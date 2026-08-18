@@ -1,0 +1,20 @@
+asyncapi: 3.0.0
+info:
+  title: Eventos del Módulo 5 - Rentas
+  version: 0.1.0
+  description: Contrato inicial de integración entre Rentas y el Core de eventos.
+defaultContentType: application/json
+
+servers:
+  core:
+    host: core-broker
+    protocol: custom
+    description: Broker administrado por el Módulo 9 - Core.
+
+channels: {}
+operations: {}
+
+components:
+  schemas:
+    EventEnvelope:
+      $ref: ./schemas/common-event-envelope.schema.json

@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+  push:
+    branches:
+      - main
+      - develop
+
+permissions:
+  contents: read
+
+jobs:
+  repository-structure:
+    name: repository-structure
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate required paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d frontend
+          test -d backend
+          test -d contracts
+          test -d infra/environments/dev
+          test -d infra/environments/test
+          test -d docs/adr
+
+  terraform:
+    name: terraform
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Check formatting
+        run: terraform fmt -check -recursive infra
+
+      - name: Validate DEV
+        working-directory: infra/environments/dev
+        run: |
+          terraform init -backend=false
+          terraform validate
+
+      - name: Validate TEST
+        working-directory: infra/environments/test
+        run: |
+          terraform init -backend=false
+          terraform validate
+
+  ci-required:
+    name: ci-required
+    if: always()
+    needs:
+      - repository-structure
+      - terraform
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify required jobs
+        shell: bash
+        env:
+          STRUCTURE_RESULT: ${{ needs.repository-structure.result }}
+          TERRAFORM_RESULT: ${{ needs.terraform.result }}
+        run: |
+          if [[ "$STRUCTURE_RESULT" != "success" || "$TERRAFORM_RESULT" != "success" ]]; then
+            echo "One or more required jobs failed."
+            exit 1
+          fi
