@@ -1,0 +1,56 @@
+name: AWS OIDC smoke test
+
+on:
+  push:
+    branches:
+      - develop
+    paths:
+      - .github/workflows/aws-oidc-smoke.yml
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: GitHub Environment cuya identidad se probará
+        required: true
+        default: dev
+        type: choice
+        options:
+          - dev
+          - test
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  verify-identity:
+    name: Verify AWS identity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'dev' }}
+
+    steps:
+      - name: Configure temporary AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: "060712744495"
+          mask-aws-account-id: true
+          role-session-name: github-oidc-smoke-${{ github.run_id }}
+
+      - name: Verify assumed role
+        shell: bash
+        env:
+          EXPECTED_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+        run: |
+          set -euo pipefail
+
+          caller_arn="$(aws sts get-caller-identity --query Arn --output text)"
+          expected_role_name="${EXPECTED_ROLE_ARN##*/}"
+
+          if [[ "$caller_arn" != *":assumed-role/${expected_role_name}/"* ]]; then
+            echo "Unexpected caller identity."
+            exit 1
+          fi
+
+          echo "OIDC authentication succeeded for ${expected_role_name}."
