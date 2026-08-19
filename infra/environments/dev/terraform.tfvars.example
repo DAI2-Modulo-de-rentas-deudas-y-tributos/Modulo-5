@@ -1,2 +1,11 @@
-project_name = "modulo-5-rentas"
-aws_region   = "sa-east-1"
+project_name   = "modulo-5-rentas"
+aws_region     = "sa-east-1"
+aws_account_id = "060712744495"
+
+vpc_cidr             = "10.50.0.0/16"
+public_subnet_cidrs   = ["10.50.0.0/24", "10.50.1.0/24"]
+database_subnet_cidrs = ["10.50.10.0/24", "10.50.11.0/24"]
+
+ecr_images_to_keep        = 20
+enable_container_insights = false
+log_retention_days        = 14
