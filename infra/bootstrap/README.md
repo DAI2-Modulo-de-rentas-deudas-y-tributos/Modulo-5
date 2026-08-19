@@ -1,65 +1,51 @@
 # Bootstrap de Terraform
 
-Esta configuración crea una única vez:
+Esta configuración administra:
 
 - bucket S3 privado, cifrado y versionado para los estados remotos;
 - locking nativo de S3 mediante `use_lockfile = true`;
 - proveedor OIDC de GitHub Actions;
 - roles IAM independientes para DEV y TEST;
-- permisos limitados inicialmente al estado Terraform de cada ambiente.
+- acceso de cada rol únicamente a su propio estado;
+- permisos del rol DEV para la red, ECR, ECS Cluster y logs de la fundación.
 
-No crea VPC, RDS, ECS, ALB ni otros recursos con costo continuo. Los roles no
-reciben todavía permisos para desplegar esos servicios.
+El rol TEST no recibe todavía permisos para crear infraestructura. Tampoco se
+guardan access keys en GitHub.
 
 ## Requisitos
 
 - AWS CLI autenticado con el perfil `rentas-admin`;
 - Terraform `>= 1.10`;
 - región `sa-east-1`;
-- proveedor OIDC, bucket y roles todavía inexistentes.
+- variables de los GitHub Environments `dev` y `test` ya configuradas.
 
-## Primera aplicación con estado local
+## Aplicar cambios del bootstrap
 
-Desde PowerShell:
+El bootstrap usa el estado remoto `bootstrap/terraform.tfstate`. Los cambios de
+permisos se aplican localmente con el usuario administrador y siempre después
+de revisar el plan:
 
 ```powershell
 $env:AWS_PROFILE = "rentas-admin"
 Set-Location infra/bootstrap
 
-terraform init
-terraform fmt -check
-terraform validate
-terraform plan -out bootstrap.tfplan
-terraform apply bootstrap.tfplan
-```
-
-Revisar el plan antes de confirmar. El resultado esperado es un bucket S3, un
-proveedor OIDC, dos roles IAM y sus políticas de acceso al estado.
-
-## Migrar el estado del bootstrap a S3
-
-Después del primer `apply`:
-
-```powershell
-$bucket = terraform output -raw terraform_state_bucket
-Copy-Item backend.tf.example backend.tf
-
-terraform init -force-copy `
-  -backend-config="bucket=$bucket" `
+terraform init -reconfigure `
+  -backend-config="bucket=modulo-5-rentas-tfstate-060712744495-sa-east-1" `
   -backend-config="key=bootstrap/terraform.tfstate" `
   -backend-config="region=sa-east-1" `
   -backend-config="encrypt=true" `
   -backend-config="use_lockfile=true"
 
-terraform state list
+terraform fmt -check
+terraform validate
+terraform plan -out=bootstrap.tfplan
+terraform apply bootstrap.tfplan
 ```
 
-Agregar `backend.tf` y `.terraform.lock.hcl` al repositorio. Los archivos de
-estado y los planes están excluidos por `.gitignore`.
+El plan de esta etapa debe agregar solamente la política inline
+`terraform-dev-foundation` al rol existente de GitHub DEV.
 
 ## Backends de los ambientes
 
-DEV utilizará `environments/dev/terraform.tfstate` y TEST utilizará
-`environments/test/terraform.tfstate`. Ambos activarán `use_lockfile = true`.
-
-No almacenar access keys ni secretos AWS en GitHub.
+DEV utiliza `environments/dev/terraform.tfstate` y TEST utiliza
+`environments/test/terraform.tfstate`. Ambos habilitan el locking nativo de S3.
