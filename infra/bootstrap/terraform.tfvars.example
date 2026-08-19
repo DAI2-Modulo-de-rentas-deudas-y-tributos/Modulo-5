@@ -1,0 +1,7 @@
+project_name            = "modulo-5-rentas"
+aws_region              = "sa-east-1"
+github_owner            = "DAI2-Modulo-de-rentas-deudas-y-tributos"
+github_repository       = "Modulo-5"
+github_dev_environment  = "dev"
+github_test_environment = "test"
+
