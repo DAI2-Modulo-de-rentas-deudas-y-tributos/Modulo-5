@@ -8,7 +8,8 @@ data "aws_iam_policy_document" "github_dev_foundation" {
   statement {
     sid = "ReadNetworkState"
     actions = [
-      "ec2:Describe*"
+      "ec2:Describe*",
+      "ec2:GetManagedPrefixListEntries"
     ]
     resources = ["*"]
   }
