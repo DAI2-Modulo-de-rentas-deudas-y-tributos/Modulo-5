@@ -14,33 +14,175 @@ permissions:
   contents: read
 
 jobs:
+  application-detection:
+    name: application-detection
+    runs-on: ubuntu-latest
+    outputs:
+      frontend-ready: ${{ steps.detect.outputs.frontend-ready }}
+      backend-ready: ${{ steps.detect.outputs.backend-ready }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Detect application manifests
+        id: detect
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          frontend_ready=false
+          backend_ready=false
+
+          if [[ -f frontend/package.json ]]; then
+            if [[ ! -f frontend/package-lock.json ]]; then
+              echo "frontend/package.json exists but package-lock.json is missing."
+              exit 1
+            fi
+            frontend_ready=true
+          fi
+
+          if [[ -f backend/pom.xml ]]; then
+            backend_ready=true
+          fi
+
+          echo "frontend-ready=${frontend_ready}" >> "${GITHUB_OUTPUT}"
+          echo "backend-ready=${backend_ready}" >> "${GITHUB_OUTPUT}"
+          echo "Frontend ready: ${frontend_ready}"
+          echo "Backend ready: ${backend_ready}"
+
   repository-structure:
     name: repository-structure
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
-      - name: Validate required paths
+      - name: Validate DevOps paths
         shell: bash
         run: |
           set -euo pipefail
           test -d frontend
           test -d backend
+          test -f backend/Dockerfile
+          test -f compose.yaml
+          test -f amplify.yml
           test -d contracts
           test -d infra/environments/dev
           test -d infra/environments/test
           test -d docs/adr
+
+  frontend:
+    name: frontend
+    needs: application-detection
+    if: needs.application-detection.outputs.frontend-ready == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build web application
+        run: npm run build
+
+  backend:
+    name: backend
+    needs: application-detection
+    if: needs.application-detection.outputs.backend-ready == 'true'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: rentas
+          POSTGRES_USER: rentas
+          POSTGRES_PASSWORD: rentas_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rentas -d rentas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/rentas
+      SPRING_DATASOURCE_USERNAME: rentas
+      SPRING_DATASOURCE_PASSWORD: rentas_ci
+      APP_MODE: api
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+          cache-dependency-path: backend/pom.xml
+
+      - name: Test and package backend
+        run: mvn -B -ntp clean verify --file backend/pom.xml
+
+      - name: Start backend and verify PostgreSQL integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -jar backend/target/rentas-backend.jar > "${RUNNER_TEMP}/backend.log" 2>&1 &
+          backend_pid=$!
+          trap 'kill "${backend_pid}" 2>/dev/null || true' EXIT
+
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8080/actuator/health > /dev/null; then
+              curl --fail --silent http://localhost:8080/api/v1/health \
+                | grep --quiet '"status":"UP"'
+              exit 0
+            fi
+            sleep 2
+          done
+
+          cat "${RUNNER_TEMP}/backend.log"
+          exit 1
+
+      - name: Build backend container image
+        run: docker build --tag modulo-5-rentas-backend:${{ github.sha }} backend
 
   terraform:
     name: terraform
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.15.8"
 
       - name: Check formatting
         run: terraform fmt -check -recursive infra
@@ -61,17 +203,37 @@ jobs:
     name: ci-required
     if: always()
     needs:
+      - application-detection
       - repository-structure
+      - frontend
+      - backend
       - terraform
     runs-on: ubuntu-latest
     steps:
       - name: Verify required jobs
         shell: bash
         env:
+          DETECTION_RESULT: ${{ needs.application-detection.result }}
           STRUCTURE_RESULT: ${{ needs.repository-structure.result }}
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+          BACKEND_RESULT: ${{ needs.backend.result }}
           TERRAFORM_RESULT: ${{ needs.terraform.result }}
         run: |
-          if [[ "$STRUCTURE_RESULT" != "success" || "$TERRAFORM_RESULT" != "success" ]]; then
-            echo "One or more required jobs failed."
+          set -euo pipefail
+
+          if [[ "$DETECTION_RESULT" != "success" \
+            || "$STRUCTURE_RESULT" != "success" \
+            || "$TERRAFORM_RESULT" != "success" ]]; then
+            echo "A required DevOps check failed."
+            exit 1
+          fi
+
+          if [[ "$FRONTEND_RESULT" != "success" && "$FRONTEND_RESULT" != "skipped" ]]; then
+            echo "Frontend CI failed."
+            exit 1
+          fi
+
+          if [[ "$BACKEND_RESULT" != "success" && "$BACKEND_RESULT" != "skipped" ]]; then
+            echo "Backend CI failed."
             exit 1
           fi

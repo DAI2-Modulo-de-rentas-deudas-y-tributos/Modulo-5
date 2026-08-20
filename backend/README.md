@@ -1,11 +1,19 @@
 # Backend
 
-API y procesos asíncronos del Módulo 5 - Rentas.
+Directorio reservado para la aplicación Spring Boot del Módulo 5.
 
-El backend se desplegará en dos modos a partir del mismo código y artefacto:
+El código fuente será provisto por el equipo de desarrollo. El contrato DevOps
+esperado es:
 
-- `api`: servicio HTTP detrás de Application Load Balancer.
-- `worker`: consumidor de eventos y ejecutor de procesos masivos.
+- Java 17 y Maven con un `pom.xml` versionado;
+- `mvn clean verify` ejecuta las pruebas y genera
+  `target/rentas-backend.jar`;
+- `GET /api/v1/health` devuelve un estado funcional;
+- `GET /actuator/health` sirve como health check de infraestructura;
+- la configuración PostgreSQL se recibe mediante variables de entorno;
+- las migraciones de esquema se administran con Flyway.
 
-Cuando se seleccione la tecnología se agregarán el proyecto base, pruebas,
-migraciones de base de datos y un `Dockerfile` multi-stage.
+Cuando `pom.xml` exista, el CI activará automáticamente pruebas, integración
+con PostgreSQL y construcción de la imagen. El `Dockerfile` multi-stage incluido
+materializa este contrato y será ajustado junto con el equipo si cambia el
+nombre final del JAR.
