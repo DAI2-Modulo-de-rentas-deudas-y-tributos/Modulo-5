@@ -1,0 +1,186 @@
+name: Deploy backend AWS DEV
+
+on:
+  push:
+    branches:
+      - develop
+    paths:
+      - backend/**
+      - .github/workflows/cd-backend-dev.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: backend-dev
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    name: detect-backend
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.backend.outputs.ready }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Detect backend application
+        id: backend
+        shell: bash
+        run: |
+          if [[ -f backend/pom.xml ]]; then
+            echo "ready=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "ready=false" >> "${GITHUB_OUTPUT}"
+            echo "Backend application is not present; deployment is skipped."
+          fi
+
+  deploy:
+    name: deploy-backend
+    needs: detect
+    if: needs.detect.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment: dev
+
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ACCOUNT_ID: "060712744495"
+      ECR_REPOSITORY: "modulo-5-rentas-dev-backend"
+      ECS_CLUSTER: "modulo-5-rentas-dev-cluster"
+      ECS_SERVICE: "modulo-5-rentas-dev-backend"
+      ECS_TASK_FAMILY: "modulo-5-rentas-dev-backend"
+      ECS_CONTAINER_NAME: "backend"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Configure temporary AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: "060712744495"
+          mask-aws-account-id: true
+          role-session-name: backend-dev-${{ github.run_id }}
+
+      - name: Check environment variables
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${AWS_REGION:?Missing AWS_REGION in the dev environment}"
+
+      - name: Login to Amazon ECR
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws ecr get-login-password --region "${AWS_REGION}" \
+            | docker login \
+                --username AWS \
+                --password-stdin \
+                "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+      - name: Build and publish immutable image
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          image_uri="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${GITHUB_SHA}"
+
+          if aws ecr describe-images \
+            --repository-name "${ECR_REPOSITORY}" \
+            --image-ids imageTag="${GITHUB_SHA}" > /dev/null 2>&1; then
+            echo "Image already exists; reusing ${image_uri}."
+          else
+            docker build --pull --tag "${image_uri}" backend
+            docker push "${image_uri}"
+          fi
+
+          echo "uri=${image_uri}" >> "${GITHUB_OUTPUT}"
+
+      - name: Register task definition revision
+        id: task
+        shell: bash
+        env:
+          IMAGE_URI: ${{ steps.image.outputs.uri }}
+        run: |
+          set -euo pipefail
+
+          aws ecs describe-task-definition \
+            --task-definition "${ECS_TASK_FAMILY}" \
+            --query taskDefinition \
+            > "${RUNNER_TEMP}/task-definition.json"
+
+          jq \
+            --arg image "${IMAGE_URI}" \
+            --arg container "${ECS_CONTAINER_NAME}" \
+            'del(
+              .taskDefinitionArn,
+              .revision,
+              .status,
+              .requiresAttributes,
+              .compatibilities,
+              .registeredAt,
+              .registeredBy
+            )
+            | (.containerDefinitions[] | select(.name == $container).image) = $image' \
+            "${RUNNER_TEMP}/task-definition.json" \
+            > "${RUNNER_TEMP}/task-definition-rendered.json"
+
+          task_definition_arn=$(aws ecs register-task-definition \
+            --cli-input-json "file://${RUNNER_TEMP}/task-definition-rendered.json" \
+            --query taskDefinition.taskDefinitionArn \
+            --output text)
+
+          echo "arn=${task_definition_arn}" >> "${GITHUB_OUTPUT}"
+
+      - name: Deploy service and wait until stable
+        shell: bash
+        env:
+          TASK_DEFINITION_ARN: ${{ steps.task.outputs.arn }}
+        run: |
+          set -euo pipefail
+
+          aws ecs update-service \
+            --cluster "${ECS_CLUSTER}" \
+            --service "${ECS_SERVICE}" \
+            --task-definition "${TASK_DEFINITION_ARN}" \
+            --desired-count 1 \
+            --force-new-deployment \
+            > /dev/null
+
+          aws ecs wait services-stable \
+            --cluster "${ECS_CLUSTER}" \
+            --services "${ECS_SERVICE}"
+
+      - name: Publish deployment summary
+        shell: bash
+        env:
+          IMAGE_URI: ${{ steps.image.outputs.uri }}
+          TASK_DEFINITION_ARN: ${{ steps.task.outputs.arn }}
+        run: |
+          {
+            echo "### Backend DEV desplegado"
+            echo
+            echo "- Image: \`${IMAGE_URI}\`"
+            echo "- Task definition: \`${TASK_DEFINITION_ARN}\`"
+            echo "- Service: \`${ECS_SERVICE}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Show ECS diagnostics on failure
+        if: failure()
+        shell: bash
+        run: |
+          aws ecs describe-services \
+            --cluster "${ECS_CLUSTER}" \
+            --services "${ECS_SERVICE}" \
+            --query 'services[0].events[:10]' \
+            --output table || true

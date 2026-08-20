@@ -1,35 +1,57 @@
 # Infraestructura
 
-Infraestructura AWS del módulo, administrada exclusivamente con Terraform.
+Infraestructura AWS del modulo, administrada exclusivamente con Terraform.
 
-## Organización
+## Organizacion
 
-- `bootstrap/`: estado remoto, OIDC y roles de GitHub Actions.
-- `modules/network/`: VPC y subredes reutilizables.
-- `modules/ecs/`: ECR, ECS Cluster y grupo de logs.
-- `environments/dev/`: composición desplegada automáticamente desde `develop`.
-- `environments/test/`: composición reservada para la promoción a TEST.
+- `bootstrap/`: estado remoto, OIDC y permisos de GitHub Actions.
+- `modules/network/`: VPC, Internet Gateway y subredes.
+- `modules/security/`: aislamiento CloudFront -> ALB -> ECS -> RDS.
+- `modules/database/`: PostgreSQL RDS y secreto administrado.
+- `modules/edge/`: ALB y endpoint HTTPS CloudFront para la API.
+- `modules/ecs/`: ECR, cluster, task definition y servicio Fargate.
+- `modules/hosting/`: aplicacion y rama de Amplify Hosting.
+- `environments/dev/`: composicion desplegada desde `develop`.
+- `environments/test/`: ambiente reservado para promocion posterior.
 
 Cada ambiente utiliza un estado remoto independiente. No se usan Terraform
 workspaces para representar ambientes.
 
-## Flujo de DEV
+## Arquitectura DEV
 
-1. El Pull Request ejecuta formato y validación sin conectarse a AWS.
-2. El bootstrap se aplica localmente si el PR modifica permisos IAM.
-3. Después del merge a `develop`, `cd-dev.yml` asume el rol DEV mediante OIDC.
-4. El pipeline inicializa el estado remoto, genera el plan y lo aplica.
-5. Los outputs quedan visibles en el resumen de la ejecución de GitHub Actions.
+El frontend se publica en Amplify Hosting. La API se consume por HTTPS desde
+CloudFront, que reenvia las solicitudes a un ALB. El ALB es el unico origen
+autorizado para alcanzar las tareas Fargate. PostgreSQL permanece en subredes
+aisladas y acepta conexiones solamente desde el grupo de seguridad del
+backend.
 
-## Fundación actual
+Para evitar el costo fijo de NAT Gateway en DEV, las tareas Fargate usan las
+subredes publicas con IP publica. No admiten trafico directo: su grupo de
+seguridad solo permite entrada desde el ALB. RDS nunca es publico.
 
-La primera entrega crea solamente recursos sin carga de trabajo permanente:
+## Flujo de despliegue
 
-- VPC, Internet Gateway y subredes en dos zonas de disponibilidad;
-- repositorio ECR del backend;
-- cluster ECS sin servicios ni tareas;
-- grupo de logs con retención de 14 días.
+1. Un Pull Request ejecuta CI y valida Terraform sin conectarse a AWS.
+2. Si cambia IAM, el bootstrap se aplica localmente con `rentas-admin`.
+3. Al fusionar infraestructura en `develop`, `cd-dev.yml` ejecuta Terraform.
+4. Cuando exista backend, `cd-backend-dev.yml` publica una imagen inmutable en
+   ECR y actualiza el servicio ECS.
+5. Cuando exista frontend, `cd-frontend-dev.yml` construye `dist` y lo publica
+   mediante la API de despliegue manual de Amplify.
 
-RDS, ALB, tareas Fargate y Amplify se agregarán cuando existan las aplicaciones
-y sus artefactos. No se crea NAT Gateway en esta etapa para evitar su costo
-fijo.
+Los tres workflows asumen el mismo rol DEV mediante OIDC. No existen access
+keys de AWS, tokens personales de GitHub ni claves de base de datos en GitHub.
+
+## Estado inicial sin aplicaciones
+
+El servicio ECS se crea con `desired_count = 0` y una referencia inerte a la
+etiqueta `bootstrap`. Por lo tanto, aplicar esta infraestructura no ejecuta
+codigo de ejemplo. Los workflows de frontend y backend detectan sus manifiestos
+y se omiten hasta que el equipo de desarrollo agregue las aplicaciones.
+
+## Costos
+
+Aunque no haya tareas Fargate ejecutandose, RDS y el Application Load Balancer
+generan costo continuo. CloudFront y Amplify se cobran principalmente por uso.
+La configuracion DEV usa una instancia RDS pequena, una sola zona y no crea NAT
+Gateway. Revisar AWS Cost Explorer y definir un presupuesto antes del apply.

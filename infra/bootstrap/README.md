@@ -1,29 +1,21 @@
 # Bootstrap de Terraform
 
-Esta configuración administra:
+Esta configuracion administra:
 
 - bucket S3 privado, cifrado y versionado para los estados remotos;
 - locking nativo de S3 mediante `use_lockfile = true`;
 - proveedor OIDC de GitHub Actions;
 - roles IAM independientes para DEV y TEST;
-- acceso de cada rol únicamente a su propio estado;
-- permisos del rol DEV para la red, ECR, ECS Cluster y logs de la fundación.
+- acceso de cada rol unicamente a su propio estado;
+- permisos DEV para Terraform, ECR, ECS, RDS, ALB, CloudFront y Amplify.
 
-El rol TEST no recibe todavía permisos para crear infraestructura. Tampoco se
-guardan access keys en GitHub.
-
-## Requisitos
-
-- AWS CLI autenticado con el perfil `rentas-admin`;
-- Terraform `>= 1.10`;
-- región `sa-east-1`;
-- variables de los GitHub Environments `dev` y `test` ya configuradas.
+El rol TEST continua sin permisos para crear la infraestructura de aplicacion.
+No se guardan access keys, claves de PostgreSQL ni tokens personales en GitHub.
 
 ## Aplicar cambios del bootstrap
 
-El bootstrap usa el estado remoto `bootstrap/terraform.tfstate`. Los cambios de
-permisos se aplican localmente con el usuario administrador y siempre después
-de revisar el plan:
+Los permisos nuevos deben aplicarse localmente con el perfil administrador
+antes de fusionar la infraestructura de runtime. Desde la raiz del repositorio:
 
 ```powershell
 $env:AWS_PROFILE = "rentas-admin"
@@ -38,14 +30,13 @@ terraform init -reconfigure `
 
 terraform fmt -check
 terraform validate
-terraform plan -out=bootstrap.tfplan
-terraform apply bootstrap.tfplan
+terraform plan -out=bootstrap-runtime.tfplan
+terraform apply bootstrap-runtime.tfplan
 ```
 
-El plan de esta etapa debe agregar solamente la política inline
-`terraform-dev-foundation` al rol existente de GitHub DEV.
-
-## Backends de los ambientes
+El plan del bootstrap debe agregar dos politicas administradas y sus dos
+attachments al rol existente `modulo-5-rentas-github-dev-deploy`. No debe
+recrear el proveedor OIDC, el bucket de estado ni los roles existentes.
 
 DEV utiliza `environments/dev/terraform.tfstate` y TEST utiliza
-`environments/test/terraform.tfstate`. Ambos habilitan el locking nativo de S3.
+`environments/test/terraform.tfstate`.

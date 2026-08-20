@@ -22,3 +22,18 @@ output "backend_log_group_name" {
   description = "Nombre del grupo de logs del backend."
   value       = aws_cloudwatch_log_group.backend.name
 }
+
+output "backend_service_name" {
+  description = "Nombre del servicio ECS del backend."
+  value       = aws_ecs_service.backend.name
+}
+
+output "backend_task_family" {
+  description = "Familia de task definitions actualizada por CD."
+  value       = aws_ecs_task_definition.backend.family
+}
+
+output "backend_task_definition_arn" {
+  description = "Task definition inicial; comienza sin tareas en ejecucion."
+  value       = aws_ecs_task_definition.backend.arn
+}

@@ -9,3 +9,21 @@ database_subnet_cidrs = ["10.50.10.0/24", "10.50.11.0/24"]
 ecr_images_to_keep        = 20
 enable_container_insights = false
 log_retention_days        = 14
+
+backend_container_port    = 8080
+backend_health_check_path = "/actuator/health"
+backend_task_cpu          = 256
+backend_task_memory       = 512
+
+database_name                  = "rentas"
+database_master_username       = "rentas_admin"
+database_port                  = 5432
+postgres_engine_version        = "16"
+database_instance_class        = "db.t4g.micro"
+database_allocated_storage     = 20
+database_max_allocated_storage = 50
+database_backup_retention_days = 1
+database_deletion_protection   = false
+database_skip_final_snapshot   = true
+
+alb_deletion_protection = false
