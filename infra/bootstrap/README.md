@@ -7,9 +7,9 @@ Esta configuracion administra:
 - proveedor OIDC de GitHub Actions;
 - roles IAM independientes para DEV y TEST;
 - acceso de cada rol unicamente a su propio estado;
-- permisos DEV para Terraform, ECR, ECS, RDS, ALB, CloudFront y Amplify.
+- permisos separados para que DEV y TEST administren unicamente sus propios recursos.
 
-El rol TEST continua sin permisos para crear la infraestructura de aplicacion.
+TEST queda autorizado, pero no se crea ningun recurso hasta ejecutar manualmente el workflow con la operacion `apply` y la confirmacion `DEPLOY_TEST`.
 No se guardan access keys, claves de PostgreSQL ni tokens personales en GitHub.
 
 ## Aplicar cambios del bootstrap
@@ -34,9 +34,9 @@ terraform plan -out=bootstrap-runtime.tfplan
 terraform apply bootstrap-runtime.tfplan
 ```
 
-El plan del bootstrap debe agregar dos politicas administradas y sus dos
-attachments al rol existente `modulo-5-rentas-github-dev-deploy`. No debe
-recrear el proveedor OIDC, el bucket de estado ni los roles existentes.
+Al incorporar TEST, el plan debe agregar una politica inline, dos politicas administradas y dos attachments al rol existente `modulo-5-rentas-github-test-deploy`. Estos cambios IAM no ejecutan aplicaciones ni generan infraestructura TEST. No debe recrear el proveedor OIDC, el bucket de estado ni los roles existentes.
 
 DEV utiliza `environments/dev/terraform.tfstate` y TEST utiliza
 `environments/test/terraform.tfstate`.
+
+

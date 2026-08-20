@@ -37,3 +37,14 @@ output "test_state_key" {
   description = "Clave S3 del estado TEST."
   value       = local.test_state_key
 }
+
+output "github_test_runtime_compute_policy_arn" {
+  description = "Politica administrada para despliegues ECR y ECS TEST."
+  value       = aws_iam_policy.github_test_runtime_compute.arn
+}
+
+output "github_test_runtime_infrastructure_policy_arn" {
+  description = "Politica administrada para la infraestructura de ejecucion TEST."
+  value       = aws_iam_policy.github_test_runtime_infrastructure.arn
+}
+
