@@ -1,10 +1,16 @@
 # Frontend
 
-Aplicación web del Módulo 5 - Rentas.
+Directorio reservado para la aplicación web React del Módulo 5.
 
-La tecnología todavía debe definirse. Cuando se seleccione el framework, este
-directorio contendrá la aplicación, sus pruebas y la configuración de build para
+El código fuente será provisto por el equipo de desarrollo. El contrato DevOps
+esperado es:
+
+- `package.json` y `package-lock.json` versionados;
+- `npm test` ejecuta las pruebas sin modo interactivo;
+- `npm run build` genera un build estático en `dist/`;
+- `VITE_API_BASE_URL` configura la URL pública del backend;
+- ninguna variable `VITE_*` contiene secretos.
+
+Cuando ambos manifests existan, el CI detectará automáticamente el frontend y
+activará instalación, pruebas y build. `amplify.yml` publicará `dist/` mediante
 AWS Amplify Hosting.
-
-La configuración por ambiente deberá recibirse mediante variables de entorno;
-no se deben guardar URLs, credenciales ni secretos directamente en el código.
