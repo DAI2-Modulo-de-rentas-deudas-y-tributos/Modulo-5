@@ -1,4 +1,4 @@
-name: Deploy AWS DEV foundation
+name: Deploy AWS DEV infrastructure
 
 on:
   push:
@@ -8,7 +8,11 @@ on:
       - .github/workflows/cd-dev.yml
       - infra/environments/dev/**
       - infra/modules/network/**
+      - infra/modules/security/**
+      - infra/modules/database/**
+      - infra/modules/edge/**
       - infra/modules/ecs/**
+      - infra/modules/hosting/**
   workflow_dispatch:
 
 permissions:
@@ -23,7 +27,7 @@ jobs:
   deploy:
     name: terraform-apply-dev
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 60
     environment: dev
 
     defaults:

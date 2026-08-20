@@ -1,11 +1,11 @@
-# Módulo ecs
+# Modulo ecs
 
-Crea la plataforma mínima de contenedores:
+Crea ECR, el cluster ECS, roles IAM, logs, una task definition y el servicio
+Fargate conectado al ALB. La definicion inicial referencia la etiqueta
+`bootstrap` y el servicio se crea con capacidad cero, por lo que no se ejecuta
+codigo de ejemplo ni se generan costos de Fargate antes del primer despliegue.
 
-- repositorio ECR cifrado, con etiquetas inmutables y escaneo al publicar;
-- política que conserva las últimas imágenes;
-- cluster ECS sin tareas ni servicios;
-- grupo de logs de CloudWatch con retención limitada.
-
-El servicio Fargate, las task definitions, los roles de ejecución y el ALB se
-agregarán cuando exista el backend y su Dockerfile.
+El pipeline de backend registra revisiones con imagenes identificadas por el
+SHA del commit y eleva la capacidad a una tarea. Terraform ignora solamente
+`task_definition` y `desired_count` del servicio porque esos dos atributos son
+propiedad del pipeline de entrega de la aplicacion.
