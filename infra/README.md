@@ -12,7 +12,7 @@ Infraestructura AWS del modulo, administrada exclusivamente con Terraform.
 - `modules/ecs/`: ECR, cluster, task definition y servicio Fargate.
 - `modules/hosting/`: aplicacion y rama de Amplify Hosting.
 - `environments/dev/`: composicion desplegada desde `develop`.
-- `environments/test/`: ambiente reservado para promocion posterior.
+- `environments/test/`: composicion aislada preparada para promocion manual.
 
 Cada ambiente utiliza un estado remoto independiente. No se usan Terraform
 workspaces para representar ambientes.
@@ -39,8 +39,11 @@ seguridad solo permite entrada desde el ALB. RDS nunca es publico.
 5. Cuando exista frontend, `cd-frontend-dev.yml` construye `dist` y lo publica
    mediante la API de despliegue manual de Amplify.
 
-Los tres workflows asumen el mismo rol DEV mediante OIDC. No existen access
-keys de AWS, tokens personales de GitHub ni claves de base de datos en GitHub.
+Los workflows DEV asumen el rol DEV y las promociones manuales asumen el rol TEST mediante OIDC. No existen access keys de AWS, tokens personales de GitHub ni claves de base de datos en GitHub.
+
+## Promocion a TEST
+
+TEST no se despliega por pushes ni merges. El workflow `cd-test.yml` ejecuta `plan` por defecto y solo aplica con la seleccion explicita `apply` mas la confirmacion `DEPLOY_TEST`. El backend reutiliza una imagen inmutable publicada previamente en ECR DEV. El frontend se reconstruye desde el mismo commit porque necesita la URL de API propia de TEST.
 
 ## Estado inicial sin aplicaciones
 
@@ -55,3 +58,5 @@ Aunque no haya tareas Fargate ejecutandose, RDS y el Application Load Balancer
 generan costo continuo. CloudFront y Amplify se cobran principalmente por uso.
 La configuracion DEV usa una instancia RDS pequena, una sola zona y no crea NAT
 Gateway. Revisar AWS Cost Explorer y definir un presupuesto antes del apply.
+
+
