@@ -92,5 +92,5 @@ CREATE TABLE exemption (
  tax_concept_id BIGINT NOT NULL REFERENCES tax_concept(id),percentage NUMERIC(5,2) NOT NULL,valid_from DATE NOT NULL,valid_until DATE,status VARCHAR(30) NOT NULL,
  approved_by VARCHAR(255) NOT NULL,approved_at TIMESTAMP WITH TIME ZONE NOT NULL,CONSTRAINT ck_exemption_percentage CHECK(percentage>0 AND percentage<=100)
 );
-CREATE INDEX idx_debt_taxpayer ON debt(taxpayer_id); CREATE INDEX idx_debt_status ON debt(status); CREATE INDEX idx_payment_taxpayer ON payment(taxpayer_id);
+CREATE INDEX idx_debt_taxpayer ON debt(taxpayer_id); CREATE INDEX idx_debt_status ON debt(status); CREATE INDEX idx_payment_taxpayer ON payment(taxpayer_id); CREATE INDEX idx_payment_paid_at ON payment(paid_at);
 CREATE INDEX idx_audit_entity ON audit_entry(entity_type,entity_id); CREATE INDEX idx_integration_status ON integration_event_log(status); CREATE INDEX idx_outbox_status ON outbox_event(status);

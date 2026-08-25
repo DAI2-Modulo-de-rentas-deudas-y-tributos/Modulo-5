@@ -1,6 +1,10 @@
 ALTER TABLE payment_allocation ADD COLUMN target_type VARCHAR(30) NOT NULL DEFAULT 'DEBT';
 ALTER TABLE payment_allocation ADD COLUMN installment_id BIGINT REFERENCES installment(id);
 ALTER TABLE payment_allocation ALTER COLUMN debt_id DROP NOT NULL;
+ALTER TABLE payment_allocation ADD CONSTRAINT ck_allocation_target CHECK (
+ (target_type='DEBT' AND debt_id IS NOT NULL AND installment_id IS NULL) OR
+ (target_type='INSTALLMENT' AND installment_id IS NOT NULL AND debt_id IS NULL)
+);
 
 CREATE TABLE payment_plan_configuration (
  id BIGSERIAL PRIMARY KEY, version INTEGER NOT NULL UNIQUE, minimum_installments INTEGER NOT NULL,
