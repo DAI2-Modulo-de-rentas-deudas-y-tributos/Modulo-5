@@ -3,6 +3,7 @@ import { AuthProvider, useAuth } from "./context/AuthContext.jsx";
 import ProtectedRoute from "./routes/ProtectedRoute.jsx";
 import RentasLayout from "./components/layout/RentasLayout.jsx";
 import CajaLayout from "./components/layout/CajaLayout.jsx";
+import AuditoriaLayout from "./components/layout/AuditoriaLayout.jsx";
 import { homePathForRole } from "./config/workspaces.js";
 import LoginPage from "./pages/LoginPage.jsx";
 import DashboardPage from "./pages/DashboardPage.jsx";
@@ -22,13 +23,38 @@ import ContribuyentesCajaPage from "./pages/caja/ContribuyentesCajaPage.jsx";
 import ContribuyenteDetallePage from "./pages/caja/ContribuyenteDetallePage.jsx";
 import PagosCajaPage from "./pages/caja/PagosCajaPage.jsx";
 import BoletasCajaPage from "./pages/caja/BoletasCajaPage.jsx";
+import AuditorDashboardPage from "./pages/auditoria/AuditorDashboardPage.jsx";
+import ContribuyentesAuditorPage from "./pages/auditoria/ContribuyentesAuditorPage.jsx";
+import ContribuyenteAuditorDetallePage from "./pages/auditoria/ContribuyenteAuditorDetallePage.jsx";
+import ConceptosPage from "./pages/auditoria/ConceptosPage.jsx";
+import ConceptoDetallePage from "./pages/auditoria/ConceptoDetallePage.jsx";
+import LiquidacionesAuditorPage from "./pages/auditoria/LiquidacionesAuditorPage.jsx";
+import LiquidacionDetallePage from "./pages/auditoria/LiquidacionDetallePage.jsx";
+import DeudasAuditorPage from "./pages/auditoria/DeudasAuditorPage.jsx";
+import DeudaDetallePage from "./pages/auditoria/DeudaDetallePage.jsx";
+import PagosAuditorPage from "./pages/auditoria/PagosAuditorPage.jsx";
+import PagoDetallePage from "./pages/auditoria/PagoDetallePage.jsx";
+import ReversionDetallePage from "./pages/auditoria/ReversionDetallePage.jsx";
+import PlanesAuditorPage from "./pages/auditoria/PlanesAuditorPage.jsx";
+import PlanDetallePage from "./pages/auditoria/PlanDetallePage.jsx";
+import ExencionesAuditorPage from "./pages/auditoria/ExencionesAuditorPage.jsx";
+import ExencionDetallePage from "./pages/auditoria/ExencionDetallePage.jsx";
+import TicketsAuditorPage from "./pages/auditoria/TicketsAuditorPage.jsx";
+import TicketDetallePage from "./pages/auditoria/TicketDetallePage.jsx";
+import IntegracionesPage from "./pages/auditoria/IntegracionesPage.jsx";
+import IntegracionDetallePage from "./pages/auditoria/IntegracionDetallePage.jsx";
+import AuditoriaPage from "./pages/auditoria/AuditoriaPage.jsx";
+import AuditoriaDetallePage from "./pages/auditoria/AuditoriaDetallePage.jsx";
+import IndicadoresPage from "./pages/auditoria/IndicadoresPage.jsx";
+import IndicadorDetallePage from "./pages/auditoria/IndicadorDetallePage.jsx";
 
 /**
  * Rutas de las dos áreas de trabajo del módulo.
  *
  * `/rentas/*` es el back-office de Personal y Supervisor —la bitácora de eventos exige
- * rol supervisor—; `/caja/*` es la ventanilla del Cajero. Cada rol entra a la suya y
- * `ProtectedRoute` devuelve a su panel a quien intente cruzarse.
+ * rol supervisor—; `/caja/*` es la ventanilla del Cajero y `/auditor/*` el área de
+ * Auditoría, que es de sólo lectura. Cada rol entra a la suya y `ProtectedRoute`
+ * devuelve a su panel a quien intente cruzarse.
  */
 export default function App() {
   return (
@@ -65,6 +91,37 @@ export default function App() {
               <Route path="contribuyentes/:taxpayerId" element={<ContribuyenteDetallePage />} />
               <Route path="pagos" element={<PagosCajaPage />} />
               <Route path="boletas" element={<BoletasCajaPage />} />
+
+              <Route path="*" element={<NotFoundPage />} />
+            </Route>
+          </Route>
+
+          <Route element={<ProtectedRoute roles={["AUDITOR"]} />}>
+            <Route path="/auditor" element={<AuditoriaLayout />}>
+              <Route index element={<AuditorDashboardPage />} />
+              <Route path="contribuyentes" element={<ContribuyentesAuditorPage />} />
+              <Route path="contribuyentes/:taxpayerId" element={<ContribuyenteAuditorDetallePage />} />
+              <Route path="conceptos" element={<ConceptosPage />} />
+              <Route path="conceptos/:code" element={<ConceptoDetallePage />} />
+              <Route path="liquidaciones" element={<LiquidacionesAuditorPage />} />
+              <Route path="liquidaciones/:settlementId" element={<LiquidacionDetallePage />} />
+              <Route path="deudas" element={<DeudasAuditorPage />} />
+              <Route path="deudas/:debtId" element={<DeudaDetallePage />} />
+              <Route path="pagos" element={<PagosAuditorPage />} />
+              <Route path="pagos/:paymentId" element={<PagoDetallePage />} />
+              <Route path="reversiones/:reversalId" element={<ReversionDetallePage />} />
+              <Route path="planes" element={<PlanesAuditorPage />} />
+              <Route path="planes/:requestId" element={<PlanDetallePage />} />
+              <Route path="exenciones" element={<ExencionesAuditorPage />} />
+              <Route path="exenciones/:requestId" element={<ExencionDetallePage />} />
+              <Route path="tickets" element={<TicketsAuditorPage />} />
+              <Route path="tickets/:ticketId" element={<TicketDetallePage />} />
+              <Route path="integraciones" element={<IntegracionesPage />} />
+              <Route path="integraciones/:eventId" element={<IntegracionDetallePage />} />
+              <Route path="auditoria" element={<AuditoriaPage />} />
+              <Route path="auditoria/:entryId" element={<AuditoriaDetallePage />} />
+              <Route path="indicadores" element={<IndicadoresPage />} />
+              <Route path="indicadores/:key" element={<IndicadorDetallePage />} />
 
               <Route path="*" element={<NotFoundPage />} />
             </Route>

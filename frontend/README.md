@@ -8,6 +8,10 @@ módulo, con login común y navegación separada por rol:
 - **Caja** (`/caja`) — ventanilla del cajero: cobros, consulta del padrón, pagos del
   día y búsqueda de boletas. El cajero cobra e imprime comprobantes; no liquida, no
   resuelve planes ni exenciones y no reversa pagos.
+- **Auditoría** (`/auditor`) — control transversal de sólo lectura: contribuyentes,
+  conceptos, liquidaciones, deudas, pagos, planes, exenciones, tickets, integraciones,
+  registro de auditoría e indicadores. El auditor observa todo el circuito y no
+  modifica ninguna entidad: `auditService` no expone una sola operación de escritura.
 
 ## Comandos
 
@@ -36,8 +40,8 @@ Copiar `.env.example` a `.env`:
   poner `false`: las firmas de `src/services/rentasService.js` no cambian.
 
 Usuarios del dataset de demostración: `mrivas` / `rentas123` (Personal de Rentas),
-`jlopez` / `rentas123` (Supervisor) y `pcabrera` / `caja123` (Cajero). Cada rol entra
-al panel de su área y no ve la del otro.
+`jlopez` / `rentas123` (Supervisor), `pcabrera` / `caja123` (Cajero) y
+`acastro` / `audit123` (Auditor). Cada rol entra al panel de su área y no ve la del otro.
 
 ## Estructura
 
@@ -47,13 +51,20 @@ src/
   components/layout/    Sidebar, Topbar, Footer y el shell de cada área de trabajo
   components/common/    Piezas del back-office: DataTable, Modal, FilterBar, Card…
   components/caja/      Comprobante de ventanilla y su reimpresión
+  components/auditoria/ Fichas, historiales y gráficos del área de control
   config/modules.js     Módulos de Rentas y su visibilidad por rol
   config/cajaModules.js Módulos de la ventanilla de caja
+  config/auditoriaModules.js  Módulos del área de auditoría
   config/workspaces.js  A qué panel entra cada rol
   context/              Sesión del agente municipal
-  pages/                Login, y una página por módulo en pages/rentas/ y pages/caja/
+  pages/                Login, y una página por módulo en pages/{rentas,caja,auditoria}/
   services/             Cliente HTTP, dataset de demostración y servicios de negocio
 ```
+
+Los gráficos de Indicadores son de una sola serie y usan `#2563A8` como relleno de
+datos —un paso más claro del navy institucional, validado por contraste sobre blanco—
+mientras que `#0F2C59` queda para texto, que es su rol en el design system. Toda
+visualización ofrece además su vista de tabla.
 
 El comprobante de caja se imprime desde el navegador: `ReceiptCard` lleva la clase
 `print-area` y las reglas `@media print` de `src/index.css` dejan sólo el ticket en el
