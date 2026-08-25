@@ -1,0 +1,45 @@
+package ar.gob.municipalidad.rentas;
+
+import java.time.LocalDate;
+import org.springframework.stereotype.Service;
+
+final class ApiResponses {
+    private ApiResponses() {}
+    static ApiDtos.TaxpayerResponse of(TaxpayerReference x){return new ApiDtos.TaxpayerResponse(x.id,x.taxpayerType,x.externalId,x.dni,x.cuit,x.displayName,x.externalStatus,x.createdAt,x.updatedAt);}
+    static ApiDtos.TaxConceptResponse of(TaxConcept x){return new ApiDtos.TaxConceptResponse(x.id,x.code,x.name,x.description,x.type,x.originModule,x.active,x.createdAt,x.updatedAt);}
+    static ApiDtos.TaxConfigurationResponse of(TaxConfiguration x){return new ApiDtos.TaxConfigurationResponse(x.id,x.taxConceptId,x.version,x.calculationType,x.rate,x.fixedAmount,x.minimumAmount,x.maximumAmount,x.partialPaymentAllowed,x.paymentPlanAllowed,x.validFrom,x.validUntil,x.status,x.createdBy,x.approvedBy,x.createdAt,x.approvedAt);}
+    static ApiDtos.DebtResponse of(Debt x,boolean inPlan){return new ApiDtos.DebtResponse(x.id,x.taxpayerId,x.taxConceptId,x.originType,x.liquidationId,x.externalObligationId,x.originalAmount,x.currentAmount,x.outstandingBalance,x.dueDate,x.status,x.dueDate.isBefore(LocalDate.now())&&x.outstandingBalance.signum()>0,inPlan,x.createdAt,x.updatedAt);}
+    static ApiDtos.PaymentResponse of(Payment x){return new ApiDtos.PaymentResponse(x.id,x.taxpayerId,x.billId,x.paymentMethod,x.amount,x.allocatedAmount,x.unallocatedAmount,x.status,x.allocationStatus,x.origin,x.receiptNumber,x.registeredBy,x.paidAt,x.createdAt);}
+    static ApiDtos.PaymentAllocationResponse of(PaymentAllocation x){return new ApiDtos.PaymentAllocationResponse(x.id,x.paymentId,x.targetType,x.debtId,x.installmentId,x.amount,x.status,x.allocatedBy,x.allocatedAt,x.reversedAt);}
+    static ApiDtos.BillResponse of(Bill x,java.util.List<BillDebt> debts){return new ApiDtos.BillResponse(x.id,x.number,x.taxpayerId,x.totalAmount,x.issueDate,x.dueDate,x.status,x.status!=BillStatus.CANCELLED&&x.dueDate.isBefore(LocalDate.now()),x.createdBy,x.createdAt,debts.stream().map(d->new ApiDtos.BillDebtResponse(d.debtId,d.amountAtIssue)).toList());}
+    static ApiDtos.CreditBalanceResponse of(CreditBalance x){return new ApiDtos.CreditBalanceResponse(x.id,x.taxpayerId,x.sourcePaymentId,x.originalAmount,x.availableAmount,x.status,x.createdAt,x.updatedAt);}
+    static ApiDtos.CreditBalanceApplicationResponse of(CreditBalanceApplication x){return new ApiDtos.CreditBalanceApplicationResponse(x.id,x.creditBalanceId,x.debtId,x.amount,x.status,x.appliedBy,x.appliedAt,x.reversedAt);}
+    static ApiDtos.PaymentReversalResponse of(PaymentReversalRequest x){return new ApiDtos.PaymentReversalResponse(x.id,x.paymentId,x.reason,x.status,x.requestedBy,x.requestedAt,x.resolvedBy,x.resolvedAt,x.executedBy,x.executedAt);}
+    static ApiDtos.PaymentPlanConfigurationResponse of(PaymentPlanConfiguration x){return new ApiDtos.PaymentPlanConfigurationResponse(x.id,x.version,x.minimumInstallments,x.maximumInstallments,x.minimumDownPaymentPercentage,x.interestRate,x.graceDays,x.maxOverdueInstallments,x.partialInstallmentPaymentAllowed,x.refinancingAllowed,x.maxRefinancingCount,x.validFrom,x.validUntil,x.active,x.createdBy,x.createdAt);}
+    static ApiDtos.PaymentPlanRequestResponse of(PaymentPlanRequest x){return new ApiDtos.PaymentPlanRequestResponse(x.id,x.taxpayerId,x.requestedInstallments,x.totalDebtAtRequest,x.estimatedDownPayment,x.estimatedFinancedAmount,x.estimatedInterest,x.estimatedTotalAmount,x.exceptional,x.exceptionReason,x.status,x.requestedBy,x.requestedAt,x.resolvedBy,x.resolvedAt,x.resolutionReason,x.paymentPlanId);}
+    static ApiDtos.PaymentPlanResponse of(PaymentPlan x){return new ApiDtos.PaymentPlanResponse(x.id,x.taxpayerId,x.requestId,x.configurationId,x.configurationVersion,x.originalPrincipalAmount,x.downPaymentAmount,x.financedPrincipalAmount,x.financingInterestAmount,x.totalPlanAmount,x.paidAmount,x.outstandingPlanAmount,x.installmentCount,x.status,x.refinancingCount,x.grantedBy,x.grantedAt,x.completedAt,x.expiredAt,x.refinancedAt);}
+    static ApiDtos.InstallmentResponse of(Installment x){return new ApiDtos.InstallmentResponse(x.id,x.paymentPlanId,x.number,x.type,x.principalAmount,x.interestAmount,x.totalAmount,x.paidAmount,x.outstandingAmount,x.dueDate,x.status,x.dueDate.isBefore(LocalDate.now())&&x.outstandingAmount.signum()>0,x.paidAt);}
+    static ApiDtos.PlanExpirationResponse of(PlanExpirationRequest x){return new ApiDtos.PlanExpirationResponse(x.id,x.paymentPlanId,x.reason,x.status,x.requestedBy,x.requestedAt,x.resolvedBy,x.resolvedAt,x.resolutionObservation);}
+    static ApiDtos.RefinancingRequestResponse of(RefinancingRequest x){return new ApiDtos.RefinancingRequestResponse(x.id,x.originalPlanId,x.taxpayerId,x.requestedInstallments,x.outstandingPrincipalAtRequest,x.estimatedInterest,x.estimatedTotalAmount,x.exceptional,x.exceptionReason,x.status,x.requestedBy,x.requestedAt,x.resolvedBy,x.resolvedAt,x.newPaymentPlanId);}
+    static ApiDtos.AdjustmentResponse of(AdjustmentRequest x){return new ApiDtos.AdjustmentResponse(x.id,x.debtId,x.type,x.amount,x.reason,x.status,x.requestedBy,x.requestedAt,x.resolvedBy,x.resolvedAt,x.resolutionReason,x.previousDebtAmount,x.newDebtAmount);}
+    static ApiDtos.LiquidationRunResponse of(LiquidationRun x){return new ApiDtos.LiquidationRunResponse(x.id,x.taxConceptId,x.period,x.dueDate,x.configurationId,x.configurationVersion,x.status,x.totalItems,x.validItems,x.errorItems,x.estimatedTotalAmount,x.createdBy,x.createdAt,x.submittedAt,x.resolvedBy,x.resolvedAt);}
+    static ApiDtos.LiquidationRunItemResponse of(LiquidationRunItem x){return new ApiDtos.LiquidationRunItemResponse(x.id,x.liquidationRunId,x.taxpayerId,x.taxableBase,x.previewAmount,x.status,x.errorCode,x.errorMessage,x.liquidationId);}
+    static ApiDtos.LiquidationRunDetailResponse of(ApiDtos.LiquidationRunDetail x){return new ApiDtos.LiquidationRunDetailResponse(of(x.run()),x.items().stream().map(ApiResponses::of).toList());}
+    static ApiDtos.ExemptionRequestResponse of(ExemptionRequest x){return new ApiDtos.ExemptionRequestResponse(x.id,x.taxpayerId,x.taxConceptId,x.reason,x.requestedPercentage,x.requestedFrom,x.requestedUntil,x.status,x.requestedBy,x.requestedAt,x.reviewedBy,x.reviewStartedAt,x.resolutionSubmittedBy,x.resolutionSubmittedAt,x.resolvedBy,x.resolvedAt,x.resolutionReason);}
+    static ApiDtos.ExemptionResponse of(Exemption x){return new ApiDtos.ExemptionResponse(x.id,x.requestId,x.taxpayerId,x.taxConceptId,x.percentage,x.validFrom,x.validUntil,x.status,x.validUntil!=null&&x.validUntil.isBefore(LocalDate.now()),x.approvedBy,x.approvedAt,x.cancelledAt);}
+    static ApiDtos.TicketResponse of(TicketCase x){return new ApiDtos.TicketResponse(x.id,x.externalTicketId,x.taxpayerId,x.externalCitizenId,x.category,x.description,x.priority,x.status,x.assignedTo,x.createdAt,x.updatedAt,x.completedAt);}
+    static ApiDtos.SocialBenefitResponse of(SocialBenefitReference x){return new ApiDtos.SocialBenefitResponse(x.id,x.externalBenefitId,x.taxpayerId,x.externalCitizenId,x.benefitType,x.externalStatus,x.discountPercentage,x.validFrom,x.validUntil,x.sourceEventId,x.updatedAt);}
+    static ApiDtos.ExternalObligationResponse of(ExternalObligation x){return new ApiDtos.ExternalObligationResponse(x.id,x.sourceModule,x.externalType,x.externalReferenceId,x.sourceEventId,x.externalTaxpayerType,x.externalTaxpayerId,x.taxpayerId,x.taxConceptId,x.amount,x.dueDate,x.status,x.errorMessage,x.retryCount,x.receivedAt,x.processedAt);}
+    static ApiDtos.AuditEntryResponse of(AuditEntry x){return new ApiDtos.AuditEntryResponse(x.id,x.entityType,x.entityId,x.action,x.userId,x.userRole,x.previousData,x.newData,x.correlationId,x.occurredAt);}
+    static ApiDtos.IntegrationEventResponse of(IntegrationEventLog x){return new ApiDtos.IntegrationEventResponse(x.id,x.eventId,x.eventType,x.sourceModule,x.targetModule,x.direction,x.status,x.payload,x.retryCount,x.errorMessage,x.occurredAt,x.receivedAt,x.processedAt,x.lastRetryAt);}
+    static ApiDtos.ElectronicPaymentResponse of(ElectronicPaymentAttempt x){return new ApiDtos.ElectronicPaymentResponse(x.id,x.paymentId,x.taxpayerId,x.debtId,x.amount,x.status,x.gatewayReference,x.createdAt);}
+    static ApiDtos.OutboxEventResponse of(OutboxEvent x){return new ApiDtos.OutboxEventResponse(x.id,x.eventType,x.targetModule,x.aggregateType,x.aggregateId,x.payload,x.status,x.retryCount,x.createdAt,x.publishedAt,x.lastAttemptAt,x.errorMessage);}
+}
+
+@Service
+class ApiResponseService {
+    private final PaymentPlanRepository plans; private final PaymentPlanDebtRepository planDebts; private final BillDebtRepository billDebts;
+    ApiResponseService(PaymentPlanRepository plans,PaymentPlanDebtRepository planDebts,BillDebtRepository billDebts){this.plans=plans;this.planDebts=planDebts;this.billDebts=billDebts;}
+    ApiDtos.DebtResponse debt(Debt x){boolean active=plans.existsByDebtIdAndStatus(x.id,PaymentPlanStatus.ACTIVE)||planDebts.existsByDebtIdAndStatus(x.id,PaymentPlanDebtStatus.ACTIVE);return ApiResponses.of(x,active);}
+    ApiDtos.BillResponse bill(Bill x){return ApiResponses.of(x,billDebts.findByBillId(x.id));}
+}
