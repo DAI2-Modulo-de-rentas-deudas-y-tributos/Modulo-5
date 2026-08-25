@@ -7,6 +7,7 @@
  * rama de mocks: la firma y el shape de respuesta no cambian.
  */
 import { USE_MOCKS, delay, request, ApiError } from "./apiClient.js";
+import { toDateInput } from "../lib/format.js";
 import * as db from "./mockDb.js";
 
 /** Copia mutable en memoria: las acciones de la demo persisten durante la sesión. */
@@ -255,6 +256,17 @@ export const billService = {
     );
   },
 
+  async search({ query = "" } = {}) {
+    if (!USE_MOCKS) {
+      const params = new URLSearchParams({ query });
+      return request(`/api/v1/bills/search?${params}`);
+    }
+    await delay();
+    const term = String(query).trim();
+    if (!term) return [];
+    return store.bills.filter((b) => matches(b.id, term) || matches(b.barcode, term));
+  },
+
   /** IssueBillRequest → BillResponse. El PDF vive en S3, nunca en la base. */
   async issue({ debtId }) {
     if (!USE_MOCKS) {
@@ -286,24 +298,32 @@ export const billService = {
 // ------------------------------------------------------------------------- Pagos
 
 export const paymentService = {
-  async list({ taxpayerId = "", status = "" } = {}) {
+  async list({ taxpayerId = "", status = "", date = "", registeredBy = "" } = {}) {
     if (!USE_MOCKS) {
-      const params = new URLSearchParams({ taxpayerId, status });
+      const params = new URLSearchParams({ taxpayerId, status, date, registeredBy });
       return request(`/api/v1/payments?${params}`);
     }
     await delay();
     return store.payments.filter(
       (p) =>
-        (!taxpayerId || p.taxpayerId === Number(taxpayerId)) && (!status || p.status === status),
+        (!taxpayerId || p.taxpayerId === Number(taxpayerId)) &&
+        (!status || p.status === status) &&
+        (!date || toDateInput(p.paidAt) === date) &&
+        (!registeredBy || p.registeredBy === registeredBy),
     );
   },
 
-  /** RegisterPaymentRequest → PaymentResponse */
-  async register({ taxpayerId, debtId, amountPaid, channel, paidAt }) {
+  /**
+   * RegisterPaymentRequest → PaymentResponse
+   *
+   * `channel` es por dónde entró el dinero (ventanilla, homebanking…); `method` es el
+   * instrumento con el que pagó el contribuyente y `registeredBy` el agente responsable.
+   */
+  async register({ taxpayerId, debtId, amountPaid, channel, paidAt, method, registeredBy }) {
     if (!USE_MOCKS) {
       return request("/api/v1/payments", {
         method: "POST",
-        body: { taxpayerId, debtId, amountPaid, channel, paidAt },
+        body: { taxpayerId, debtId, amountPaid, channel, paidAt, method, registeredBy },
       });
     }
     await delay();
@@ -329,6 +349,10 @@ export const paymentService = {
       remainingBalance: debt ? debt.outstandingAmount - amount : null,
       paidAt: paidAt ? new Date(paidAt).toISOString() : nowIso(),
       channel,
+      method: method ?? null,
+      registeredBy: registeredBy ?? null,
+      // Se congela al cobrar: el comprobante debe decir si la obligación estaba vencida.
+      wasOverdue: debt ? debt.status === "OVERDUE" : null,
       receiptNumber: `REC-2026-${nextId()}`,
       status: debt ? "REGISTERED" : "UNALLOCATED",
       allocated: Boolean(debt),
@@ -426,6 +450,11 @@ function applyPaymentToDebt(debt, payment) {
   if (debt.outstandingAmount <= 0) {
     debt.outstandingAmount = 0;
     debt.status = "SETTLED";
+    store.bills
+      .filter((bill) => bill.debtId === debt.id && bill.status !== "SETTLED")
+      .forEach((bill) => {
+        bill.status = "SETTLED";
+      });
     recordOutboundEvent("debtSettled", originModule(debt.originType), {
       debtId: debt.id,
       originType: debt.originType,
@@ -700,6 +729,353 @@ export const eventService = {
     event.processedAt = nowIso();
     event.attempts += 1;
     return event;
+  },
+};
+
+// -------------------------------------------------------------------------- Caja
+
+/**
+ * En la demo el reloj corre pero la jornada es siempre la del dataset: así un cobro
+ * recién registrado aparece en el resumen del día junto a los movimientos de ejemplo.
+ */
+const businessDate = () => (USE_MOCKS ? db.BUSINESS_DATE : toDateInput(new Date()));
+
+function counterTimestamp() {
+  if (!USE_MOCKS) return nowIso();
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2, "0");
+  const mm = String(now.getMinutes()).padStart(2, "0");
+  return `${db.BUSINESS_DATE}T${hh}:${mm}:00-03:00`;
+}
+
+const outstandingOf = (taxpayerId) =>
+  store.debts
+    .filter((d) => d.taxpayerId === taxpayerId)
+    .reduce((acc, d) => acc + d.outstandingAmount, 0);
+
+const overdueOf = (taxpayerId) =>
+  store.debts
+    .filter((d) => d.taxpayerId === taxpayerId && d.status === "OVERDUE")
+    .reduce((acc, d) => acc + d.outstandingAmount, 0);
+
+const taxpayerOf = (taxpayerId) => store.taxpayers.find((t) => t.id === taxpayerId) ?? null;
+
+/** Un resultado de búsqueda por contribuyente: nombre, documento y deuda consolidada. */
+function taxpayerResult(taxpayer) {
+  const pending = store.debts.filter(
+    (d) => d.taxpayerId === taxpayer.id && d.outstandingAmount > 0,
+  );
+  return {
+    kind: "TAXPAYER",
+    id: taxpayer.id,
+    taxpayerId: taxpayer.id,
+    title: taxpayer.name,
+    subtitle: `${taxpayer.documentType} ${taxpayer.document} · CUIT ${taxpayer.cuit}`,
+    amount: round2(outstandingOf(taxpayer.id)),
+    status: taxpayer.status,
+    detail: pending.length
+      ? `${pending.length} ${pending.length === 1 ? "deuda pendiente" : "deudas pendientes"}`
+      : "Sin deuda pendiente",
+    dueDate: null,
+  };
+}
+
+/** Un resultado por boleta: el papel que el contribuyente trae a la ventanilla. */
+function billResult(bill) {
+  const taxpayer = taxpayerOf(bill.taxpayerId);
+  return {
+    kind: "BILL",
+    id: bill.id,
+    taxpayerId: bill.taxpayerId,
+    debtId: bill.debtId,
+    title: `Boleta #${bill.id}`,
+    subtitle: taxpayer ? `${taxpayer.name} · ${bill.conceptCode}` : bill.conceptCode,
+    amount: bill.amount,
+    status: bill.status,
+    detail: `Deuda #${bill.debtId}`,
+    dueDate: bill.dueDate,
+  };
+}
+
+/** Un resultado por deuda: la obligación puntual y a quién está vinculada. */
+function debtResult(debt) {
+  const taxpayer = taxpayerOf(debt.taxpayerId);
+  return {
+    kind: "DEBT",
+    id: debt.id,
+    taxpayerId: debt.taxpayerId,
+    debtId: debt.id,
+    title: `Deuda #${debt.id}`,
+    subtitle: taxpayer ? `${taxpayer.name} · ${debt.conceptCode}` : debt.conceptCode,
+    amount: debt.outstandingAmount,
+    status: debt.status,
+    detail: `Origen ${debt.originType}${debt.originId ? ` #${debt.originId}` : ""}`,
+    dueDate: debt.dueDate,
+  };
+}
+
+/** Comprobante de caja: lo que se imprime y lo que queda como evidencia del cobro. */
+function buildReceipt(payment, billId) {
+  const debt = store.debts.find((d) => d.id === payment.debtId) ?? null;
+  const taxpayer = taxpayerOf(payment.taxpayerId);
+  const cashier = db.USERS.find((u) => u.username === payment.registeredBy) ?? null;
+  const bill = billId
+    ? store.bills.find((b) => b.id === Number(billId))
+    : store.bills.find((b) => b.debtId === payment.debtId);
+
+  return {
+    receiptNumber: payment.receiptNumber,
+    paymentId: payment.id,
+    issuedAt: payment.paidAt,
+    taxpayer: taxpayer && {
+      id: taxpayer.id,
+      name: taxpayer.name,
+      documentType: taxpayer.documentType,
+      document: taxpayer.document,
+      cuit: taxpayer.cuit,
+    },
+    conceptCode: debt?.conceptCode ?? null,
+    debtId: payment.debtId,
+    billId: bill?.id ?? null,
+    originType: payment.originType,
+    originId: payment.originId,
+    amountPaid: payment.amountPaid,
+    remainingBalance: payment.remainingBalance,
+    settled: debt ? debt.status === "SETTLED" : false,
+    wasOverdue: payment.wasOverdue,
+    method: payment.method,
+    channel: payment.channel,
+    status: payment.status,
+    cashier: cashier && {
+      username: cashier.username,
+      fullName: cashier.fullName,
+      counter: cashier.counter ?? null,
+    },
+  };
+}
+
+/**
+ * Operaciones de la ventanilla de caja.
+ *
+ * El cajero cobra: busca al contribuyente o su papel, imputa el pago a la deuda y
+ * entrega el comprobante. No liquida, no resuelve planes ni exenciones y no reversa
+ * — eso queda en el área de trabajo de Personal de Rentas.
+ */
+export const cashierService = {
+  /** Búsqueda unificada: documento, CUIT, nombre, N° de boleta o N° de deuda. */
+  async search({ query = "" } = {}) {
+    if (!USE_MOCKS) {
+      const params = new URLSearchParams({ query });
+      return request(`/api/v1/cashier/search?${params}`);
+    }
+    await delay();
+    const term = String(query).trim();
+    if (!term) return [];
+
+    const bills = store.bills
+      .filter((b) => matches(b.id, term) || matches(b.barcode, term))
+      .map(billResult);
+
+    const debts = store.debts.filter((d) => matches(d.id, term)).map(debtResult);
+
+    const taxpayers = store.taxpayers
+      .filter(
+        (t) =>
+          matches(t.name, term) ||
+          matches(t.document, term) ||
+          matches(t.cuit, term) ||
+          matches(t.id, term),
+      )
+      .map(taxpayerResult);
+
+    // El papel manda: si el término identifica una boleta o una deuda, va primero.
+    return [...bills, ...debts, ...taxpayers];
+  },
+
+  /**
+   * Contexto de cobro de un resultado de búsqueda: qué se cobra y a quién.
+   * Por contribuyente devuelve todas sus deudas con saldo; por boleta o deuda,
+   * sólo la obligación elegida.
+   */
+  async chargeContext({ kind, id }) {
+    if (!USE_MOCKS) return request(`/api/v1/cashier/charge-context/${kind}/${id}`);
+    await delay();
+
+    let bill = null;
+    let debts = [];
+    let taxpayerId = null;
+
+    if (kind === "BILL") {
+      bill = store.bills.find((b) => b.id === Number(id)) ?? null;
+      if (!bill) throw new ApiError("Boleta inexistente.", 404);
+      taxpayerId = bill.taxpayerId;
+      debts = store.debts.filter((d) => d.id === bill.debtId);
+    } else if (kind === "DEBT") {
+      const debt = store.debts.find((d) => d.id === Number(id));
+      if (!debt) throw new ApiError("Deuda inexistente.", 404);
+      taxpayerId = debt.taxpayerId;
+      debts = [debt];
+      bill = store.bills.find((b) => b.debtId === debt.id) ?? null;
+    } else {
+      taxpayerId = Number(id);
+      debts = store.debts.filter((d) => d.taxpayerId === taxpayerId && d.outstandingAmount > 0);
+    }
+
+    const taxpayer = taxpayerOf(taxpayerId);
+    if (!taxpayer) throw new ApiError("El contribuyente no existe en el padrón local.", 404);
+
+    const chargeable = debts.filter((d) => d.outstandingAmount > 0);
+
+    return {
+      kind,
+      taxpayer,
+      bill,
+      debts: chargeable,
+      selectedDebtId: kind === "TAXPAYER" ? null : (chargeable[0]?.id ?? null),
+      totals: {
+        outstanding: round2(outstandingOf(taxpayer.id)),
+        overdue: round2(overdueOf(taxpayer.id)),
+        pendingCount: store.debts.filter(
+          (d) => d.taxpayerId === taxpayer.id && d.outstandingAmount > 0,
+        ).length,
+      },
+    };
+  },
+
+  /** RegisterCounterPaymentRequest → CounterPaymentReceiptResponse */
+  async registerCounterPayment({ debtId, billId, amountPaid, method, registeredBy }) {
+    if (!USE_MOCKS) {
+      return request("/api/v1/cashier/payments", {
+        method: "POST",
+        body: { debtId, billId, amountPaid, method, registeredBy },
+      });
+    }
+    if (!debtId) throw new ApiError("Seleccioná la deuda o boleta que se está cobrando.", 400);
+    if (!method) throw new ApiError("Indicá el medio de pago.", 400);
+
+    const debt = store.debts.find((d) => d.id === Number(debtId));
+    if (!debt) throw new ApiError("Deuda inexistente.", 404);
+    if (debt.outstandingAmount <= 0) throw new ApiError("La deuda ya está cancelada.", 409);
+
+    // El cobro reutiliza el registro de pagos: imputa, descuenta y publica los eventos.
+    const payment = await paymentService.register({
+      taxpayerId: debt.taxpayerId,
+      debtId: debt.id,
+      amountPaid,
+      channel: "VENTANILLA",
+      method,
+      registeredBy,
+      paidAt: counterTimestamp(),
+    });
+
+    return buildReceipt(payment, billId);
+  },
+
+  /** Reimpresión: el comprobante de un pago ya registrado. */
+  async receipt(paymentId) {
+    if (!USE_MOCKS) return request(`/api/v1/cashier/receipts/${paymentId}`);
+    await delay(200);
+    const payment = store.payments.find((p) => p.id === Number(paymentId));
+    if (!payment) throw new ApiError("Pago inexistente.", 404);
+    return buildReceipt(payment, null);
+  },
+
+  /** Ficha de ventanilla: deudas, pagos y boletas del contribuyente en una consulta. */
+  async taxpayerFile(taxpayerId) {
+    if (!USE_MOCKS) return request(`/api/v1/cashier/taxpayers/${taxpayerId}/file`);
+    await delay();
+    const id = Number(taxpayerId);
+    const taxpayer = taxpayerOf(id);
+    if (!taxpayer) throw new ApiError("El contribuyente no existe en el padrón local.", 404);
+
+    const debts = store.debts.filter((d) => d.taxpayerId === id);
+    const payments = store.payments
+      .filter((p) => p.taxpayerId === id)
+      .sort((a, b) => new Date(b.paidAt) - new Date(a.paidAt));
+
+    return {
+      taxpayer,
+      debts,
+      payments,
+      bills: store.bills.filter((b) => b.taxpayerId === id),
+      totals: {
+        outstanding: round2(outstandingOf(id)),
+        overdue: round2(overdueOf(id)),
+        paid: round2(
+          payments
+            .filter((p) => p.status === "REGISTERED")
+            .reduce((acc, p) => acc + p.amountPaid, 0),
+        ),
+      },
+    };
+  },
+
+  /** Agentes que pueden figurar como responsables de un cobro. */
+  async agents() {
+    if (!USE_MOCKS) return request("/api/v1/cashier/agents");
+    await delay(200);
+    return db.USERS.map((u) => ({ value: u.username, label: u.fullName }));
+  },
+
+  /** Resumen de la jornada del cajero: lo que muestra el panel de caja. */
+  async dailySummary({ registeredBy = "", date } = {}) {
+    if (!USE_MOCKS) {
+      const params = new URLSearchParams({ registeredBy, date: date ?? "" });
+      return request(`/api/v1/cashier/daily-summary?${params}`);
+    }
+    await delay();
+    const day = date || businessDate();
+
+    const ofTheDay = store.payments
+      .filter(
+        (p) =>
+          toDateInput(p.paidAt) === day && (!registeredBy || p.registeredBy === registeredBy),
+      )
+      .sort((a, b) => new Date(b.paidAt) - new Date(a.paidAt));
+
+    const collected = ofTheDay.filter((p) => p.status === "REGISTERED");
+
+    const byMethod = Object.values(
+      collected.reduce((acc, p) => {
+        const key = p.method ?? "SIN_MEDIO";
+        acc[key] ??= { method: key, count: 0, total: 0 };
+        acc[key].count += 1;
+        acc[key].total = round2(acc[key].total + p.amountPaid);
+        return acc;
+      }, {}),
+    );
+
+    return {
+      date: day,
+      registeredCount: collected.length,
+      totalCollected: round2(collected.reduce((acc, p) => acc + p.amountPaid, 0)),
+      // Pagos que entraron por otro canal y todavía nadie imputó a una deuda.
+      pendingCount: store.payments.filter((p) => p.status === "UNALLOCATED").length,
+      reversedCount: ofTheDay.filter((p) => p.status === "REVERSED").length,
+      byMethod,
+      latest: ofTheDay.slice(0, 6).map((p) => ({
+        id: p.id,
+        receiptNumber: p.receiptNumber,
+        taxpayerId: p.taxpayerId,
+        taxpayerName: taxpayerOf(p.taxpayerId)?.name ?? `Contribuyente #${p.taxpayerId}`,
+        amountPaid: p.amountPaid,
+        paidAt: p.paidAt,
+        status: p.status,
+        method: p.method,
+      })),
+      activity: ofTheDay.map((p) => ({
+        id: p.id,
+        description:
+          p.status === "REVERSED"
+            ? `Reversión de ${p.receiptNumber} — ${taxpayerOf(p.taxpayerId)?.name ?? "contribuyente"}`
+            : p.debtId
+              ? `Cobro imputado a la deuda #${p.debtId} — ${taxpayerOf(p.taxpayerId)?.name ?? "contribuyente"}`
+              : `Pago sin imputar — ${taxpayerOf(p.taxpayerId)?.name ?? "contribuyente"}`,
+        status: p.status,
+        at: p.paidAt,
+        amount: p.amountPaid,
+      })),
+    };
   },
 };
 

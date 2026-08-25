@@ -14,3 +14,26 @@ body {
   background: #fafafa;
   color: #1a1a1a;
 }
+
+/* Impresión de comprobantes: sólo el ticket llega al papel. */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+
+  .print-area,
+  .print-area * {
+    visibility: visible;
+  }
+
+  .print-area {
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: 100%;
+    border: none;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+}
