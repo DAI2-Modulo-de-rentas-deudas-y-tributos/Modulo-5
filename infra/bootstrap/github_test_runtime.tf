@@ -189,6 +189,25 @@ data "aws_iam_policy_document" "github_test_runtime_infrastructure" {
   }
 
   statement {
+    sid = "ManageTestRdsManagedCredentials"
+    actions = [
+      "secretsmanager:CreateSecret",
+      "secretsmanager:TagResource"
+    ]
+    resources = [
+      "arn:${data.aws_partition.current.partition}:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:rds!db-*"
+    ]
+  }
+
+  statement {
+    sid     = "DescribeTestManagedEncryptionKeys"
+    actions = ["kms:DescribeKey"]
+    resources = [
+      "arn:${data.aws_partition.current.partition}:kms:${var.aws_region}:${data.aws_caller_identity.current.account_id}:key/*"
+    ]
+  }
+
+  statement {
     sid = "ManageTestApiCloudFront"
     actions = [
       "cloudfront:CreateDistribution",

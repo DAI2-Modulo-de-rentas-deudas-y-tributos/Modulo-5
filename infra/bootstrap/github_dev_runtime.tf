@@ -177,6 +177,25 @@ data "aws_iam_policy_document" "github_dev_runtime_infrastructure" {
   }
 
   statement {
+    sid = "ManageDevRdsManagedCredentials"
+    actions = [
+      "secretsmanager:CreateSecret",
+      "secretsmanager:TagResource"
+    ]
+    resources = [
+      "arn:${data.aws_partition.current.partition}:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:rds!db-*"
+    ]
+  }
+
+  statement {
+    sid     = "DescribeDevManagedEncryptionKeys"
+    actions = ["kms:DescribeKey"]
+    resources = [
+      "arn:${data.aws_partition.current.partition}:kms:${var.aws_region}:${data.aws_caller_identity.current.account_id}:key/*"
+    ]
+  }
+
+  statement {
     sid = "ManageDevApiCloudFront"
     actions = [
       "cloudfront:CreateDistribution",
