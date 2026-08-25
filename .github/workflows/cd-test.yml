@@ -1,0 +1,124 @@
+name: Prepare or deploy AWS TEST infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: "Accion de Terraform; plan no crea recursos"
+        required: true
+        default: plan
+        type: choice
+        options:
+          - plan
+          - apply
+      confirmation:
+        description: "Para apply escribir exactamente DEPLOY_TEST"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: terraform-test
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: terraform-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: test
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: infra/environments/test
+
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      TF_STATE_KEY: ${{ vars.TF_STATE_KEY }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      REQUESTED_OPERATION: ${{ inputs.operation }}
+      APPLY_CONFIRMATION: ${{ inputs.confirmation }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.15.8"
+          terraform_wrapper: false
+
+      - name: Configure temporary AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: "060712744495"
+          mask-aws-account-id: true
+          role-session-name: terraform-test-${{ github.run_id }}
+
+      - name: Check environment variables
+        run: |
+          set -euo pipefail
+          : "${TF_STATE_BUCKET:?Missing TF_STATE_BUCKET in the test environment}"
+          : "${TF_STATE_KEY:?Missing TF_STATE_KEY in the test environment}"
+          : "${AWS_REGION:?Missing AWS_REGION in the test environment}"
+
+      - name: Validate requested operation
+        run: |
+          set -euo pipefail
+          if [[ "${REQUESTED_OPERATION}" == "apply" && "${APPLY_CONFIRMATION}" != "DEPLOY_TEST" ]]; then
+            echo "Apply requires confirmation DEPLOY_TEST."
+            exit 1
+          fi
+
+      - name: Initialize remote state
+        run: |
+          terraform init -input=false -reconfigure \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${TF_STATE_KEY}" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="encrypt=true" \
+            -backend-config="use_lockfile=true"
+
+      - name: Validate
+        run: terraform validate -no-color
+
+      - name: Plan
+        run: terraform plan -input=false -lock-timeout=5m -no-color -out=test.tfplan
+
+      - name: Apply
+        if: inputs.operation == 'apply'
+        run: terraform apply -input=false -lock-timeout=5m -auto-approve test.tfplan
+
+      - name: Publish plan summary
+        if: inputs.operation == 'plan'
+        run: |
+          {
+            echo "### AWS TEST planificado"
+            echo
+            echo "No se aplicaron cambios ni se crearon recursos."
+            echo "Commit: \`${GITHUB_SHA}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Publish deployment summary
+        if: inputs.operation == 'apply'
+        run: |
+          {
+            echo "### AWS TEST actualizado"
+            echo
+            echo '```text'
+            terraform output -no-color
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+

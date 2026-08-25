@@ -7,6 +7,7 @@
 
 # Node / frontend
 node_modules/
+.vite/
 dist/
 build/
 .next/
@@ -46,3 +47,7 @@ Thumbs.db
 *.log
 tmp/
 temp/
+
+# Configuración local de asistentes de código
+# CLAUDE.md sí se versiona: es el contexto compartido del proyecto.
+.claude/
