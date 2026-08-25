@@ -9,7 +9,8 @@ data "aws_iam_policy_document" "github_test_foundation" {
     sid = "ReadNetworkState"
     actions = [
       "ec2:Describe*",
-      "ec2:GetManagedPrefixListEntries"
+      "ec2:GetManagedPrefixListEntries",
+      "ec2:GetSecurityGroupsForVpc"
     ]
     resources = ["*"]
   }
