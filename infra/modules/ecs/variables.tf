@@ -64,6 +64,20 @@ variable "task_memory" {
   default     = 512
 }
 
+variable "health_check_grace_period_seconds" {
+  description = "Tiempo permitido para que Spring Boot inicie antes de evaluar el health check."
+  type        = number
+  default     = 300
+
+  validation {
+    condition = (
+      var.health_check_grace_period_seconds >= 60 &&
+      var.health_check_grace_period_seconds <= 900
+    )
+    error_message = "health_check_grace_period_seconds debe estar entre 60 y 900."
+  }
+}
+
 variable "database_address" {
   description = "Hostname privado de PostgreSQL."
   type        = string
