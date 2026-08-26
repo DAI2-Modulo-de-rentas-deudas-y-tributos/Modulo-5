@@ -5,6 +5,9 @@ locals {
   test_ecs_task_definition_arn    = "arn:${data.aws_partition.current.partition}:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task-definition/${var.project_name}-test-backend:*"
   test_amplify_app_arn            = "arn:${data.aws_partition.current.partition}:amplify:${var.aws_region}:${data.aws_caller_identity.current.account_id}:apps/*"
   dev_backend_repository_arn      = "arn:${data.aws_partition.current.partition}:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/${var.project_name}-dev-backend"
+  test_nightly_shutdown_role_arn  = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${var.project_name}-test-nightly-shutdown"
+  test_scheduler_schedule_arn     = "arn:${data.aws_partition.current.partition}:scheduler:${var.aws_region}:${data.aws_caller_identity.current.account_id}:schedule/default/${var.project_name}-test-stop-*"
+  test_budget_arn                 = "arn:${data.aws_partition.current.partition}:budgets::${data.aws_caller_identity.current.account_id}:budget/${var.project_name}-test-monthly-cost"
 }
 
 data "aws_iam_policy_document" "github_test_runtime_compute" {
@@ -101,7 +104,8 @@ data "aws_iam_policy_document" "github_test_runtime_compute" {
     ]
     resources = [
       local.test_backend_execution_role_arn,
-      local.test_backend_task_role_arn
+      local.test_backend_task_role_arn,
+      local.test_nightly_shutdown_role_arn
     ]
   }
 
@@ -117,6 +121,18 @@ data "aws_iam_policy_document" "github_test_runtime_compute" {
       test     = "StringEquals"
       variable = "iam:PassedToService"
       values   = ["ecs-tasks.amazonaws.com"]
+    }
+  }
+
+  statement {
+    sid       = "PassTestShutdownRoleToScheduler"
+    actions   = ["iam:PassRole"]
+    resources = [local.test_nightly_shutdown_role_arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["scheduler.amazonaws.com"]
     }
   }
 }
@@ -183,7 +199,9 @@ data "aws_iam_policy_document" "github_test_runtime_infrastructure" {
       "rds:ListTagsForResource",
       "rds:ModifyDBInstance",
       "rds:ModifyDBSubnetGroup",
-      "rds:RemoveTagsFromResource"
+      "rds:RemoveTagsFromResource",
+      "rds:StartDBInstance",
+      "rds:StopDBInstance"
     ]
     resources = ["*"]
   }
@@ -197,6 +215,44 @@ data "aws_iam_policy_document" "github_test_runtime_infrastructure" {
     resources = [
       "arn:${data.aws_partition.current.partition}:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:rds!db-*"
     ]
+  }
+
+  statement {
+    sid = "ManageTestNightlySchedules"
+    actions = [
+      "scheduler:CreateSchedule",
+      "scheduler:DeleteSchedule",
+      "scheduler:GetSchedule",
+      "scheduler:UpdateSchedule"
+    ]
+    resources = [local.test_scheduler_schedule_arn]
+  }
+
+  statement {
+    sid       = "ListTestNightlySchedules"
+    actions   = ["scheduler:ListSchedules"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid = "ManageTestMonthlyBudget"
+    actions = [
+      "budgets:ListTagsForResource",
+      "budgets:ModifyBudget",
+      "budgets:TagResource",
+      "budgets:UntagResource",
+      "budgets:ViewBudget"
+    ]
+    resources = [local.test_budget_arn]
+  }
+
+  statement {
+    sid = "ManageBillingForTestBudget"
+    actions = [
+      "aws-portal:ModifyBilling",
+      "aws-portal:ViewBilling"
+    ]
+    resources = ["*"]
   }
 
   statement {
@@ -284,4 +340,3 @@ resource "aws_iam_role_policy_attachment" "github_test_runtime_infrastructure" {
   role       = aws_iam_role.github_test.name
   policy_arn = aws_iam_policy.github_test_runtime_infrastructure.arn
 }
-

@@ -47,7 +47,7 @@ variable "database_subnet_cidrs" {
 variable "ecr_images_to_keep" {
   description = "Cantidad de imagenes del backend conservadas en ECR."
   type        = number
-  default     = 20
+  default     = 5
 }
 
 variable "enable_container_insights" {
@@ -59,7 +59,49 @@ variable "enable_container_insights" {
 variable "log_retention_days" {
   description = "Dias de retencion de logs del backend."
   type        = number
-  default     = 14
+  default     = 7
+}
+
+variable "enable_nightly_shutdown" {
+  description = "Habilita el apagado automatico nocturno de ECS y RDS en TEST."
+  type        = bool
+  default     = true
+}
+
+variable "nightly_shutdown_timezone" {
+  description = "Zona horaria IANA utilizada por EventBridge Scheduler."
+  type        = string
+  default     = "America/Argentina/Buenos_Aires"
+
+  validation {
+    condition     = length(trimspace(var.nightly_shutdown_timezone)) > 0
+    error_message = "nightly_shutdown_timezone no puede estar vacia."
+  }
+}
+
+variable "test_monthly_budget_limit_usd" {
+  description = "Limite mensual en USD para el presupuesto de TEST."
+  type        = number
+  default     = 25
+
+  validation {
+    condition     = var.test_monthly_budget_limit_usd > 0
+    error_message = "test_monthly_budget_limit_usd debe ser mayor que cero."
+  }
+}
+
+variable "budget_alert_email" {
+  description = "Email opcional para alertas del presupuesto; se inyecta desde GitHub Environment."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = (
+      trimspace(var.budget_alert_email) == "" ||
+      can(regex("^[^@ ]+@[^@ ]+\\.[^@ ]+$", trimspace(var.budget_alert_email)))
+    )
+    error_message = "budget_alert_email debe estar vacio o contener un email valido."
+  }
 }
 
 variable "backend_container_port" {
@@ -151,5 +193,4 @@ variable "alb_deletion_protection" {
   type        = bool
   default     = false
 }
-
 
