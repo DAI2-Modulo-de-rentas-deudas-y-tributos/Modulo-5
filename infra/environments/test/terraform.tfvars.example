@@ -6,9 +6,13 @@ vpc_cidr             = "10.60.0.0/16"
 public_subnet_cidrs   = ["10.60.0.0/24", "10.60.1.0/24"]
 database_subnet_cidrs = ["10.60.10.0/24", "10.60.11.0/24"]
 
-ecr_images_to_keep        = 20
+ecr_images_to_keep        = 5
 enable_container_insights = false
-log_retention_days        = 14
+log_retention_days        = 7
+
+enable_nightly_shutdown       = true
+nightly_shutdown_timezone     = "America/Argentina/Buenos_Aires"
+test_monthly_budget_limit_usd = 25
 
 backend_container_port    = 8080
 backend_health_check_path = "/actuator/health"
@@ -27,5 +31,4 @@ database_deletion_protection   = false
 database_skip_final_snapshot   = true
 
 alb_deletion_protection = false
-
 

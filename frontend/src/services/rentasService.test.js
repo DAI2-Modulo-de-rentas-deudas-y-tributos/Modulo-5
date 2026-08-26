@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   auditService,
+  portalService,
   billService,
   cashierService,
   debtService,
@@ -222,7 +223,8 @@ describe("planes de pago", () => {
 
     expect(plan.status).toBe("GRANTED");
     expect(plan.planId).toBeTruthy();
-    expect(plan.totalAmount).toBe(plan.totalDebt * 1.1);
+    // El servicio redondea a centavos: comparar contra el float crudo es frágil.
+    expect(plan.totalAmount).toBeCloseTo(plan.totalDebt * 1.1, 2);
   });
 
   it("no permite resolver dos veces la misma solicitud", async () => {
@@ -549,5 +551,222 @@ describe("auditoría", () => {
     expect(breakdown.count).toBe(breakdown.rows.length);
     expect(breakdown.rows.every((row) => row.status === "OVERDUE")).toBe(true);
     expect(breakdown.total).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * Portal del contribuyente. El ciudadano consulta su propio legajo y sólo puede
+ * iniciar dos trámites; el resto de las operaciones son del municipio.
+ */
+describe("portal del contribuyente", () => {
+  it("sólo expone consultas y los dos trámites que puede iniciar el ciudadano", () => {
+    // Registrar pagos, emitir boletas o resolver solicitudes no son atribuciones suyas.
+    const prohibidos = /^(register(?!Exemption)|issue|resolve|reverse|allocate|retry)/;
+    expect(Object.keys(portalService).filter((m) => prohibidos.test(m))).toEqual([]);
+
+    expect(Object.keys(portalService)).toContain("requestPaymentPlan");
+    expect(Object.keys(portalService)).toContain("requestExemption");
+  });
+
+  it("resume la cuenta con deuda, próximo vencimiento y saldo a favor", async () => {
+    const summary = await portalService.accountSummary(123);
+
+    expect(summary.taxpayer.name).toBe("Juan Pérez");
+    expect(summary.totalDebt).toBeGreaterThan(0);
+    expect(summary.creditBalance).toBe(20000);
+    // El próximo vencimiento es el más cercano entre las obligaciones con saldo.
+    expect(summary.nextDueDate.debtId).toBe(3200);
+    expect(summary.nextDueDate.overdue).toBe(true);
+    expect(summary.obligations.every((o) => o.outstandingAmount > 0)).toBe(true);
+  });
+
+  it("avisa primero de la deuda vencida y después de lo informativo", async () => {
+    const notices = await portalService.notices(123);
+
+    expect(notices[0].severity).toBe("error");
+    expect(notices[0].title).toMatch(/vencida/i);
+    // El saldo a favor se informa, no se reclama.
+    expect(notices.some((n) => n.id === "saldo-a-favor" && n.severity === "success")).toBe(true);
+  });
+
+  it("no deja ver el legajo de otro contribuyente", async () => {
+    const debts = await portalService.debts({ taxpayerId: 123 });
+    const payments = await portalService.payments({ taxpayerId: 123 });
+
+    expect(debts.every((d) => d.taxpayerId === 123)).toBe(true);
+    expect(payments.every((p) => p.taxpayerId === 123)).toBe(true);
+  });
+
+  it("marca las deudas que ya están dentro de una solicitud de plan", async () => {
+    const debts = await portalService.debts({ taxpayerId: 123 });
+
+    // La solicitud 800 incluye la deuda 3200; la 3003 queda libre para financiar.
+    expect(debts.find((d) => d.id === 3200).planRequestId).toBe(800);
+    expect(debts.find((d) => d.id === 3003).planRequestId).toBeNull();
+  });
+
+  it("pide un plan de pago y publica paymentPlanRequested", async () => {
+    const settlement = await settlementService.generate({
+      taxpayerId: 145,
+      conceptCode: "ABL",
+      period: "2027-01",
+      baseAmount: 60000,
+      dueDate: "2027-01-10",
+    });
+    await settlementService.issue(settlement.id);
+    const debt = (await debtService.list({ taxpayerId: 145 })).find(
+      (d) => d.originId === settlement.id,
+    );
+
+    const plan = await portalService.requestPaymentPlan({
+      taxpayerId: 145,
+      debtIds: [debt.id],
+      installments: 6,
+    });
+
+    expect(plan.status).toBe("REQUESTED");
+    expect(plan.totalDebt).toBe(60000);
+    expect(plan.installments).toBe(6);
+    expect(plan.taxpayerType).toBe("CITIZEN");
+  });
+
+  it("rechaza financiar una deuda ajena", async () => {
+    await expect(
+      portalService.requestPaymentPlan({ taxpayerId: 145, debtIds: [3200], installments: 6 }),
+    ).rejects.toThrow(/no te pertenece/i);
+  });
+
+  it("rechaza financiar dos veces la misma deuda", async () => {
+    await expect(
+      portalService.requestPaymentPlan({ taxpayerId: 123, debtIds: [3200], installments: 6 }),
+    ).rejects.toThrow(/ya está incluida/i);
+  });
+
+  it("exige elegir alguna deuda", async () => {
+    await expect(
+      portalService.requestPaymentPlan({ taxpayerId: 123, debtIds: [], installments: 6 }),
+    ).rejects.toThrow(/al menos una deuda/i);
+  });
+
+  it("simula la cuota antes de mandar la solicitud", async () => {
+    const simulacion = portalService.simulatePaymentPlan({ totalDebt: 120000, installments: 6 });
+
+    expect(simulacion.installments).toBe(6);
+    expect(simulacion.totalAmount).toBeGreaterThan(120000);
+    expect(simulacion.installmentAmount).toBeCloseTo(simulacion.totalAmount / 6, 2);
+  });
+
+  it("pide una exención a su propio nombre", async () => {
+    const exemption = await portalService.requestExemption({
+      taxpayerId: 145,
+      conceptCode: "PATENTE",
+      reason: "Jubilada con haber mínimo",
+      requestedPercentage: 50,
+      requestedFrom: "2027-01-01",
+      requestedUntil: "2027-12-31",
+    });
+
+    expect(exemption.citizenId).toBe(145);
+    expect(exemption.status).toBe("REQUESTED");
+    expect(exemption.requestedPercentage).toBe(50);
+  });
+});
+
+describe("plan de pago con anticipo", () => {
+  it("descuenta el anticipo de la base financiada y abarata la cuota", async () => {
+    const sinAnticipo = paymentPlanService.simulate({ totalDebt: 100000, installments: 6 });
+    const conAnticipo = paymentPlanService.simulate({
+      totalDebt: 100000,
+      installments: 6,
+      downPayment: 40000,
+    });
+
+    expect(conAnticipo.financedAmount).toBe(60000);
+    // El interés se calcula sobre lo financiado, no sobre la deuda entera.
+    expect(conAnticipo.interestAmount).toBe(6000);
+    expect(conAnticipo.totalAmount).toBe(106000);
+    expect(conAnticipo.installmentAmount).toBeLessThan(sinAnticipo.installmentAmount);
+  });
+
+  it("sin anticipo calcula igual que antes", async () => {
+    const simulacion = paymentPlanService.simulate({ totalDebt: 100000, installments: 6 });
+
+    expect(simulacion.downPayment).toBe(0);
+    expect(simulacion.financedAmount).toBe(100000);
+    expect(simulacion.totalAmount).toBe(110000);
+  });
+
+  it("nunca financia más que la deuda aunque el anticipo se pase", async () => {
+    const simulacion = paymentPlanService.simulate({
+      totalDebt: 50000,
+      installments: 3,
+      downPayment: 90000,
+    });
+
+    expect(simulacion.downPayment).toBe(50000);
+    expect(simulacion.financedAmount).toBe(0);
+  });
+
+  it("guarda el anticipo que ofrece el contribuyente en la solicitud", async () => {
+    const settlement = await settlementService.generate({
+      taxpayerId: 78,
+      conceptCode: "ABL",
+      period: "2027-03",
+      baseAmount: 90000,
+      dueDate: "2027-03-10",
+    });
+    await settlementService.issue(settlement.id);
+    const debt = (await debtService.list({ taxpayerId: 78 })).find(
+      (d) => d.originId === settlement.id,
+    );
+
+    const plan = await portalService.requestPaymentPlan({
+      taxpayerId: 78,
+      debtIds: [debt.id],
+      installments: 6,
+      downPayment: 20000,
+    });
+
+    expect(plan.downPayment).toBe(20000);
+
+    // Al resolver, Rentas respeta el anticipo ofrecido.
+    const otorgado = await paymentPlanService.resolve({
+      requestId: plan.requestId,
+      status: "GRANTED",
+      resolvedBy: "jlopez",
+    });
+    expect(otorgado.financedAmount).toBe(70000);
+    expect(otorgado.totalAmount).toBe(97000);
+  });
+});
+
+describe("documentación de la exención", () => {
+  it("guarda los adjuntos como referencia a S3, nunca el binario", async () => {
+    const exemption = await portalService.requestExemption({
+      taxpayerId: 78,
+      conceptCode: "ABL",
+      reason: "Entidad de bien público",
+      requestedPercentage: 100,
+      requestedFrom: "2027-01-01",
+      requestedUntil: "2027-12-31",
+      attachments: [{ name: "estatuto.pdf" }, { name: "acta.pdf" }],
+    });
+
+    expect(exemption.attachments).toHaveLength(2);
+    expect(exemption.attachments[0]).toMatch(/^s3:\/\/rentas-documents\/exenciones\//);
+    expect(exemption.attachments[0]).toMatch(/estatuto\.pdf$/);
+  });
+
+  it("acepta una solicitud sin documentación", async () => {
+    const exemption = await portalService.requestExemption({
+      taxpayerId: 78,
+      conceptCode: "PATENTE",
+      reason: "Sin documentación por ahora",
+      requestedPercentage: 50,
+      requestedFrom: "2027-01-01",
+      requestedUntil: "2027-06-30",
+    });
+
+    expect(exemption.attachments).toEqual([]);
   });
 });
