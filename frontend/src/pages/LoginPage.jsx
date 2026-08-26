@@ -9,7 +9,11 @@ import { useAuth } from "../context/AuthContext.jsx";
 import { homePathForRole } from "../config/workspaces.js";
 import { USE_MOCKS } from "../services/apiClient.js";
 
-/** Ingreso al área de trabajo. Sólo agentes municipales: no hay autorregistro. */
+/**
+ * Ingreso al módulo. Entran los agentes municipales y también el contribuyente a su
+ * propio legajo; en ningún caso hay autorregistro: las cuentas las da de alta el
+ * municipio y el rol decide a qué área se llega.
+ */
 export default function LoginPage() {
   const { login, isAuthenticated, user } = useAuth();
   const navigate = useNavigate();
@@ -75,20 +79,20 @@ export default function LoginPage() {
             </span>
           </div>
           <h1 className="text-[2.25rem] font-extrabold leading-tight tracking-[-0.02em] text-white lg:text-[2.75rem]">
-            Área de trabajo de{" "}
+            Módulo de{" "}
             <span className="bg-gradient-to-r from-[#D63031] to-[#e74c3c] bg-clip-text text-transparent">
               Rentas
             </span>
           </h1>
           <p className="mt-4 max-w-sm text-[15px] leading-relaxed text-white/60">
-            Liquidaciones, deudas, boletas, pagos, planes de pago, exenciones y la caja de
-            atención al contribuyente de la Municipalidad de Ciudad UADE.
+            Liquidaciones, deudas, boletas, pagos, planes de pago, exenciones, la caja de
+            atención y el portal del contribuyente de la Municipalidad de Ciudad UADE.
           </p>
         </div>
 
         <p className="relative mt-12 flex items-center gap-2 text-[12px] text-white/40 lg:mt-0">
           <Building2 className="h-3.5 w-3.5" strokeWidth={1.5} />
-          Uso exclusivo de agentes municipales — Gestión 2026
+          Agentes municipales y contribuyentes — Gestión 2026
         </p>
       </section>
 
@@ -162,6 +166,10 @@ export default function LoginPage() {
                 <li>
                   <code className="font-semibold text-[#0F2C59]">acastro</code> / audit123 —
                   Auditor
+                </li>
+                <li>
+                  <code className="font-semibold text-[#0F2C59]">jperez</code> / ciudadano123 —
+                  Contribuyente
                 </li>
               </ul>
             </div>

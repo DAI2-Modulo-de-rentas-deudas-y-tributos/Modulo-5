@@ -51,3 +51,6 @@ temp/
 # Configuración local de asistentes de código
 # CLAUDE.md sí se versiona: es el contexto compartido del proyecto.
 .claude/
+
+# Seguimiento personal de avance, no del proyecto
+estado-tareas-front.csv

@@ -199,6 +199,17 @@ export const USERS = [
     roleLabel: "Auditor de Rentas",
     email: "acastro@rentas.ciudaduade.gob.ar",
   },
+  {
+    id: 5,
+    username: "jperez",
+    password: "ciudadano123",
+    fullName: "Juan Pérez",
+    role: "CONTRIBUYENTE",
+    roleLabel: "Contribuyente",
+    email: "juan.perez@mail.com",
+    /** Unica cuenta que no es de un agente municipal: mira su propio legajo. */
+    taxpayerId: 123,
+  },
 ];
 
 /**
@@ -811,8 +822,10 @@ export const paymentPlans = [
     planId: null,
     taxpayerId: 123,
     taxpayerType: "CITIZEN",
-    debtIds: [3200, 3003],
-    totalDebt: 160000.0,
+    // Sólo la deuda vencida: la infracción #3003 queda libre para que el contribuyente
+    // pueda pedir financiarla desde el portal.
+    debtIds: [3200],
+    totalDebt: 85000.0,
     installments: 6,
     status: "REQUESTED",
     lifecycle: null,
