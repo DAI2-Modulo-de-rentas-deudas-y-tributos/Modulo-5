@@ -13,6 +13,10 @@ import * as db from "./mockDb.js";
 /** Copia mutable en memoria: las acciones de la demo persisten durante la sesión. */
 const store = {
   taxpayers: db.taxpayers.map((t) => ({ ...t })),
+  conceptDefinitions: db.conceptDefinitions.map((c) => ({
+    ...c,
+    versions: c.versions.map((v) => ({ ...v })),
+  })),
   settlements: db.settlements.map((s) => ({ ...s })),
   debts: db.debts.map((d) => ({ ...d })),
   bills: db.bills.map((b) => ({ ...b })),
@@ -105,6 +109,244 @@ export const taxpayerService = {
   },
 };
 
+
+// ------------------------------------------------- Configuración de tributos
+
+/** Estados por los que pasa una versión de configuración antes de regir. */
+const CONFIG_FLOW = ["DRAFT", "PENDING_APPROVAL", "ACTIVE"];
+
+const conceptByCode = (code) => store.conceptDefinitions.find((c) => c.code === code) ?? null;
+
+/** Versión que rige hoy: la que quedó activa tras la última aprobación. */
+const activeVersionOf = (concept) =>
+  (concept.versions ?? []).find((v) => v.status === "ACTIVE") ?? null;
+
+const nextVersionNumber = (concept) =>
+  Math.max(0, ...(concept.versions ?? []).map((v) => v.version)) + 1;
+
+/**
+ * Configuración de tributos.
+ *
+ * Una versión nueva no toca las liquidaciones ya emitidas: cada liquidación guarda
+ * con qué versión se calculó, así que un cambio de alícuota rige de acá en adelante
+ * y el pasado queda reconstruible. Los cambios que afectan el cálculo pasan por
+ * aprobación del Supervisor antes de regir.
+ */
+export const taxConfigService = {
+  /** Conceptos con su versión vigente y si tienen algo esperando aprobación. */
+  async list({ type = "", status = "" } = {}) {
+    if (!USE_MOCKS) {
+      const params = new URLSearchParams({ type, status });
+      return request(`/api/v1/tax-config?${params}`);
+    }
+    await delay();
+    return store.conceptDefinitions
+      .filter((c) => (!type || c.type === type) && (!status || c.status === status))
+      .map((concept) => ({
+        ...concept,
+        activeVersion: activeVersionOf(concept),
+        pendingVersion:
+          (concept.versions ?? []).find((v) => v.status === "PENDING_APPROVAL") ?? null,
+        draftVersion: (concept.versions ?? []).find((v) => v.status === "DRAFT") ?? null,
+      }));
+  },
+
+  /** Ficha del concepto con todo su historial de versiones. */
+  async detail(code) {
+    if (!USE_MOCKS) return request(`/api/v1/tax-config/${code}`);
+    await delay();
+    const concept = conceptByCode(code);
+    if (!concept) throw new ApiError("Concepto inexistente.", 404);
+    return {
+      ...concept,
+      activeVersion: activeVersionOf(concept),
+      // Cuántas liquidaciones dependen de este concepto: no se borra, se desactiva.
+      settlementCount: store.settlements.filter((s) => s.conceptCode === code).length,
+      openDebtCount: store.debts.filter(
+        (d) => d.conceptCode === code && d.outstandingAmount > 0,
+      ).length,
+    };
+  },
+
+  /**
+   * ProposeTaxConfigVersionRequest: crea una versión en borrador con las reglas de
+   * cálculo propuestas. No rige hasta que el Supervisor la apruebe.
+   */
+  async proposeVersion({
+    code,
+    calculationType,
+    rate,
+    minimumAmount,
+    maximumAmount,
+    validFrom,
+    validUntil,
+    conceptStatus,
+    note,
+    requestedBy,
+  }) {
+    if (!USE_MOCKS) {
+      return request(`/api/v1/tax-config/${code}/versions`, {
+        method: "POST",
+        body: {
+          calculationType,
+          rate,
+          minimumAmount,
+          maximumAmount,
+          validFrom,
+          validUntil,
+          conceptStatus,
+          note,
+        },
+      });
+    }
+    await delay();
+    const concept = conceptByCode(code);
+    if (!concept) throw new ApiError("Concepto inexistente.", 404);
+
+    if ((concept.versions ?? []).some((v) => CONFIG_FLOW.slice(0, 2).includes(v.status))) {
+      throw new ApiError("El concepto ya tiene una versión en curso: resolvela primero.", 409);
+    }
+    if (calculationType === "PORCENTAJE" && !(Number(rate) > 0)) {
+      throw new ApiError("Una configuración por porcentaje necesita una alícuota mayor a cero.", 400);
+    }
+    if (
+      minimumAmount !== null &&
+      maximumAmount !== null &&
+      Number(maximumAmount) < Number(minimumAmount)
+    ) {
+      throw new ApiError("El máximo no puede ser menor al mínimo.", 400);
+    }
+    if (!validFrom || !validUntil || validUntil <= validFrom) {
+      throw new ApiError("La vigencia tiene que terminar después de empezar.", 400);
+    }
+    // Las versiones se suceden, no conviven: si se solaparan, dos reglas distintas
+    // regirían el mismo día y no se sabría con cuál se liquidó.
+    const vigente = activeVersionOf(concept);
+    if (vigente?.validUntil && validFrom <= vigente.validUntil) {
+      throw new ApiError(
+        `La v${vigente.version} rige hasta el ${vigente.validUntil}: la nueva tiene que empezar después.`,
+        409,
+      );
+    }
+    if (!note?.trim()) {
+      throw new ApiError("Describí el cambio: queda en el historial de versiones.", 400);
+    }
+
+    const version = {
+      version: nextVersionNumber(concept),
+      date: validFrom,
+      status: "DRAFT",
+      user: requestedBy,
+      note,
+      calculationType,
+      rate: calculationType === "PORCENTAJE" ? Number(rate) : null,
+      minimumAmount: minimumAmount === null || minimumAmount === "" ? null : Number(minimumAmount),
+      maximumAmount: maximumAmount === null || maximumAmount === "" ? null : Number(maximumAmount),
+      validFrom,
+      validUntil,
+      // Una versión también puede proponer dar de baja el concepto.
+      conceptStatus: conceptStatus ?? concept.status,
+      requestedAt: nowIso(),
+      requestedBy,
+      resolvedAt: null,
+      resolvedBy: null,
+      reason: null,
+    };
+    concept.versions = [version, ...(concept.versions ?? [])];
+    return version;
+  },
+
+  /** El borrador pasa a la bandeja del Supervisor. */
+  async submitForApproval({ code, version, requestedBy }) {
+    if (!USE_MOCKS) {
+      return request(`/api/v1/tax-config/${code}/versions/${version}/submit`, { method: "POST" });
+    }
+    await delay();
+    const concept = conceptByCode(code);
+    if (!concept) throw new ApiError("Concepto inexistente.", 404);
+    const target = (concept.versions ?? []).find((v) => v.version === Number(version));
+    if (!target) throw new ApiError("Versión inexistente.", 404);
+    if (target.status !== "DRAFT") {
+      throw new ApiError("Sólo se envían a aprobación las versiones en borrador.", 409);
+    }
+    target.status = "PENDING_APPROVAL";
+    target.submittedBy = requestedBy;
+    target.submittedAt = nowIso();
+    return target;
+  },
+
+  /** Bandeja del Supervisor: todo lo que espera aprobación, de lo más viejo a lo nuevo. */
+  async pendingApprovals() {
+    if (!USE_MOCKS) return request("/api/v1/tax-config/pending");
+    await delay();
+    return store.conceptDefinitions
+      .flatMap((concept) =>
+        (concept.versions ?? [])
+          .filter((v) => v.status === "PENDING_APPROVAL")
+          .map((v) => ({
+            ...v,
+            code: concept.code,
+            name: concept.name,
+            type: concept.type,
+            currentVersion: activeVersionOf(concept),
+          })),
+      )
+      .sort((a, b) => String(a.submittedAt).localeCompare(String(b.submittedAt)));
+  },
+
+  /**
+   * ResolveTaxConfigVersionRequest. Al aprobar, la versión pasa a regir y la anterior
+   * queda inactiva: se conserva el historial completo, nunca se borra una versión.
+   */
+  async resolveVersion({ code, version, status, resolvedBy, resolverRole, reason }) {
+    if (!USE_MOCKS) {
+      return request(`/api/v1/tax-config/${code}/versions/${version}/status`, {
+        method: "PUT",
+        body: { status, reason },
+      });
+    }
+    await delay();
+    if (resolverRole !== "SUPERVISOR") {
+      throw new ApiError("Sólo el Supervisor aprueba o rechaza una configuración.", 403);
+    }
+    const concept = conceptByCode(code);
+    if (!concept) throw new ApiError("Concepto inexistente.", 404);
+    const target = (concept.versions ?? []).find((v) => v.version === Number(version));
+    if (!target) throw new ApiError("Versión inexistente.", 404);
+    if (target.status !== "PENDING_APPROVAL") {
+      throw new ApiError("La versión no está esperando aprobación.", 409);
+    }
+    if (status === "REJECTED" && !reason?.trim()) {
+      throw new ApiError("El motivo del rechazo es obligatorio.", 400);
+    }
+
+    target.resolvedAt = nowIso();
+    target.resolvedBy = resolvedBy;
+
+    if (status === "REJECTED") {
+      target.status = "REJECTED";
+      target.reason = reason;
+      return target;
+    }
+
+    // La anterior deja de regir pero no se borra: queda como historia consultable.
+    const anterior = activeVersionOf(concept);
+    if (anterior) anterior.status = "INACTIVE";
+
+    target.status = "ACTIVE";
+    // Los parámetros de la versión aprobada pasan a ser los del concepto.
+    concept.calculationType = target.calculationType;
+    concept.rate = target.rate;
+    concept.minimumAmount = target.minimumAmount;
+    concept.maximumAmount = target.maximumAmount;
+    concept.validFrom = target.validFrom;
+    concept.validUntil = target.validUntil;
+    concept.status = target.conceptStatus ?? concept.status;
+
+    return { ...target, previousVersion: anterior, concept };
+  },
+};
+
 // ---------------------------------------------------------------- Liquidaciones
 
 export const settlementService = {
@@ -154,6 +396,9 @@ export const settlementService = {
       dueDate,
       status: "DRAFT",
       createdAt: nowIso(),
+      // Sella con qué versión del concepto se calculó: un cambio posterior de la
+      // configuración rige hacia adelante y no reescribe esta liquidación.
+      conceptVersion: activeVersionOf(conceptByCode(conceptCode) ?? { versions: [] })?.version ?? null,
     };
     store.settlements.unshift(settlement);
     return settlement;
@@ -292,6 +537,8 @@ export const settlementService = {
         dueDate,
         status: "DRAFT",
         createdAt: nowIso(),
+        conceptVersion:
+          activeVersionOf(conceptByCode(conceptCode) ?? { versions: [] })?.version ?? null,
       };
       store.settlements.unshift(settlement);
       return settlement;
@@ -1385,7 +1632,7 @@ const matchesTaxpayerTerm = (taxpayerId, term) => {
 const formatMoney = (value) =>
   new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(value ?? 0);
 
-const conceptOf = (code) => db.conceptDefinitions.find((c) => c.code === code) ?? null;
+const conceptOf = (code) => store.conceptDefinitions.find((c) => c.code === code) ?? null;
 const conceptName = (code) => conceptOf(code)?.name ?? code ?? "—";
 const nameOfTaxpayer = (id) =>
   store.taxpayers.find((t) => t.id === id)?.name ?? `Contribuyente #${id}`;
@@ -1515,7 +1762,7 @@ export const auditService = {
       return request(`/api/v1/audit/concepts?${params}`);
     }
     await delay();
-    return db.conceptDefinitions.filter(
+    return store.conceptDefinitions.filter(
       (c) =>
         (!query || matches(c.code, query) || matches(c.name, query)) &&
         (!type || c.type === type) &&

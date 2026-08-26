@@ -38,7 +38,7 @@ export const conceptDefinitions = [
     validFrom: "2026-01-01",
     validUntil: "2026-12-31",
     versions: [
-      { version: 3, date: "2026-01-01", status: "ACTIVE", user: "jlopez", note: "Alícuota 2% y tope máximo $150.000" },
+      { version: 3, date: "2026-01-01", status: "ACTIVE", user: "jlopez", note: "Alícuota 2% y tope máximo $150.000", calculationType: "PORCENTAJE", rate: 2.0, minimumAmount: 20000.0, maximumAmount: 150000.0, validFrom: "2026-01-01", validUntil: "2026-12-31" },
       { version: 2, date: "2025-07-01", status: "EXPIRED", user: "jlopez", note: "Alícuota 1,8%" },
       { version: 1, date: "2025-01-01", status: "EXPIRED", user: "mrivas", note: "Alta del concepto" },
     ],
@@ -55,7 +55,7 @@ export const conceptDefinitions = [
     validFrom: "2026-01-01",
     validUntil: "2026-12-31",
     versions: [
-      { version: 2, date: "2026-01-01", status: "ACTIVE", user: "jlopez", note: "Actualización del valor fijo anual" },
+      { version: 2, date: "2026-01-01", status: "ACTIVE", user: "jlopez", note: "Actualización del valor fijo anual", calculationType: "FIJO", rate: null, minimumAmount: 118000.0, maximumAmount: 240000.0, validFrom: "2026-01-01", validUntil: "2026-12-31" },
       { version: 1, date: "2025-01-01", status: "EXPIRED", user: "mrivas", note: "Alta del concepto" },
     ],
   },
@@ -71,7 +71,7 @@ export const conceptDefinitions = [
     validFrom: "2026-01-01",
     validUntil: "2026-12-31",
     versions: [
-      { version: 1, date: "2026-01-01", status: "ACTIVE", user: "mrivas", note: "Alta del concepto" },
+      { version: 1, date: "2026-01-01", status: "ACTIVE", user: "mrivas", note: "Alta del concepto", calculationType: "PORCENTAJE", rate: 1.5, minimumAmount: 15000.0, maximumAmount: 200000.0, validFrom: "2026-01-01", validUntil: "2026-12-31" },
     ],
   },
   {
@@ -88,7 +88,7 @@ export const conceptDefinitions = [
     // El importe llega calculado desde M4 en permitFeeGenerated; Rentas sólo lo liquida.
     externalModule: "M4",
     versions: [
-      { version: 2, date: "2026-01-01", status: "ACTIVE", user: "jlopez", note: "Tope máximo $150.000" },
+      { version: 2, date: "2026-01-01", status: "ACTIVE", user: "jlopez", note: "Tope máximo $150.000", calculationType: "PORCENTAJE", rate: 2.0, minimumAmount: 20000.0, maximumAmount: 150000.0, validFrom: "2026-01-01", validUntil: "2026-12-31" },
       { version: 1, date: "2025-03-01", status: "EXPIRED", user: "jlopez", note: "Alta del concepto" },
     ],
   },
@@ -105,7 +105,7 @@ export const conceptDefinitions = [
     validUntil: "2026-12-31",
     externalModule: "M4",
     versions: [
-      { version: 1, date: "2026-01-01", status: "ACTIVE", user: "jlopez", note: "Alta del concepto" },
+      { version: 1, date: "2026-01-01", status: "ACTIVE", user: "jlopez", note: "Alta del concepto", calculationType: "IMPORTE_EXTERNO", rate: null, minimumAmount: null, maximumAmount: null, validFrom: "2026-01-01", validUntil: "2026-12-31" },
     ],
   },
   {
@@ -121,7 +121,7 @@ export const conceptDefinitions = [
     validUntil: "2026-12-31",
     externalModule: "M7",
     versions: [
-      { version: 1, date: "2026-01-01", status: "ACTIVE", user: "jlopez", note: "Alta del concepto" },
+      { version: 1, date: "2026-01-01", status: "ACTIVE", user: "jlopez", note: "Alta del concepto", calculationType: "IMPORTE_EXTERNO", rate: null, minimumAmount: null, maximumAmount: null, validFrom: "2026-01-01", validUntil: "2026-12-31" },
     ],
   },
   {
@@ -136,7 +136,7 @@ export const conceptDefinitions = [
     validFrom: "2025-01-01",
     validUntil: "2025-12-31",
     versions: [
-      { version: 2, date: "2026-01-01", status: "INACTIVE", user: "jlopez", note: "Baja: el cargo dejó de aplicarse" },
+      { version: 2, date: "2026-01-01", status: "INACTIVE", user: "jlopez", note: "Baja: el cargo dejó de aplicarse", calculationType: "FIJO", rate: null, minimumAmount: 15000.0, maximumAmount: 35000.0, validFrom: "2025-01-01", validUntil: "2025-12-31" },
       { version: 1, date: "2025-01-01", status: "EXPIRED", user: "mrivas", note: "Alta del concepto" },
     ],
   },
