@@ -4,15 +4,20 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: "Accion de Terraform; plan no crea recursos"
+        description: "Accion de Terraform; plan no crea recursos y destroy elimina TEST"
         required: true
         default: plan
         type: choice
         options:
           - plan
           - apply
+          - destroy
       confirmation:
-        description: "Para apply escribir exactamente DEPLOY_TEST"
+        description: "Para apply: DEPLOY_TEST. Para destroy: DESTROY_TEST"
+        required: false
+        type: string
+      destroy_data_confirmation:
+        description: "Para destroy confirmar la perdida de datos con DELETE_TEST_DATA"
         required: false
         type: string
 
@@ -44,6 +49,8 @@ jobs:
       AWS_REGION: ${{ vars.AWS_REGION }}
       REQUESTED_OPERATION: ${{ inputs.operation }}
       APPLY_CONFIRMATION: ${{ inputs.confirmation }}
+      DESTROY_DATA_CONFIRMATION: ${{ inputs.destroy_data_confirmation }}
+      TF_VAR_budget_alert_email: ${{ vars.BUDGET_ALERT_EMAIL }}
 
     steps:
       - name: Checkout
@@ -76,10 +83,30 @@ jobs:
       - name: Validate requested operation
         run: |
           set -euo pipefail
-          if [[ "${REQUESTED_OPERATION}" == "apply" && "${APPLY_CONFIRMATION}" != "DEPLOY_TEST" ]]; then
-            echo "Apply requires confirmation DEPLOY_TEST."
-            exit 1
-          fi
+          case "${REQUESTED_OPERATION}" in
+            plan)
+              ;;
+            apply)
+              if [[ "${APPLY_CONFIRMATION}" != "DEPLOY_TEST" ]]; then
+                echo "Apply requires confirmation DEPLOY_TEST."
+                exit 1
+              fi
+              ;;
+            destroy)
+              if [[ "${APPLY_CONFIRMATION}" != "DESTROY_TEST" ]]; then
+                echo "Destroy requires confirmation DESTROY_TEST."
+                exit 1
+              fi
+              if [[ "${DESTROY_DATA_CONFIRMATION}" != "DELETE_TEST_DATA" ]]; then
+                echo "Destroy requires data confirmation DELETE_TEST_DATA."
+                exit 1
+              fi
+              ;;
+            *)
+              echo "Unsupported operation: ${REQUESTED_OPERATION}"
+              exit 1
+              ;;
+          esac
 
       - name: Initialize remote state
         run: |
@@ -94,11 +121,20 @@ jobs:
         run: terraform validate -no-color
 
       - name: Plan
+        if: inputs.operation != 'destroy'
         run: terraform plan -input=false -lock-timeout=5m -no-color -out=test.tfplan
+
+      - name: Plan complete TEST destruction
+        if: inputs.operation == 'destroy'
+        run: terraform plan -destroy -input=false -lock-timeout=5m -no-color -out=test-destroy.tfplan
 
       - name: Apply
         if: inputs.operation == 'apply'
         run: terraform apply -input=false -lock-timeout=5m -auto-approve test.tfplan
+
+      - name: Destroy TEST
+        if: inputs.operation == 'destroy'
+        run: terraform apply -input=false -lock-timeout=5m -auto-approve test-destroy.tfplan
 
       - name: Publish plan summary
         if: inputs.operation == 'plan'
@@ -121,4 +157,13 @@ jobs:
             echo '```'
           } >> "${GITHUB_STEP_SUMMARY}"
 
+      - name: Publish destruction summary
+        if: inputs.operation == 'destroy'
+        run: |
+          {
+            echo "### AWS TEST eliminado"
+            echo
+            echo "La infraestructura y los datos descartables de TEST fueron eliminados."
+            echo "El estado remoto de Terraform y el bootstrap de IAM se conservaron."
+          } >> "${GITHUB_STEP_SUMMARY}"
 
