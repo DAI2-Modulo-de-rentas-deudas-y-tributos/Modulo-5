@@ -29,6 +29,8 @@ const STATUS_TONES = {
   REQUESTED: "warning",
   PENDING_REVIEW: "info",
   PENDING_SUPERVISOR: "warning",
+  UNDER_REVIEW: "warning",
+  REFINANCED: "navy",
   UNALLOCATED: "warning",
   WAITING_FOR_INFORMATION: "warning",
   RETRYING: "warning",

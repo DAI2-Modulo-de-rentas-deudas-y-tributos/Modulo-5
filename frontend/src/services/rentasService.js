@@ -21,6 +21,7 @@ const store = {
   exemptions: db.exemptions.map((e) => ({ ...e })),
   tickets: db.tickets.map((t) => ({ ...t })),
   eventLog: db.eventLog.map((e) => ({ ...e })),
+  refinancings: db.refinancings.map((r) => ({ ...r })),
   reversals: db.reversals.map((r) => ({ ...r })),
   creditBalances: db.creditBalances.map((c) => ({ ...c })),
   auditLog: db.auditLog.map((a) => ({ ...a })),
@@ -834,6 +835,267 @@ export const paymentPlanService = {
     return plan;
   },
 };
+
+
+// -------------------------------------------------------------- Refinanciación
+
+/** Saldo vivo de un plan: lo que queda por pagar entre cuotas pendientes y vencidas. */
+const planOutstanding = (plan) =>
+  round2(
+    (plan.schedule ?? [])
+      .filter((c) => c.status !== "SETTLED")
+      .reduce((acc, c) => acc + c.amount, 0),
+  );
+
+const overdueInstallments = (plan) =>
+  (plan.schedule ?? []).filter((c) => c.status === "OVERDUE").length;
+
+/**
+ * Evalúa si un plan puede refinanciarse y, si no, por qué.
+ *
+ * Devuelve los motivos en vez de un booleano suelto: el operador tiene que poder
+ * explicarle al contribuyente qué le falta. El umbral de cuotas impagas sale de
+ * `REFINANCING_RULES`, no está escrito en el código.
+ */
+function refinancingEligibility(plan) {
+  const reasons = [];
+
+  if (plan.status !== "GRANTED") {
+    reasons.push("El plan todavía no fue otorgado.");
+  }
+  if (plan.lifecycle === "FULFILLED") {
+    reasons.push("El plan ya está cumplido: no queda saldo que refinanciar.");
+  }
+  if (plan.lifecycle === "REFINANCED") {
+    reasons.push("El plan ya fue refinanciado por otro posterior.");
+  }
+
+  const vencidas = overdueInstallments(plan);
+  const minimo = db.REFINANCING_RULES.minimumOverdueInstallments;
+  if (vencidas < minimo) {
+    reasons.push(
+      `Requiere al menos ${minimo} cuota${minimo === 1 ? "" : "s"} vencida${minimo === 1 ? "" : "s"} y tiene ${vencidas}.`,
+    );
+  }
+
+  if (store.refinancings.some((r) => r.planId === plan.planId && r.status !== "REJECTED")) {
+    reasons.push("Ya tiene una solicitud de refinanciación en curso.");
+  }
+
+  return {
+    eligible: reasons.length === 0,
+    reasons,
+    overdueInstallments: vencidas,
+    outstandingAmount: planOutstanding(plan),
+  };
+}
+
+export const refinancingService = {
+  /** Planes que el operador puede refinanciar, con el motivo cuando no se puede. */
+  async eligiblePlans({ taxpayerId = "", onlyEligible = false } = {}) {
+    if (!USE_MOCKS) {
+      const params = new URLSearchParams({ taxpayerId, onlyEligible: String(onlyEligible) });
+      return request(`/api/v1/payment-plans/refinancing/eligible?${params}`);
+    }
+    await delay();
+    return store.paymentPlans
+      .filter((p) => p.planId && (!taxpayerId || p.taxpayerId === Number(taxpayerId)))
+      .map((plan) => ({ ...plan, ...refinancingEligibility(plan) }))
+      .filter((plan) => !onlyEligible || plan.eligible);
+  },
+
+  /**
+   * Simula la refinanciación sobre el saldo vivo del plan, no sobre la deuda original:
+   * lo ya pagado no se vuelve a financiar.
+   */
+  simulate({ outstandingAmount, installments, downPayment = 0 }) {
+    return paymentPlanService.simulate({
+      totalDebt: outstandingAmount,
+      installments,
+      downPayment,
+    });
+  },
+
+  /**
+   * RequestRefinancingRequest. La solicitud es interna: no se publica nada por el
+   * solo hecho de pedirla. El plan vigente sigue igual hasta que se apruebe.
+   */
+  async request({ planId, installments, downPayment = 0, requestedBy, note }) {
+    if (!USE_MOCKS) {
+      return request("/api/v1/payment-plans/refinancing", {
+        method: "POST",
+        body: { planId, installments, downPayment, note },
+      });
+    }
+    await delay();
+    const plan = store.paymentPlans.find((p) => p.planId === Number(planId));
+    if (!plan) throw new ApiError("Plan inexistente.", 404);
+
+    const evaluacion = refinancingEligibility(plan);
+    if (!evaluacion.eligible) throw new ApiError(evaluacion.reasons[0], 409);
+
+    const simulacion = refinancingService.simulate({
+      outstandingAmount: evaluacion.outstandingAmount,
+      installments,
+      downPayment,
+    });
+
+    const solicitud = {
+      requestId: nextId(),
+      planId: plan.planId,
+      taxpayerId: plan.taxpayerId,
+      outstandingAmount: evaluacion.outstandingAmount,
+      overdueInstallments: evaluacion.overdueInstallments,
+      installments: simulacion.installments,
+      downPayment: simulacion.downPayment,
+      totalAmount: simulacion.totalAmount,
+      installmentAmount: simulacion.installmentAmount,
+      status: "REQUESTED",
+      requestedAt: nowIso(),
+      requestedBy,
+      note: note ?? null,
+      resolvedAt: null,
+      resolvedBy: null,
+      reason: null,
+      newPlanId: null,
+    };
+    store.refinancings.unshift(solicitud);
+    return solicitud;
+  },
+
+  /** Deriva la evaluación al Supervisor. Igual que en los planes, es estado interno. */
+  async escalate({ requestId, escalatedBy, note }) {
+    if (!USE_MOCKS) {
+      return request(`/api/v1/payment-plans/refinancing/${requestId}/escalate`, {
+        method: "POST",
+        body: { note },
+      });
+    }
+    await delay();
+    const solicitud = store.refinancings.find((r) => r.requestId === Number(requestId));
+    if (!solicitud) throw new ApiError("Solicitud inexistente.", 404);
+    if (solicitud.status !== "REQUESTED") {
+      throw new ApiError("La solicitud ya fue evaluada.", 409);
+    }
+    if (!note?.trim()) {
+      throw new ApiError("Indicá por qué la derivás: el Supervisor necesita el contexto.", 400);
+    }
+    solicitud.status = "UNDER_REVIEW";
+    solicitud.escalatedBy = escalatedBy;
+    solicitud.escalatedAt = nowIso();
+    solicitud.escalationNote = note;
+    return solicitud;
+  },
+
+  /**
+   * ResolveRefinancingRequest. La refinanciación se hace efectiva recién al aprobarse.
+   *
+   * El plan original **no se elimina**: pasa a `REFINANCED` y conserva sus cuotas, sus
+   * pagos y su resolución como antecedente, enlazado con el plan que lo reemplaza.
+   */
+  async resolve({ requestId, status, resolvedBy, resolverRole, reason }) {
+    if (!USE_MOCKS) {
+      return request(`/api/v1/payment-plans/refinancing/${requestId}/status`, {
+        method: "PUT",
+        body: { status, reason },
+      });
+    }
+    await delay();
+    const solicitud = store.refinancings.find((r) => r.requestId === Number(requestId));
+    if (!solicitud) throw new ApiError("Solicitud inexistente.", 404);
+    if (solicitud.status === "APPROVED" || solicitud.status === "REJECTED") {
+      throw new ApiError("La solicitud ya fue resuelta.", 409);
+    }
+    if (status === "REJECTED" && !reason?.trim()) {
+      throw new ApiError("El motivo del rechazo es obligatorio.", 400);
+    }
+    if (solicitud.status === "UNDER_REVIEW" && resolverRole !== "SUPERVISOR") {
+      throw new ApiError("La solicitud está derivada: sólo el Supervisor puede resolverla.", 403);
+    }
+
+    solicitud.status = status;
+    solicitud.resolvedAt = nowIso();
+    solicitud.resolvedBy = resolvedBy;
+
+    if (status === "REJECTED") {
+      solicitud.reason = reason;
+      return solicitud;
+    }
+
+    const original = store.paymentPlans.find((p) => p.planId === solicitud.planId);
+    const simulacion = refinancingService.simulate({
+      outstandingAmount: solicitud.outstandingAmount,
+      installments: solicitud.installments,
+      downPayment: solicitud.downPayment,
+    });
+
+    const nuevo = {
+      requestId: nextId(),
+      planId: nextId(),
+      taxpayerId: original.taxpayerId,
+      taxpayerType: original.taxpayerType,
+      debtIds: [...original.debtIds],
+      totalDebt: solicitud.outstandingAmount,
+      totalAmount: simulacion.totalAmount,
+      installments: simulacion.installments,
+      status: "GRANTED",
+      lifecycle: "CURRENT",
+      requestedAt: solicitud.requestedAt,
+      resolvedAt: nowIso(),
+      resolvedBy,
+      reason: null,
+      downPayment: simulacion.downPayment,
+      financedAmount: simulacion.financedAmount,
+      interestAmount: simulacion.interestAmount,
+      outstandingAmount: simulacion.totalAmount,
+      // Enlace hacia atrás: de dónde vino este plan.
+      refinancedFrom: original.planId,
+      schedule: Array.from({ length: simulacion.installments }, (_, i) => ({
+        number: i + 1,
+        dueDate: addMonths(nowIso(), i + 1),
+        amount: simulacion.installmentAmount,
+        status: "PENDING",
+      })),
+      history: [
+        { at: nowIso(), status: "GRANTED", actor: resolvedBy, note: `Refinancia el plan #${original.planId}` },
+        { at: nowIso(), status: "CURRENT", actor: "sistema" },
+      ],
+    };
+    store.paymentPlans.unshift(nuevo);
+
+    // El original queda como antecedente, con todo su historial intacto.
+    original.lifecycle = "REFINANCED";
+    original.refinancedInto = nuevo.planId;
+    original.history = [
+      ...(original.history ?? []),
+      {
+        at: nowIso(),
+        status: "REFINANCED",
+        actor: resolvedBy,
+        note: `Refinanciado por el plan #${nuevo.planId}`,
+      },
+    ];
+
+    solicitud.newPlanId = nuevo.planId;
+    return { ...solicitud, newPlan: nuevo, previousPlan: original };
+  },
+
+  async list({ status = "" } = {}) {
+    if (!USE_MOCKS) {
+      const params = new URLSearchParams({ status });
+      return request(`/api/v1/payment-plans/refinancing?${params}`);
+    }
+    await delay();
+    return store.refinancings.filter((r) => !status || r.status === status);
+  },
+};
+
+/** Suma meses a una fecha, para armar el cronograma del plan nuevo. */
+function addMonths(iso, months) {
+  const d = new Date(iso);
+  d.setMonth(d.getMonth() + months);
+  return d.toISOString().slice(0, 10);
+}
 
 // ------------------------------------------------------------------ Exenciones
 

@@ -15,6 +15,7 @@ import DeudasPage from "./pages/rentas/DeudasPage.jsx";
 import BoletasPage from "./pages/rentas/BoletasPage.jsx";
 import PagosPage from "./pages/rentas/PagosPage.jsx";
 import PlanesPage from "./pages/rentas/PlanesPage.jsx";
+import RefinanciacionPage from "./pages/rentas/RefinanciacionPage.jsx";
 import ExencionesPage from "./pages/rentas/ExencionesPage.jsx";
 import TicketsPage from "./pages/rentas/TicketsPage.jsx";
 import EventosPage from "./pages/rentas/EventosPage.jsx";
@@ -80,6 +81,7 @@ export default function App() {
               <Route path="boletas" element={<BoletasPage />} />
               <Route path="pagos" element={<PagosPage />} />
               <Route path="planes" element={<PlanesPage />} />
+              <Route path="refinanciacion" element={<RefinanciacionPage />} />
               <Route path="exenciones" element={<ExencionesPage />} />
               <Route path="tickets" element={<TicketsPage />} />
 

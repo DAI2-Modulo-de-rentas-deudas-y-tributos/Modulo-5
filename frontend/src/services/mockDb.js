@@ -224,6 +224,20 @@ export const PAYMENT_METHODS = [
   { value: "QR", label: "Billetera virtual / QR" },
 ];
 
+/**
+ * Reglas de refinanciación. Son parámetros de negocio, no constantes técnicas: si
+ * el municipio cambia el criterio de incumplimiento, se ajusta acá y en un solo lugar.
+ */
+export const REFINANCING_RULES = {
+  /** Cuotas vencidas que tiene que acumular un plan para poder refinanciarse. */
+  minimumOverdueInstallments: 1,
+  /** Alternativas de cuotas que se ofrecen al refinanciar. */
+  installmentChoices: [6, 12, 18],
+};
+
+/** Solicitudes de refinanciación. Proceso interno de M5: no viaja a ningún módulo. */
+export const refinancings = [];
+
 export const taxpayers = [
   {
     id: 123,

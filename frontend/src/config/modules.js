@@ -68,6 +68,16 @@ export const MODULES = [
     countLabel: "pendientes",
   },
   {
+    id: "refinanciacion",
+    path: "/rentas/refinanciacion",
+    label: "Refinanciación",
+    iconName: "RefreshCw",
+    description:
+      "Rearmar planes incumplidos sobre su saldo vivo, conservando el original como antecedente.",
+    roles: ["PERSONAL", "SUPERVISOR"],
+    countLabel: "refinanciables",
+  },
+  {
     id: "exenciones",
     path: "/rentas/exenciones",
     label: "Exenciones",
