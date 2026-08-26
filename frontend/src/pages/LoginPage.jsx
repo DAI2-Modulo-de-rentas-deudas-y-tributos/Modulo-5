@@ -159,6 +159,10 @@ export default function LoginPage() {
                   <code className="font-semibold text-[#0F2C59]">pcabrera</code> / caja123 —
                   Cajero
                 </li>
+                <li>
+                  <code className="font-semibold text-[#0F2C59]">acastro</code> / audit123 —
+                  Auditor
+                </li>
               </ul>
             </div>
           )}

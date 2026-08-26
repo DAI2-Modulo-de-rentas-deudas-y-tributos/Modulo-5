@@ -21,6 +21,9 @@ const store = {
   exemptions: db.exemptions.map((e) => ({ ...e })),
   tickets: db.tickets.map((t) => ({ ...t })),
   eventLog: db.eventLog.map((e) => ({ ...e })),
+  reversals: db.reversals.map((r) => ({ ...r })),
+  creditBalances: db.creditBalances.map((c) => ({ ...c })),
+  auditLog: db.auditLog.map((a) => ({ ...a })),
 };
 
 let sequence = 90000;
@@ -1221,6 +1224,636 @@ export const cashierService = {
         at: p.paidAt,
         amount: p.amountPaid,
       })),
+    };
+  },
+};
+
+// ---------------------------------------------------------------------- Auditoría
+
+/**
+ * Día calendario de un valor. Las fechas sin hora (`YYYY-MM-DD`) ya vienen en ese
+ * formato: convertirlas correría un día según la zona horaria.
+ */
+const dayOf = (value) =>
+  typeof value === "string" && value.length === 10 ? value : toDateInput(value);
+
+const inRange = (value, from, to) => {
+  if (!from && !to) return true;
+  if (!value) return false;
+  const day = dayOf(value);
+  return (!from || day >= from) && (!to || day <= to);
+};
+
+const sum = (rows, pick) => round2(rows.reduce((acc, row) => acc + (pick(row) ?? 0), 0));
+
+/**
+ * Acciones que representan una intervención humana sobre algo ya emitido.
+ * Es la definición de "ajuste manual" del panel: el resto son altas del circuito normal.
+ */
+const MANUAL_ADJUSTMENTS = [
+  "PAYMENT_REVERSED",
+  "EXEMPTION_APPROVED",
+  "EXEMPTION_REJECTED",
+  "PAYMENT_PLAN_GRANTED",
+  "PAYMENT_PLAN_REJECTED",
+];
+
+/** Filtro de contribuyente por texto libre: acepta id, nombre o documento. */
+const matchesTaxpayerTerm = (taxpayerId, term) => {
+  if (!term) return true;
+  const taxpayer = store.taxpayers.find((t) => t.id === taxpayerId);
+  return (
+    matches(taxpayerId, term) ||
+    matches(taxpayer?.name, term) ||
+    matches(taxpayer?.document, term) ||
+    matches(taxpayer?.cuit, term)
+  );
+};
+
+const conceptOf = (code) => db.conceptDefinitions.find((c) => c.code === code) ?? null;
+const conceptName = (code) => conceptOf(code)?.name ?? code ?? "—";
+const nameOfTaxpayer = (id) =>
+  store.taxpayers.find((t) => t.id === id)?.name ?? `Contribuyente #${id}`;
+
+/** Enriquece una fila con el nombre del contribuyente y del concepto. */
+const decorate = (row) => ({
+  ...row,
+  taxpayerName: row.taxpayerId ? nameOfTaxpayer(row.taxpayerId) : null,
+  conceptName: row.conceptCode ? conceptName(row.conceptCode) : null,
+});
+
+/**
+ * Consultas del área de Auditoría.
+ *
+ * Todas son de lectura: el auditor observa el circuito completo —liquidación, deuda,
+ * pago, plan, exención, ticket, evento— y la traza de quién hizo cada cosa, pero no
+ * puede modificar ninguna entidad. No hay una sola operación de escritura acá.
+ */
+export const auditService = {
+  /** Panel del auditor: volumen de la jornada, desvíos y actividad reciente. */
+  async dashboard() {
+    if (!USE_MOCKS) return request("/api/v1/audit/dashboard");
+    await delay();
+    const today = businessDate();
+
+    const paymentsToday = store.payments.filter((p) => dayOf(p.paidAt) === today);
+    const auditToday = store.auditLog.filter((a) => dayOf(a.at) === today);
+
+    return {
+      date: today,
+      dailyOperations: auditToday.length,
+      paymentsRegistered: paymentsToday.filter((p) => p.status === "REGISTERED").length,
+      paymentsReversed: store.reversals.length,
+      manualAdjustments: store.auditLog.filter((a) => MANUAL_ADJUSTMENTS.includes(a.action))
+        .length,
+      defaultedPlans: store.paymentPlans.filter((p) => p.lifecycle === "DEFAULTED").length,
+      exemptionsApproved: store.exemptions.filter((e) => e.status === "APPROVED").length,
+      exemptionsRejected: store.exemptions.filter((e) => e.status === "REJECTED").length,
+      integrationErrors: store.eventLog.filter(
+        (e) => e.status === "DLQ" || e.status === "RETRYING",
+      ).length,
+      recentActivity: [...store.auditLog]
+        .sort((a, b) => new Date(b.at) - new Date(a.at))
+        .slice(0, 8)
+        .map((entry) => ({
+          id: entry.id,
+          at: entry.at,
+          username: entry.username,
+          role: entry.role,
+          action: entry.action,
+          entity: entry.entity,
+          result: entry.result,
+        })),
+    };
+  },
+
+  // ------------------------------------------------------------ Contribuyentes
+
+  async taxpayers({ query = "" } = {}) {
+    if (!USE_MOCKS) {
+      const params = new URLSearchParams({ query });
+      return request(`/api/v1/audit/taxpayers?${params}`);
+    }
+    await delay();
+    return store.taxpayers
+      .filter(
+        (t) =>
+          !query ||
+          matches(t.name, query) ||
+          matches(t.document, query) ||
+          matches(t.cuit, query) ||
+          matches(t.id, query),
+      )
+      .map((taxpayer) => {
+        const debts = store.debts.filter((d) => d.taxpayerId === taxpayer.id);
+        return {
+          ...taxpayer,
+          totalDebt: sum(debts, (d) => d.outstandingAmount),
+          overdueDebt: sum(
+            debts.filter((d) => d.status === "OVERDUE"),
+            (d) => d.outstandingAmount,
+          ),
+        };
+      });
+  },
+
+  /** Ficha 360°: lo que el auditor necesita para reconstruir la situación fiscal. */
+  async taxpayerFile(taxpayerId) {
+    if (!USE_MOCKS) return request(`/api/v1/audit/taxpayers/${taxpayerId}`);
+    await delay();
+    const id = Number(taxpayerId);
+    const taxpayer = store.taxpayers.find((t) => t.id === id);
+    if (!taxpayer) throw new ApiError("El contribuyente no existe en el padrón local.", 404);
+
+    const debts = store.debts.filter((d) => d.taxpayerId === id).map(decorate);
+    const credits = store.creditBalances.filter(
+      (c) => c.taxpayerId === id && c.status === "ACTIVE",
+    );
+
+    return {
+      taxpayer,
+      debts,
+      payments: store.payments
+        .filter((p) => p.taxpayerId === id)
+        .sort((a, b) => new Date(b.paidAt) - new Date(a.paidAt))
+        .map(decorate),
+      plans: store.paymentPlans.filter((p) => p.taxpayerId === id).map(decorate),
+      exemptions: store.exemptions
+        .filter((e) => e.citizenId === id)
+        .map((e) => ({ ...e, conceptName: conceptName(e.conceptCode) })),
+      totals: {
+        totalDebt: sum(debts, (d) => d.outstandingAmount),
+        overdueDebt: sum(
+          debts.filter((d) => d.status === "OVERDUE"),
+          (d) => d.outstandingAmount,
+        ),
+        creditBalance: sum(credits, (c) => c.amount),
+      },
+    };
+  },
+
+  // ------------------------------------------------------------------ Conceptos
+
+  async concepts({ query = "", type = "", status = "" } = {}) {
+    if (!USE_MOCKS) {
+      const params = new URLSearchParams({ query, type, status });
+      return request(`/api/v1/audit/concepts?${params}`);
+    }
+    await delay();
+    return db.conceptDefinitions.filter(
+      (c) =>
+        (!query || matches(c.code, query) || matches(c.name, query)) &&
+        (!type || c.type === type) &&
+        (!status || c.status === status),
+    );
+  },
+
+  async conceptDetail(code) {
+    if (!USE_MOCKS) return request(`/api/v1/audit/concepts/${code}`);
+    await delay();
+    const concept = conceptOf(code);
+    if (!concept) throw new ApiError("Concepto inexistente.", 404);
+    return concept;
+  },
+
+  // -------------------------------------------------------------- Liquidaciones
+
+  async settlements({ taxpayer = "", conceptCode = "", status = "", from = "", to = "" } = {}) {
+    if (!USE_MOCKS) {
+      const params = new URLSearchParams({ taxpayer, conceptCode, status, from, to });
+      return request(`/api/v1/audit/settlements?${params}`);
+    }
+    await delay();
+    return store.settlements
+      .filter(
+        (s) =>
+          matchesTaxpayerTerm(s.taxpayerId, taxpayer) &&
+          (!conceptCode || s.conceptCode === conceptCode) &&
+          (!status || s.status === status) &&
+          inRange(s.createdAt, from, to),
+      )
+      .map(decorate);
+  },
+
+  async settlementDetail(id) {
+    if (!USE_MOCKS) return request(`/api/v1/audit/settlements/${id}`);
+    await delay();
+    const settlement = store.settlements.find((s) => s.id === Number(id));
+    if (!settlement) throw new ApiError("Liquidación inexistente.", 404);
+    return {
+      ...decorate(settlement),
+      debt: settlement.debtId
+        ? (store.debts.find((d) => d.id === settlement.debtId) ?? null)
+        : null,
+    };
+  },
+
+  // --------------------------------------------------------------------- Deudas
+
+  async debts({ taxpayer = "", conceptCode = "", status = "", from = "", to = "" } = {}) {
+    if (!USE_MOCKS) {
+      const params = new URLSearchParams({ taxpayer, conceptCode, status, from, to });
+      return request(`/api/v1/audit/debts?${params}`);
+    }
+    await delay();
+    return store.debts
+      .filter(
+        (d) =>
+          matchesTaxpayerTerm(d.taxpayerId, taxpayer) &&
+          (!conceptCode || d.conceptCode === conceptCode) &&
+          (!status || d.status === status) &&
+          inRange(d.dueDate, from, to),
+      )
+      .map(decorate);
+  },
+
+  async debtDetail(id) {
+    if (!USE_MOCKS) return request(`/api/v1/audit/debts/${id}`);
+    await delay();
+    const debt = store.debts.find((d) => d.id === Number(id));
+    if (!debt) throw new ApiError("Deuda inexistente.", 404);
+
+    return {
+      ...decorate(debt),
+      paidAmount: round2(debt.originalAmount - debt.outstandingAmount),
+      settlement: store.settlements.find((s) => s.id === debt.settlementId) ?? null,
+      payments: store.payments
+        .filter((p) => p.allocations?.some((a) => a.debtId === debt.id))
+        .sort((a, b) => new Date(b.paidAt) - new Date(a.paidAt)),
+      plan: store.paymentPlans.find((p) => p.debtIds.includes(debt.id)) ?? null,
+      bills: store.bills.filter((b) => b.debtId === debt.id),
+    };
+  },
+
+  // ---------------------------------------------------------------------- Pagos
+
+  /** `tab` refleja las solapas del listado: registrados, sin imputar, saldos a favor. */
+  async payments({ tab = "REGISTERED", taxpayer = "", method = "", from = "", to = "" } = {}) {
+    if (!USE_MOCKS) {
+      const params = new URLSearchParams({ tab, taxpayer, method, from, to });
+      return request(`/api/v1/audit/payments?${params}`);
+    }
+    await delay();
+    const byTab = (payment) => {
+      if (tab === "UNALLOCATED") return payment.status === "UNALLOCATED";
+      if (tab === "CREDIT") return Boolean(payment.creditBalanceId);
+      if (tab === "REVERSED") return payment.status === "REVERSED";
+      return payment.status === "REGISTERED";
+    };
+    return store.payments
+      .filter(
+        (p) =>
+          byTab(p) &&
+          matchesTaxpayerTerm(p.taxpayerId, taxpayer) &&
+          (!method || p.method === method) &&
+          inRange(p.paidAt, from, to),
+      )
+      .sort((a, b) => new Date(b.paidAt) - new Date(a.paidAt))
+      .map(decorate);
+  },
+
+  async paymentDetail(id) {
+    if (!USE_MOCKS) return request(`/api/v1/audit/payments/${id}`);
+    await delay();
+    const payment = store.payments.find((p) => p.id === Number(id));
+    if (!payment) throw new ApiError("Pago inexistente.", 404);
+
+    return {
+      ...decorate(payment),
+      allocations: (payment.allocations ?? []).map((allocation) => {
+        const debt = store.debts.find((d) => d.id === allocation.debtId);
+        return {
+          ...allocation,
+          conceptCode: debt?.conceptCode ?? null,
+          conceptName: debt ? conceptName(debt.conceptCode) : null,
+        };
+      }),
+      creditBalance: payment.creditBalanceId
+        ? (store.creditBalances.find((c) => c.id === payment.creditBalanceId) ?? null)
+        : null,
+      reversal: payment.reversalId
+        ? (store.reversals.find((r) => r.id === payment.reversalId) ?? null)
+        : null,
+    };
+  },
+
+  // ---------------------------------------------------------------- Reversiones
+
+  async reversals({ paymentId = "", username = "", from = "", to = "" } = {}) {
+    if (!USE_MOCKS) {
+      const params = new URLSearchParams({ paymentId, username, from, to });
+      return request(`/api/v1/audit/reversals?${params}`);
+    }
+    await delay();
+    return store.reversals
+      .filter(
+        (r) =>
+          (!paymentId || matches(r.paymentId, paymentId)) &&
+          (!username || r.requestedBy === username || r.approvedBy === username) &&
+          inRange(r.reversedAt, from, to),
+      )
+      .map(decorate);
+  },
+
+  async reversalDetail(id) {
+    if (!USE_MOCKS) return request(`/api/v1/audit/reversals/${id}`);
+    await delay();
+    const reversal = store.reversals.find((r) => r.id === Number(id));
+    if (!reversal) throw new ApiError("Reversión inexistente.", 404);
+    return {
+      ...decorate(reversal),
+      payment: store.payments.find((p) => p.id === reversal.paymentId) ?? null,
+      debt: store.debts.find((d) => d.id === reversal.debtId) ?? null,
+    };
+  },
+
+  // -------------------------------------------------------------- Planes de pago
+
+  async plans({ taxpayer = "", status = "", lifecycle = "", from = "", to = "" } = {}) {
+    if (!USE_MOCKS) {
+      const params = new URLSearchParams({ taxpayer, status, lifecycle, from, to });
+      return request(`/api/v1/audit/payment-plans?${params}`);
+    }
+    await delay();
+    return store.paymentPlans
+      .filter(
+        (p) =>
+          matchesTaxpayerTerm(p.taxpayerId, taxpayer) &&
+          (!status || p.status === status) &&
+          (!lifecycle || p.lifecycle === lifecycle) &&
+          inRange(p.requestedAt, from, to),
+      )
+      .map(decorate);
+  },
+
+  async planDetail(requestId) {
+    if (!USE_MOCKS) return request(`/api/v1/audit/payment-plans/${requestId}`);
+    await delay();
+    const plan = store.paymentPlans.find((p) => p.requestId === Number(requestId));
+    if (!plan) throw new ApiError("Plan de pago inexistente.", 404);
+    return {
+      ...decorate(plan),
+      debts: store.debts.filter((d) => plan.debtIds.includes(d.id)).map(decorate),
+    };
+  },
+
+  // ----------------------------------------------------------------- Exenciones
+
+  async exemptions({ tab = "", taxpayer = "", conceptCode = "", from = "", to = "" } = {}) {
+    if (!USE_MOCKS) {
+      const params = new URLSearchParams({ tab, taxpayer, conceptCode, from, to });
+      return request(`/api/v1/audit/exemptions?${params}`);
+    }
+    await delay();
+    return store.exemptions
+      .filter(
+        (e) =>
+          (!tab || e.status === tab) &&
+          matchesTaxpayerTerm(e.citizenId, taxpayer) &&
+          (!conceptCode || e.conceptCode === conceptCode) &&
+          inRange(e.requestedAt, from, to),
+      )
+      .map((e) => ({
+        ...e,
+        taxpayerName: nameOfTaxpayer(e.citizenId),
+        conceptName: conceptName(e.conceptCode),
+      }));
+  },
+
+  async exemptionDetail(requestId) {
+    if (!USE_MOCKS) return request(`/api/v1/audit/exemptions/${requestId}`);
+    await delay();
+    const exemption = store.exemptions.find((e) => e.requestId === Number(requestId));
+    if (!exemption) throw new ApiError("Solicitud de exención inexistente.", 404);
+    return {
+      ...exemption,
+      taxpayerName: nameOfTaxpayer(exemption.citizenId),
+      conceptName: conceptName(exemption.conceptCode),
+    };
+  },
+
+  // -------------------------------------------------------------------- Tickets
+
+  async tickets({ taxpayer = "", subject = "", status = "", priority = "", from = "", to = "" } = {}) {
+    if (!USE_MOCKS) {
+      const params = new URLSearchParams({ taxpayer, subject, status, priority, from, to });
+      return request(`/api/v1/audit/tickets?${params}`);
+    }
+    await delay();
+    return store.tickets
+      .filter(
+        (t) =>
+          matchesTaxpayerTerm(t.citizenId, taxpayer) &&
+          (!subject || t.subject === subject) &&
+          (!status || t.status === status) &&
+          (!priority || t.priority === priority) &&
+          inRange(t.createdAt, from, to),
+      )
+      .map((t) => ({ ...t, taxpayerName: nameOfTaxpayer(t.citizenId) }));
+  },
+
+  async ticketDetail(ticketId) {
+    if (!USE_MOCKS) return request(`/api/v1/audit/tickets/${ticketId}`);
+    await delay();
+    const ticket = store.tickets.find((t) => t.ticketId === Number(ticketId));
+    if (!ticket) throw new ApiError("Ticket inexistente.", 404);
+    return {
+      ...ticket,
+      taxpayerName: nameOfTaxpayer(ticket.citizenId),
+      payment: ticket.reference?.paymentId
+        ? (store.payments.find((p) => p.id === ticket.reference.paymentId) ?? null)
+        : null,
+      debt: ticket.reference?.debtId
+        ? (store.debts.find((d) => d.id === ticket.reference.debtId) ?? null)
+        : null,
+    };
+  },
+
+  // --------------------------------------------------------------- Integraciones
+
+  async integrations({ sourceModule = "", eventType = "", status = "", from = "", to = "" } = {}) {
+    if (!USE_MOCKS) {
+      const params = new URLSearchParams({ sourceModule, eventType, status, from, to });
+      return request(`/api/v1/audit/integrations?${params}`);
+    }
+    await delay();
+    return store.eventLog
+      .filter(
+        (e) =>
+          (!sourceModule || e.sourceModule === sourceModule) &&
+          (!eventType || e.eventType === eventType) &&
+          (!status || e.status === status) &&
+          inRange(e.occurredAt, from, to),
+      )
+      .sort((a, b) => new Date(b.occurredAt) - new Date(a.occurredAt));
+  },
+
+  async integrationDetail(eventId) {
+    if (!USE_MOCKS) return request(`/api/v1/audit/integrations/${eventId}`);
+    await delay();
+    const event = store.eventLog.find((e) => e.eventId === eventId);
+    if (!event) throw new ApiError("Evento inexistente.", 404);
+    return event;
+  },
+
+  // ------------------------------------------------------- Registro de auditoría
+
+  async auditTrail({ username = "", role = "", action = "", entityType = "", from = "", to = "" } = {}) {
+    if (!USE_MOCKS) {
+      const params = new URLSearchParams({ username, role, action, entityType, from, to });
+      return request(`/api/v1/audit/trail?${params}`);
+    }
+    await delay();
+    return store.auditLog
+      .filter(
+        (a) =>
+          (!username || a.username === username) &&
+          (!role || a.role === role) &&
+          (!action || a.action === action) &&
+          (!entityType || a.entity.type === entityType) &&
+          inRange(a.at, from, to),
+      )
+      .sort((a, b) => new Date(b.at) - new Date(a.at));
+  },
+
+  async auditDetail(id) {
+    if (!USE_MOCKS) return request(`/api/v1/audit/trail/${id}`);
+    await delay();
+    const entry = store.auditLog.find((a) => a.id === Number(id));
+    if (!entry) throw new ApiError("Registro de auditoría inexistente.", 404);
+    return entry;
+  },
+
+  // ---------------------------------------------------------------- Indicadores
+
+  /** Indicadores del período. Cada tarjeta se puede abrir para ver qué la compone. */
+  async indicators({ from = "", to = "", conceptCode = "" } = {}) {
+    if (!USE_MOCKS) {
+      const params = new URLSearchParams({ from, to, conceptCode });
+      return request(`/api/v1/audit/indicators?${params}`);
+    }
+    await delay();
+
+    const settlements = store.settlements.filter(
+      (s) =>
+        s.status !== "DRAFT" &&
+        (!conceptCode || s.conceptCode === conceptCode) &&
+        inRange(s.createdAt, from, to),
+    );
+    const payments = store.payments.filter(
+      (p) => p.status === "REGISTERED" && inRange(p.paidAt, from, to),
+    );
+    const debts = store.debts.filter((d) => !conceptCode || d.conceptCode === conceptCode);
+
+    const pending = debts.filter((d) => d.status === "PENDING");
+    const overdue = debts.filter((d) => d.status === "OVERDUE");
+
+    const pendingAmount = sum(pending, (d) => d.outstandingAmount);
+    const overdueAmount = sum(overdue, (d) => d.outstandingAmount);
+    const totalOutstanding = round2(pendingAmount + overdueAmount);
+
+    // Recaudación por mes, ordenada cronológicamente para el gráfico.
+    const byPeriod = Object.values(
+      payments.reduce((acc, payment) => {
+        const period = dayOf(payment.paidAt).slice(0, 7);
+        acc[period] ??= { period, amount: 0, count: 0 };
+        acc[period].amount = round2(acc[period].amount + payment.amountPaid);
+        acc[period].count += 1;
+        return acc;
+      }, {}),
+    ).sort((a, b) => a.period.localeCompare(b.period));
+
+    const byConcept = Object.values(
+      debts
+        .filter((d) => d.outstandingAmount > 0)
+        .reduce((acc, debt) => {
+          acc[debt.conceptCode] ??= {
+            conceptCode: debt.conceptCode,
+            conceptName: conceptName(debt.conceptCode),
+            amount: 0,
+            count: 0,
+          };
+          acc[debt.conceptCode].amount = round2(
+            acc[debt.conceptCode].amount + debt.outstandingAmount,
+          );
+          acc[debt.conceptCode].count += 1;
+          return acc;
+        }, {}),
+    ).sort((a, b) => b.amount - a.amount);
+
+    return {
+      range: { from, to, conceptCode },
+      totalSettled: sum(settlements, (s) => s.amount),
+      totalCollected: sum(payments, (p) => p.amountPaid),
+      pendingDebt: pendingAmount,
+      overdueDebt: overdueAmount,
+      // Morosidad: qué porción de la deuda viva ya está vencida.
+      delinquencyRate: totalOutstanding > 0 ? round2((overdueAmount / totalOutstanding) * 100) : 0,
+      defaultedPlans: store.paymentPlans.filter((p) => p.lifecycle === "DEFAULTED").length,
+      counts: {
+        totalSettled: settlements.length,
+        totalCollected: payments.length,
+        pendingDebt: pending.length,
+        overdueDebt: overdue.length,
+      },
+      byPeriod,
+      byConcept,
+    };
+  },
+
+  /** Detalle de un indicador: las filas concretas que lo componen. */
+  async indicatorBreakdown(key, { from = "", to = "", conceptCode = "", taxpayerId = "" } = {}) {
+    if (!USE_MOCKS) {
+      const params = new URLSearchParams({ from, to, conceptCode, taxpayerId });
+      return request(`/api/v1/audit/indicators/${key}?${params}`);
+    }
+    await delay();
+
+    const matchesTaxpayer = (row) => matchesTaxpayerTerm(row.taxpayerId, taxpayerId);
+
+    if (key === "totalSettled" || key === "totalCollected") {
+      const rows =
+        key === "totalSettled"
+          ? store.settlements.filter(
+              (s) =>
+                s.status !== "DRAFT" &&
+                (!conceptCode || s.conceptCode === conceptCode) &&
+                inRange(s.createdAt, from, to) &&
+                matchesTaxpayer(s),
+            )
+          : store.payments.filter(
+              (p) => p.status === "REGISTERED" && inRange(p.paidAt, from, to) && matchesTaxpayer(p),
+            );
+      return {
+        key,
+        total: sum(rows, (r) => r.amount ?? r.amountPaid),
+        count: rows.length,
+        rows: rows.map(decorate),
+      };
+    }
+
+    if (key === "defaultedPlans") {
+      const rows = store.paymentPlans.filter((p) => p.lifecycle === "DEFAULTED");
+      return {
+        key,
+        total: sum(rows, (p) => p.outstandingAmount),
+        count: rows.length,
+        rows: rows.map(decorate),
+      };
+    }
+
+    const status = key === "overdueDebt" ? "OVERDUE" : "PENDING";
+    const rows = store.debts.filter(
+      (d) =>
+        d.status === status &&
+        (!conceptCode || d.conceptCode === conceptCode) &&
+        matchesTaxpayer(d),
+    );
+    return {
+      key,
+      total: sum(rows, (d) => d.outstandingAmount),
+      count: rows.length,
+      rows: rows.map(decorate),
     };
   },
 };

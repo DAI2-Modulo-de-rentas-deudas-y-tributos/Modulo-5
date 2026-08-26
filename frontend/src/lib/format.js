@@ -40,6 +40,15 @@ export const toDateInput = (value) => {
   return new Date(date.getTime() - offset).toISOString().slice(0, 10);
 };
 
+const compactFormatter = new Intl.NumberFormat("es-AR", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
+
+/** Importe abreviado para ejes y etiquetas de gráficos: $12,5 M. */
+export const formatCompactCurrency = (value) =>
+  value === null || value === undefined ? "—" : `$${compactFormatter.format(value)}`;
+
 export const formatPercentage = (value) =>
   value === null || value === undefined ? "—" : `${Number(value).toFixed(0)}%`;
 
@@ -83,6 +92,61 @@ export const STATUS_LABELS = {
   VENTANILLA: "Ventanilla",
   HOMEBANKING: "Homebanking",
   DEBITO_AUTOMATICO: "Débito automático",
+  // Ciclo interno del plan de pago, posterior al otorgamiento.
+  CURRENT: "Vigente",
+  FULFILLED: "Cumplido",
+  DEFAULTED: "Incumplido",
+  PARTIAL: "Parcial",
+  // Conceptos: tipo, estado y forma de cálculo.
+  TASA: "Tasa",
+  MULTA: "Multa",
+  CARGO: "Cargo",
+  INACTIVE: "Inactivo",
+  PORCENTAJE: "Porcentaje",
+  FIJO: "Importe fijo",
+  IMPORTE_EXTERNO: "Importe informado por el módulo de origen",
+  // Procesamiento de eventos de integración.
+  RECEIVED: "Recibido",
+  PROCESSING: "Procesando",
+  ERROR: "Error",
+  OK: "OK",
+  // Roles que figuran en el registro de auditoría.
+  PERSONAL: "Personal de Rentas",
+  SUPERVISOR: "Supervisor",
+  CAJERO: "Cajero",
+  AUDITOR: "Auditor",
+  SISTEMA: "Sistema",
 };
+
+/** Acciones registradas en la auditoría, en el idioma del expediente. */
+export const AUDIT_ACTION_LABELS = {
+  SETTLEMENT_ISSUED: "Liquidación emitida",
+  BILL_ISSUED: "Boleta emitida",
+  PAYMENT_REGISTERED: "Pago registrado",
+  PAYMENT_REVERSED: "Pago reversado",
+  PAYMENT_PLAN_GRANTED: "Plan de pago otorgado",
+  PAYMENT_PLAN_REJECTED: "Plan de pago rechazado",
+  EXEMPTION_APPROVED: "Exención aprobada",
+  EXEMPTION_REJECTED: "Exención rechazada",
+  TICKET_STATUS_UPDATED: "Estado de ticket actualizado",
+  EVENT_MOVED_TO_DLQ: "Evento enviado a DLQ",
+  DEBT_REPORTED_OVERDUE: "Deuda vencida informada a M8",
+};
+
+export const actionLabelFor = (value) => AUDIT_ACTION_LABELS[value] ?? value ?? "—";
+
+/** Entidades sobre las que puede recaer una acción auditada. */
+export const ENTITY_LABELS = {
+  SETTLEMENT: "Liquidación",
+  DEBT: "Deuda",
+  BILL: "Boleta",
+  PAYMENT: "Pago",
+  PAYMENT_PLAN: "Plan de pago",
+  EXEMPTION: "Exención",
+  TICKET: "Ticket",
+  EVENT: "Evento",
+};
+
+export const entityLabelFor = (value) => ENTITY_LABELS[value] ?? value ?? "—";
 
 export const labelFor = (value) => STATUS_LABELS[value] ?? value ?? "—";

@@ -40,6 +40,20 @@ const STATUS_TONES = {
   BLOCKED: "danger",
   DECEASED: "danger",
   DLQ: "danger",
+  // Ciclo del plan de pago.
+  CURRENT: "info",
+  FULFILLED: "success",
+  DEFAULTED: "danger",
+  PARTIAL: "warning",
+  // Conceptos y procesamiento de eventos.
+  INACTIVE: "neutral",
+  TASA: "neutral",
+  MULTA: "neutral",
+  CARGO: "neutral",
+  RECEIVED: "neutral",
+  PROCESSING: "info",
+  OK: "success",
+  ERROR: "danger",
 };
 
 export default function StatusBadge({ status, tone, label }) {
