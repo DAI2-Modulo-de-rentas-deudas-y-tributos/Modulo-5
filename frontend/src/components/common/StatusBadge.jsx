@@ -51,6 +51,7 @@ const STATUS_TONES = {
   PARTIAL: "warning",
   // Conceptos y procesamiento de eventos.
   INACTIVE: "neutral",
+  PENDING_APPROVAL: "warning",
   TASA: "neutral",
   MULTA: "neutral",
   CARGO: "neutral",

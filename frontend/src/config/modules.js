@@ -18,6 +18,16 @@ export const MODULES = [
     countLabel: "registrados",
   },
   {
+    id: "tributos",
+    path: "/rentas/tributos",
+    label: "Configuración de tributos",
+    iconName: "Tags",
+    description:
+      "Reglas de cálculo de cada concepto, versionadas y con aprobación del Supervisor.",
+    roles: ["PERSONAL", "SUPERVISOR"],
+    countLabel: "conceptos",
+  },
+  {
     id: "liquidaciones",
     path: "/rentas/liquidaciones",
     label: "Liquidaciones",

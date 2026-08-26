@@ -10,6 +10,7 @@ import LoginPage from "./pages/LoginPage.jsx";
 import DashboardPage from "./pages/DashboardPage.jsx";
 import NotFoundPage from "./pages/NotFoundPage.jsx";
 import ContribuyentesPage from "./pages/rentas/ContribuyentesPage.jsx";
+import ConfiguracionTributosPage from "./pages/rentas/ConfiguracionTributosPage.jsx";
 import LiquidacionesPage from "./pages/rentas/LiquidacionesPage.jsx";
 import DeudasPage from "./pages/rentas/DeudasPage.jsx";
 import BoletasPage from "./pages/rentas/BoletasPage.jsx";
@@ -76,6 +77,7 @@ export default function App() {
             <Route path="/rentas" element={<RentasLayout />}>
               <Route index element={<DashboardPage />} />
               <Route path="contribuyentes" element={<ContribuyentesPage />} />
+              <Route path="tributos" element={<ConfiguracionTributosPage />} />
               <Route path="liquidaciones" element={<LiquidacionesPage />} />
               <Route path="deudas" element={<DeudasPage />} />
               <Route path="boletas" element={<BoletasPage />} />

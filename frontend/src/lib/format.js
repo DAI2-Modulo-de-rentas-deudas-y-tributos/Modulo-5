@@ -107,6 +107,7 @@ export const STATUS_LABELS = {
   MULTA: "Multa",
   CARGO: "Cargo",
   INACTIVE: "Inactivo",
+  PENDING_APPROVAL: "Esperando aprobación",
   PORCENTAJE: "Porcentaje",
   FIJO: "Importe fijo",
   IMPORTE_EXTERNO: "Importe informado por el módulo de origen",
