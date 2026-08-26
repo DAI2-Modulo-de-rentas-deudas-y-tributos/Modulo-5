@@ -4,6 +4,7 @@ import ProtectedRoute from "./routes/ProtectedRoute.jsx";
 import RentasLayout from "./components/layout/RentasLayout.jsx";
 import CajaLayout from "./components/layout/CajaLayout.jsx";
 import AuditoriaLayout from "./components/layout/AuditoriaLayout.jsx";
+import PortalLayout from "./components/layout/PortalLayout.jsx";
 import { homePathForRole } from "./config/workspaces.js";
 import LoginPage from "./pages/LoginPage.jsx";
 import DashboardPage from "./pages/DashboardPage.jsx";
@@ -47,14 +48,21 @@ import AuditoriaPage from "./pages/auditoria/AuditoriaPage.jsx";
 import AuditoriaDetallePage from "./pages/auditoria/AuditoriaDetallePage.jsx";
 import IndicadoresPage from "./pages/auditoria/IndicadoresPage.jsx";
 import IndicadorDetallePage from "./pages/auditoria/IndicadorDetallePage.jsx";
+import InicioPage from "./pages/portal/InicioPage.jsx";
+import MisDeudasPage from "./pages/portal/MisDeudasPage.jsx";
+import MisBoletasPage from "./pages/portal/MisBoletasPage.jsx";
+import MisPagosPage from "./pages/portal/MisPagosPage.jsx";
+import PlanesPortalPage from "./pages/portal/PlanesPortalPage.jsx";
+import ExencionesPortalPage from "./pages/portal/ExencionesPortalPage.jsx";
 
 /**
  * Rutas de las dos áreas de trabajo del módulo.
  *
  * `/rentas/*` es el back-office de Personal y Supervisor —la bitácora de eventos exige
  * rol supervisor—; `/caja/*` es la ventanilla del Cajero y `/auditor/*` el área de
- * Auditoría, que es de sólo lectura. Cada rol entra a la suya y `ProtectedRoute`
- * devuelve a su panel a quien intente cruzarse.
+ * Auditoría, de sólo lectura. `/portal/*` es el único espacio de cara al ciudadano:
+ * el Contribuyente consulta su propio legajo. Cada rol entra a la suya y
+ * `ProtectedRoute` devuelve a su panel a quien intente cruzarse.
  */
 export default function App() {
   return (
@@ -122,6 +130,19 @@ export default function App() {
               <Route path="auditoria/:entryId" element={<AuditoriaDetallePage />} />
               <Route path="indicadores" element={<IndicadoresPage />} />
               <Route path="indicadores/:key" element={<IndicadorDetallePage />} />
+
+              <Route path="*" element={<NotFoundPage />} />
+            </Route>
+          </Route>
+
+          <Route element={<ProtectedRoute roles={["CONTRIBUYENTE"]} />}>
+            <Route path="/portal" element={<PortalLayout />}>
+              <Route index element={<InicioPage />} />
+              <Route path="deudas" element={<MisDeudasPage />} />
+              <Route path="boletas" element={<MisBoletasPage />} />
+              <Route path="pagos" element={<MisPagosPage />} />
+              <Route path="planes" element={<PlanesPortalPage />} />
+              <Route path="exenciones" element={<ExencionesPortalPage />} />
 
               <Route path="*" element={<NotFoundPage />} />
             </Route>

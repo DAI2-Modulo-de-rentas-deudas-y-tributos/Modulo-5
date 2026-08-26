@@ -632,17 +632,103 @@ export const paymentPlanService = {
     return store.paymentPlans.filter((p) => !status || p.status === status);
   },
 
-  /** Simula el plan antes de resolver: interés fijo del 5% por cada 3 cuotas. */
-  simulate({ totalDebt, installments }) {
+  /**
+   * RequestPaymentPlanRequest → publica paymentPlanRequested.
+   * La solicitud nace en el contribuyente; Rentas la resuelve después.
+   */
+  async request({ taxpayerId, debtIds, installments, downPayment = 0 }) {
+    if (!USE_MOCKS) {
+      return request("/api/v1/payment-plans", {
+        method: "POST",
+        body: { taxpayerId, debtIds, installments, downPayment },
+      });
+    }
+    await delay();
+    const taxpayer = store.taxpayers.find((t) => t.id === Number(taxpayerId));
+    if (!taxpayer) throw new ApiError("El contribuyente no existe en el padrón local.", 404);
+
+    const ids = (debtIds ?? []).map(Number);
+    if (ids.length === 0) throw new ApiError("Elegí al menos una deuda para financiar.", 400);
+
+    const debts = store.debts.filter((d) => ids.includes(d.id) && d.taxpayerId === taxpayer.id);
+    if (debts.length !== ids.length) {
+      throw new ApiError("Alguna de las deudas no te pertenece o no existe.", 409);
+    }
+    if (debts.some((d) => d.outstandingAmount <= 0)) {
+      throw new ApiError("No se puede financiar una deuda ya cancelada.", 409);
+    }
+    // Una deuda no puede entrar en dos planes a la vez.
+    const yaEnPlan = store.paymentPlans.find(
+      (p) => p.status !== "REJECTED" && p.debtIds.some((id) => ids.includes(id)),
+    );
+    if (yaEnPlan) {
+      throw new ApiError(
+        `La deuda #${yaEnPlan.debtIds.find((id) => ids.includes(id))} ya está incluida en la solicitud #${yaEnPlan.requestId}.`,
+        409,
+      );
+    }
+
+    const totalDebt = round2(debts.reduce((acc, d) => acc + d.outstandingAmount, 0));
+    const anticipo = Math.min(Math.max(Number(downPayment) || 0, 0), totalDebt);
+    const plan = {
+      requestId: nextId(),
+      planId: null,
+      taxpayerId: taxpayer.id,
+      taxpayerType: taxpayer.type,
+      debtIds: ids,
+      totalDebt,
+      installments: Number(installments),
+      status: "REQUESTED",
+      lifecycle: null,
+      requestedAt: nowIso(),
+      resolvedAt: null,
+      resolvedBy: null,
+      reason: null,
+      // El anticipo lo ofrece el contribuyente; el resto lo fija Rentas al resolver.
+      downPayment: anticipo,
+      financedAmount: null,
+      interestAmount: null,
+      schedule: [],
+      history: [{ at: nowIso(), status: "REQUESTED", actor: taxpayer.name }],
+    };
+    store.paymentPlans.unshift(plan);
+
+    recordOutboundEvent("paymentPlanRequested", "M5", {
+      requestId: plan.requestId,
+      taxpayerType: plan.taxpayerType,
+      taxpayerId: plan.taxpayerId,
+      debtIds: plan.debtIds,
+      totalDebt: plan.totalDebt,
+      installments: plan.installments,
+    });
+    return plan;
+  },
+
+  /**
+   * Simula el plan: interés fijo del 5% por cada 3 cuotas.
+   *
+   * El anticipo se paga al contado y sale de la base financiada, así que baja el
+   * interés y la cuota. Sin anticipo el cálculo es el de siempre.
+   */
+  simulate({ totalDebt, installments, downPayment = 0 }) {
     const n = Number(installments) || 1;
+    const total = Number(totalDebt);
+    const anticipo = Math.min(Math.max(Number(downPayment) || 0, 0), total);
+
+    const financedAmount = round2(total - anticipo);
     const interestRate = Math.floor(n / 3) * 0.05;
-    const totalAmount = round2(Number(totalDebt) * (1 + interestRate));
+    const interestAmount = round2(financedAmount * interestRate);
+    const totalAmount = round2(anticipo + financedAmount + interestAmount);
+
     return {
       installments: n,
       interestRate,
+      downPayment: round2(anticipo),
+      financedAmount,
+      interestAmount,
       totalAmount,
       // La diferencia por redondeo se absorbe en la última cuota al generar el plan.
-      installmentAmount: round2(totalAmount / n),
+      installmentAmount: round2((financedAmount + interestAmount) / n),
     };
   },
 
@@ -672,9 +758,12 @@ export const paymentPlanService = {
       const simulation = paymentPlanService.simulate({
         totalDebt: plan.totalDebt,
         installments: installments ?? plan.installments,
+        downPayment: plan.downPayment,
       });
       plan.planId = nextId();
       plan.installments = simulation.installments;
+      plan.financedAmount = simulation.financedAmount;
+      plan.interestAmount = simulation.interestAmount;
       plan.totalAmount = simulation.totalAmount;
       recordOutboundEvent("updatePaymentPlanStatus", "M5", {
         requestId: plan.requestId,
@@ -717,11 +806,21 @@ export const exemptionService = {
     requestedPercentage,
     requestedFrom,
     requestedUntil,
+    attachments = [],
   }) {
     if (!USE_MOCKS) {
+      // Los archivos van aparte, como multipart: acá viaja sólo la referencia.
       return request("/api/v1/exemptions", {
         method: "POST",
-        body: { citizenId, conceptCode, reason, requestedPercentage, requestedFrom, requestedUntil },
+        body: {
+          citizenId,
+          conceptCode,
+          reason,
+          requestedPercentage,
+          requestedFrom,
+          requestedUntil,
+          attachments,
+        },
       });
     }
     await delay();
@@ -740,7 +839,10 @@ export const exemptionService = {
       status: "REQUESTED",
       requestedAt: nowIso(),
       hasSocialBenefit: taxpayer.benefit?.status === "ACTIVE",
-      attachments: [],
+      // El binario va a S3; la base guarda la referencia, nunca el archivo.
+      attachments: attachments.map(
+        (file) => `s3://rentas-documents/exenciones/${nextId()}/${file.name ?? file}`,
+      ),
       resolvedBy: null,
     };
     store.exemptions.unshift(exemption);
@@ -894,7 +996,16 @@ function counterTimestamp() {
   const now = new Date();
   const hh = String(now.getHours()).padStart(2, "0");
   const mm = String(now.getMinutes()).padStart(2, "0");
-  return `${db.BUSINESS_DATE}T${hh}:${mm}:00-03:00`;
+  const stamp = new Date(`${db.BUSINESS_DATE}T${hh}:${mm}:00-03:00`).getTime();
+
+  // El cobro que se acaba de hacer es el último de la jornada. Si el reloj real va
+  // más atrasado que el último movimiento del dataset, igual va después: si no,
+  // aparecería en el medio de "Últimos pagos" en vez de encabezar la lista.
+  const ultimoDelDia = store.payments
+    .filter((p) => toDateInput(p.paidAt) === db.BUSINESS_DATE)
+    .reduce((max, p) => Math.max(max, new Date(p.paidAt).getTime()), 0);
+
+  return new Date(Math.max(stamp, ultimoDelDia + 60000)).toISOString();
 }
 
 const outstandingOf = (taxpayerId) =>
@@ -1269,6 +1380,10 @@ const matchesTaxpayerTerm = (taxpayerId, term) => {
     matches(taxpayer?.cuit, term)
   );
 };
+
+/** Importe en pesos para los textos que arma el servicio (avisos del portal). */
+const formatMoney = (value) =>
+  new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(value ?? 0);
 
 const conceptOf = (code) => db.conceptDefinitions.find((c) => c.code === code) ?? null;
 const conceptName = (code) => conceptOf(code)?.name ?? code ?? "—";
@@ -1855,6 +1970,299 @@ export const auditService = {
       count: rows.length,
       rows: rows.map(decorate),
     };
+  },
+};
+
+// ------------------------------------------------------- Portal del contribuyente
+
+/** Días que faltan (o pasaron, en negativo) hasta una fecha, contra la jornada del dataset. */
+const daysUntil = (date) => {
+  const from = new Date(`${businessDate()}T00:00:00-03:00`);
+  const to = new Date(`${dayOf(date)}T00:00:00-03:00`);
+  return Math.round((to - from) / 86400000);
+};
+
+/** Un vencimiento entra en la ventana de aviso cuando faltan 15 días o menos. */
+const DUE_SOON_DAYS = 15;
+
+/**
+ * Portal del contribuyente.
+ *
+ * El ciudadano consulta su propio legajo y puede iniciar dos trámites: pedir un plan
+ * de pago —que es la forma de conseguir más plazo— y pedir una exención. Nada más:
+ * registrar pagos, emitir boletas y resolver solicitudes son atribuciones del
+ * municipio, no del contribuyente.
+ *
+ * Todas las consultas reciben el `taxpayerId` de la sesión: nadie ve el legajo ajeno.
+ */
+export const portalService = {
+  /** Resumen de la cuenta: lo que el ciudadano ve al entrar. */
+  async accountSummary(taxpayerId) {
+    if (!USE_MOCKS) return request(`/api/v1/portal/${taxpayerId}/account-summary`);
+    await delay();
+    const id = Number(taxpayerId);
+    const taxpayer = store.taxpayers.find((t) => t.id === id);
+    if (!taxpayer) throw new ApiError("El contribuyente no existe en el padrón local.", 404);
+
+    const debts = store.debts.filter((d) => d.taxpayerId === id);
+    const pending = debts.filter((d) => d.outstandingAmount > 0);
+
+    // El próximo vencimiento es el más cercano entre las obligaciones con saldo.
+    const next = [...pending].sort((a, b) => dayOf(a.dueDate).localeCompare(dayOf(b.dueDate)))[0];
+
+    const credits = store.creditBalances.filter(
+      (c) => c.taxpayerId === id && c.status === "ACTIVE",
+    );
+
+    return {
+      taxpayer,
+      totalDebt: round2(outstandingOf(id)),
+      overdueDebt: round2(overdueOf(id)),
+      creditBalance: sum(credits, (c) => c.amount),
+      nextDueDate: next
+        ? {
+            debtId: next.id,
+            conceptCode: next.conceptCode,
+            conceptName: conceptName(next.conceptCode),
+            amount: next.outstandingAmount,
+            dueDate: next.dueDate,
+            daysLeft: daysUntil(next.dueDate),
+            overdue: next.status === "OVERDUE",
+          }
+        : null,
+      obligations: pending
+        .sort((a, b) => dayOf(a.dueDate).localeCompare(dayOf(b.dueDate)))
+        .map((debt) => ({
+          ...debt,
+          conceptName: conceptName(debt.conceptCode),
+          daysLeft: daysUntil(debt.dueDate),
+          // La boleta ya emitida es lo que el ciudadano lleva a pagar.
+          billId: store.bills.find((b) => b.debtId === debt.id && b.status === "ISSUED")?.id ?? null,
+        })),
+      counts: {
+        debts: pending.length,
+        overdue: debts.filter((d) => d.status === "OVERDUE").length,
+        bills: store.bills.filter((b) => b.taxpayerId === id && b.status === "ISSUED").length,
+        openRequests:
+          store.paymentPlans.filter((p) => p.taxpayerId === id && p.status === "REQUESTED").length +
+          store.exemptions.filter((e) => e.citizenId === id && e.status === "REQUESTED").length,
+      },
+    };
+  },
+
+  /** Avisos de la portada: lo que exige atención, de lo más urgente a lo informativo. */
+  async notices(taxpayerId) {
+    if (!USE_MOCKS) return request(`/api/v1/portal/${taxpayerId}/notices`);
+    await delay();
+    const id = Number(taxpayerId);
+    const avisos = [];
+
+    const overdue = store.debts.filter((d) => d.taxpayerId === id && d.status === "OVERDUE");
+    if (overdue.length > 0) {
+      avisos.push({
+        id: "deuda-vencida",
+        severity: "error",
+        title: overdue.length === 1 ? "Tenés una deuda vencida" : `Tenés ${overdue.length} deudas vencidas`,
+        detail: `Suman ${formatMoney(sum(overdue, (d) => d.outstandingAmount))}. Podés pedir un plan de pago para financiarlas.`,
+        path: "/portal/deudas",
+      });
+    }
+
+    const soon = store.debts.filter(
+      (d) =>
+        d.taxpayerId === id &&
+        d.outstandingAmount > 0 &&
+        d.status !== "OVERDUE" &&
+        daysUntil(d.dueDate) >= 0 &&
+        daysUntil(d.dueDate) <= DUE_SOON_DAYS,
+    );
+    soon.forEach((debt) => {
+      const dias = daysUntil(debt.dueDate);
+      avisos.push({
+        id: `vence-${debt.id}`,
+        severity: "info",
+        title: dias === 0 ? "Una obligación vence hoy" : `Una obligación vence en ${dias} días`,
+        detail: `${conceptName(debt.conceptCode)} — ${formatMoney(debt.outstandingAmount)}.`,
+        path: "/portal/deudas",
+      });
+    });
+
+    store.bills
+      .filter((b) => b.taxpayerId === id && b.status === "ISSUED")
+      .forEach((bill) => {
+        avisos.push({
+          id: `boleta-${bill.id}`,
+          severity: "info",
+          title: `Boleta #${bill.id} disponible`,
+          detail: `${conceptName(bill.conceptCode)} — ${formatMoney(bill.amount)}. Ya podés descargarla.`,
+          path: "/portal/boletas",
+        });
+      });
+
+    store.paymentPlans
+      .filter((p) => p.taxpayerId === id && p.status !== "REQUESTED")
+      .forEach((plan) => {
+        avisos.push({
+          id: `plan-${plan.requestId}`,
+          severity: plan.status === "GRANTED" ? "success" : "info",
+          title:
+            plan.status === "GRANTED"
+              ? `Tu plan de pago #${plan.planId} fue otorgado`
+              : `Tu solicitud de plan #${plan.requestId} fue rechazada`,
+          detail: plan.status === "GRANTED" ? `${plan.installments} cuotas.` : plan.reason,
+          path: "/portal/planes",
+        });
+      });
+
+    store.exemptions
+      .filter((e) => e.citizenId === id && e.status !== "REQUESTED")
+      .forEach((exemption) => {
+        avisos.push({
+          id: `exencion-${exemption.requestId}`,
+          severity: exemption.status === "APPROVED" ? "success" : "info",
+          title:
+            exemption.status === "APPROVED"
+              ? `Tu exención de ${conceptName(exemption.conceptCode)} fue aprobada`
+              : `Tu solicitud de exención de ${conceptName(exemption.conceptCode)} fue rechazada`,
+          detail:
+            exemption.status === "APPROVED"
+              ? `${exemption.percentage}% desde el ${dayOf(exemption.validFrom)}.`
+              : exemption.reason_rejected,
+          path: "/portal/exenciones",
+        });
+      });
+
+    const credit = store.creditBalances.filter(
+      (c) => c.taxpayerId === id && c.status === "ACTIVE",
+    );
+    if (credit.length > 0) {
+      avisos.push({
+        id: "saldo-a-favor",
+        severity: "success",
+        title: "Tenés saldo a favor",
+        detail: `${formatMoney(sum(credit, (c) => c.amount))} disponibles para aplicar a una deuda. Consultá en la oficina de Rentas.`,
+        path: null,
+      });
+    }
+
+    const orden = { error: 0, info: 1, success: 2 };
+    return avisos.sort((a, b) => orden[a.severity] - orden[b.severity]);
+  },
+
+  // --------------------------------------------------------------- Consultas
+
+  async debts({ taxpayerId, status = "" }) {
+    if (!USE_MOCKS) {
+      const params = new URLSearchParams({ status });
+      return request(`/api/v1/portal/${taxpayerId}/debts?${params}`);
+    }
+    await delay();
+    const id = Number(taxpayerId);
+    return store.debts
+      .filter((d) => d.taxpayerId === id && (!status || d.status === status))
+      .sort((a, b) => dayOf(a.dueDate).localeCompare(dayOf(b.dueDate)))
+      .map((debt) => ({
+        ...debt,
+        conceptName: conceptName(debt.conceptCode),
+        daysLeft: daysUntil(debt.dueDate),
+        billId: store.bills.find((b) => b.debtId === debt.id && b.status === "ISSUED")?.id ?? null,
+        // Una deuda ya incluida en una solicitud viva no se puede volver a financiar.
+        planRequestId:
+          store.paymentPlans.find(
+            (p) => p.status !== "REJECTED" && p.debtIds.includes(debt.id),
+          )?.requestId ?? null,
+      }));
+  },
+
+  async bills({ taxpayerId, status = "" }) {
+    if (!USE_MOCKS) {
+      const params = new URLSearchParams({ status });
+      return request(`/api/v1/portal/${taxpayerId}/bills?${params}`);
+    }
+    await delay();
+    const id = Number(taxpayerId);
+    return store.bills
+      .filter((b) => b.taxpayerId === id && (!status || b.status === status))
+      .sort((a, b) => new Date(b.issuedAt) - new Date(a.issuedAt))
+      .map((bill) => ({
+        ...bill,
+        conceptName: conceptName(bill.conceptCode),
+        daysLeft: daysUntil(bill.dueDate),
+      }));
+  },
+
+  async payments({ taxpayerId }) {
+    if (!USE_MOCKS) return request(`/api/v1/portal/${taxpayerId}/payments`);
+    await delay();
+    const id = Number(taxpayerId);
+    return store.payments
+      .filter((p) => p.taxpayerId === id)
+      .sort((a, b) => new Date(b.paidAt) - new Date(a.paidAt))
+      .map((payment) => {
+        const debt = store.debts.find((d) => d.id === payment.debtId);
+        return {
+          ...payment,
+          conceptName: debt ? conceptName(debt.conceptCode) : null,
+        };
+      });
+  },
+
+  async paymentPlans({ taxpayerId }) {
+    if (!USE_MOCKS) return request(`/api/v1/portal/${taxpayerId}/payment-plans`);
+    await delay();
+    const id = Number(taxpayerId);
+    return store.paymentPlans
+      .filter((p) => p.taxpayerId === id)
+      .sort((a, b) => new Date(b.requestedAt) - new Date(a.requestedAt))
+      .map((plan) => ({
+        ...plan,
+        debts: store.debts
+          .filter((d) => plan.debtIds.includes(d.id))
+          .map((d) => ({ ...d, conceptName: conceptName(d.conceptCode) })),
+      }));
+  },
+
+  async exemptions({ taxpayerId }) {
+    if (!USE_MOCKS) return request(`/api/v1/portal/${taxpayerId}/exemptions`);
+    await delay();
+    const id = Number(taxpayerId);
+    return store.exemptions
+      .filter((e) => e.citizenId === id)
+      .sort((a, b) => new Date(b.requestedAt) - new Date(a.requestedAt))
+      .map((exemption) => ({ ...exemption, conceptName: conceptName(exemption.conceptCode) }));
+  },
+
+  // ---------------------------------------------------------------- Trámites
+
+  /** Simulación previa: el ciudadano ve la cuota antes de mandar la solicitud. */
+  simulatePaymentPlan({ totalDebt, installments, downPayment = 0 }) {
+    return paymentPlanService.simulate({ totalDebt, installments, downPayment });
+  },
+
+  /** Pedir financiar deudas en cuotas → publica paymentPlanRequested. */
+  async requestPaymentPlan({ taxpayerId, debtIds, installments, downPayment = 0 }) {
+    return paymentPlanService.request({ taxpayerId, debtIds, installments, downPayment });
+  },
+
+  /** Pedir una exención total o parcial → publica exemptionRequested hacia M8. */
+  async requestExemption({
+    taxpayerId,
+    conceptCode,
+    reason,
+    requestedPercentage,
+    requestedFrom,
+    requestedUntil,
+    attachments = [],
+  }) {
+    return exemptionService.requestExemption({
+      citizenId: taxpayerId,
+      conceptCode,
+      reason,
+      requestedPercentage,
+      requestedFrom,
+      requestedUntil,
+      attachments,
+    });
   },
 };
 

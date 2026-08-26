@@ -12,6 +12,10 @@ módulo, con login común y navegación separada por rol:
   conceptos, liquidaciones, deudas, pagos, planes, exenciones, tickets, integraciones,
   registro de auditoría e indicadores. El auditor observa todo el circuito y no
   modifica ninguna entidad: `auditService` no expone una sola operación de escritura.
+- **Portal del contribuyente** (`/portal`) — la única área de cara al ciudadano: su
+  resumen de cuenta con avisos, deudas, boletas, pagos, planes y exenciones. Consulta
+  su propio legajo y puede iniciar dos trámites —pedir un plan de pago, que es la vía
+  para conseguir más plazo, y pedir una exención—; no registra pagos ni resuelve nada.
 
 ## Comandos
 
@@ -40,8 +44,9 @@ Copiar `.env.example` a `.env`:
   poner `false`: las firmas de `src/services/rentasService.js` no cambian.
 
 Usuarios del dataset de demostración: `mrivas` / `rentas123` (Personal de Rentas),
-`jlopez` / `rentas123` (Supervisor), `pcabrera` / `caja123` (Cajero) y
-`acastro` / `audit123` (Auditor). Cada rol entra al panel de su área y no ve la del otro.
+`jlopez` / `rentas123` (Supervisor), `pcabrera` / `caja123` (Cajero),
+`acastro` / `audit123` (Auditor) y `jperez` / `ciudadano123` (Contribuyente). Cada rol
+entra al panel de su área y no ve la del otro.
 
 ## Estructura
 
@@ -55,9 +60,10 @@ src/
   config/modules.js     Módulos de Rentas y su visibilidad por rol
   config/cajaModules.js Módulos de la ventanilla de caja
   config/auditoriaModules.js  Módulos del área de auditoría
+  config/portalModules.js     Módulos del portal del contribuyente
   config/workspaces.js  A qué panel entra cada rol
   context/              Sesión del agente municipal
-  pages/                Login, y una página por módulo en pages/{rentas,caja,auditoria}/
+  pages/                Login, y una página por módulo en pages/{rentas,caja,auditoria,portal}/
   services/             Cliente HTTP, dataset de demostración y servicios de negocio
 ```
 

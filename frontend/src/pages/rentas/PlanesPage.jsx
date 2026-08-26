@@ -174,8 +174,14 @@ function ResolvePlanModal({ plan, taxpayerName, onClose, onDone }) {
   const [submitting, setSubmitting] = useState(false);
 
   const simulation = useMemo(
-    () => paymentPlanService.simulate({ totalDebt: plan.totalDebt, installments }),
-    [plan.totalDebt, installments],
+    () =>
+      paymentPlanService.simulate({
+        totalDebt: plan.totalDebt,
+        installments,
+        // El anticipo lo ofreció el contribuyente al solicitar: la resolución lo respeta.
+        downPayment: plan.downPayment,
+      }),
+    [plan.totalDebt, plan.downPayment, installments],
   );
 
   const currentStep = decision === "REJECTED" ? 2 : installments ? 1 : 0;
@@ -279,9 +285,19 @@ function ResolvePlanModal({ plan, taxpayerName, onClose, onDone }) {
                 </p>
               </div>
             </div>
+            {simulation.downPayment > 0 && (
+              <div className="mt-3 flex items-center justify-between border-t border-neutral-200 pt-3 text-[13px]">
+                <span className="text-neutral-500">
+                  Anticipo ofrecido por el contribuyente
+                </span>
+                <span className="font-semibold tabular-nums text-neutral-800">
+                  {formatCurrency(simulation.downPayment)}
+                </span>
+              </div>
+            )}
             <p className="mt-3 text-[12px] text-neutral-400">
-              Interés aplicado: {(simulation.interestRate * 100).toFixed(0)}% sobre la deuda
-              consolidada.
+              Interés aplicado: {(simulation.interestRate * 100).toFixed(0)}% sobre{" "}
+              {formatCurrency(simulation.financedAmount)} financiados.
             </p>
           </div>
         </>
