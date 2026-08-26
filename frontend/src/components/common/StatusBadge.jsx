@@ -27,6 +27,8 @@ const STATUS_TONES = {
   ORGANIZATION: "neutral",
   PENDING: "warning",
   REQUESTED: "warning",
+  PENDING_REVIEW: "info",
+  PENDING_SUPERVISOR: "warning",
   UNALLOCATED: "warning",
   WAITING_FOR_INFORMATION: "warning",
   RETRYING: "warning",

@@ -31,11 +31,13 @@ const STEPS = [
  * cuotas y la resolución publica updatePaymentPlanStatus (GRANTED | REJECTED).
  */
 export default function PlanesPage() {
-  const [status, setStatus] = useState("");
+  const { user } = useAuth();
+  const [filters, setFilters] = useState({ status: "", internalStatus: "" });
   const [selected, setSelected] = useState(null);
+  const [escalating, setEscalating] = useState(null);
   const [feedback, setFeedback] = useState(null);
 
-  const loader = useCallback(() => paymentPlanService.list({ status }), [status]);
+  const loader = useCallback(() => paymentPlanService.list(filters), [filters]);
   const { data: plans, loading, error, reload } = useResource(loader, []);
   const { nameOf } = useTaxpayerIndex();
 
@@ -74,19 +76,51 @@ export default function PlanesPage() {
     },
     { key: "status", header: "Estado", render: (row) => <StatusBadge status={row.status} /> },
     {
+      key: "internalStatus",
+      header: "Gestión interna",
+      render: (row) =>
+        row.status === "REQUESTED" ? (
+          <StatusBadge status={row.internalStatus} />
+        ) : (
+          <span className="text-neutral-300">—</span>
+        ),
+    },
+    {
       key: "actions",
       header: "",
       align: "right",
-      render: (row) =>
-        row.status === "REQUESTED" ? (
-          <Button size="sm" variant="primary" onClick={() => setSelected(row)}>
-            Resolver
-          </Button>
-        ) : (
-          <span className="text-[12px] text-neutral-400">
-            {row.resolvedBy ? `Por ${row.resolvedBy}` : "—"}
-          </span>
-        ),
+      render: (row) => {
+        if (row.status !== "REQUESTED") {
+          return (
+            <span className="text-[12px] text-neutral-400">
+              {row.resolvedBy ? `Por ${row.resolvedBy}` : "—"}
+            </span>
+          );
+        }
+
+        const derivada = row.internalStatus === "PENDING_SUPERVISOR";
+        // Derivada sólo la resuelve el Supervisor: el resto ve por qué no puede.
+        if (derivada && user.role !== "SUPERVISOR") {
+          return (
+            <span className="text-[12px] text-neutral-400">
+              Esperando al Supervisor
+            </span>
+          );
+        }
+
+        return (
+          <div className="flex justify-end gap-2">
+            {!derivada && user.role !== "SUPERVISOR" && (
+              <Button size="sm" variant="secondary" onClick={() => setEscalating(row)}>
+                Derivar
+              </Button>
+            )}
+            <Button size="sm" variant="primary" onClick={() => setSelected(row)}>
+              Resolver
+            </Button>
+          </div>
+        );
+      },
     },
   ];
 
@@ -105,6 +139,12 @@ export default function PlanesPage() {
       )}
       {error && <Alert variant="error" title="No pudimos cargar las solicitudes">{error}</Alert>}
 
+      <Alert variant="info" title="La derivación no sale de Rentas">
+        Derivar al Supervisor es un estado interno del módulo. Hacia los demás módulos
+        sólo viaja la resolución final —otorgado o rechazado— en{" "}
+        <code className="font-semibold">updatePaymentPlanStatus</code>.
+      </Alert>
+
       <Card
         title="Solicitudes"
         description="Otorgar genera el plan y sus cuotas; rechazar exige un motivo."
@@ -120,9 +160,19 @@ export default function PlanesPage() {
                 { value: "REJECTED", label: "Rechazados" },
               ],
             },
+            {
+              name: "internalStatus",
+              label: "Gestión interna",
+              options: [
+                { value: "PENDING_REVIEW", label: "En revisión" },
+                { value: "PENDING_SUPERVISOR", label: "Derivado a Supervisor" },
+              ],
+            },
           ]}
-          values={{ status }}
-          onFilterChange={(_, value) => setStatus(value)}
+          values={filters}
+          onFilterChange={(name, value) =>
+            setFilters((previous) => ({ ...previous, [name]: value }))
+          }
         />
 
         <DataTable
@@ -135,6 +185,24 @@ export default function PlanesPage() {
           emptyDescription="No hay planes de pago que coincidan con el filtro."
         />
       </Card>
+
+      {escalating && (
+        <EscalatePlanModal
+          plan={escalating}
+          taxpayerName={nameOf(escalating.taxpayerId)}
+          escalatedBy={user.username}
+          onClose={() => setEscalating(null)}
+          onDone={(plan) => {
+            setEscalating(null);
+            setFeedback({
+              variant: "success",
+              title: "Solicitud derivada",
+              message: `La solicitud #${plan.requestId} quedó a resolución del Supervisor. No se publicó ningún evento: la derivación es interna.`,
+            });
+            reload();
+          }}
+        />
+      )}
 
       {selected && (
         <ResolvePlanModal
@@ -165,6 +233,81 @@ export default function PlanesPage() {
 }
 
 /** Simulación de cuotas + resolución en un mismo flujo de tres pasos. */
+/**
+ * EscalatePaymentPlanRequest: el analista que no puede decidir manda la solicitud
+ * al Supervisor con el motivo. No publica nada: el estado es interno de M5.
+ */
+function EscalatePlanModal({ plan, taxpayerName, escalatedBy, onClose, onDone }) {
+  const [note, setNote] = useState("");
+  const [error, setError] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const onSubmit = async (event) => {
+    event.preventDefault();
+    setError(null);
+    if (!note.trim()) {
+      setError("Indicá por qué la derivás: el Supervisor necesita el contexto.");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      onDone(
+        await paymentPlanService.escalate({
+          requestId: plan.requestId,
+          escalatedBy,
+          note,
+        }),
+      );
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Modal
+      open
+      title={`Derivar la solicitud #${plan.requestId}`}
+      description={`${taxpayerName} · ${formatCurrency(plan.totalDebt)} en ${plan.installments} cuotas`}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancelar
+          </Button>
+          <Button variant="primary" loading={submitting} onClick={onSubmit}>
+            Derivar al Supervisor
+          </Button>
+        </>
+      }
+    >
+      {error && (
+        <Alert variant="error" title="No se pudo derivar">
+          {error}
+        </Alert>
+      )}
+
+      <Alert variant="info" title="La solicitud sigue pendiente para el exterior">
+        Derivar no resuelve nada ni publica ningún evento. Para los demás módulos la
+        solicitud sigue en el mismo estado hasta que el Supervisor la otorgue o la rechace.
+      </Alert>
+
+      <form onSubmit={onSubmit} noValidate>
+        <FormField
+          label="Motivo de la derivación"
+          name="note"
+          type="textarea"
+          placeholder="Por ejemplo: el contribuyente pide más cuotas de las habituales."
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+          required
+        />
+      </form>
+    </Modal>
+  );
+}
+
 function ResolvePlanModal({ plan, taxpayerName, onClose, onDone }) {
   const { user } = useAuth();
   const [installments, setInstallments] = useState(String(plan.installments));
@@ -196,6 +339,8 @@ function ResolvePlanModal({ plan, taxpayerName, onClose, onDone }) {
           installments: Number(installments),
           reason,
           resolvedBy: user.username,
+          // El servicio rechaza que un analista resuelva una solicitud ya derivada.
+          resolverRole: user.role,
         }),
       );
     } catch (caught) {

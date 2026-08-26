@@ -45,6 +45,14 @@ function recordOutboundEvent(eventType, destinationModule, data) {
 const matches = (value, term) =>
   String(value ?? "").toLowerCase().includes(term.toLowerCase());
 
+/**
+ * Estado interno de una solicitud de plan. No viaja a ningún módulo: el contrato
+ * sólo conoce REQUESTED, GRANTED y REJECTED. Las solicitudes que nunca se derivaron
+ * se leen como PENDING_REVIEW sin necesidad de marcarlas en el dataset.
+ */
+const internalStatusOf = (plan) =>
+  plan.internalStatus ?? (plan.status === "REQUESTED" ? "PENDING_REVIEW" : plan.status);
+
 /** Los importes se redondean a centavos: el dinero nunca se muestra con ruido binario. */
 const round2 = (value) => Math.round(value * 100) / 100;
 
@@ -445,13 +453,16 @@ function originModule(originType) {
 // -------------------------------------------------------------- Planes de pago
 
 export const paymentPlanService = {
-  async list({ status = "" } = {}) {
+  async list({ status = "", internalStatus = "" } = {}) {
     if (!USE_MOCKS) {
-      const params = new URLSearchParams({ status });
+      const params = new URLSearchParams({ status, internalStatus });
       return request(`/api/v1/payment-plans?${params}`);
     }
     await delay();
-    return store.paymentPlans.filter((p) => !status || p.status === status);
+    return store.paymentPlans
+      .filter((p) => !status || p.status === status)
+      .map((p) => ({ ...p, internalStatus: internalStatusOf(p) }))
+      .filter((p) => !internalStatus || p.internalStatus === internalStatus);
   },
 
   /** Simula el plan antes de resolver: interés fijo del 5% por cada 3 cuotas. */
@@ -468,8 +479,42 @@ export const paymentPlanService = {
     };
   },
 
+  /**
+   * Deriva la solicitud al Supervisor (EscalatePaymentPlanRequest).
+   *
+   * Es un estado **interno de M5**: no se publica nada. El contrato con el exterior
+   * sólo contempla la resolución final (GRANTED | REJECTED), así que inventar un
+   * estado intermodular para la derivación rompería el acuerdo con los otros módulos.
+   */
+  async escalate({ requestId, escalatedBy, note }) {
+    if (!USE_MOCKS) {
+      return request(`/api/v1/payment-plans/${requestId}/escalate`, {
+        method: "POST",
+        body: { note },
+      });
+    }
+    await delay();
+    const plan = store.paymentPlans.find((p) => p.requestId === Number(requestId));
+    if (!plan) throw new ApiError("Solicitud inexistente.", 404);
+    if (plan.status !== "REQUESTED") {
+      throw new ApiError("La solicitud ya fue resuelta.", 409);
+    }
+    if (internalStatusOf(plan) === "PENDING_SUPERVISOR") {
+      throw new ApiError("La solicitud ya está derivada al Supervisor.", 409);
+    }
+    if (!note?.trim()) {
+      throw new ApiError("Indicá por qué la derivás: el Supervisor necesita el contexto.", 400);
+    }
+
+    plan.internalStatus = "PENDING_SUPERVISOR";
+    plan.escalatedBy = escalatedBy;
+    plan.escalatedAt = nowIso();
+    plan.escalationNote = note;
+    return plan;
+  },
+
   /** ResolvePaymentPlanRequest → publica updatePaymentPlanStatus (GRANTED | REJECTED). */
-  async resolve({ requestId, status, installments, reason, resolvedBy }) {
+  async resolve({ requestId, status, installments, reason, resolvedBy, resolverRole }) {
     if (!USE_MOCKS) {
       return request(`/api/v1/payment-plans/${requestId}/status`, {
         method: "PUT",
@@ -485,8 +530,12 @@ export const paymentPlanService = {
     if (status === "REJECTED" && !reason?.trim()) {
       throw new ApiError("El motivo del rechazo es obligatorio.", 400);
     }
+    if (internalStatusOf(plan) === "PENDING_SUPERVISOR" && resolverRole !== "SUPERVISOR") {
+      throw new ApiError("La solicitud está derivada: sólo el Supervisor puede resolverla.", 403);
+    }
 
     plan.status = status;
+    plan.internalStatus = status === "GRANTED" ? "APPROVED" : "REJECTED";
     plan.resolvedAt = nowIso();
     plan.resolvedBy = resolvedBy;
 

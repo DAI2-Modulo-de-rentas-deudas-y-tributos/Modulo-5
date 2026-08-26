@@ -42,6 +42,9 @@ export const STATUS_LABELS = {
   REVERSED: "Reversado",
   REQUESTED: "Pendiente de resolución",
   GRANTED: "Otorgado",
+  // Estados internos de M5: no viajan a ningún módulo.
+  PENDING_REVIEW: "En revisión",
+  PENDING_SUPERVISOR: "Derivado a Supervisor",
   APPROVED: "Aprobada",
   REJECTED: "Rechazada",
   OPEN: "Abierto",
