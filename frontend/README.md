@@ -1,7 +1,13 @@
 # Frontend
 
-Aplicación web React del Módulo 5 — Rentas. Contiene el **área de trabajo de
-Personal de Rentas**: login y los módulos funcionales de la operación diaria.
+Aplicación web React del Módulo 5 — Rentas. Contiene las dos áreas de trabajo del
+módulo, con login común y navegación separada por rol:
+
+- **Personal de Rentas** (`/rentas`) — back-office: liquidaciones, deudas, boletas,
+  pagos, planes, exenciones, tickets y, para el supervisor, la bitácora de eventos.
+- **Caja** (`/caja`) — ventanilla del cajero: cobros, consulta del padrón, pagos del
+  día y búsqueda de boletas. El cajero cobra e imprime comprobantes; no liquida, no
+  resuelve planes ni exenciones y no reversa pagos.
 
 ## Comandos
 
@@ -29,21 +35,29 @@ Copiar `.env.example` a `.env`:
   backend no exista, la app funciona completa contra esos datos. Con el backend arriba,
   poner `false`: las firmas de `src/services/rentasService.js` no cambian.
 
-Usuarios del dataset de demostración: `mrivas` / `rentas123` (Personal de Rentas) y
-`jlopez` / `rentas123` (Supervisor).
+Usuarios del dataset de demostración: `mrivas` / `rentas123` (Personal de Rentas),
+`jlopez` / `rentas123` (Supervisor) y `pcabrera` / `caja123` (Cajero). Cada rol entra
+al panel de su área y no ve la del otro.
 
 ## Estructura
 
 ```text
 src/
   components/ui/        Kit compartido del design system (no modificar; extender por props)
-  components/layout/    Sidebar, Topbar, Footer y shell de los módulos
+  components/layout/    Sidebar, Topbar, Footer y el shell de cada área de trabajo
   components/common/    Piezas del back-office: DataTable, Modal, FilterBar, Card…
-  config/modules.js     Módulos funcionales del área y su visibilidad por rol
+  components/caja/      Comprobante de ventanilla y su reimpresión
+  config/modules.js     Módulos de Rentas y su visibilidad por rol
+  config/cajaModules.js Módulos de la ventanilla de caja
+  config/workspaces.js  A qué panel entra cada rol
   context/              Sesión del agente municipal
-  pages/                Login, panel de inicio y una página por módulo en pages/rentas/
+  pages/                Login, y una página por módulo en pages/rentas/ y pages/caja/
   services/             Cliente HTTP, dataset de demostración y servicios de negocio
 ```
+
+El comprobante de caja se imprime desde el navegador: `ReceiptCard` lleva la clase
+`print-area` y las reglas `@media print` de `src/index.css` dejan sólo el ticket en el
+papel. Cuando exista el backend, el PDF se generará ahí y se guardará en S3.
 
 ## Design system
 

@@ -6,11 +6,12 @@ import Alert from "../components/ui/Alert.jsx";
 import Button from "../components/common/Button.jsx";
 import logo from "../assets/logo.png";
 import { useAuth } from "../context/AuthContext.jsx";
+import { homePathForRole } from "../config/workspaces.js";
 import { USE_MOCKS } from "../services/apiClient.js";
 
 /** Ingreso al área de trabajo. Sólo agentes municipales: no hay autorregistro. */
 export default function LoginPage() {
-  const { login, isAuthenticated } = useAuth();
+  const { login, isAuthenticated, user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -20,7 +21,7 @@ export default function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
 
   if (isAuthenticated) {
-    return <Navigate to={location.state?.from ?? "/rentas"} replace />;
+    return <Navigate to={location.state?.from ?? homePathForRole(user.role)} replace />;
   }
 
   const onChange = (event) => {
@@ -44,8 +45,9 @@ export default function LoginPage() {
 
     setSubmitting(true);
     try {
-      await login(form);
-      navigate(location.state?.from ?? "/rentas", { replace: true });
+      // Cada rol tiene su propia área: el destino sale del perfil que devuelve el login.
+      const profile = await login(form);
+      navigate(location.state?.from ?? homePathForRole(profile.role), { replace: true });
     } catch (caught) {
       setSubmitError(caught.message);
     } finally {
@@ -79,8 +81,8 @@ export default function LoginPage() {
             </span>
           </h1>
           <p className="mt-4 max-w-sm text-[15px] leading-relaxed text-white/60">
-            Liquidaciones, deudas, boletas, pagos, planes de pago y exenciones de la
-            Municipalidad de Ciudad UADE.
+            Liquidaciones, deudas, boletas, pagos, planes de pago, exenciones y la caja de
+            atención al contribuyente de la Municipalidad de Ciudad UADE.
           </p>
         </div>
 
@@ -152,6 +154,10 @@ export default function LoginPage() {
                 <li>
                   <code className="font-semibold text-[#0F2C59]">jlopez</code> / rentas123 —
                   Supervisor
+                </li>
+                <li>
+                  <code className="font-semibold text-[#0F2C59]">pcabrera</code> / caja123 —
+                  Cajero
                 </li>
               </ul>
             </div>

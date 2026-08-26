@@ -6,6 +6,12 @@
  * beneficios de M8, tickets de M2) se referencian por `originType` + `originId`.
  */
 
+/**
+ * Jornada de la demo. El dataset está fechado en este día para que el panel de caja
+ * muestre siempre una jornada con movimiento.
+ */
+export const BUSINESS_DATE = "2026-08-25";
+
 export const CONCEPTS = [
   { code: "TASA_SERVICIOS", label: "Tasa de servicios generales" },
   { code: "ABL", label: "Alumbrado, barrido y limpieza" },
@@ -41,6 +47,29 @@ export const USERS = [
     roleLabel: "Supervisor de Rentas",
     email: "jlopez@rentas.ciudaduade.gob.ar",
   },
+  {
+    id: 3,
+    username: "pcabrera",
+    password: "caja123",
+    fullName: "Paula Cabrera",
+    role: "CAJERO",
+    roleLabel: "Cajero de Rentas",
+    email: "pcabrera@rentas.ciudaduade.gob.ar",
+    /** Puesto de atención al que se imputan los cobros de la jornada. */
+    counter: "Caja 3 — Sede Central",
+  },
+];
+
+/**
+ * Medios de pago aceptados en ventanilla. El canal (`channel`) dice por dónde entró
+ * el dinero; el medio (`method`) dice con qué instrumento pagó el contribuyente.
+ */
+export const PAYMENT_METHODS = [
+  { value: "EFECTIVO", label: "Efectivo" },
+  { value: "TARJETA_DEBITO", label: "Tarjeta de débito" },
+  { value: "TARJETA_CREDITO", label: "Tarjeta de crédito" },
+  { value: "TRANSFERENCIA", label: "Transferencia" },
+  { value: "QR", label: "Billetera virtual / QR" },
 ];
 
 export const taxpayers = [
@@ -200,7 +229,7 @@ export const debts = [
     originType: "TRAFFIC_INFRACTION",
     originId: 850,
     originalAmount: 75000.0,
-    outstandingAmount: 75000.0,
+    outstandingAmount: 50000.0,
     dueDate: "2026-09-20",
     status: "PENDING",
     reportedToM8: false,
@@ -213,7 +242,7 @@ export const debts = [
     originType: "SETTLEMENT",
     originId: 7003,
     originalAmount: 96000.0,
-    outstandingAmount: 42000.0,
+    outstandingAmount: 30000.0,
     dueDate: "2026-07-20",
     status: "OVERDUE",
     reportedToM8: true,
@@ -270,6 +299,9 @@ export const payments = [
     remainingBalance: 0.0,
     paidAt: "2026-08-24T15:30:00-03:00",
     channel: "VENTANILLA",
+    method: "EFECTIVO",
+    registeredBy: "pcabrera",
+    wasOverdue: false,
     receiptNumber: "REC-2026-9001",
     status: "REGISTERED",
     allocated: true,
@@ -284,6 +316,9 @@ export const payments = [
     remainingBalance: 42000.0,
     paidAt: "2026-08-23T12:10:00-03:00",
     channel: "TRANSFERENCIA",
+    method: "TRANSFERENCIA",
+    registeredBy: "mrivas",
+    wasOverdue: true,
     receiptNumber: "REC-2026-9002",
     status: "REGISTERED",
     allocated: true,
@@ -298,6 +333,9 @@ export const payments = [
     remainingBalance: null,
     paidAt: "2026-08-25T09:05:00-03:00",
     channel: "HOMEBANKING",
+    method: "TRANSFERENCIA",
+    registeredBy: null,
+    wasOverdue: null,
     receiptNumber: "REC-2026-9003",
     status: "UNALLOCATED",
     allocated: false,
@@ -312,10 +350,47 @@ export const payments = [
     remainingBalance: null,
     paidAt: "2026-08-18T16:45:00-03:00",
     channel: "VENTANILLA",
+    method: "EFECTIVO",
+    registeredBy: "pcabrera",
+    wasOverdue: false,
     receiptNumber: "REC-2026-9004",
     status: "REVERSED",
     allocated: false,
     reversalReason: "Pago registrado por error",
+  },
+  {
+    id: 9005,
+    taxpayerId: 123,
+    debtId: 3003,
+    originType: "TRAFFIC_INFRACTION",
+    originId: 850,
+    amountPaid: 25000.0,
+    remainingBalance: 50000.0,
+    paidAt: "2026-08-25T09:40:00-03:00",
+    channel: "VENTANILLA",
+    method: "TARJETA_DEBITO",
+    registeredBy: "pcabrera",
+    wasOverdue: false,
+    receiptNumber: "REC-2026-9005",
+    status: "REGISTERED",
+    allocated: true,
+  },
+  {
+    id: 9006,
+    taxpayerId: 145,
+    debtId: 3004,
+    originType: "SETTLEMENT",
+    originId: 7003,
+    amountPaid: 12000.0,
+    remainingBalance: 30000.0,
+    paidAt: "2026-08-25T10:15:00-03:00",
+    channel: "VENTANILLA",
+    method: "EFECTIVO",
+    registeredBy: "pcabrera",
+    wasOverdue: true,
+    receiptNumber: "REC-2026-9006",
+    status: "REGISTERED",
+    allocated: true,
   },
 ];
 

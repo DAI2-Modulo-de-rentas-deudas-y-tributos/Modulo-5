@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  billService,
+  cashierService,
   debtService,
   exemptionService,
   paymentPlanService,
@@ -266,5 +268,139 @@ describe("tickets", () => {
 
     expect(ticket.status).toBe("IN_PROGRESS");
     expect(ticket.assignedTo).toBe("mrivas");
+  });
+});
+
+describe("caja", () => {
+  it("busca al contribuyente por documento y devuelve su deuda consolidada", async () => {
+    const results = await cashierService.search({ query: "40111222" });
+
+    const taxpayer = results.find((r) => r.kind === "TAXPAYER");
+    expect(taxpayer.title).toBe("Juan Pérez");
+    expect(taxpayer.amount).toBeGreaterThan(0);
+  });
+
+  it("busca por N° de boleta y muestra a qué contribuyente está vinculada", async () => {
+    const results = await cashierService.search({ query: "12001" });
+
+    expect(results[0].kind).toBe("BILL");
+    expect(results[0].subtitle).toMatch(/Juan Pérez/);
+    expect(results[0].taxpayerId).toBe(123);
+  });
+
+  it("preselecciona la deuda cuando el cobro entra por una boleta", async () => {
+    const context = await cashierService.chargeContext({ kind: "BILL", id: 12002 });
+
+    expect(context.taxpayer.id).toBe(78);
+    expect(context.bill.id).toBe(12002);
+    expect(context.selectedDebtId).toBe(3002);
+    expect(context.debts).toHaveLength(1);
+  });
+
+  it("exige el medio de pago para cobrar en ventanilla", async () => {
+    await expect(
+      cashierService.registerCounterPayment({ debtId: 3003, amountPaid: 1000 }),
+    ).rejects.toThrow(/medio de pago/i);
+  });
+
+  it("rechaza cobrar una deuda sin saldo", async () => {
+    await expect(
+      cashierService.registerCounterPayment({
+        debtId: 3001,
+        amountPaid: 1000,
+        method: "EFECTIVO",
+        registeredBy: "pcabrera",
+      }),
+    ).rejects.toThrow(/cancelada/i);
+  });
+
+  it("cobra la deuda y devuelve el comprobante con el responsable", async () => {
+    const settlement = await settlementService.generate({
+      taxpayerId: 78,
+      conceptCode: "ABL",
+      period: "2026-12",
+      baseAmount: 40000,
+      dueDate: "2026-12-10",
+    });
+    await settlementService.issue(settlement.id);
+    const debt = (await debtService.list({ taxpayerId: 78 })).find(
+      (d) => d.originId === settlement.id,
+    );
+
+    const receipt = await cashierService.registerCounterPayment({
+      debtId: debt.id,
+      amountPaid: 40000,
+      method: "EFECTIVO",
+      registeredBy: "pcabrera",
+    });
+
+    expect(receipt.receiptNumber).toMatch(/^REC-2026-/);
+    expect(receipt.amountPaid).toBe(40000);
+    expect(receipt.remainingBalance).toBe(0);
+    expect(receipt.settled).toBe(true);
+    expect(receipt.wasOverdue).toBe(false);
+    expect(receipt.cashier.fullName).toBe("Paula Cabrera");
+    expect(receipt.channel).toBe("VENTANILLA");
+  });
+
+  it("cancela la boleta junto con la deuda que la originó", async () => {
+    const bills = await billService.list({ taxpayerId: "78" });
+    expect(bills.find((b) => b.id === 12002).status).toBe("ISSUED");
+
+    await cashierService.registerCounterPayment({
+      debtId: 3002,
+      amountPaid: 150000,
+      method: "TRANSFERENCIA",
+      registeredBy: "pcabrera",
+    });
+
+    const after = await billService.list({ taxpayerId: "78" });
+    expect(after.find((b) => b.id === 12002).status).toBe("SETTLED");
+  });
+
+  it("suma el cobro a la jornada del cajero", async () => {
+    const before = await cashierService.dailySummary({ registeredBy: "pcabrera" });
+
+    const settlement = await settlementService.generate({
+      taxpayerId: 190,
+      conceptCode: "PATENTE",
+      period: "2026-12",
+      baseAmount: 5000,
+      dueDate: "2026-12-20",
+    });
+    await settlementService.issue(settlement.id);
+    const debt = (await debtService.list({ taxpayerId: 190 })).find(
+      (d) => d.originId === settlement.id,
+    );
+    await cashierService.registerCounterPayment({
+      debtId: debt.id,
+      amountPaid: 5000,
+      method: "QR",
+      registeredBy: "pcabrera",
+    });
+
+    const after = await cashierService.dailySummary({ registeredBy: "pcabrera" });
+
+    expect(after.registeredCount).toBe(before.registeredCount + 1);
+    expect(after.totalCollected).toBe(before.totalCollected + 5000);
+    expect(after.latest[0].amountPaid).toBe(5000);
+  });
+
+  it("reconstruye el comprobante de un pago ya registrado", async () => {
+    const receipt = await cashierService.receipt(9005);
+
+    expect(receipt.receiptNumber).toBe("REC-2026-9005");
+    expect(receipt.taxpayer.name).toBe("Juan Pérez");
+    expect(receipt.method).toBe("TARJETA_DEBITO");
+    expect(receipt.cashier.counter).toMatch(/Caja 3/);
+  });
+
+  it("arma la ficha del contribuyente con deudas, pagos y boletas", async () => {
+    const file = await cashierService.taxpayerFile(123);
+
+    expect(file.taxpayer.name).toBe("Juan Pérez");
+    expect(file.debts.length).toBeGreaterThan(0);
+    expect(file.payments.length).toBeGreaterThan(0);
+    expect(file.totals.outstanding).toBeGreaterThanOrEqual(0);
   });
 });

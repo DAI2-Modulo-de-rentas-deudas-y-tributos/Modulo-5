@@ -10,6 +10,11 @@ const dateFormatter = new Intl.DateTimeFormat("es-AR", {
   year: "numeric",
 });
 
+const timeFormatter = new Intl.DateTimeFormat("es-AR", {
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
 const dateTimeFormatter = new Intl.DateTimeFormat("es-AR", {
   day: "2-digit",
   month: "2-digit",
@@ -25,6 +30,15 @@ export const formatDate = (value) => (value ? dateFormatter.format(new Date(valu
 
 export const formatDateTime = (value) =>
   value ? dateTimeFormatter.format(new Date(value)) : "—";
+
+export const formatTime = (value) => (value ? timeFormatter.format(new Date(value)) : "—");
+
+/** `YYYY-MM-DD` de una fecha, para comparar jornadas sin arrastrar la hora. */
+export const toDateInput = (value) => {
+  const date = value ? new Date(value) : new Date();
+  const offset = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 10);
+};
 
 export const formatPercentage = (value) =>
   value === null || value === undefined ? "—" : `${Number(value).toFixed(0)}%`;
@@ -60,6 +74,15 @@ export const STATUS_LABELS = {
   HIGH: "Alta",
   MEDIUM: "Media",
   LOW: "Baja",
+  // Medios de pago de ventanilla.
+  EFECTIVO: "Efectivo",
+  TARJETA_DEBITO: "Tarjeta de débito",
+  TARJETA_CREDITO: "Tarjeta de crédito",
+  TRANSFERENCIA: "Transferencia",
+  QR: "Billetera virtual / QR",
+  VENTANILLA: "Ventanilla",
+  HOMEBANKING: "Homebanking",
+  DEBITO_AUTOMATICO: "Débito automático",
 };
 
 export const labelFor = (value) => STATUS_LABELS[value] ?? value ?? "—";

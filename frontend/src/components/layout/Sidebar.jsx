@@ -1,13 +1,21 @@
 import { NavLink } from "react-router-dom";
 import { icons, X } from "lucide-react";
 import logo from "../../assets/logo.png";
-import { modulesForRole } from "../../config/modules.js";
-import { useAuth } from "../../context/AuthContext.jsx";
 
-/** Navegación lateral del área de trabajo: un ítem por módulo funcional. */
-export default function Sidebar({ open, onClose }) {
-  const { user } = useAuth();
-  const modules = modulesForRole(user.role);
+/**
+ * Navegación lateral del área de trabajo: un ítem por módulo funcional.
+ * Es presentacional — cada layout decide qué módulos entrega y cómo se llama su área.
+ */
+export default function Sidebar({
+  open,
+  onClose,
+  modules = [],
+  homePath,
+  homeLabel = "Panel de inicio",
+  areaTag,
+  sectionLabel = "Operación",
+  footerLines = [],
+}) {
 
   const linkClasses = ({ isActive }) =>
     `flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium transition-colors ${
@@ -37,7 +45,7 @@ export default function Sidebar({ open, onClose }) {
             <div className="leading-tight">
               <p className="text-[13px] font-bold text-white">Ciudad UADE</p>
               <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-white/40">
-                Rentas
+                {areaTag}
               </p>
             </div>
           </div>
@@ -52,16 +60,16 @@ export default function Sidebar({ open, onClose }) {
         </div>
 
         <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 pb-6">
-          <NavLink to="/rentas" end className={linkClasses} onClick={onClose}>
+          <NavLink to={homePath} end className={linkClasses} onClick={onClose}>
             {(() => {
               const Icon = icons.LayoutDashboard;
               return <Icon className="h-4 w-4 shrink-0" strokeWidth={1.5} />;
             })()}
-            Panel de inicio
+            {homeLabel}
           </NavLink>
 
           <p className="mt-4 px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.15em] text-white/30">
-            Operación
+            {sectionLabel}
           </p>
 
           {modules.map((module) => {
@@ -82,9 +90,12 @@ export default function Sidebar({ open, onClose }) {
 
         <div className="border-t border-white/10 px-5 py-4">
           <p className="text-[11px] text-white/40 leading-relaxed">
-            Módulo 5 — Rentas
-            <br />
-            Gestión 2026
+            {footerLines.map((line, index) => (
+              <span key={line}>
+                {index > 0 && <br />}
+                {line}
+              </span>
+            ))}
           </p>
         </div>
       </aside>
