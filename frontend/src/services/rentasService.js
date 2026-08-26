@@ -155,6 +155,152 @@ export const settlementService = {
     return settlement;
   },
 
+  /**
+   * Previsualiza un lote antes de emitirlo (PreviewSettlementBatchRequest).
+   *
+   * Devuelve tres grupos porque no todos los casos son iguales:
+   *  - `items`    : lo que se va a generar, con el descuento ya calculado por contribuyente.
+   *  - `errors`   : lo que queda afuera y por qué. Nada de esto se genera.
+   *  - `warnings` : se genera igual, pero el operador tiene que saberlo.
+   *
+   * Un contribuyente bloqueado o fallecido **no** es un error: la obligación existe
+   * igual. Lo que M1 restringe es la emisión de boletas, no la liquidación.
+   */
+  async previewBatch({ conceptCode, period, baseAmount, dueDate, taxpayerType = "" }) {
+    if (!USE_MOCKS) {
+      return request("/api/v1/settlements/batch/preview", {
+        method: "POST",
+        body: { conceptCode, period, baseAmount, dueDate, taxpayerType },
+      });
+    }
+    await delay();
+
+    const base = Number(baseAmount);
+    const alcanzados = store.taxpayers.filter((t) => !taxpayerType || t.type === taxpayerType);
+
+    const items = [];
+    const errors = [];
+    const warnings = [];
+
+    alcanzados.forEach((taxpayer) => {
+      // Una liquidación por contribuyente, concepto y período: no se duplica.
+      const yaLiquidado = store.settlements.find(
+        (s) =>
+          s.taxpayerId === taxpayer.id &&
+          s.conceptCode === conceptCode &&
+          s.period === period,
+      );
+      if (yaLiquidado) {
+        errors.push({
+          taxpayerId: taxpayer.id,
+          taxpayerName: taxpayer.name,
+          reason: `Ya tiene la liquidación #${yaLiquidado.id} para ${conceptCode} ${period}.`,
+        });
+        return;
+      }
+
+      // El descuento sale del beneficio social replicado desde M8.
+      const benefit = taxpayer.benefit;
+      const aplica =
+        benefit?.status === "ACTIVE" && benefit.applicableConceptCodes.includes(conceptCode);
+      const discountPercentage = aplica ? benefit.discountPercentage : 0;
+      const amount = round2(base * (1 - discountPercentage / 100));
+
+      if (taxpayer.status === "BLOCKED") {
+        warnings.push({
+          taxpayerId: taxpayer.id,
+          taxpayerName: taxpayer.name,
+          reason: "Bloqueado en M1: se liquida, pero no emitas la boleta hasta regularizar.",
+        });
+      }
+      if (taxpayer.status === "DECEASED") {
+        warnings.push({
+          taxpayerId: taxpayer.id,
+          taxpayerName: taxpayer.name,
+          reason: "Fallecimiento informado por M1: la deuda debe tramitarse con los herederos.",
+        });
+      }
+
+      items.push({
+        taxpayerId: taxpayer.id,
+        taxpayerName: taxpayer.name,
+        taxpayerType: taxpayer.type,
+        document: `${taxpayer.documentType} ${taxpayer.document}`,
+        status: taxpayer.status,
+        baseAmount: base,
+        discountPercentage,
+        amount,
+      });
+    });
+
+    return {
+      conceptCode,
+      period,
+      dueDate,
+      items,
+      errors,
+      warnings,
+      totals: {
+        toGenerate: items.length,
+        skipped: errors.length,
+        flagged: warnings.length,
+        amount: round2(items.reduce((acc, i) => acc + i.amount, 0)),
+        discounted: items.filter((i) => i.discountPercentage > 0).length,
+      },
+    };
+  },
+
+  /**
+   * GenerateSettlementBatchRequest → genera el lote en borrador.
+   *
+   * Queda en `DRAFT` a propósito: emitir doscientas liquidaciones de una es
+   * irreversible, así que la emisión sigue siendo un acto explícito por liquidación.
+   */
+  async generateBatch({ conceptCode, period, baseAmount, dueDate, taxpayerType = "" }) {
+    if (!USE_MOCKS) {
+      return request("/api/v1/settlements/batch", {
+        method: "POST",
+        body: { conceptCode, period, baseAmount, dueDate, taxpayerType },
+      });
+    }
+
+    const preview = await settlementService.previewBatch({
+      conceptCode,
+      period,
+      baseAmount,
+      dueDate,
+      taxpayerType,
+    });
+    if (preview.items.length === 0) {
+      throw new ApiError("No hay contribuyentes alcanzados: revisá el período y el alcance.", 409);
+    }
+
+    const generated = preview.items.map((item) => {
+      const settlement = {
+        id: nextId(),
+        taxpayerId: item.taxpayerId,
+        taxpayerType: item.taxpayerType,
+        conceptCode,
+        period,
+        baseAmount: item.baseAmount,
+        discountPercentage: item.discountPercentage,
+        amount: item.amount,
+        dueDate,
+        status: "DRAFT",
+        createdAt: nowIso(),
+      };
+      store.settlements.unshift(settlement);
+      return settlement;
+    });
+
+    return {
+      generated,
+      totals: preview.totals,
+      errors: preview.errors,
+      warnings: preview.warnings,
+    };
+  },
+
   /** Confirma la liquidación y genera la deuda asociada (evento interno debtGenerated). */
   async issue(settlementId) {
     if (!USE_MOCKS) {
