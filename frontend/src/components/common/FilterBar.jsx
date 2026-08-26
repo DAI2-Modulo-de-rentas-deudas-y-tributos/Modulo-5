@@ -2,7 +2,7 @@ import { Search } from "lucide-react";
 
 /**
  * Barra de filtros de los listados: buscador libre + selects declarativos.
- * `filters`: [{ name, label, options }]
+ * `filters`: [{ name, label, options }] o [{ name, label, type: "date" }]
  */
 export default function FilterBar({
   searchValue = "",
@@ -33,22 +33,33 @@ export default function FilterBar({
           </div>
         )}
 
-        {filters.map((filter) => (
-          <select
-            key={filter.name}
-            value={values[filter.name] ?? ""}
-            aria-label={filter.label}
-            onChange={(event) => onFilterChange(filter.name, event.target.value)}
-            className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-[13px] font-medium text-neutral-700 outline-none transition-colors focus:border-[#D63031]/40 focus:bg-white focus:ring-2 focus:ring-[#D63031]/10"
-          >
-            <option value="">{filter.label}: todos</option>
-            {filter.options.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        ))}
+        {filters.map((filter) =>
+          filter.type === "date" ? (
+            <input
+              key={filter.name}
+              type="date"
+              value={values[filter.name] ?? ""}
+              aria-label={filter.label}
+              onChange={(event) => onFilterChange(filter.name, event.target.value)}
+              className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-[13px] font-medium text-neutral-700 outline-none transition-colors focus:border-[#D63031]/40 focus:bg-white focus:ring-2 focus:ring-[#D63031]/10"
+            />
+          ) : (
+            <select
+              key={filter.name}
+              value={values[filter.name] ?? ""}
+              aria-label={filter.label}
+              onChange={(event) => onFilterChange(filter.name, event.target.value)}
+              className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-[13px] font-medium text-neutral-700 outline-none transition-colors focus:border-[#D63031]/40 focus:bg-white focus:ring-2 focus:ring-[#D63031]/10"
+            >
+              <option value="">{filter.label}: todos</option>
+              {filter.options.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          ),
+        )}
       </div>
 
       {actions && <div className="flex items-center gap-2">{actions}</div>}

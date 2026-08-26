@@ -217,7 +217,7 @@ resource "aws_ecs_service" "backend" {
   enable_execute_command  = true
   propagate_tags          = "SERVICE"
 
-  health_check_grace_period_seconds = 60
+  health_check_grace_period_seconds = var.health_check_grace_period_seconds
 
   deployment_circuit_breaker {
     enable   = true

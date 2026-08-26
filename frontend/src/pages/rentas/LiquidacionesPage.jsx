@@ -11,6 +11,7 @@ import FormField from "../../components/ui/FormField.jsx";
 import useResource from "../../hooks/useResource.js";
 import useTaxpayerIndex from "../../hooks/useTaxpayerIndex.js";
 import { settlementService } from "../../services/rentasService.js";
+import GeneracionMasivaModal from "./GeneracionMasivaModal.jsx";
 import { CONCEPTS } from "../../services/mockDb.js";
 import { formatCurrency, formatDate, formatPercentage } from "../../lib/format.js";
 
@@ -25,6 +26,7 @@ const CONCEPT_OPTIONS = CONCEPTS.filter((c) =>
 export default function LiquidacionesPage() {
   const [filters, setFilters] = useState({ period: "", conceptCode: "", status: "" });
   const [creating, setCreating] = useState(false);
+  const [batchOpen, setBatchOpen] = useState(false);
   const [feedback, setFeedback] = useState(null);
   const [issuing, setIssuing] = useState(null);
 
@@ -126,9 +128,14 @@ export default function LiquidacionesPage() {
         title="Liquidaciones registradas"
         description="Las liquidaciones en borrador no generan deuda hasta ser emitidas."
         actions={
-          <Button size="sm" variant="primary" onClick={() => setCreating(true)}>
-            Nueva liquidación
-          </Button>
+          <>
+            <Button size="sm" variant="secondary" onClick={() => setBatchOpen(true)}>
+              Generación masiva
+            </Button>
+            <Button size="sm" variant="primary" onClick={() => setCreating(true)}>
+              Nueva liquidación
+            </Button>
+          </>
         }
       >
         <FilterBar
@@ -186,6 +193,21 @@ export default function LiquidacionesPage() {
           reload();
         }}
       />
+
+      {batchOpen && (
+        <GeneracionMasivaModal
+          onClose={() => setBatchOpen(false)}
+          onGenerated={(result) => {
+            setBatchOpen(false);
+            setFeedback({
+              variant: "success",
+              title: "Lote generado",
+              message: `${result.generated.length} liquidaciones en borrador por ${formatCurrency(result.totals.amount)}. Emitilas para que generen deuda.`,
+            });
+            reload();
+          }}
+        />
+      )}
     </ModuleShell>
   );
 }

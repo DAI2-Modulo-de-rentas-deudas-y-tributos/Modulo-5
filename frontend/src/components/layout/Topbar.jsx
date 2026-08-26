@@ -3,7 +3,7 @@ import { LogOut, Menu, ChevronDown } from "lucide-react";
 import { useAuth } from "../../context/AuthContext.jsx";
 
 /** Barra superior: apertura del menú en mobile e identidad del agente logueado. */
-export default function Topbar({ onOpenMenu }) {
+export default function Topbar({ onOpenMenu, areaLabel = "Área de trabajo", areaName }) {
   const { user, logout } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -27,11 +27,9 @@ export default function Topbar({ onOpenMenu }) {
 
       <div className="hidden flex-col leading-tight lg:flex">
         <span className="text-[11px] font-bold uppercase tracking-[0.15em] text-[#D63031]">
-          Área de trabajo
+          {areaLabel}
         </span>
-        <span className="text-[14px] font-semibold text-[#0F2C59]">
-          Personal de Rentas
-        </span>
+        <span className="text-[14px] font-semibold text-[#0F2C59]">{areaName}</span>
       </div>
 
       <div className="relative ml-auto">

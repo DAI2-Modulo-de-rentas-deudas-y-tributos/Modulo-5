@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  auditService,
+  billService,
+  cashierService,
   debtService,
   exemptionService,
   paymentPlanService,
@@ -266,5 +269,285 @@ describe("tickets", () => {
 
     expect(ticket.status).toBe("IN_PROGRESS");
     expect(ticket.assignedTo).toBe("mrivas");
+  });
+});
+
+describe("caja", () => {
+  it("busca al contribuyente por documento y devuelve su deuda consolidada", async () => {
+    const results = await cashierService.search({ query: "40111222" });
+
+    const taxpayer = results.find((r) => r.kind === "TAXPAYER");
+    expect(taxpayer.title).toBe("Juan Pérez");
+    expect(taxpayer.amount).toBeGreaterThan(0);
+  });
+
+  it("busca por N° de boleta y muestra a qué contribuyente está vinculada", async () => {
+    const results = await cashierService.search({ query: "12001" });
+
+    expect(results[0].kind).toBe("BILL");
+    expect(results[0].subtitle).toMatch(/Juan Pérez/);
+    expect(results[0].taxpayerId).toBe(123);
+  });
+
+  it("preselecciona la deuda cuando el cobro entra por una boleta", async () => {
+    const context = await cashierService.chargeContext({ kind: "BILL", id: 12002 });
+
+    expect(context.taxpayer.id).toBe(78);
+    expect(context.bill.id).toBe(12002);
+    expect(context.selectedDebtId).toBe(3002);
+    expect(context.debts).toHaveLength(1);
+  });
+
+  it("exige el medio de pago para cobrar en ventanilla", async () => {
+    await expect(
+      cashierService.registerCounterPayment({ debtId: 3003, amountPaid: 1000 }),
+    ).rejects.toThrow(/medio de pago/i);
+  });
+
+  it("rechaza cobrar una deuda sin saldo", async () => {
+    await expect(
+      cashierService.registerCounterPayment({
+        debtId: 3001,
+        amountPaid: 1000,
+        method: "EFECTIVO",
+        registeredBy: "pcabrera",
+      }),
+    ).rejects.toThrow(/cancelada/i);
+  });
+
+  it("cobra la deuda y devuelve el comprobante con el responsable", async () => {
+    const settlement = await settlementService.generate({
+      taxpayerId: 78,
+      conceptCode: "ABL",
+      period: "2026-12",
+      baseAmount: 40000,
+      dueDate: "2026-12-10",
+    });
+    await settlementService.issue(settlement.id);
+    const debt = (await debtService.list({ taxpayerId: 78 })).find(
+      (d) => d.originId === settlement.id,
+    );
+
+    const receipt = await cashierService.registerCounterPayment({
+      debtId: debt.id,
+      amountPaid: 40000,
+      method: "EFECTIVO",
+      registeredBy: "pcabrera",
+    });
+
+    expect(receipt.receiptNumber).toMatch(/^REC-2026-/);
+    expect(receipt.amountPaid).toBe(40000);
+    expect(receipt.remainingBalance).toBe(0);
+    expect(receipt.settled).toBe(true);
+    expect(receipt.wasOverdue).toBe(false);
+    expect(receipt.cashier.fullName).toBe("Paula Cabrera");
+    expect(receipt.channel).toBe("VENTANILLA");
+  });
+
+  it("cancela la boleta junto con la deuda que la originó", async () => {
+    const bills = await billService.list({ taxpayerId: "78" });
+    expect(bills.find((b) => b.id === 12002).status).toBe("ISSUED");
+
+    await cashierService.registerCounterPayment({
+      debtId: 3002,
+      amountPaid: 150000,
+      method: "TRANSFERENCIA",
+      registeredBy: "pcabrera",
+    });
+
+    const after = await billService.list({ taxpayerId: "78" });
+    expect(after.find((b) => b.id === 12002).status).toBe("SETTLED");
+  });
+
+  it("suma el cobro a la jornada del cajero", async () => {
+    const before = await cashierService.dailySummary({ registeredBy: "pcabrera" });
+
+    const settlement = await settlementService.generate({
+      taxpayerId: 190,
+      conceptCode: "PATENTE",
+      period: "2026-12",
+      baseAmount: 5000,
+      dueDate: "2026-12-20",
+    });
+    await settlementService.issue(settlement.id);
+    const debt = (await debtService.list({ taxpayerId: 190 })).find(
+      (d) => d.originId === settlement.id,
+    );
+    await cashierService.registerCounterPayment({
+      debtId: debt.id,
+      amountPaid: 5000,
+      method: "QR",
+      registeredBy: "pcabrera",
+    });
+
+    const after = await cashierService.dailySummary({ registeredBy: "pcabrera" });
+
+    expect(after.registeredCount).toBe(before.registeredCount + 1);
+    expect(after.totalCollected).toBe(before.totalCollected + 5000);
+    expect(after.latest[0].amountPaid).toBe(5000);
+  });
+
+  it("reconstruye el comprobante de un pago ya registrado", async () => {
+    const receipt = await cashierService.receipt(9005);
+
+    expect(receipt.receiptNumber).toBe("REC-2026-9005");
+    expect(receipt.taxpayer.name).toBe("Juan Pérez");
+    expect(receipt.method).toBe("TARJETA_DEBITO");
+    expect(receipt.cashier.counter).toMatch(/Caja 3/);
+  });
+
+  it("arma la ficha del contribuyente con deudas, pagos y boletas", async () => {
+    const file = await cashierService.taxpayerFile(123);
+
+    expect(file.taxpayer.name).toBe("Juan Pérez");
+    expect(file.debts.length).toBeGreaterThan(0);
+    expect(file.payments.length).toBeGreaterThan(0);
+    expect(file.totals.outstanding).toBeGreaterThanOrEqual(0);
+  });
+});
+
+/**
+ * Auditoría. Son consultas: ninguna de estas operaciones modifica el store, por eso
+ * pueden correr sobre el dataset compartido sin preparar entidades propias.
+ */
+describe("auditoría", () => {
+  it("no expone ninguna operación de escritura", () => {
+    // El área es de sólo lectura: si aparece un verbo de escritura, es un error de diseño.
+    const writeVerbs = /^(register|create|update|resolve|issue|reverse|allocate|retry|delete|generate)/;
+    const offenders = Object.keys(auditService).filter((name) => writeVerbs.test(name));
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("resume la jornada con los desvíos que hay que mirar", async () => {
+    const dashboard = await auditService.dashboard();
+
+    expect(dashboard.paymentsReversed).toBeGreaterThan(0);
+    expect(dashboard.integrationErrors).toBeGreaterThan(0);
+    expect(dashboard.recentActivity.length).toBeGreaterThan(0);
+    // La actividad viene de la más reciente a la más vieja.
+    const [first, second] = dashboard.recentActivity;
+    expect(new Date(first.at) >= new Date(second.at)).toBe(true);
+  });
+
+  it("arma la ficha del contribuyente con sus cuatro frentes y el saldo a favor", async () => {
+    const file = await auditService.taxpayerFile(123);
+
+    expect(file.taxpayer.name).toBe("Juan Pérez");
+    expect(file.debts.length).toBeGreaterThan(0);
+    expect(file.payments.length).toBeGreaterThan(0);
+    expect(file.exemptions.length).toBeGreaterThan(0);
+    expect(file.totals.creditBalance).toBe(20000);
+    // Los listados llegan con el nombre del concepto resuelto, no sólo el código.
+    expect(file.debts[0].conceptName).toBeTruthy();
+  });
+
+  it("devuelve el concepto con su historial de versiones", async () => {
+    const concept = await auditService.conceptDetail("TASA_SERVICIOS");
+
+    expect(concept.type).toBe("TASA");
+    expect(concept.calculationType).toBe("PORCENTAJE");
+    expect(concept.versions.length).toBe(3);
+    expect(concept.versions[0].status).toBe("ACTIVE");
+  });
+
+  it("traza la liquidación externa hasta el evento que la originó", async () => {
+    const settlement = await auditService.settlementDetail(7007);
+
+    expect(settlement.origin.module).toBe("M7");
+    expect(settlement.origin.event).toBe("infractionConfirmed");
+    expect(settlement.origin.externalRef).toBe("infractionId:850");
+    expect(settlement.debt.id).toBe(3003);
+  });
+
+  it("compone el saldo de la deuda y lista los pagos que la tocaron", async () => {
+    const debt = await auditService.debtDetail(3004);
+
+    expect(debt.originalAmount).toBe(96000);
+    expect(debt.paidAmount).toBe(66000);
+    expect(debt.outstandingAmount).toBe(30000);
+    expect(debt.payments.map((p) => p.id)).toEqual([9006, 9002]);
+    expect(debt.history.length).toBeGreaterThan(1);
+  });
+
+  it("muestra la imputación del pago y su reversión", async () => {
+    const payment = await auditService.paymentDetail(9004);
+
+    expect(payment.allocations[0].debtId).toBe(3005);
+    expect(payment.reversal.id).toBe(500);
+    expect(payment.status).toBe("REVERSED");
+  });
+
+  it("deja ver los dos estados que deshizo la reversión", async () => {
+    const reversal = await auditService.reversalDetail(500);
+
+    expect(reversal.requestedBy).toBe("pcabrera");
+    expect(reversal.approvedBy).toBe("jlopez");
+    expect(reversal.paymentStatusChange).toEqual({ from: "REGISTERED", to: "REVERSED" });
+    expect(reversal.debtStatusChange).toEqual({ from: "SETTLED", to: "OVERDUE" });
+    expect(reversal.eventPublished).toBe("paymentReversed");
+  });
+
+  it("separa la resolución del plan de su ciclo interno", async () => {
+    const granted = await auditService.planDetail(801);
+    const defaulted = await auditService.planDetail(803);
+
+    expect(granted.status).toBe("GRANTED");
+    expect(granted.lifecycle).toBe("CURRENT");
+    expect(granted.schedule.length).toBe(6);
+    expect(granted.debts[0].id).toBe(3002);
+
+    expect(defaulted.status).toBe("GRANTED");
+    expect(defaulted.lifecycle).toBe("DEFAULTED");
+  });
+
+  it("expone la brecha entre el porcentaje solicitado y el aprobado", async () => {
+    const exemption = await auditService.exemptionDetail(603);
+
+    expect(exemption.requestedPercentage).toBe(100);
+    expect(exemption.percentage).toBe(75);
+    expect(exemption.fileNumber).toBe("EXP-450");
+    expect(exemption.benefitId).toBe(400);
+  });
+
+  it("devuelve el evento con su payload y el error que lo dejó en DLQ", async () => {
+    const event = await auditService.integrationDetail(
+      "9c3b5e6d-4d5e-4f70-a143-dd44ee55ff66",
+    );
+
+    expect(event.eventType).toBe("permitUpdate");
+    expect(event.sourceModule).toBe("M4");
+    expect(event.status).toBe("DLQ");
+    expect(event.payload.permitId).toBe(250);
+    expect(event.attempts).toBe(3);
+  });
+
+  it("filtra el registro de auditoría por rol y acción", async () => {
+    const supervisorEntries = await auditService.auditTrail({ role: "SUPERVISOR" });
+    const reversals = await auditService.auditTrail({ action: "PAYMENT_REVERSED" });
+
+    expect(supervisorEntries.every((e) => e.role === "SUPERVISOR")).toBe(true);
+    expect(reversals[0].before["Estado pago"]).toBe("REGISTERED");
+    expect(reversals[0].after["Estado pago"]).toBe("REVERSED");
+  });
+
+  it("calcula la morosidad sobre la deuda viva", async () => {
+    const indicators = await auditService.indicators({});
+
+    const alive = indicators.pendingDebt + indicators.overdueDebt;
+    expect(indicators.delinquencyRate).toBeCloseTo((indicators.overdueDebt / alive) * 100, 1);
+    expect(indicators.byConcept.length).toBeGreaterThan(0);
+    // El gráfico de deuda por concepto llega ordenado de mayor a menor.
+    expect(indicators.byConcept[0].amount).toBeGreaterThanOrEqual(
+      indicators.byConcept[indicators.byConcept.length - 1].amount,
+    );
+  });
+
+  it("abre el indicador en las filas que lo componen", async () => {
+    const breakdown = await auditService.indicatorBreakdown("overdueDebt", {});
+
+    expect(breakdown.count).toBe(breakdown.rows.length);
+    expect(breakdown.rows.every((row) => row.status === "OVERDUE")).toBe(true);
+    expect(breakdown.total).toBeGreaterThan(0);
   });
 });
