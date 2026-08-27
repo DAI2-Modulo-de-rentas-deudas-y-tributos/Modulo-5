@@ -7,7 +7,6 @@
  * rama de mocks: la firma y el shape de respuesta no cambian.
  */
 import { USE_MOCKS, delay, request, ApiError } from "./apiClient.js";
-import { toDateInput } from "../lib/format.js";
 import * as db from "./mockDb.js";
 
 /** Copia mutable en memoria: las acciones de la demo persisten durante la sesión. */
@@ -77,6 +76,19 @@ const EXEMPTION_WORKFLOW = [
 const exemptionInternalStatusOf = (exemption) =>
   exemption.internalStatus ??
   (exemption.status === "REQUESTED" ? "PENDING_REVIEW" : exemption.status);
+
+/**
+ * Día calendario en la zona del municipio (UTC-3), no en la del navegador.
+ *
+ * Todo el dataset está fechado en -03:00. Si el día se calculara con el reloj local,
+ * el mismo cobro caería en días distintos según dónde corra —en UTC un movimiento de
+ * la tarde se pasa al día siguiente— y desaparecería del resumen de la jornada.
+ */
+const businessDayOf = (value) => {
+  if (typeof value === "string" && value.length === 10) return value;
+  const instante = new Date(value).getTime();
+  return new Date(instante - 3 * 3600000).toISOString().slice(0, 10);
+};
 
 /** Los importes se redondean a centavos: el dinero nunca se muestra con ruido binario. */
 const round2 = (value) => Math.round(value * 100) / 100;
@@ -902,7 +914,7 @@ export const paymentService = {
       (p) =>
         (!taxpayerId || p.taxpayerId === Number(taxpayerId)) &&
         (!status || p.status === status) &&
-        (!date || toDateInput(p.paidAt) === date) &&
+        (!date || businessDayOf(p.paidAt) === date) &&
         (!registeredBy || p.registeredBy === registeredBy),
     );
   },
@@ -1939,23 +1951,21 @@ export const eventService = {
  * En la demo el reloj corre pero la jornada es siempre la del dataset: así un cobro
  * recién registrado aparece en el resumen del día junto a los movimientos de ejemplo.
  */
-const businessDate = () => (USE_MOCKS ? db.BUSINESS_DATE : toDateInput(new Date()));
+const businessDate = () => (USE_MOCKS ? db.BUSINESS_DATE : businessDayOf(new Date()));
 
 function counterTimestamp() {
   if (!USE_MOCKS) return nowIso();
-  const now = new Date();
-  const hh = String(now.getHours()).padStart(2, "0");
-  const mm = String(now.getMinutes()).padStart(2, "0");
-  const stamp = new Date(`${db.BUSINESS_DATE}T${hh}:${mm}:00-03:00`).getTime();
+  // Mediodía de la jornada, no la hora del reloj: así el cobro cae en el mismo día
+  // calendario corra donde corra. Con la hora local, en UTC un cobro de la tarde
+  // quedaba fechado al día siguiente y desaparecía del resumen.
+  const base = new Date(`${db.BUSINESS_DATE}T12:00:00-03:00`).getTime();
 
-  // El cobro que se acaba de hacer es el último de la jornada. Si el reloj real va
-  // más atrasado que el último movimiento del dataset, igual va después: si no,
-  // aparecería en el medio de "Últimos pagos" en vez de encabezar la lista.
+  // Y va después del último movimiento del día, para encabezar "Últimos pagos".
   const ultimoDelDia = store.payments
-    .filter((p) => toDateInput(p.paidAt) === db.BUSINESS_DATE)
+    .filter((p) => businessDayOf(p.paidAt) === db.BUSINESS_DATE)
     .reduce((max, p) => Math.max(max, new Date(p.paidAt).getTime()), 0);
 
-  return new Date(Math.max(stamp, ultimoDelDia + 60000)).toISOString();
+  return new Date(Math.max(base, ultimoDelDia + 60000)).toISOString();
 }
 
 const outstandingOf = (taxpayerId) =>
@@ -2239,7 +2249,7 @@ export const cashierService = {
     const ofTheDay = store.payments
       .filter(
         (p) =>
-          toDateInput(p.paidAt) === day && (!registeredBy || p.registeredBy === registeredBy),
+          businessDayOf(p.paidAt) === day && (!registeredBy || p.registeredBy === registeredBy),
       )
       .sort((a, b) => new Date(b.paidAt) - new Date(a.paidAt));
 
@@ -2296,7 +2306,7 @@ export const cashierService = {
  * formato: convertirlas correría un día según la zona horaria.
  */
 const dayOf = (value) =>
-  typeof value === "string" && value.length === 10 ? value : toDateInput(value);
+  typeof value === "string" && value.length === 10 ? value : businessDayOf(value);
 
 const inRange = (value, from, to) => {
   if (!from && !to) return true;
