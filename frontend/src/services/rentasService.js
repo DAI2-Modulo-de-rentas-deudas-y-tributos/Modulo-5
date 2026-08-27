@@ -2441,6 +2441,10 @@ export const auditService = {
     if (!taxpayer) throw new ApiError("El contribuyente no existe en el padrón local.", 404);
 
     const debts = store.debts.filter((d) => d.taxpayerId === id).map(decorate);
+    const settlements = store.settlements
+      .filter((s) => s.taxpayerId === id)
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+      .map(decorate);
     const credits = store.creditBalances.filter(
       (c) => c.taxpayerId === id && c.status === "ACTIVE",
     );
@@ -2448,6 +2452,8 @@ export const auditService = {
     return {
       taxpayer,
       debts,
+      // El circuito empieza acá: la liquidación es la que genera la deuda.
+      settlements,
       payments: store.payments
         .filter((p) => p.taxpayerId === id)
         .sort((a, b) => new Date(b.paidAt) - new Date(a.paidAt))

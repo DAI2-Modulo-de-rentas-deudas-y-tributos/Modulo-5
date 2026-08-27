@@ -19,6 +19,7 @@ import {
 } from "../../lib/format.js";
 
 const TABS = [
+  { id: "settlements", label: "Liquidaciones" },
   { id: "debts", label: "Deudas" },
   { id: "payments", label: "Pagos" },
   { id: "plans", label: "Planes" },
@@ -29,7 +30,7 @@ const TABS = [
 export default function ContribuyenteAuditorDetallePage() {
   const { taxpayerId } = useParams();
   const navigate = useNavigate();
-  const [tab, setTab] = useState("debts");
+  const [tab, setTab] = useState("settlements");
 
   const loader = useCallback(() => auditService.taxpayerFile(taxpayerId), [taxpayerId]);
   const { data: file, loading, error } = useResource(loader);
@@ -146,6 +147,45 @@ export default function ContribuyenteAuditorDetallePage() {
           </div>
         }
       >
+        {tab === "settlements" && (
+          <DataTable
+            columns={[
+              {
+                key: "id",
+                header: "Liquidación",
+                render: (row) => <span className="tabular-nums">#{row.id}</span>,
+              },
+              { key: "conceptName", header: "Concepto" },
+              { key: "period", header: "Período" },
+              {
+                key: "amount",
+                header: "Importe",
+                align: "right",
+                render: (row) => formatCurrency(row.amount),
+              },
+              {
+                key: "conceptVersion",
+                header: "Versión",
+                align: "right",
+                render: (row) =>
+                  row.conceptVersion ? (
+                    <span className="tabular-nums">v{row.conceptVersion}</span>
+                  ) : (
+                    <span className="text-neutral-300">—</span>
+                  ),
+              },
+              { key: "dueDate", header: "Vencimiento", render: (row) => formatDate(row.dueDate) },
+              { key: "status", header: "Estado", render: (row) => <StatusBadge status={row.status} /> },
+            ]}
+            rows={file.settlements}
+            rowKey={(row) => row.id}
+            emptyIconName="Calculator"
+            emptyTitle="Sin liquidaciones"
+            emptyDescription="No se emitieron liquidaciones a su nombre."
+            onRowClick={(row) => navigate(`/auditor/liquidaciones/${row.id}`)}
+          />
+        )}
+
         {tab === "debts" && (
           <DataTable
             columns={[
