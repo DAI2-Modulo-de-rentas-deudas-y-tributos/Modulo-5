@@ -1,11 +1,11 @@
 data "aws_partition" "current" {}
 
 locals {
-  nightly_shutdown_role_name = "${local.name_prefix}-nightly-shutdown"
-  scheduler_schedule_pattern = "arn:${data.aws_partition.current.partition}:scheduler:${var.aws_region}:${var.aws_account_id}:schedule/default/${local.name_prefix}-stop-*"
-  ecs_service_arn            = "arn:${data.aws_partition.current.partition}:ecs:${var.aws_region}:${var.aws_account_id}:service/${module.ecs.cluster_name}/${module.ecs.backend_service_name}"
-  database_instance_arn      = "arn:${data.aws_partition.current.partition}:rds:${var.aws_region}:${var.aws_account_id}:db:${module.database.instance_id}"
-  budget_alert_email         = trimspace(var.budget_alert_email)
+  nightly_shutdown_role_name   = "${local.name_prefix}-nightly-shutdown"
+  scheduler_schedule_group_arn = "arn:${data.aws_partition.current.partition}:scheduler:${var.aws_region}:${var.aws_account_id}:schedule-group/default"
+  ecs_service_arn              = "arn:${data.aws_partition.current.partition}:ecs:${var.aws_region}:${var.aws_account_id}:service/${module.ecs.cluster_name}/${module.ecs.backend_service_name}"
+  database_instance_arn        = "arn:${data.aws_partition.current.partition}:rds:${var.aws_region}:${var.aws_account_id}:db:${module.database.instance_id}"
+  budget_alert_email           = trimspace(var.budget_alert_email)
 
   budget_notifications = local.budget_alert_email == "" ? {} : {
     actual_50 = {
@@ -40,9 +40,9 @@ data "aws_iam_policy_document" "nightly_shutdown_assume" {
     }
 
     condition {
-      test     = "ArnLike"
+      test     = "StringEquals"
       variable = "aws:SourceArn"
-      values   = [local.scheduler_schedule_pattern]
+      values   = [local.scheduler_schedule_group_arn]
     }
   }
 }
@@ -84,6 +84,8 @@ resource "aws_scheduler_schedule" "stop_ecs" {
   schedule_expression          = "cron(0 22 * * ? *)"
   schedule_expression_timezone = var.nightly_shutdown_timezone
 
+  depends_on = [aws_iam_role_policy.nightly_shutdown]
+
   flexible_time_window {
     mode = "OFF"
   }
@@ -112,6 +114,8 @@ resource "aws_scheduler_schedule" "stop_rds" {
   schedule_expression          = "cron(15 22 * * ? *)"
   schedule_expression_timezone = var.nightly_shutdown_timezone
 
+  depends_on = [aws_iam_role_policy.nightly_shutdown]
+
   flexible_time_window {
     mode = "OFF"
   }
@@ -121,7 +125,7 @@ resource "aws_scheduler_schedule" "stop_rds" {
     role_arn = aws_iam_role.nightly_shutdown.arn
 
     input = jsonencode({
-      DBInstanceIdentifier = module.database.instance_id
+      DbInstanceIdentifier = module.database.instance_id
     })
 
     retry_policy {
