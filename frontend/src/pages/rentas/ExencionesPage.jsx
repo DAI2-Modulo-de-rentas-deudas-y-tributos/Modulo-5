@@ -9,12 +9,13 @@ import Modal from "../../components/common/Modal.jsx";
 import Button from "../../components/common/Button.jsx";
 import Alert from "../../components/ui/Alert.jsx";
 import FormField from "../../components/ui/FormField.jsx";
+import FileUpload from "../../components/common/FileUpload.jsx";
 import useResource from "../../hooks/useResource.js";
 import useTaxpayerIndex from "../../hooks/useTaxpayerIndex.js";
 import { exemptionService } from "../../services/rentasService.js";
 import { CONCEPTS } from "../../services/mockDb.js";
 import { useAuth } from "../../context/AuthContext.jsx";
-import { formatDate, formatDateTime, formatPercentage } from "../../lib/format.js";
+import { formatDate, formatDateTime, formatPercentage, labelFor } from "../../lib/format.js";
 
 const CONCEPT_OPTIONS = CONCEPTS.filter((c) =>
   ["TASA_SERVICIOS", "ABL", "PATENTE"].includes(c.code),
@@ -27,9 +28,11 @@ const CONCEPT_OPTIONS = CONCEPTS.filter((c) =>
  */
 export default function ExencionesPage() {
   const [status, setStatus] = useState("");
+  const { user } = useAuth();
   const [creating, setCreating] = useState(false);
   const [selected, setSelected] = useState(null);
   const [feedback, setFeedback] = useState(null);
+  const [workflow, setWorkflow] = useState(null);
 
   const loader = useCallback(() => exemptionService.list({ status }), [status]);
   const { data: exemptions, loading, error, reload } = useResource(loader, []);
@@ -79,19 +82,40 @@ export default function ExencionesPage() {
     },
     { key: "status", header: "Estado", render: (row) => <StatusBadge status={row.status} /> },
     {
+      key: "internalStatus",
+      header: "Trámite",
+      render: (row) =>
+        row.status === "REQUESTED" ? (
+          <StatusBadge status={row.internalStatus} />
+        ) : (
+          <span className="text-neutral-300">—</span>
+        ),
+    },
+    {
       key: "actions",
       header: "",
       align: "right",
-      render: (row) =>
-        row.status === "REQUESTED" ? (
-          <Button size="sm" variant="primary" onClick={() => setSelected(row)}>
-            Resolver
-          </Button>
-        ) : (
-          <span className="text-[12px] text-neutral-400">
-            {row.resolvedBy ? `Por ${row.resolvedBy}` : "—"}
-          </span>
-        ),
+      render: (row) => {
+        if (row.status !== "REQUESTED") {
+          return (
+            <span className="text-[12px] text-neutral-400">
+              {row.resolvedBy ? `Por ${row.resolvedBy}` : "—"}
+            </span>
+          );
+        }
+        return (
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="secondary" onClick={() => setWorkflow(row)}>
+              Trámite
+            </Button>
+            {row.internalStatus === "PENDING_RESOLUTION" && (
+              <Button size="sm" variant="primary" onClick={() => setSelected(row)}>
+                Resolver
+              </Button>
+            )}
+          </div>
+        );
+      },
     },
   ];
 
@@ -157,6 +181,19 @@ export default function ExencionesPage() {
               title: "Solicitud registrada",
               message: `Se publicó exemptionRequested para la solicitud #${exemption.requestId}.`,
             });
+            reload();
+          }}
+        />
+      )}
+
+      {workflow && (
+        <WorkflowModal
+          exemption={workflow}
+          actor={user.username}
+          onClose={() => setWorkflow(null)}
+          onDone={(exemption, mensaje) => {
+            setWorkflow(null);
+            setFeedback({ variant: "success", title: "Trámite actualizado", message: mensaje });
             reload();
           }}
         />
@@ -332,6 +369,130 @@ function NewExemptionModal({ taxpayerOptions, onClose, onDone }) {
 }
 
 /** Resolución → publica updateExemptionStatus (APPROVED | REJECTED). */
+/**
+ * Pasos internos del trámite. Ninguno viaja a M8: el contrato sólo contempla la
+ * resolución final. Pedir documentación, registrarla y enviar a resolución son
+ * estados de gestión de Rentas.
+ */
+function WorkflowModal({ exemption, actor, onClose, onDone }) {
+  const [accion, setAccion] = useState(
+    exemption.internalStatus === "DOCUMENTATION_REQUIRED" ? "RECEIVE" : "REQUIRE",
+  );
+  const [note, setNote] = useState("");
+  const [files, setFiles] = useState([]);
+  const [error, setError] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const onSubmit = async (event) => {
+    event.preventDefault();
+    setError(null);
+    setSubmitting(true);
+    try {
+      if (accion === "RECEIVE") {
+        const resultado = await exemptionService.attachDocumentation({
+          requestId: exemption.requestId,
+          attachments: files,
+          actor,
+        });
+        onDone(resultado, `Se registraron ${files.length} archivo(s) de la solicitud #${exemption.requestId}.`);
+        return;
+      }
+      const internalStatus = accion === "REQUIRE" ? "DOCUMENTATION_REQUIRED" : "PENDING_RESOLUTION";
+      const resultado = await exemptionService.advanceWorkflow({
+        requestId: exemption.requestId,
+        internalStatus,
+        note,
+        actor,
+      });
+      onDone(
+        resultado,
+        internalStatus === "DOCUMENTATION_REQUIRED"
+          ? `Se le pidió documentación al ciudadano por la solicitud #${exemption.requestId}.`
+          : `La solicitud #${exemption.requestId} quedó lista para resolver.`,
+      );
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Modal
+      open
+      title={`Trámite de la solicitud #${exemption.requestId}`}
+      description={`Estado interno: ${labelFor(exemption.internalStatus)}`}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancelar
+          </Button>
+          <Button variant="primary" loading={submitting} onClick={onSubmit}>
+            Confirmar
+          </Button>
+        </>
+      }
+    >
+      {error && (
+        <Alert variant="error" title="No se pudo actualizar">
+          {error}
+        </Alert>
+      )}
+
+      <Alert variant="info" title="Estos pasos no salen de Rentas">
+        Desarrollo Social sólo recibe la resolución final, aprobada o rechazada. La
+        gestión de documentación es interna del módulo.
+      </Alert>
+
+      <form onSubmit={onSubmit} noValidate className="flex flex-col gap-4">
+        <FormField
+          label="Acción"
+          name="accion"
+          type="select"
+          value={accion}
+          onChange={(event) => setAccion(event.target.value)}
+          options={[
+            { value: "REQUIRE", label: "Solicitar documentación" },
+            { value: "RECEIVE", label: "Registrar documentación recibida" },
+            { value: "RESOLUTION", label: "Enviar a resolución" },
+          ]}
+          required
+        />
+
+        {accion === "RECEIVE" ? (
+          <FileUpload
+            files={files}
+            onChange={setFiles}
+            label="Documentación presentada"
+            hint="Lo que el ciudadano entregó por mesa de entradas."
+          />
+        ) : (
+          <FormField
+            label={accion === "REQUIRE" ? "Qué documentación falta" : "Observaciones"}
+            name="note"
+            type="textarea"
+            placeholder={
+              accion === "REQUIRE"
+                ? "Por ejemplo: certificado de ingresos de los últimos tres meses."
+                : "Contexto para quien resuelva."
+            }
+            value={note}
+            onChange={(event) => setNote(event.target.value)}
+            required={accion === "REQUIRE"}
+          />
+        )}
+
+        {exemption.attachments.length > 0 && (
+          <p className="text-[12px] text-neutral-400">
+            Ya tiene {exemption.attachments.length} archivo(s) presentados.
+          </p>
+        )}
+      </form>
+    </Modal>
+  );
+}
+
 function ResolveExemptionModal({ exemption, citizenName, onClose, onDone }) {
   const { user } = useAuth();
   const [form, setForm] = useState({
