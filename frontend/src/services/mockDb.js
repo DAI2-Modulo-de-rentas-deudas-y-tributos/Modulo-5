@@ -235,6 +235,12 @@ export const REFINANCING_RULES = {
   installmentChoices: [6, 12, 18],
 };
 
+/**
+ * Ajustes manuales sobre una deuda. El analista propone, el Supervisor autoriza y
+ * recién entonces el analista ejecuta: autorizar y ejecutar son actos separados.
+ */
+export const debtAdjustments = [];
+
 /** Solicitudes de refinanciación. Proceso interno de M5: no viaja a ningún módulo. */
 export const refinancings = [];
 
@@ -1095,7 +1101,10 @@ export const tickets = [
     externalStatus: "IN_PROGRESS",
     escalated: false,
     createdAt: "2026-08-24T08:30:00-03:00",
-    additionalInformation: "El ciudadano adjuntó información",
+    additionalInformation: "El ciudadano adjuntó el comprobante del pago no imputado",
+    // Llega en ticketUpdated: el ciudadano la presentó por el portal de M2.
+    attachments: ["s3://rentas-documents/tickets/1001/comprobante-pago.pdf"],
+    receivedAt: "2026-08-24T16:10:00-03:00",
     assignedTo: "mrivas",
     reference: { type: "PAYMENT", paymentId: 9003, debtId: null },
     history: [
@@ -1132,6 +1141,8 @@ export const tickets = [
     escalated: false,
     createdAt: "2026-08-21T16:05:00-03:00",
     additionalInformation: "Falta el número de partida",
+    attachments: [],
+    receivedAt: "2026-08-22T09:15:00-03:00",
     assignedTo: "mrivas",
     reference: { type: "DEBT", paymentId: null, debtId: 3004 },
     history: [

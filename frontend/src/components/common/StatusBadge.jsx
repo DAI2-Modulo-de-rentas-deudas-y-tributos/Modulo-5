@@ -52,6 +52,10 @@ const STATUS_TONES = {
   // Conceptos y procesamiento de eventos.
   INACTIVE: "neutral",
   PENDING_APPROVAL: "warning",
+  EXECUTED: "success",
+  DOCUMENTATION_REQUIRED: "danger",
+  DOCUMENTATION_RECEIVED: "info",
+  PENDING_RESOLUTION: "navy",
   TASA: "neutral",
   MULTA: "neutral",
   CARGO: "neutral",

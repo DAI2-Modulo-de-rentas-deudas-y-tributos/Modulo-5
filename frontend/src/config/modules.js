@@ -68,6 +68,16 @@ export const MODULES = [
     countLabel: "del día",
   },
   {
+    id: "ajustes",
+    path: "/rentas/ajustes",
+    label: "Ajustes y saldos",
+    iconName: "SlidersHorizontal",
+    description:
+      "Corregir una deuda con autorización del Supervisor, o aplicarle un saldo a favor.",
+    roles: ["PERSONAL", "SUPERVISOR"],
+    countLabel: "pendientes",
+  },
+  {
     id: "planes",
     path: "/rentas/planes",
     label: "Planes de pago",

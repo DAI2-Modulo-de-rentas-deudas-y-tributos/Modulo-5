@@ -14,6 +14,7 @@ import ConfiguracionTributosPage from "./pages/rentas/ConfiguracionTributosPage.
 import LiquidacionesPage from "./pages/rentas/LiquidacionesPage.jsx";
 import DeudasPage from "./pages/rentas/DeudasPage.jsx";
 import BoletasPage from "./pages/rentas/BoletasPage.jsx";
+import AjustesYSaldosPage from "./pages/rentas/AjustesYSaldosPage.jsx";
 import PagosPage from "./pages/rentas/PagosPage.jsx";
 import PlanesPage from "./pages/rentas/PlanesPage.jsx";
 import RefinanciacionPage from "./pages/rentas/RefinanciacionPage.jsx";
@@ -82,6 +83,7 @@ export default function App() {
               <Route path="deudas" element={<DeudasPage />} />
               <Route path="boletas" element={<BoletasPage />} />
               <Route path="pagos" element={<PagosPage />} />
+              <Route path="ajustes" element={<AjustesYSaldosPage />} />
               <Route path="planes" element={<PlanesPage />} />
               <Route path="refinanciacion" element={<RefinanciacionPage />} />
               <Route path="exenciones" element={<ExencionesPage />} />

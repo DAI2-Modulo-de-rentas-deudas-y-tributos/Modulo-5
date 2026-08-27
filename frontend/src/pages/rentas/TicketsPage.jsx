@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import { Paperclip } from "lucide-react";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
 import Card from "../../components/common/Card.jsx";
 import DataTable from "../../components/common/DataTable.jsx";
@@ -51,6 +52,12 @@ export default function TicketsPage() {
       render: (row) => (
         <div className="flex max-w-xs flex-col">
           <span className="truncate text-neutral-700">{row.description}</span>
+          {row.attachments?.length > 0 && (
+            <span className="mt-0.5 inline-flex items-center gap-1 text-[12px] font-medium text-blue-700">
+              <Paperclip className="h-3 w-3" strokeWidth={2} />
+              {row.attachments.length} adjunto(s)
+            </span>
+          )}
           {row.additionalInformation && (
             <span className="truncate text-[12px] text-neutral-400">
               {row.additionalInformation}
@@ -210,13 +217,44 @@ function UpdateTicketModal({ ticket, citizenName, onClose, onDone }) {
 
       <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-4 text-[13px] text-neutral-600">
         <p>{ticket.description}</p>
-        {ticket.additionalInformation && (
-          <p className="mt-2 text-neutral-500">
-            <span className="font-medium text-neutral-700">Información adicional:</span>{" "}
-            {ticket.additionalInformation}
-          </p>
-        )}
       </div>
+
+      {/* Lo que el ciudadano sumó después: llega de M2 en ticketUpdated. */}
+      {(ticket.additionalInformation || ticket.attachments?.length > 0) && (
+        <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-[13px] font-semibold text-blue-800">
+              Información recibida del ciudadano
+            </p>
+            {ticket.receivedAt && (
+              <span className="shrink-0 text-[12px] text-blue-700">
+                {formatDateTime(ticket.receivedAt)}
+              </span>
+            )}
+          </div>
+
+          {ticket.additionalInformation && (
+            <p className="mt-2 text-[13px] text-blue-700">{ticket.additionalInformation}</p>
+          )}
+
+          {ticket.attachments?.length > 0 && (
+            <ul className="mt-3 flex flex-col gap-1.5">
+              {ticket.attachments.map((url) => (
+                <li key={url}>
+                  <a
+                    href={url}
+                    title={url}
+                    className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#0F2C59] transition-colors hover:text-[#D63031]"
+                  >
+                    <Paperclip className="h-3.5 w-3.5" strokeWidth={2} />
+                    {url.split("/").pop()}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       <FormField
         label="Nuevo estado"

@@ -7,7 +7,6 @@
  * rama de mocks: la firma y el shape de respuesta no cambian.
  */
 import { USE_MOCKS, delay, request, ApiError } from "./apiClient.js";
-import { toDateInput } from "../lib/format.js";
 import * as db from "./mockDb.js";
 
 /** Copia mutable en memoria: las acciones de la demo persisten durante la sesión. */
@@ -26,6 +25,7 @@ const store = {
   tickets: db.tickets.map((t) => ({ ...t })),
   eventLog: db.eventLog.map((e) => ({ ...e })),
   refinancings: db.refinancings.map((r) => ({ ...r })),
+  debtAdjustments: db.debtAdjustments.map((a) => ({ ...a })),
   reversals: db.reversals.map((r) => ({ ...r })),
   creditBalances: db.creditBalances.map((c) => ({ ...c })),
   auditLog: db.auditLog.map((a) => ({ ...a })),
@@ -61,6 +61,34 @@ const matches = (value, term) =>
  */
 const internalStatusOf = (plan) =>
   plan.internalStatus ?? (plan.status === "REQUESTED" ? "PENDING_REVIEW" : plan.status);
+
+/**
+ * Pasos internos del trámite de exención. Son de M5: el contrato con M8 sólo
+ * contempla la resolución final (APPROVED | REJECTED).
+ */
+const EXEMPTION_WORKFLOW = [
+  "PENDING_REVIEW",
+  "DOCUMENTATION_REQUIRED",
+  "DOCUMENTATION_RECEIVED",
+  "PENDING_RESOLUTION",
+];
+
+const exemptionInternalStatusOf = (exemption) =>
+  exemption.internalStatus ??
+  (exemption.status === "REQUESTED" ? "PENDING_REVIEW" : exemption.status);
+
+/**
+ * Día calendario en la zona del municipio (UTC-3), no en la del navegador.
+ *
+ * Todo el dataset está fechado en -03:00. Si el día se calculara con el reloj local,
+ * el mismo cobro caería en días distintos según dónde corra —en UTC un movimiento de
+ * la tarde se pasa al día siguiente— y desaparecería del resumen de la jornada.
+ */
+const businessDayOf = (value) => {
+  if (typeof value === "string" && value.length === 10) return value;
+  const instante = new Date(value).getTime();
+  return new Date(instante - 3 * 3600000).toISOString().slice(0, 10);
+};
 
 /** Los importes se redondean a centavos: el dinero nunca se muestra con ruido binario. */
 const round2 = (value) => Math.round(value * 100) / 100;
@@ -646,6 +674,179 @@ export const debtService = {
   },
 };
 
+
+// ------------------------------------------------------------- Ajuste manual
+
+/** Lo único que un ajuste puede tocar: importe, vencimiento o ambos. */
+const ADJUSTABLE_FIELDS = ["outstandingAmount", "dueDate"];
+
+/**
+ * Ajustes manuales de deuda.
+ *
+ * Separa autorizar de ejecutar: el Supervisor aprueba, pero el ajuste se aplica
+ * cuando el analista lo ejecuta. Si la deuda ya fue informada a otro módulo por
+ * `overdueDebt`, la corrección **no** se comunica republicando ese evento —se
+ * interpretaría como una deuda nueva—, sino con `debtUpdated`, que todavía no está
+ * en el contrato y queda registrado como pendiente de acuerdo intermodular.
+ */
+export const debtAdjustmentService = {
+  async list({ status = "", debtId = "" } = {}) {
+    if (!USE_MOCKS) {
+      const params = new URLSearchParams({ status, debtId });
+      return request(`/api/v1/debt-adjustments?${params}`);
+    }
+    await delay();
+    return store.debtAdjustments
+      .filter((a) => (!status || a.status === status) && (!debtId || a.debtId === Number(debtId)))
+      .map((a) => {
+        const debt = store.debts.find((d) => d.id === a.debtId);
+        return {
+          ...a,
+          taxpayerId: debt?.taxpayerId ?? null,
+          conceptName: debt ? conceptName(debt.conceptCode) : null,
+          reportedToM8: debt?.reportedToM8 ?? false,
+        };
+      });
+  },
+
+  /** RequestDebtAdjustmentRequest: el analista propone el cambio con su motivo. */
+  async request({ debtId, newAmount, newDueDate, reason, requestedBy }) {
+    if (!USE_MOCKS) {
+      return request("/api/v1/debt-adjustments", {
+        method: "POST",
+        body: { debtId, newAmount, newDueDate, reason },
+      });
+    }
+    await delay();
+    const debt = store.debts.find((d) => d.id === Number(debtId));
+    if (!debt) throw new ApiError("Deuda inexistente.", 404);
+    if (debt.status === "SETTLED") {
+      throw new ApiError("No se ajusta una deuda ya cancelada.", 409);
+    }
+    if (store.debtAdjustments.some((a) => a.debtId === debt.id && a.status !== "REJECTED" && a.status !== "EXECUTED")) {
+      throw new ApiError("La deuda ya tiene un ajuste en curso.", 409);
+    }
+    if (!reason?.trim()) {
+      throw new ApiError("El motivo es obligatorio: queda como respaldo del ajuste.", 400);
+    }
+
+    const cambiaImporte = newAmount !== null && newAmount !== "" && Number(newAmount) !== debt.outstandingAmount;
+    const cambiaVencimiento = Boolean(newDueDate) && newDueDate !== debt.dueDate;
+    if (!cambiaImporte && !cambiaVencimiento) {
+      throw new ApiError("Indicá al menos un cambio: importe, vencimiento o ambos.", 400);
+    }
+    if (cambiaImporte && !(Number(newAmount) >= 0)) {
+      throw new ApiError("El importe ajustado no puede ser negativo.", 400);
+    }
+
+    const adjustment = {
+      id: nextId(),
+      debtId: debt.id,
+      status: "PENDING_APPROVAL",
+      reason,
+      requestedBy,
+      requestedAt: nowIso(),
+      previousAmount: debt.outstandingAmount,
+      newAmount: cambiaImporte ? round2(Number(newAmount)) : debt.outstandingAmount,
+      previousDueDate: debt.dueDate,
+      newDueDate: cambiaVencimiento ? newDueDate : debt.dueDate,
+      approvedBy: null,
+      approvedAt: null,
+      executedBy: null,
+      executedAt: null,
+      rejectionReason: null,
+    };
+    store.debtAdjustments.unshift(adjustment);
+    return adjustment;
+  },
+
+  /** El Supervisor autoriza o rechaza. Autorizar no aplica el cambio todavía. */
+  async resolve({ adjustmentId, status, resolvedBy, resolverRole, reason }) {
+    if (!USE_MOCKS) {
+      return request(`/api/v1/debt-adjustments/${adjustmentId}/status`, {
+        method: "PUT",
+        body: { status, reason },
+      });
+    }
+    await delay();
+    if (resolverRole !== "SUPERVISOR") {
+      throw new ApiError("Sólo el Supervisor autoriza un ajuste manual.", 403);
+    }
+    const adjustment = store.debtAdjustments.find((a) => a.id === Number(adjustmentId));
+    if (!adjustment) throw new ApiError("Ajuste inexistente.", 404);
+    if (adjustment.status !== "PENDING_APPROVAL") {
+      throw new ApiError("El ajuste ya fue resuelto.", 409);
+    }
+    if (status === "REJECTED" && !reason?.trim()) {
+      throw new ApiError("El motivo del rechazo es obligatorio.", 400);
+    }
+
+    adjustment.status = status === "REJECTED" ? "REJECTED" : "APPROVED";
+    adjustment.approvedBy = resolvedBy;
+    adjustment.approvedAt = nowIso();
+    if (status === "REJECTED") adjustment.rejectionReason = reason;
+    return adjustment;
+  },
+
+  /**
+   * ExecuteDebtAdjustmentRequest: aplica el cambio autorizado.
+   *
+   * Si la deuda ya viajó a M8 en `overdueDebt`, se registra `debtUpdated` con los
+   * valores anterior y posterior. No se republica `overdueDebt`: el consumidor lo
+   * leería como una deuda distinta y la contaría dos veces.
+   */
+  async execute({ adjustmentId, executedBy }) {
+    if (!USE_MOCKS) {
+      return request(`/api/v1/debt-adjustments/${adjustmentId}/execute`, { method: "POST" });
+    }
+    await delay();
+    const adjustment = store.debtAdjustments.find((a) => a.id === Number(adjustmentId));
+    if (!adjustment) throw new ApiError("Ajuste inexistente.", 404);
+    if (adjustment.status !== "APPROVED") {
+      throw new ApiError("El ajuste todavía no fue autorizado por el Supervisor.", 409);
+    }
+
+    const debt = store.debts.find((d) => d.id === adjustment.debtId);
+    if (!debt) throw new ApiError("Deuda inexistente.", 404);
+
+    debt.outstandingAmount = adjustment.newAmount;
+    debt.dueDate = adjustment.newDueDate;
+    if (debt.outstandingAmount <= 0) {
+      debt.status = "SETTLED";
+    } else {
+      debt.status = new Date(debt.dueDate) < new Date() ? "OVERDUE" : "PENDING";
+    }
+    debt.history = [
+      ...(debt.history ?? []),
+      {
+        at: nowIso(),
+        status: debt.status,
+        note: `Ajuste manual #${adjustment.id} ejecutado por ${executedBy}`,
+      },
+    ];
+
+    adjustment.status = "EXECUTED";
+    adjustment.executedBy = executedBy;
+    adjustment.executedAt = nowIso();
+
+    // La deuda ya informada cambió: hay que comunicar la actualización, no una nueva.
+    if (debt.reportedToM8) {
+      recordOutboundEvent("debtUpdated", "M8", {
+        debtId: debt.id,
+        previousAmount: adjustment.previousAmount,
+        newAmount: adjustment.newAmount,
+        previousDueDate: adjustment.previousDueDate,
+        newDueDate: adjustment.newDueDate,
+        version: (debt.version ?? 1) + 1,
+      });
+      debt.version = (debt.version ?? 1) + 1;
+      adjustment.notifiedTo = "M8";
+    }
+
+    return { adjustment, debt };
+  },
+};
+
 // ----------------------------------------------------------------------- Boletas
 
 export const billService = {
@@ -713,7 +914,7 @@ export const paymentService = {
       (p) =>
         (!taxpayerId || p.taxpayerId === Number(taxpayerId)) &&
         (!status || p.status === status) &&
-        (!date || toDateInput(p.paidAt) === date) &&
+        (!date || businessDayOf(p.paidAt) === date) &&
         (!registeredBy || p.registeredBy === registeredBy),
     );
   },
@@ -875,6 +1076,129 @@ function originModule(originType) {
   if (originType === "TRAFFIC_INFRACTION") return "M7";
   return "M5";
 }
+
+
+// ------------------------------------------------------------ Saldos a favor
+
+/**
+ * Saldos a favor.
+ *
+ * Aplicar un saldo **no genera un pago nuevo** ni publica `paymentRegistered`: ese
+ * dinero ya se registró cuando el saldo se creó. Volver a publicarlo contabilizaría
+ * dos veces el mismo importe. La aplicación es una operación interna de M5.
+ */
+export const creditBalanceService = {
+  async list({ taxpayerId = "", status = "" } = {}) {
+    if (!USE_MOCKS) {
+      const params = new URLSearchParams({ taxpayerId, status });
+      return request(`/api/v1/credit-balances?${params}`);
+    }
+    await delay();
+    return store.creditBalances
+      .filter(
+        (c) =>
+          (!taxpayerId || c.taxpayerId === Number(taxpayerId)) && (!status || c.status === status),
+      )
+      .map((credit) => ({
+        ...credit,
+        remainingAmount: round2(
+          credit.amount - (credit.applications ?? []).reduce((acc, a) => acc + a.amount, 0),
+        ),
+      }));
+  },
+
+  /** Deudas del contribuyente a las que se le puede aplicar el saldo. */
+  async applicableDebts(creditId) {
+    if (!USE_MOCKS) return request(`/api/v1/credit-balances/${creditId}/applicable-debts`);
+    await delay();
+    const credit = store.creditBalances.find((c) => c.id === Number(creditId));
+    if (!credit) throw new ApiError("Saldo a favor inexistente.", 404);
+    return store.debts
+      .filter((d) => d.taxpayerId === credit.taxpayerId && d.outstandingAmount > 0)
+      .map((d) => ({ ...d, conceptName: conceptName(d.conceptCode) }));
+  },
+
+  /**
+   * ApplyCreditBalanceRequest. Total o parcial, pero nunca más que el saldo
+   * disponible ni más que la deuda pendiente.
+   */
+  async apply({ creditId, debtId, amount, appliedBy }) {
+    if (!USE_MOCKS) {
+      return request(`/api/v1/credit-balances/${creditId}/applications`, {
+        method: "POST",
+        body: { debtId, amount },
+      });
+    }
+    await delay();
+    const credit = store.creditBalances.find((c) => c.id === Number(creditId));
+    if (!credit) throw new ApiError("Saldo a favor inexistente.", 404);
+    if (credit.status !== "ACTIVE") throw new ApiError("El saldo a favor ya se consumió.", 409);
+
+    const debt = store.debts.find((d) => d.id === Number(debtId));
+    if (!debt) throw new ApiError("Deuda inexistente.", 404);
+    if (debt.taxpayerId !== credit.taxpayerId) {
+      throw new ApiError("La deuda pertenece a otro contribuyente.", 409);
+    }
+    if (debt.outstandingAmount <= 0) throw new ApiError("La deuda ya está cancelada.", 409);
+
+    const disponible = round2(
+      credit.amount - (credit.applications ?? []).reduce((acc, a) => acc + a.amount, 0),
+    );
+    const importe = round2(Number(amount));
+    if (!(importe > 0)) throw new ApiError("El importe debe ser mayor a cero.", 400);
+    if (importe > disponible) {
+      throw new ApiError(`El saldo disponible es ${formatMoney(disponible)}.`, 409);
+    }
+    if (importe > debt.outstandingAmount) {
+      throw new ApiError("El importe supera el saldo de la deuda.", 409);
+    }
+
+    credit.applications = [
+      ...(credit.applications ?? []),
+      { debtId: debt.id, amount: importe, at: nowIso(), appliedBy },
+    ];
+    const restante = round2(disponible - importe);
+    if (restante <= 0) {
+      credit.status = "SETTLED";
+      credit.appliedTo = debt.id;
+    }
+
+    debt.outstandingAmount = round2(debt.outstandingAmount - importe);
+    debt.history = [
+      ...(debt.history ?? []),
+      {
+        at: nowIso(),
+        status: debt.status,
+        note: `Saldo a favor #${credit.id} aplicado por ${formatMoney(importe)}`,
+      },
+    ];
+
+    // Si el saldo cancela la deuda, el módulo de origen tiene que enterarse. El evento
+    // no lleva importes, así que informarlo no duplica dinero: sólo cierra la obligación.
+    if (debt.outstandingAmount <= 0) {
+      debt.outstandingAmount = 0;
+      debt.status = "SETTLED";
+      store.bills
+        .filter((b) => b.debtId === debt.id && b.status !== "SETTLED")
+        .forEach((b) => {
+          b.status = "SETTLED";
+        });
+      recordOutboundEvent("debtSettled", originModule(debt.originType), {
+        debtId: debt.id,
+        originType: debt.originType,
+        originId: debt.originId,
+        settledAt: nowIso(),
+      });
+    }
+
+    return {
+      credit: { ...credit, remainingAmount: restante },
+      debt,
+      appliedAmount: importe,
+      debtSettled: debt.status === "SETTLED",
+    };
+  },
+};
 
 // -------------------------------------------------------------- Planes de pago
 
@@ -1347,13 +1671,86 @@ function addMonths(iso, months) {
 // ------------------------------------------------------------------ Exenciones
 
 export const exemptionService = {
-  async list({ status = "" } = {}) {
+  async list({ status = "", internalStatus = "" } = {}) {
     if (!USE_MOCKS) {
-      const params = new URLSearchParams({ status });
+      const params = new URLSearchParams({ status, internalStatus });
       return request(`/api/v1/exemptions?${params}`);
     }
     await delay();
-    return store.exemptions.filter((e) => !status || e.status === status);
+    return store.exemptions
+      .filter((e) => !status || e.status === status)
+      .map((e) => ({ ...e, internalStatus: exemptionInternalStatusOf(e) }))
+      .filter((e) => !internalStatus || e.internalStatus === internalStatus);
+  },
+
+  /**
+   * Estado interno del trámite. M8 sólo conoce APPROVED y REJECTED: los pasos de
+   * documentación y revisión son de M5 y no se publican.
+   */
+  async advanceWorkflow({ requestId, internalStatus, note, actor }) {
+    if (!USE_MOCKS) {
+      return request(`/api/v1/exemptions/${requestId}/workflow`, {
+        method: "PUT",
+        body: { internalStatus, note },
+      });
+    }
+    await delay();
+    const exemption = store.exemptions.find((e) => e.requestId === Number(requestId));
+    if (!exemption) throw new ApiError("Solicitud inexistente.", 404);
+    if (exemption.status !== "REQUESTED") {
+      throw new ApiError("La solicitud ya fue resuelta.", 409);
+    }
+    if (!EXEMPTION_WORKFLOW.includes(internalStatus)) {
+      throw new ApiError("Estado de trámite desconocido.", 400);
+    }
+    if (internalStatus === "DOCUMENTATION_REQUIRED" && !note?.trim()) {
+      throw new ApiError("Indicá qué documentación falta: el ciudadano tiene que saberlo.", 400);
+    }
+    if (internalStatus === "PENDING_RESOLUTION" && exemption.attachments.length === 0) {
+      throw new ApiError(
+        "No se puede enviar a resolución sin la documentación respaldatoria.",
+        409,
+      );
+    }
+
+    exemption.internalStatus = internalStatus;
+    exemption.workflow = [
+      ...(exemption.workflow ?? []),
+      { at: nowIso(), internalStatus, actor, note: note ?? null },
+    ];
+    return exemption;
+  },
+
+  /** Registra la documentación que el ciudadano presentó por mesa de entradas. */
+  async attachDocumentation({ requestId, attachments, actor }) {
+    if (!USE_MOCKS) {
+      return request(`/api/v1/exemptions/${requestId}/attachments`, {
+        method: "POST",
+        body: { attachments },
+      });
+    }
+    await delay();
+    const exemption = store.exemptions.find((e) => e.requestId === Number(requestId));
+    if (!exemption) throw new ApiError("Solicitud inexistente.", 404);
+    if (!attachments?.length) throw new ApiError("Adjuntá al menos un archivo.", 400);
+
+    exemption.attachments = [
+      ...exemption.attachments,
+      ...attachments.map(
+        (file) => `s3://rentas-documents/exenciones/${exemption.requestId}/${file.name ?? file}`,
+      ),
+    ];
+    exemption.internalStatus = "DOCUMENTATION_RECEIVED";
+    exemption.workflow = [
+      ...(exemption.workflow ?? []),
+      {
+        at: nowIso(),
+        internalStatus: "DOCUMENTATION_RECEIVED",
+        actor,
+        note: `${attachments.length} archivo(s) presentados`,
+      },
+    ];
+    return exemption;
   },
 
   /** Alta de solicitud por mesa de entradas → publica exemptionRequested hacia M8. */
@@ -1434,8 +1831,15 @@ export const exemptionService = {
     if (status === "REJECTED" && !reason?.trim()) {
       throw new ApiError("El motivo del rechazo es obligatorio.", 400);
     }
+    if (exemptionInternalStatusOf(exemption) === "DOCUMENTATION_REQUIRED") {
+      throw new ApiError(
+        "Falta la documentación pedida: no se puede resolver hasta que la presente.",
+        409,
+      );
+    }
 
     exemption.status = status;
+    exemption.internalStatus = status;
     exemption.resolvedBy = resolvedBy;
 
     if (status === "APPROVED") {
@@ -1547,23 +1951,21 @@ export const eventService = {
  * En la demo el reloj corre pero la jornada es siempre la del dataset: así un cobro
  * recién registrado aparece en el resumen del día junto a los movimientos de ejemplo.
  */
-const businessDate = () => (USE_MOCKS ? db.BUSINESS_DATE : toDateInput(new Date()));
+const businessDate = () => (USE_MOCKS ? db.BUSINESS_DATE : businessDayOf(new Date()));
 
 function counterTimestamp() {
   if (!USE_MOCKS) return nowIso();
-  const now = new Date();
-  const hh = String(now.getHours()).padStart(2, "0");
-  const mm = String(now.getMinutes()).padStart(2, "0");
-  const stamp = new Date(`${db.BUSINESS_DATE}T${hh}:${mm}:00-03:00`).getTime();
+  // Mediodía de la jornada, no la hora del reloj: así el cobro cae en el mismo día
+  // calendario corra donde corra. Con la hora local, en UTC un cobro de la tarde
+  // quedaba fechado al día siguiente y desaparecía del resumen.
+  const base = new Date(`${db.BUSINESS_DATE}T12:00:00-03:00`).getTime();
 
-  // El cobro que se acaba de hacer es el último de la jornada. Si el reloj real va
-  // más atrasado que el último movimiento del dataset, igual va después: si no,
-  // aparecería en el medio de "Últimos pagos" en vez de encabezar la lista.
+  // Y va después del último movimiento del día, para encabezar "Últimos pagos".
   const ultimoDelDia = store.payments
-    .filter((p) => toDateInput(p.paidAt) === db.BUSINESS_DATE)
+    .filter((p) => businessDayOf(p.paidAt) === db.BUSINESS_DATE)
     .reduce((max, p) => Math.max(max, new Date(p.paidAt).getTime()), 0);
 
-  return new Date(Math.max(stamp, ultimoDelDia + 60000)).toISOString();
+  return new Date(Math.max(base, ultimoDelDia + 60000)).toISOString();
 }
 
 const outstandingOf = (taxpayerId) =>
@@ -1847,7 +2249,7 @@ export const cashierService = {
     const ofTheDay = store.payments
       .filter(
         (p) =>
-          toDateInput(p.paidAt) === day && (!registeredBy || p.registeredBy === registeredBy),
+          businessDayOf(p.paidAt) === day && (!registeredBy || p.registeredBy === registeredBy),
       )
       .sort((a, b) => new Date(b.paidAt) - new Date(a.paidAt));
 
@@ -1904,7 +2306,7 @@ export const cashierService = {
  * formato: convertirlas correría un día según la zona horaria.
  */
 const dayOf = (value) =>
-  typeof value === "string" && value.length === 10 ? value : toDateInput(value);
+  typeof value === "string" && value.length === 10 ? value : businessDayOf(value);
 
 const inRange = (value, from, to) => {
   if (!from && !to) return true;
