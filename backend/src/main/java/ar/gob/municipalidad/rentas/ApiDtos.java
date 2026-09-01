@@ -16,7 +16,7 @@ public final class ApiDtos {
     public record TaxConfigurationResponse(Long id,Long taxConceptId,int version,CalculationType calculationType,BigDecimal rate,BigDecimal fixedAmount,BigDecimal minimumAmount,BigDecimal maximumAmount,boolean partialPaymentAllowed,boolean paymentPlanAllowed,LocalDate validFrom,LocalDate validUntil,TaxConfigurationStatus status,String createdBy,String approvedBy,OffsetDateTime createdAt,OffsetDateTime approvedAt) {}
     public record DebtResponse(Long id,Long taxpayerId,Long taxConceptId,DebtOriginType originType,Long liquidationId,Long externalObligationId,BigDecimal originalAmount,BigDecimal currentAmount,BigDecimal outstandingBalance,LocalDate dueDate,DebtStatus status,boolean overdue,boolean inPaymentPlan,OffsetDateTime createdAt,OffsetDateTime updatedAt) {}
     public record PaymentResponse(Long id,Long taxpayerId,Long billId,PaymentMethod paymentMethod,BigDecimal amount,BigDecimal allocatedAmount,BigDecimal unallocatedAmount,PaymentStatus status,PaymentAllocationStatus allocationStatus,PaymentOrigin origin,String receiptNumber,String registeredBy,OffsetDateTime paidAt,OffsetDateTime createdAt) {}
-    public record PaymentAllocationResponse(Long id,Long paymentId,AllocationTargetType targetType,Long debtId,Long installmentId,BigDecimal amount,String status,String allocatedBy,OffsetDateTime allocatedAt,OffsetDateTime reversedAt) {}
+    public record PaymentAllocationResponse(Long id,Long paymentId,AllocationTargetType targetType,Long debtId,Long installmentId,BigDecimal amount,BigDecimal principalApplied,BigDecimal interestApplied,String status,String allocatedBy,OffsetDateTime allocatedAt,OffsetDateTime reversedAt) {}
     public record BillDebtResponse(Long debtId,BigDecimal amountAtIssue) {}
     public record BillResponse(Long id,String number,Long taxpayerId,BigDecimal totalAmount,LocalDate issueDate,LocalDate dueDate,BillStatus status,boolean expired,String createdBy,OffsetDateTime createdAt,List<BillDebtResponse> debts) {}
     public record CreditBalanceResponse(Long id,Long taxpayerId,Long sourcePaymentId,BigDecimal originalAmount,BigDecimal availableAmount,CreditBalanceStatus status,OffsetDateTime createdAt,OffsetDateTime updatedAt) {}
@@ -108,7 +108,7 @@ public final class ApiDtos {
     public record RefinancingSimulationResponse(Long originalPlanId,BigDecimal outstandingPrincipal,BigDecimal interest,
         BigDecimal total,int installments,boolean exceptional) {}
     public record CreateRefinancingRequest(@Min(1) @Max(60) int installments) {}
-    public record CreateAdjustmentRequest(@NotNull Long debtId,@NotNull AdjustmentType type,@NotNull @DecimalMin(value="0.01",inclusive=false) BigDecimal amount,@NotBlank String reason) {}
+    public record CreateAdjustmentRequest(@NotNull Long debtId,@NotNull AdjustmentType type,@NotNull @DecimalMin("0.01") BigDecimal amount,@NotBlank String reason) {}
     public record LiquidationRunItemRequest(@NotNull Long taxpayerId,@NotNull @PositiveOrZero BigDecimal taxableBase) {}
     public record CreateLiquidationRunRequest(@NotNull Long taxConceptId,@NotBlank @Pattern(regexp="\\d{4}-\\d{2}") String period,
         @NotNull LocalDate dueDate,@NotEmpty List<@Valid LiquidationRunItemRequest> items) {}

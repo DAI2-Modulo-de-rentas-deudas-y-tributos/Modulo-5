@@ -23,6 +23,7 @@ class PaymentPlanFlowTests {
     @Autowired LiquidationService liquidations;
     @Autowired PlanWorkflowService workflow;
     @Autowired PaymentService payments;
+    @Autowired ReversalService reversals;
     @Autowired DebtRepository debts;
     @Autowired PaymentPlanRepository plans;
     @Autowired PaymentPlanDebtRepository planDebts;
@@ -56,10 +57,15 @@ class PaymentPlanFlowTests {
             .isInstanceOf(BusinessException.class).hasMessageContaining("plan de pago activo");
         Installment down=installments.findByPaymentPlanIdOrderByNumber(plan.id).get(0);
 
-        payments.register(new ApiDtos.RegisterPaymentRequest(debt.taxpayerId,null,PaymentMethod.CASH,down.totalAmount,List.of(new ApiDtos.AllocationRequest(null,down.id,down.totalAmount))));
+        Payment payment=payments.register(new ApiDtos.RegisterPaymentRequest(debt.taxpayerId,null,PaymentMethod.CASH,down.totalAmount,List.of(new ApiDtos.AllocationRequest(null,down.id,down.totalAmount))));
 
         assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("90.00");
         assertThat(installments.findById(down.id).orElseThrow().status).isEqualTo(InstallmentStatus.PAID);
+        PaymentAllocation allocation=paymentsAllocation(payment.id);
+        assertThat(allocation.principalApplied.add(allocation.interestApplied)).isEqualByComparingTo(allocation.amount);
+        PaymentReversalRequest reversal=reversals.request(payment.id,"Pago duplicado");reversals.approve(reversal.id);reversals.execute(reversal.id);
+        assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("100.00");
+        assertThat(installments.findById(down.id).orElseThrow().outstandingAmount).isEqualByComparingTo(down.totalAmount);
     }
 
     @Test void exceptionalInstallmentCountNeedsSupervisorApproval() {
@@ -77,6 +83,7 @@ class PaymentPlanFlowTests {
     @Test void approvedExpirationReleasesDebtsWithoutRestoringPaidPrincipal() {
         Debt debt=debt("PLAN-FLOW-4","PLAN-FLOW-CONCEPT-4"); PaymentPlan plan=grant(debt,2);
         installments.findByPaymentPlanIdOrderByNumber(plan.id).forEach(x->x.dueDate=LocalDate.now().minusDays(1));
+        assertThat(workflow.defaulted(org.springframework.data.domain.PageRequest.of(0,10))).extracting(x->x.id).contains(plan.id);
         PlanExpirationRequest expiration=workflow.requestExpiration(plan.id,new ApiDtos.CreatePlanExpirationRequest("Cuotas vencidas"));
 
         workflow.approveExpiration(expiration.id,"Verificado");
@@ -98,5 +105,7 @@ class PaymentPlanFlowTests {
     }
 
     private PaymentPlan grant(Debt debt,int count){PaymentPlanRequest request=workflow.request(new ApiDtos.CreatePaymentPlanRequest(debt.taxpayerId,List.of(debt.id),count));workflow.grant(request.id,null);return plans.findById(request.paymentPlanId).orElseThrow();}
+    @Autowired PaymentAllocationRepository paymentAllocations;
+    private PaymentAllocation paymentsAllocation(Long paymentId){return paymentAllocations.findByPaymentId(paymentId).get(0);}
     private Debt debt(String externalId,String conceptCode){TaxpayerReference taxpayer=catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(TaxpayerType.CITIZEN,externalId,"123",null,"Persona "+externalId));TaxConcept concept=catalog.createConcept(new ApiDtos.CreateTaxConceptRequest(conceptCode,conceptCode,null,TaxConceptType.FEE,"M5"));TaxConfiguration config=catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(concept.id,CalculationType.FIXED,null,new BigDecimal("100"),null,null,true,true,LocalDate.now().minusDays(1),null));catalog.submit(config.id);catalog.approve(config.id);liquidations.create(new ApiDtos.LiquidationRequest(taxpayer.id,concept.id,YearMonth.now().toString(),BigDecimal.ZERO,LocalDate.now().plusDays(30)));return debts.findByTaxpayerId(taxpayer.id).get(0);}
 }

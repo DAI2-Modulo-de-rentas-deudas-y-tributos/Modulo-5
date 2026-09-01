@@ -65,14 +65,17 @@ class BillingFlowTests {
         assertThat(debts.findById(debt.id).orElseThrow().status).isEqualTo(DebtStatus.PAID);
     }
 
-    @Test void overpaymentBecomesCreditAndIsNotCountedAsUnallocated() {
+    @Test void overpaymentPreservesAllocationBreakdownAndCannotBeSpentTwice() {
         Debt debt = debt("BILL-5", "OVERPAY-CREDIT");
 
         Payment payment = payments.register(new ApiDtos.RegisterPaymentRequest(debt.taxpayerId, PaymentMethod.CASH, new BigDecimal("120"), List.of(new ApiDtos.AllocationRequest(debt.id, new BigDecimal("120")))));
 
-        assertThat(payment.unallocatedAmount).isEqualByComparingTo("0.00");
-        assertThat(payment.allocationStatus).isEqualTo(PaymentAllocationStatus.FULLY_ALLOCATED);
+        assertThat(payment.allocatedAmount).isEqualByComparingTo("100.00");
+        assertThat(payment.unallocatedAmount).isEqualByComparingTo("20.00");
+        assertThat(payment.allocationStatus).isEqualTo(PaymentAllocationStatus.PARTIALLY_ALLOCATED);
         assertThat(credits.findBySourcePaymentId(payment.id).orElseThrow().availableAmount).isEqualByComparingTo("20.00");
+        assertThatThrownBy(() -> payments.allocateExisting(payment.id, new ApiDtos.AllocationRequest(debt.id, new BigDecimal("20"))))
+            .isInstanceOf(BusinessException.class).hasMessageContaining("saldo a favor");
     }
 
     @Test void creditCanBeAppliedToAnotherDebtOfSameTaxpayer() {
@@ -106,7 +109,8 @@ class BillingFlowTests {
     }
 
     private Debt debt(String externalId, String conceptCode) {
-        TaxpayerReference taxpayer = catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(TaxpayerType.CITIZEN, externalId, "123", null, "Persona " + externalId));
+        String uniqueDni = externalId.substring(externalId.lastIndexOf('-') + 1);
+        TaxpayerReference taxpayer = catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(TaxpayerType.CITIZEN, externalId, uniqueDni, null, "Persona " + externalId));
         TaxConcept concept = concept(conceptCode);
         activate(concept.id);
         liquidations.create(liquidation(taxpayer.id, concept.id));

@@ -57,6 +57,13 @@ class DomainFlowTests {
         Debt debt=debt("CIT-5","OVERPAY",true);
         Payment payment=paymentService.register(new ApiDtos.RegisterPaymentRequest(debt.taxpayerId,PaymentMethod.TRANSFER,new BigDecimal("120"),List.of(new ApiDtos.AllocationRequest(debt.id,new BigDecimal("120")))));
         assertThat(credits.findBySourcePaymentId(payment.id).orElseThrow().availableAmount).isEqualByComparingTo("20.00");
+        assertThat(payment.allocatedAmount.add(payment.unallocatedAmount)).isEqualByComparingTo(payment.amount);
+        assertThat(payment.allocatedAmount).isEqualByComparingTo("100.00");
+        assertThat(payment.unallocatedAmount).isEqualByComparingTo("20.00");
+        assertThat(allocations.findByPaymentId(payment.id)).singleElement().satisfies(a->{
+            assertThat(a.principalApplied.add(a.interestApplied)).isEqualByComparingTo(a.amount);
+            assertThat(a.principalApplied).isEqualByComparingTo("100.00");
+        });
         PaymentReversalRequest request=reversalService.request(payment.id,"Carga duplicada"); reversalService.approve(request.id); reversalService.execute(request.id);
         assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("100.00");
     }

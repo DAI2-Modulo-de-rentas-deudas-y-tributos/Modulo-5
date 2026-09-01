@@ -231,6 +231,8 @@ class PaymentAllocation {
     @Column(name="debt_id") public Long debtId;
     @Column(name="installment_id") public Long installmentId;
     @Column(nullable=false,precision=19,scale=2) public BigDecimal amount;
+    @Column(name="principal_applied",nullable=false,precision=19,scale=2) public BigDecimal principalApplied;
+    @Column(name="interest_applied",nullable=false,precision=19,scale=2) public BigDecimal interestApplied;
     @Column(nullable=false) public String status;
     @Column(name="allocated_by",nullable=false) public String allocatedBy;
     @Column(name="allocated_at",nullable=false) public OffsetDateTime allocatedAt;
