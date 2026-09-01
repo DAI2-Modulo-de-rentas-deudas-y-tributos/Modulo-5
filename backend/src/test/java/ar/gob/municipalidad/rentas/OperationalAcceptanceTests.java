@@ -69,7 +69,7 @@ class OperationalAcceptanceTests {
             .andExpect(content().contentType(MediaType.APPLICATION_PDF))
             .andExpect(header().string(
                 HttpHeaders.CONTENT_DISPOSITION,
-                "attachment; filename="" + bill.number + ".pdf""
+                "attachment; filename=\"" + bill.number + ".pdf\""
             ))
             .andReturn();
 
