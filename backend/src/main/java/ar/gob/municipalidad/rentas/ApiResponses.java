@@ -1,7 +1,10 @@
 package ar.gob.municipalidad.rentas;
 
 import java.time.LocalDate;
+import java.util.*;
+import org.springframework.data.domain.Page;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 final class ApiResponses {
     private ApiResponses() {}
@@ -10,7 +13,7 @@ final class ApiResponses {
     static ApiDtos.TaxConfigurationResponse of(TaxConfiguration x){return new ApiDtos.TaxConfigurationResponse(x.id,x.taxConceptId,x.version,x.calculationType,x.rate,x.fixedAmount,x.minimumAmount,x.maximumAmount,x.partialPaymentAllowed,x.paymentPlanAllowed,x.validFrom,x.validUntil,x.status,x.createdBy,x.approvedBy,x.createdAt,x.approvedAt);}
     static ApiDtos.DebtResponse of(Debt x,boolean inPlan){return new ApiDtos.DebtResponse(x.id,x.taxpayerId,x.taxConceptId,x.originType,x.liquidationId,x.externalObligationId,x.originalAmount,x.currentAmount,x.outstandingBalance,x.dueDate,x.status,x.dueDate.isBefore(LocalDate.now())&&x.outstandingBalance.signum()>0,inPlan,x.createdAt,x.updatedAt);}
     static ApiDtos.PaymentResponse of(Payment x){return new ApiDtos.PaymentResponse(x.id,x.taxpayerId,x.billId,x.paymentMethod,x.amount,x.allocatedAmount,x.unallocatedAmount,x.status,x.allocationStatus,x.origin,x.receiptNumber,x.registeredBy,x.paidAt,x.createdAt);}
-    static ApiDtos.PaymentAllocationResponse of(PaymentAllocation x){return new ApiDtos.PaymentAllocationResponse(x.id,x.paymentId,x.targetType,x.debtId,x.installmentId,x.amount,x.status,x.allocatedBy,x.allocatedAt,x.reversedAt);}
+    static ApiDtos.PaymentAllocationResponse of(PaymentAllocation x){return new ApiDtos.PaymentAllocationResponse(x.id,x.paymentId,x.targetType,x.debtId,x.installmentId,x.amount,x.principalApplied,x.interestApplied,x.status,x.allocatedBy,x.allocatedAt,x.reversedAt);}
     static ApiDtos.BillResponse of(Bill x,java.util.List<BillDebt> debts){return new ApiDtos.BillResponse(x.id,x.number,x.taxpayerId,x.totalAmount,x.issueDate,x.dueDate,x.status,x.status!=BillStatus.CANCELLED&&x.dueDate.isBefore(LocalDate.now()),x.createdBy,x.createdAt,debts.stream().map(d->new ApiDtos.BillDebtResponse(d.debtId,d.amountAtIssue)).toList());}
     static ApiDtos.CreditBalanceResponse of(CreditBalance x){return new ApiDtos.CreditBalanceResponse(x.id,x.taxpayerId,x.sourcePaymentId,x.originalAmount,x.availableAmount,x.status,x.createdAt,x.updatedAt);}
     static ApiDtos.CreditBalanceApplicationResponse of(CreditBalanceApplication x){return new ApiDtos.CreditBalanceApplicationResponse(x.id,x.creditBalanceId,x.debtId,x.amount,x.status,x.appliedBy,x.appliedAt,x.reversedAt);}
@@ -28,10 +31,10 @@ final class ApiResponses {
     static ApiDtos.ExemptionRequestResponse of(ExemptionRequest x){return new ApiDtos.ExemptionRequestResponse(x.id,x.taxpayerId,x.taxConceptId,x.reason,x.requestedPercentage,x.requestedFrom,x.requestedUntil,x.status,x.requestedBy,x.requestedAt,x.reviewedBy,x.reviewStartedAt,x.resolutionSubmittedBy,x.resolutionSubmittedAt,x.resolvedBy,x.resolvedAt,x.resolutionReason);}
     static ApiDtos.ExemptionResponse of(Exemption x){return new ApiDtos.ExemptionResponse(x.id,x.requestId,x.taxpayerId,x.taxConceptId,x.percentage,x.validFrom,x.validUntil,x.status,x.validUntil!=null&&x.validUntil.isBefore(LocalDate.now()),x.approvedBy,x.approvedAt,x.cancelledAt);}
     static ApiDtos.TicketResponse of(TicketCase x){return new ApiDtos.TicketResponse(x.id,x.externalTicketId,x.taxpayerId,x.externalCitizenId,x.category,x.description,x.priority,x.status,x.assignedTo,x.createdAt,x.updatedAt,x.completedAt);}
-    static ApiDtos.SocialBenefitResponse of(SocialBenefitReference x){return new ApiDtos.SocialBenefitResponse(x.id,x.externalBenefitId,x.taxpayerId,x.externalCitizenId,x.benefitType,x.externalStatus,x.discountPercentage,x.validFrom,x.validUntil,x.sourceEventId,x.updatedAt);}
+    static ApiDtos.SocialBenefitResponse of(SocialBenefitReference x){return new ApiDtos.SocialBenefitResponse(x.id,x.externalBenefitId,x.taxpayerId,x.externalCitizenId,x.benefitType,x.calculatedStatus,x.externalStatus,x.discountPercentage,x.validFrom,x.validUntil,x.externalSourceEventId,x.updatedAt);}
     static ApiDtos.ExternalObligationResponse of(ExternalObligation x){return new ApiDtos.ExternalObligationResponse(x.id,x.sourceModule,x.externalType,x.externalReferenceId,x.sourceEventId,x.externalTaxpayerType,x.externalTaxpayerId,x.taxpayerId,x.taxConceptId,x.amount,x.dueDate,x.status,x.errorMessage,x.retryCount,x.receivedAt,x.processedAt);}
     static ApiDtos.AuditEntryResponse of(AuditEntry x){return new ApiDtos.AuditEntryResponse(x.id,x.entityType,x.entityId,x.action,x.userId,x.userRole,x.previousData,x.newData,x.correlationId,x.occurredAt);}
-    static ApiDtos.IntegrationEventResponse of(IntegrationEventLog x){return new ApiDtos.IntegrationEventResponse(x.id,x.eventId,x.eventType,x.sourceModule,x.targetModule,x.direction,x.status,x.payload,x.retryCount,x.errorMessage,x.occurredAt,x.receivedAt,x.processedAt,x.lastRetryAt);}
+    static ApiDtos.IntegrationEventResponse of(IntegrationEventLog x){return new ApiDtos.IntegrationEventResponse(x.id,x.externalEventId==null&&x.eventId!=null?x.eventId.toString():x.externalEventId,x.eventType,x.sourceModule,x.targetModule,x.direction,x.status,x.payload,x.retryCount,x.errorMessage,x.occurredAt,x.receivedAt,x.processedAt,x.lastRetryAt);}
     static ApiDtos.ElectronicPaymentResponse of(ElectronicPaymentAttempt x){return new ApiDtos.ElectronicPaymentResponse(x.id,x.paymentId,x.taxpayerId,x.debtId,x.amount,x.status,x.gatewayReference,x.createdAt);}
     static ApiDtos.OutboxEventResponse of(OutboxEvent x){return new ApiDtos.OutboxEventResponse(x.id,x.eventType,x.targetModule,x.aggregateType,x.aggregateId,x.payload,x.status,x.retryCount,x.createdAt,x.publishedAt,x.lastAttemptAt,x.errorMessage);}
 }
@@ -42,4 +45,6 @@ class ApiResponseService {
     ApiResponseService(PaymentPlanRepository plans,PaymentPlanDebtRepository planDebts,BillDebtRepository billDebts){this.plans=plans;this.planDebts=planDebts;this.billDebts=billDebts;}
     ApiDtos.DebtResponse debt(Debt x){boolean active=plans.existsByDebtIdAndStatus(x.id,PaymentPlanStatus.ACTIVE)||planDebts.existsByDebtIdAndStatus(x.id,PaymentPlanDebtStatus.ACTIVE);return ApiResponses.of(x,active);}
     ApiDtos.BillResponse bill(Bill x){return ApiResponses.of(x,billDebts.findByBillId(x.id));}
+    @Transactional(readOnly=true) Page<ApiDtos.DebtResponse> debts(Page<Debt> page){if(page.isEmpty())return page.map(x->ApiResponses.of(x,false));List<Long> ids=page.map(x->x.id).toList();Set<Long> active=new HashSet<>(plans.findDebtIdsByStatus(ids,PaymentPlanStatus.ACTIVE));active.addAll(planDebts.findDebtIdsByStatus(ids,PaymentPlanDebtStatus.ACTIVE));return page.map(x->ApiResponses.of(x,active.contains(x.id)));}
+    @Transactional(readOnly=true) Page<ApiDtos.BillResponse> bills(Page<Bill> page){if(page.isEmpty())return page.map(x->ApiResponses.of(x,List.of()));Map<Long,List<BillDebt>> grouped=billDebts.findByBillIdInOrderByBillIdAscIdAsc(page.map(x->x.id).toList()).stream().collect(java.util.stream.Collectors.groupingBy(x->x.billId));return page.map(x->ApiResponses.of(x,grouped.getOrDefault(x.id,List.of())));}
 }

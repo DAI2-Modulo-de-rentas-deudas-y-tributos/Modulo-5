@@ -14,8 +14,12 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
+import org.slf4j.MDC;
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.UUID;
 
 @Configuration
 @EnableMethodSecurity
@@ -36,6 +40,19 @@ record AuthenticatedIdentity(String userId, Long taxpayerId) {
 }
 
 @Component
+@Order(Ordered.HIGHEST_PRECEDENCE)
+class CorrelationIdFilter extends OncePerRequestFilter {
+    static final String HEADER="X-Correlation-Id";
+    @Override protected void doFilterInternal(HttpServletRequest request,HttpServletResponse response,FilterChain chain)
+            throws ServletException,IOException {
+        String supplied=request.getHeader(HEADER);
+        String correlationId=supplied!=null&&supplied.matches("[A-Za-z0-9._:-]{1,100}")?supplied:UUID.randomUUID().toString();
+        MDC.put("traceId",correlationId);response.setHeader(HEADER,correlationId);
+        try { chain.doFilter(request,response); } finally { MDC.remove("traceId"); }
+    }
+}
+
+@Component
 class DevIdentityFilter extends OncePerRequestFilter {
     private final boolean enabled;
     DevIdentityFilter(@Value("${rentas.security.dev-mode:false}") boolean enabled) { this.enabled = enabled; }
@@ -46,7 +63,9 @@ class DevIdentityFilter extends OncePerRequestFilter {
             String user = value(request, "X-Dev-User", "dev-rentas");
             String roles = value(request, "X-Dev-Roles", "RENTAS,SUPERVISOR,CASHIER");
             String taxpayer = request.getHeader("X-Dev-Taxpayer-Id");
-            Long taxpayerId = taxpayer == null || taxpayer.isBlank() ? null : Long.valueOf(taxpayer);
+            Long taxpayerId;
+            try { taxpayerId = taxpayer == null || taxpayer.isBlank() ? null : Long.valueOf(taxpayer); }
+            catch (NumberFormatException ex) { response.sendError(HttpServletResponse.SC_BAD_REQUEST,"X-Dev-Taxpayer-Id inválido"); return; }
             var authorities = Arrays.stream(roles.split(","))
                 .map(String::trim).filter(s -> !s.isBlank()).map(s -> new SimpleGrantedAuthority("ROLE_" + s)).toList();
             var auth = new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity(user, taxpayerId), null, authorities);
@@ -62,7 +81,9 @@ class DevIdentityFilter extends OncePerRequestFilter {
 @Component
 class CurrentIdentity {
     AuthenticatedIdentity get() {
-        Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        var authentication=SecurityContextHolder.getContext().getAuthentication();
+        if(authentication==null)throw new BusinessException("UNAUTHENTICATED","Se requiere autenticación",401);
+        Object principal = authentication.getPrincipal();
         if (principal instanceof AuthenticatedIdentity identity) return identity;
         return new AuthenticatedIdentity(String.valueOf(principal), null);
     }

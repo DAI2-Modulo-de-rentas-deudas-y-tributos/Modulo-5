@@ -109,3 +109,31 @@ docker compose up -d postgres
 Después abrí `/actuator/health`, `/swagger-ui.html` y `/v3/api-docs`. Finalmente revisá `target/site/jacoco/index.html` y `BACKEND_COMPLETENESS.md`.
 
 La regla profesional es documentar por separado lo aprobado, lo omitido y lo bloqueado; nunca transformar una limitación del ambiente en un éxito ficticio.
+
+## 11. Qué cambió en la segunda etapa de hardening
+
+El quality gate ahora forma parte de Maven. No depende de que una persona recuerde mirar un HTML: `verify` falla si las líneas globales bajan de 85%. La medición final fue 87,83% sin excluir controllers, services ni lógica de negocio.
+
+El sobrepago enseñó una diferencia importante entre *no imputado* y *convertido a crédito*. Si $120 cancelan una deuda de $100, los $20 restantes ya no están libres dentro del pago: se transformaron en un `CreditBalance`. Por eso el pago queda completamente asignado, aunque sólo exista una allocation contra deuda por $100.
+
+Las cuotas agregaron `principalApplied` e `interestApplied`. Guardar ambos evita recalcular el pasado con una fórmula o configuración que podría cambiar. Al revertir, sólo `principalApplied` vuelve a la deuda original; el interés no era capital y no debe aumentarla.
+
+## 12. Defensa en profundidad en la base
+
+Las validaciones Java mejoran el error que recibe el usuario, pero una carrera, un script o un bug futuro puede evitarlas. V9 agrega checks equivalentes para los invariantes que deben ser siempre verdaderos. Esta combinación se llama defensa en profundidad:
+
+```text
+DTO valida formato -> servicio valida negocio -> lock serializa -> transacción agrupa -> DB impide estado imposible
+```
+
+No todas las reglas pertenecen a un CHECK. Por ejemplo, “una deuda no puede estar en dos planes activos” involucra filas y estados: se protege con transacción, lock, consulta y pruebas concurrentes.
+
+## 13. Errores y correlación
+
+El cliente recibe un error estable sin SQL ni stack trace. El detalle técnico sí queda en el log junto con `traceId`. `X-Correlation-Id` conecta request, respuesta, log y auditoría; si el cliente no aporta uno seguro, el backend genera un UUID. El `finally` del filtro elimina MDC porque los threads del servidor se reutilizan.
+
+## 14. Resultado comprobable
+
+La corrida final local detectó 52 tests: 49 aprobaron, 3 Testcontainers se omitieron, 0 fallaron y 0 terminaron con error. Flyway aplicó V1–V9 sobre H2 en modo PostgreSQL. Docker no está instalado, de modo que PostgreSQL 17 real sigue pendiente y no se presenta como validado.
+
+El detalle auditable está en `BACKEND_HARDENING_REPORT.md`; esta guía explica el razonamiento para que puedas repetirlo y defender las decisiones.

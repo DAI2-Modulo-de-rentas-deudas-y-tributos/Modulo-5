@@ -24,7 +24,7 @@ enum BillStatus { ISSUED, CANCELLED }
 enum ElectronicPaymentStatus { PREVIEWED, APPROVED, REJECTED }
 enum ExternalObligationType { PERMIT_FEE, COMMERCIAL_FINE, TRAFFIC_INFRACTION }
 enum ExternalObligationStatus { RECEIVED, PROCESSED, ERROR }
-enum IntegrationEventStatus { RECEIVED, PENDING, PROCESSED, PUBLISHED, FAILED, DEAD_LETTER }
+enum IntegrationEventStatus { RECEIVED, PENDING, PROCESSED, IGNORED, PUBLISHED, FAILED, DEAD_LETTER }
 enum EventDirection { INBOUND, OUTBOUND }
 enum OutboxStatus { PENDING, PUBLISHED, FAILED, DEAD_LETTER }
 enum PaymentPlanStatus { ACTIVE, COMPLETED, EXPIRED, REFINANCED, CANCELLED }
@@ -231,6 +231,8 @@ class PaymentAllocation {
     @Column(name="debt_id") public Long debtId;
     @Column(name="installment_id") public Long installmentId;
     @Column(nullable=false,precision=19,scale=2) public BigDecimal amount;
+    @Column(name="principal_applied",nullable=false,precision=19,scale=2) public BigDecimal principalApplied;
+    @Column(name="interest_applied",nullable=false,precision=19,scale=2) public BigDecimal interestApplied;
     @Column(nullable=false) public String status;
     @Column(name="allocated_by",nullable=false) public String allocatedBy;
     @Column(name="allocated_at",nullable=false) public OffsetDateTime allocatedAt;
@@ -335,6 +337,7 @@ class PaymentReversalRequest {
 @Entity @Table(name="processed_event")
 class ProcessedEvent {
     @Id @Column(name="event_id") public UUID eventId;
+    @Column(name="external_event_id",nullable=false,unique=true) public String externalEventId;
     @Column(name="event_type",nullable=false) public String eventType;
     @Column(name="source_module",nullable=false) public String sourceModule;
     @Column(name="received_at",nullable=false) public OffsetDateTime receivedAt;
@@ -346,6 +349,7 @@ class ProcessedEvent {
 class IntegrationEventLog {
     @Id @GeneratedValue(strategy=GenerationType.IDENTITY) public Long id;
     @Column(name="event_id",nullable=false) public UUID eventId;
+    @Column(name="external_event_id",nullable=false) public String externalEventId;
     @Column(name="event_type",nullable=false) public String eventType;
     @Column(name="source_module",nullable=false) public String sourceModule;
     @Column(name="target_module") public String targetModule;
@@ -572,13 +576,34 @@ class SocialBenefitReference {
     @Column(name="taxpayer_id") public Long taxpayerId;
     @Column(name="external_citizen_id",nullable=false) public String externalCitizenId;
     @Column(name="benefit_type",nullable=false) public String benefitType;
-    @Enumerated(EnumType.STRING) @Column(name="external_status",nullable=false) public SocialBenefitStatus externalStatus;
+    @Column(name="external_status",nullable=false) public String externalStatus;
+    @Enumerated(EnumType.STRING) @Column(name="calculated_status",nullable=false) public SocialBenefitStatus calculatedStatus;
+    @Column(name="external_application_id") public String externalApplicationId;
+    @Column(name="external_program_id") public String externalProgramId;
+    @Column(name="program_name") public String programName;
+    @Column(name="benefits_payload",nullable=false,columnDefinition="text") public String benefitsPayload;
     @Column(name="discount_percentage",precision=5,scale=2) public BigDecimal discountPercentage;
     @Column(name="valid_from",nullable=false) public LocalDate validFrom;
     @Column(name="valid_until") public LocalDate validUntil;
     @Column(name="source_event_id",nullable=false) public UUID sourceEventId;
+    @Column(name="external_source_event_id",nullable=false) public String externalSourceEventId;
     @Column(name="updated_at",nullable=false) public OffsetDateTime updatedAt;
     protected SocialBenefitReference() {}
+}
+
+@Entity @Table(name="taxpayer_representation_reference",uniqueConstraints=@UniqueConstraint(columnNames="external_representation_id"))
+class TaxpayerRepresentationReference {
+    @Id @GeneratedValue(strategy=GenerationType.IDENTITY) public Long id;
+    @Column(name="external_representation_id",nullable=false) public String externalRepresentationId;
+    @Column(name="external_person_id",nullable=false) public String externalPersonId;
+    @Column(name="external_organization_id",nullable=false) public String externalOrganizationId;
+    @Column(nullable=false) public String scope;
+    @Column(name="valid_from") public LocalDate validFrom;
+    @Column(name="valid_until") public LocalDate validUntil;
+    @Column(nullable=false) public String status;
+    @Column(name="source_event_id",nullable=false) public String sourceEventId;
+    @Column(name="updated_at",nullable=false) public OffsetDateTime updatedAt;
+    protected TaxpayerRepresentationReference() {}
 }
 
 @Entity @Table(name="social_benefit_tax_concept",uniqueConstraints=@UniqueConstraint(columnNames={"social_benefit_id","tax_concept_id"}))

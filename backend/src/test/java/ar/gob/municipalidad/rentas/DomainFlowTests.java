@@ -19,6 +19,7 @@ class DomainFlowTests {
     @Autowired ReversalService reversalService; @Autowired PaymentPlanService planService; @Autowired ExemptionService exemptionService;
     @Autowired ExternalObligationService externalService; @Autowired DebtRepository debts; @Autowired PaymentAllocationRepository allocations;
     @Autowired CreditBalanceRepository credits; @Autowired ProcessedEventRepository processed; @Autowired ExternalObligationRepository obligations; @Autowired LiquidationComponentRepository components;
+    @Autowired TaxConceptRepository concepts;
 
     @BeforeEach void authenticate() {
         var authorities=List.of("RENTAS","SUPERVISOR","CASHIER").stream().map(x->new SimpleGrantedAuthority("ROLE_"+x)).toList();
@@ -57,12 +58,19 @@ class DomainFlowTests {
         Debt debt=debt("CIT-5","OVERPAY",true);
         Payment payment=paymentService.register(new ApiDtos.RegisterPaymentRequest(debt.taxpayerId,PaymentMethod.TRANSFER,new BigDecimal("120"),List.of(new ApiDtos.AllocationRequest(debt.id,new BigDecimal("120")))));
         assertThat(credits.findBySourcePaymentId(payment.id).orElseThrow().availableAmount).isEqualByComparingTo("20.00");
+        assertThat(payment.allocatedAmount.add(payment.unallocatedAmount)).isEqualByComparingTo(payment.amount);
+        assertThat(payment.allocatedAmount).isEqualByComparingTo("100.00");
+        assertThat(payment.unallocatedAmount).isEqualByComparingTo("20.00");
+        assertThat(allocations.findByPaymentId(payment.id)).singleElement().satisfies(a->{
+            assertThat(a.principalApplied.add(a.interestApplied)).isEqualByComparingTo(a.amount);
+            assertThat(a.principalApplied).isEqualByComparingTo("100.00");
+        });
         PaymentReversalRequest request=reversalService.request(payment.id,"Carga duplicada"); reversalService.approve(request.id); reversalService.execute(request.id);
         assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("100.00");
     }
 
     @Test void duplicateEventAndBusinessDuplicateCreateSingleDebt() {
-        TaxpayerReference taxpayer=taxpayer("EXT-7"); concept("TRAFFIC_INFRACTION",TaxConceptType.FINE,"M7");
+        TaxpayerReference taxpayer=taxpayer("EXT-7"); concepts.findByCode("TRAFFIC_INFRACTION").orElseGet(()->concept("TRAFFIC_INFRACTION",TaxConceptType.FINE,"M7"));
         UUID id=UUID.randomUUID(); var data=new ApiDtos.InfractionData("INF-2026-1",TaxpayerType.CITIZEN,"EXT-7",new BigDecimal("75"),LocalDate.now().plusDays(10));
         var first=new ApiDtos.EventEnvelope<>(id,"infractionConfirmed",OffsetDateTime.now(),"M7",data);
         ExternalObligation one=externalService.consumeInfraction(first); ExternalObligation same=externalService.consumeInfraction(first);

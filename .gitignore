@@ -4,6 +4,25 @@
 !.env.example
 *.pem
 *.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.truststore
+**/secrets/
+**/credentials/
+*.secret
+*.secrets
+secrets.local.*
+local-secrets.*
+*.secrets.local.*
+credentials.local.*
+local-credentials.*
+*.credentials.local.*
+application-local.yml
+application-local.yaml
+application-secrets.yml
+application-secrets.yaml
 
 # Node / frontend
 node_modules/
