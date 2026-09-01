@@ -11,6 +11,16 @@ import java.time.LocalDate;
 import java.math.BigDecimal;
 import java.util.*;
 
+interface CollectionIndicatorAggregate {
+    long getPaymentCount(); BigDecimal getConfirmedAmount(); BigDecimal getAllocatedAmount(); BigDecimal getUnallocatedAmount();
+}
+interface DebtIndicatorAggregate {
+    long getDebtCount(); long getPaidCount(); long getOpenCount(); BigDecimal getOriginalAmount(); BigDecimal getOutstandingAmount();
+}
+interface DelinquencyIndicatorAggregate {
+    long getOverdueDebtCount(); long getOpenDebtCount(); BigDecimal getOverdueAmount();
+}
+
 @org.springframework.data.repository.NoRepositoryBean
 interface FilteredRepository<T,ID> extends JpaRepository<T,ID>,JpaSpecificationExecutor<T> {}
 
@@ -25,16 +35,44 @@ interface TaxConfigurationRepository extends FilteredRepository<TaxConfiguration
     Optional<TaxConfiguration> findFirstByTaxConceptIdOrderByVersionDesc(Long conceptId);
 }
 interface LiquidationRepository extends FilteredRepository<Liquidation,Long> { List<Liquidation> findByTaxpayerId(Long taxpayerId); boolean existsByTaxpayerIdAndTaxConceptIdAndPeriod(Long taxpayerId,Long conceptId,String period); }
-interface LiquidationComponentRepository extends JpaRepository<LiquidationComponent,Long> { List<LiquidationComponent> findByLiquidationIdOrderById(Long liquidationId); }
-interface DebtRepository extends FilteredRepository<Debt,Long> { List<Debt> findByTaxpayerId(Long taxpayerId); boolean existsByExternalObligationId(Long externalObligationId); @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select d from Debt d where d.id=:id") Optional<Debt> findByIdForUpdate(Long id); }
+interface LiquidationComponentRepository extends JpaRepository<LiquidationComponent,Long> { List<LiquidationComponent> findByLiquidationIdOrderById(Long liquidationId); List<LiquidationComponent> findByLiquidationIdInOrderByLiquidationIdAscIdAsc(Collection<Long> liquidationIds); }
+interface DebtRepository extends FilteredRepository<Debt,Long> {
+    List<Debt> findByTaxpayerId(Long taxpayerId); boolean existsByExternalObligationId(Long externalObligationId);
+    @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select d from Debt d where d.id=:id") Optional<Debt> findByIdForUpdate(Long id);
+    @Query("""
+        select count(d.id) as debtCount,
+          coalesce(sum(case when d.status=ar.gob.municipalidad.rentas.DebtStatus.PAID then 1 else 0 end),0) as paidCount,
+          coalesce(sum(case when d.status not in (ar.gob.municipalidad.rentas.DebtStatus.PAID,ar.gob.municipalidad.rentas.DebtStatus.CANCELLED) and d.outstandingBalance>0 then 1 else 0 end),0) as openCount,
+          coalesce(sum(d.originalAmount),0) as originalAmount,
+          coalesce(sum(d.outstandingBalance),0) as outstandingAmount
+        from Debt d
+        """) DebtIndicatorAggregate aggregateDebt();
+    @Query("""
+        select coalesce(sum(case when d.status not in (ar.gob.municipalidad.rentas.DebtStatus.PAID,ar.gob.municipalidad.rentas.DebtStatus.CANCELLED) and d.outstandingBalance>0 and d.dueDate<:today then 1 else 0 end),0) as overdueDebtCount,
+          coalesce(sum(case when d.status not in (ar.gob.municipalidad.rentas.DebtStatus.PAID,ar.gob.municipalidad.rentas.DebtStatus.CANCELLED) and d.outstandingBalance>0 then 1 else 0 end),0) as openDebtCount,
+          coalesce(sum(case when d.status not in (ar.gob.municipalidad.rentas.DebtStatus.PAID,ar.gob.municipalidad.rentas.DebtStatus.CANCELLED) and d.outstandingBalance>0 and d.dueDate<:today then d.outstandingBalance else 0 end),0) as overdueAmount
+        from Debt d
+        """) DelinquencyIndicatorAggregate aggregateDelinquency(@Param("today") LocalDate today);
+}
 interface ExternalObligationRepository extends FilteredRepository<ExternalObligation,Long> {
     Optional<ExternalObligation> findBySourceModuleAndExternalTypeAndExternalReferenceId(String module, ExternalObligationType type, String reference);
     Page<ExternalObligation> findByStatus(ExternalObligationStatus status,Pageable pageable);
 }
-interface PaymentRepository extends FilteredRepository<Payment,Long> { List<Payment> findByTaxpayerId(Long taxpayerId); Page<Payment> findByTaxpayerId(Long taxpayerId,Pageable pageable); Page<Payment> findByUnallocatedAmountGreaterThan(BigDecimal amount,Pageable pageable); @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select p from Payment p where p.id=:id") Optional<Payment> findByIdForUpdate(Long id); }
+interface PaymentRepository extends FilteredRepository<Payment,Long> {
+    List<Payment> findByTaxpayerId(Long taxpayerId); Page<Payment> findByTaxpayerId(Long taxpayerId,Pageable pageable); Page<Payment> findByUnallocatedAmountGreaterThan(BigDecimal amount,Pageable pageable);
+    @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select p from Payment p where p.id=:id") Optional<Payment> findByIdForUpdate(Long id);
+    @Query("""
+        select count(p.id) as paymentCount, coalesce(sum(p.amount),0) as confirmedAmount,
+          coalesce(sum(p.allocatedAmount),0) as allocatedAmount, coalesce(sum(p.unallocatedAmount),0) as unallocatedAmount
+        from Payment p
+        where p.status=ar.gob.municipalidad.rentas.PaymentStatus.CONFIRMED
+          and (:from is null or cast(p.paidAt as LocalDate)>=:from)
+          and (:to is null or cast(p.paidAt as LocalDate)<=:to)
+        """) CollectionIndicatorAggregate aggregateConfirmed(@Param("from") LocalDate from,@Param("to") LocalDate to);
+}
 interface PaymentAllocationRepository extends FilteredRepository<PaymentAllocation,Long> { List<PaymentAllocation> findByPaymentId(Long paymentId); }
 interface BillRepository extends FilteredRepository<Bill,Long> { List<Bill> findByTaxpayerId(Long taxpayerId); Page<Bill> findByTaxpayerId(Long taxpayerId,Pageable pageable); }
-interface BillDebtRepository extends JpaRepository<BillDebt,Long> { List<BillDebt> findByBillId(Long billId); }
+interface BillDebtRepository extends JpaRepository<BillDebt,Long> { List<BillDebt> findByBillId(Long billId); List<BillDebt> findByBillIdInOrderByBillIdAscIdAsc(Collection<Long> billIds); }
 interface ElectronicPaymentRepository extends JpaRepository<ElectronicPaymentAttempt,Long> { Optional<ElectronicPaymentAttempt> findByPaymentId(Long paymentId); }
 interface CreditBalanceRepository extends FilteredRepository<CreditBalance,Long> { Optional<CreditBalance> findBySourcePaymentId(Long paymentId); @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select c from CreditBalance c where c.sourcePaymentId=:paymentId") Optional<CreditBalance> findBySourcePaymentIdForUpdate(Long paymentId); List<CreditBalance> findByTaxpayerId(Long taxpayerId); @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select c from CreditBalance c where c.id=:id") Optional<CreditBalance> findByIdForUpdate(Long id); }
 interface CreditBalanceApplicationRepository extends JpaRepository<CreditBalanceApplication,Long> {}
@@ -52,11 +90,21 @@ interface PaymentPlanRequestRepository extends FilteredRepository<PaymentPlanReq
 interface PaymentPlanRequestDebtRepository extends JpaRepository<PaymentPlanRequestDebt,Long> { List<PaymentPlanRequestDebt> findByRequestId(Long requestId); }
 interface PaymentPlanRepository extends FilteredRepository<PaymentPlan,Long> {
     boolean existsByDebtIdAndStatus(Long debtId, PaymentPlanStatus status);
-    @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select p from PaymentPlan p where p.id=:id") Optional<PaymentPlan> findByIdForUpdate(Long id);
+    long countByTaxpayerIdAndStatus(Long taxpayerId,PaymentPlanStatus status);
     Page<PaymentPlan> findByTaxpayerId(Long taxpayerId,Pageable pageable);
+    @Query("select p.debtId from PaymentPlan p where p.debtId in :debtIds and p.status=:status") Set<Long> findDebtIdsByStatus(@Param("debtIds") Collection<Long> debtIds,@Param("status") PaymentPlanStatus status);
+    @Query("""
+        select p from PaymentPlan p where p.status=ar.gob.municipalidad.rentas.PaymentPlanStatus.ACTIVE
+          and (select count(i.id) from Installment i where i.paymentPlanId=p.id
+            and i.status not in (ar.gob.municipalidad.rentas.InstallmentStatus.PAID,ar.gob.municipalidad.rentas.InstallmentStatus.CANCELLED)
+            and i.outstandingAmount>0 and i.dueDate<:today)
+          > (select c.maxOverdueInstallments from PaymentPlanConfiguration c where c.id=p.configurationId)
+        """) Page<PaymentPlan> findDefaulted(@Param("today") LocalDate today,Pageable pageable);
+    @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select p from PaymentPlan p where p.id=:id") Optional<PaymentPlan> findByIdForUpdate(Long id);
 }
 interface PaymentPlanDebtRepository extends JpaRepository<PaymentPlanDebt,Long> {
     boolean existsByDebtIdAndStatus(Long debtId,PaymentPlanDebtStatus status);
+    @Query("select d.debtId from PaymentPlanDebt d where d.debtId in :debtIds and d.status=:status") Set<Long> findDebtIdsByStatus(@Param("debtIds") Collection<Long> debtIds,@Param("status") PaymentPlanDebtStatus status);
     List<PaymentPlanDebt> findByPaymentPlanId(Long paymentPlanId);
 }
 interface InstallmentRepository extends JpaRepository<Installment,Long> { List<Installment> findByPaymentPlanIdOrderByNumber(Long planId); @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select i from Installment i where i.id=:id") Optional<Installment> findByIdForUpdate(Long id); }

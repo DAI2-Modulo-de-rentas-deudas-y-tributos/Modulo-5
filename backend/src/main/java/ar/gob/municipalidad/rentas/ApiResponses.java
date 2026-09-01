@@ -1,7 +1,10 @@
 package ar.gob.municipalidad.rentas;
 
 import java.time.LocalDate;
+import java.util.*;
+import org.springframework.data.domain.Page;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 final class ApiResponses {
     private ApiResponses() {}
@@ -42,4 +45,6 @@ class ApiResponseService {
     ApiResponseService(PaymentPlanRepository plans,PaymentPlanDebtRepository planDebts,BillDebtRepository billDebts){this.plans=plans;this.planDebts=planDebts;this.billDebts=billDebts;}
     ApiDtos.DebtResponse debt(Debt x){boolean active=plans.existsByDebtIdAndStatus(x.id,PaymentPlanStatus.ACTIVE)||planDebts.existsByDebtIdAndStatus(x.id,PaymentPlanDebtStatus.ACTIVE);return ApiResponses.of(x,active);}
     ApiDtos.BillResponse bill(Bill x){return ApiResponses.of(x,billDebts.findByBillId(x.id));}
+    @Transactional(readOnly=true) Page<ApiDtos.DebtResponse> debts(Page<Debt> page){if(page.isEmpty())return page.map(x->ApiResponses.of(x,false));List<Long> ids=page.map(x->x.id).toList();Set<Long> active=new HashSet<>(plans.findDebtIdsByStatus(ids,PaymentPlanStatus.ACTIVE));active.addAll(planDebts.findDebtIdsByStatus(ids,PaymentPlanDebtStatus.ACTIVE));return page.map(x->ApiResponses.of(x,active.contains(x.id)));}
+    @Transactional(readOnly=true) Page<ApiDtos.BillResponse> bills(Page<Bill> page){if(page.isEmpty())return page.map(x->ApiResponses.of(x,List.of()));Map<Long,List<BillDebt>> grouped=billDebts.findByBillIdInOrderByBillIdAscIdAsc(page.map(x->x.id).toList()).stream().collect(java.util.stream.Collectors.groupingBy(x->x.billId));return page.map(x->ApiResponses.of(x,grouped.getOrDefault(x.id,List.of())));}
 }

@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.MDC;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.data.domain.Page;
 import java.math.*;
 import java.time.*;
 import java.util.*;
@@ -104,6 +105,8 @@ class LiquidationService {
         return amount.setScale(2,RoundingMode.HALF_UP);
     }
     ApiDtos.LiquidationResponse response(Liquidation l){return new ApiDtos.LiquidationResponse(l.id,l.taxpayerId,l.taxConceptId,l.taxConfigurationId,l.configurationVersion,l.period,l.taxableBase,l.baseAmount,l.discountAmount,l.exemptionAmount,l.surchargeAmount,l.interestAmount,l.finalAmount,l.dueDate,l.status,l.createdBy,l.issuedAt,components.findByLiquidationIdOrderById(l.id).stream().map(this::response).toList());}
+    @Transactional(readOnly=true) Page<ApiDtos.LiquidationResponse> responses(Page<Liquidation> page){if(page.isEmpty())return page.map(x->response(x,List.of()));Map<Long,List<LiquidationComponent>> grouped=components.findByLiquidationIdInOrderByLiquidationIdAscIdAsc(page.map(x->x.id).toList()).stream().collect(java.util.stream.Collectors.groupingBy(x->x.liquidationId));return page.map(x->response(x,grouped.getOrDefault(x.id,List.of())));}
+    private ApiDtos.LiquidationResponse response(Liquidation l,List<LiquidationComponent> detail){return new ApiDtos.LiquidationResponse(l.id,l.taxpayerId,l.taxConceptId,l.taxConfigurationId,l.configurationVersion,l.period,l.taxableBase,l.baseAmount,l.discountAmount,l.exemptionAmount,l.surchargeAmount,l.interestAmount,l.finalAmount,l.dueDate,l.status,l.createdBy,l.issuedAt,detail.stream().map(this::response).toList());}
     private ApiDtos.LiquidationComponentResponse response(LiquidationComponent c){return new ApiDtos.LiquidationComponentResponse(c.id,c.type,c.sourceType,c.sourceId,c.description,c.amount);}
     private Reduction reduction(Long taxpayerId,Long conceptId,BigDecimal base,LocalDate date) {
         Exemption exemption=exemptions.findByTaxpayerIdAndTaxConceptIdAndStatus(taxpayerId,conceptId,"ACTIVE").stream().filter(x->!x.validFrom.isAfter(date)&&(x.validUntil==null||!x.validUntil.isBefore(date))).max(Comparator.comparing(x->x.percentage)).orElse(null);
