@@ -66,8 +66,8 @@ interface PaymentRepository extends FilteredRepository<Payment,Long> {
           coalesce(sum(p.allocatedAmount),0) as allocatedAmount, coalesce(sum(p.unallocatedAmount),0) as unallocatedAmount
         from Payment p
         where p.status=ar.gob.municipalidad.rentas.PaymentStatus.CONFIRMED
-          and (:from is null or cast(p.paidAt as LocalDate)>=:from)
-          and (:to is null or cast(p.paidAt as LocalDate)<=:to)
+          and (cast(:from as LocalDate) is null or cast(p.paidAt as LocalDate)>=:from)
+          and (cast(:to as LocalDate) is null or cast(p.paidAt as LocalDate)<=:to)
         """) CollectionIndicatorAggregate aggregateConfirmed(@Param("from") LocalDate from,@Param("to") LocalDate to);
 }
 interface PaymentAllocationRepository extends FilteredRepository<PaymentAllocation,Long> { List<PaymentAllocation> findByPaymentId(Long paymentId); }
