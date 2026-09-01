@@ -64,7 +64,9 @@ class OperationalAcceptanceTests {
             LocalDate.now().plusDays(10)
         ));
 
-        MvcResult result = mvc.perform(get("/api/v1/bills/{id}/document", bill.id))
+        SecurityContextHolder.clearContext();
+        MvcResult result = mvc.perform(get("/api/v1/bills/{id}/document", bill.id)
+                .header("X-Dev-Roles", "RENTAS"))
             .andExpect(status().isOk())
             .andExpect(content().contentType(MediaType.APPLICATION_PDF))
             .andExpect(header().string(
