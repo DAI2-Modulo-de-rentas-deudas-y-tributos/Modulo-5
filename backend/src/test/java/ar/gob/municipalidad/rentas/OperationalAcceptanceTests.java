@@ -81,8 +81,9 @@ class OperationalAcceptanceTests {
             .contains(bill.number)
             .contains("100.00");
 
-        authenticate("AUDITOR");
-        mvc.perform(get("/api/v1/bills/{id}/document", bill.id))
+        SecurityContextHolder.clearContext();
+        mvc.perform(get("/api/v1/bills/{id}/document", bill.id)
+                .header("X-Dev-Roles", "AUDITOR"))
             .andExpect(status().isForbidden());
     }
 
