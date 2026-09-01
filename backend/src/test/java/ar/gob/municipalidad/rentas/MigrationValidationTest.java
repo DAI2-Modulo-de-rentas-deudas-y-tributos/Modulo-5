@@ -18,7 +18,7 @@ class MigrationValidationTest {
         registry.add("spring.datasource.password",()->"");
     }
     @Test void flywaySchemaMatchesJpaModel() {
-        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(9);
-        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(9);
+        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(11);
+        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(11);
     }
 }

@@ -16,6 +16,8 @@ interface FilteredRepository<T,ID> extends JpaRepository<T,ID>,JpaSpecificationE
 
 interface TaxpayerRepository extends FilteredRepository<TaxpayerReference,Long> {
     Optional<TaxpayerReference> findByTaxpayerTypeAndExternalId(TaxpayerType type, String externalId);
+    Optional<TaxpayerReference> findByTaxpayerTypeAndDni(TaxpayerType type,String dni);
+    Optional<TaxpayerReference> findByTaxpayerTypeAndCuit(TaxpayerType type,String cuit);
 }
 interface TaxConceptRepository extends FilteredRepository<TaxConcept,Long> { Optional<TaxConcept> findByCode(String code); }
 interface TaxConfigurationRepository extends FilteredRepository<TaxConfiguration,Long> {
@@ -37,8 +39,8 @@ interface ElectronicPaymentRepository extends JpaRepository<ElectronicPaymentAtt
 interface CreditBalanceRepository extends FilteredRepository<CreditBalance,Long> { Optional<CreditBalance> findBySourcePaymentId(Long paymentId); @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select c from CreditBalance c where c.sourcePaymentId=:paymentId") Optional<CreditBalance> findBySourcePaymentIdForUpdate(Long paymentId); List<CreditBalance> findByTaxpayerId(Long taxpayerId); @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select c from CreditBalance c where c.id=:id") Optional<CreditBalance> findByIdForUpdate(Long id); }
 interface CreditBalanceApplicationRepository extends JpaRepository<CreditBalanceApplication,Long> {}
 interface PaymentReversalRepository extends FilteredRepository<PaymentReversalRequest,Long> { @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select r from PaymentReversalRequest r where r.id=:id") Optional<PaymentReversalRequest> findByIdForUpdate(Long id); boolean existsByPaymentIdAndStatusIn(Long paymentId,Collection<PaymentReversalStatus> statuses); }
-interface ProcessedEventRepository extends JpaRepository<ProcessedEvent,UUID> {}
-interface IntegrationEventLogRepository extends FilteredRepository<IntegrationEventLog,Long> { Optional<IntegrationEventLog> findFirstByEventIdOrderByIdDesc(UUID eventId); Page<IntegrationEventLog> findByStatusIn(Collection<IntegrationEventStatus> statuses,Pageable pageable); }
+interface ProcessedEventRepository extends JpaRepository<ProcessedEvent,UUID> { boolean existsByExternalEventId(String eventId); }
+interface IntegrationEventLogRepository extends FilteredRepository<IntegrationEventLog,Long> { Optional<IntegrationEventLog> findFirstByEventIdOrderByIdDesc(UUID eventId); Optional<IntegrationEventLog> findFirstByExternalEventIdOrderByIdDesc(String eventId); Page<IntegrationEventLog> findByStatusIn(Collection<IntegrationEventStatus> statuses,Pageable pageable); }
 interface OutboxRepository extends JpaRepository<OutboxEvent,UUID> { @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select e from OutboxEvent e where e.status in (ar.gob.municipalidad.rentas.OutboxStatus.PENDING,ar.gob.municipalidad.rentas.OutboxStatus.FAILED) order by e.createdAt") List<OutboxEvent> findPublishable(Pageable pageable); }
 interface AuditRepository extends FilteredRepository<AuditEntry,Long> { List<AuditEntry> findByEntityTypeAndEntityIdOrderByOccurredAt(String entityType,String entityId); }
 interface PaymentPlanConfigurationRepository extends FilteredRepository<PaymentPlanConfiguration,Long> {
@@ -67,6 +69,7 @@ interface TicketCaseRepository extends FilteredRepository<TicketCase,Long> { Opt
 interface TicketCaseUpdateRepository extends JpaRepository<TicketCaseUpdate,Long> { List<TicketCaseUpdate> findByTicketCaseIdOrderByCreatedAt(Long ticketCaseId); }
 interface SocialBenefitRepository extends FilteredRepository<SocialBenefitReference,Long> { Optional<SocialBenefitReference> findByExternalBenefitId(String externalBenefitId); List<SocialBenefitReference> findByTaxpayerId(Long taxpayerId); }
 interface SocialBenefitTaxConceptRepository extends JpaRepository<SocialBenefitTaxConcept,Long> { List<SocialBenefitTaxConcept> findBySocialBenefitId(Long benefitId); boolean existsBySocialBenefitIdAndTaxConceptId(Long benefitId,Long conceptId); void deleteBySocialBenefitId(Long benefitId); }
+interface TaxpayerRepresentationRepository extends JpaRepository<TaxpayerRepresentationReference,Long> { Optional<TaxpayerRepresentationReference> findByExternalRepresentationId(String externalRepresentationId); }
 interface ExemptionRequestRepository extends FilteredRepository<ExemptionRequest,Long> { Page<ExemptionRequest> findByTaxpayerId(Long taxpayerId,Pageable pageable); @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select e from ExemptionRequest e where e.id=:id") Optional<ExemptionRequest> findByIdForUpdate(Long id); }
 interface ExemptionRequestDocumentRepository extends JpaRepository<ExemptionRequestDocument,Long> { List<ExemptionRequestDocument> findByExemptionRequestId(Long requestId); }
 interface ExemptionRepository extends FilteredRepository<Exemption,Long> {
