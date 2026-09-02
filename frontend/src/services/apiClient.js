@@ -36,9 +36,8 @@ export function authHeaders() {
       ...(user.taxpayerId ? { "X-Dev-Taxpayer-Id": String(user.taxpayerId) } : {}),
     };
   }
-  if (AUTH_MODE !== "core") return {};
-  const token = sessionStorage.getItem("rentas.token");
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  // Core/JWT todavía no tiene contrato: no reutilizar tokens de la sesión mock.
+  return {};
 }
 
 export async function request(path, { method = "GET", body, signal } = {}) {

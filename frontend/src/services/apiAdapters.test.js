@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createElement } from "react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { adaptApiRequest, adaptApiResponse, enumMappings, pageItems } from "./apiAdapters.js";
 
 describe("API adapters", () => {
@@ -181,13 +183,36 @@ describe("API client modes", () => {
     expect(authHeaders()["X-Dev-Taxpayer-Id"]).toBe("7");
   });
 
-  it("never sends dev headers in Core mode", async () => {
+  it("sends no headers in Core mode while the Core/JWT contract is pending", async () => {
     vi.stubEnv("VITE_AUTH_MODE", "core");
     vi.stubEnv("VITE_DEV_IDENTITY_HEADERS", "true");
     sessionStorage.setItem("rentas.user", JSON.stringify({ username: "x", role: "SUPERVISOR" }));
-    sessionStorage.setItem("rentas.token", "token");
+    sessionStorage.setItem("rentas.token", "mock.eA==.token");
     const { authHeaders } = await import("./apiClient.js");
-    expect(authHeaders()).toEqual({ Authorization: "Bearer token" });
+    expect(authHeaders()).toEqual({});
+  });
+
+  it("does not authenticate a persisted mock user in Core mode", async () => {
+    vi.stubEnv("VITE_AUTH_MODE", "core");
+    sessionStorage.setItem("rentas.user", JSON.stringify({ username: "jlopez", role: "SUPERVISOR" }));
+    sessionStorage.setItem("rentas.token", "mock.eA==.token");
+    const { AuthProvider, useAuth } = await import("../context/AuthContext.jsx");
+    function AuthState() {
+      return createElement("span", null, useAuth().isAuthenticated ? "authenticated" : "anonymous");
+    }
+
+    render(createElement(AuthProvider, null, createElement(AuthState)));
+    expect(screen.getByText("anonymous")).toBeDefined();
+    expect(sessionStorage.getItem("rentas.user")).not.toBeNull();
+    cleanup();
+  });
+
+  it("does not add dev headers unless they are explicitly enabled", async () => {
+    vi.stubEnv("VITE_AUTH_MODE", "mock");
+    vi.stubEnv("VITE_DEV_IDENTITY_HEADERS", "false");
+    sessionStorage.setItem("rentas.user", JSON.stringify({ username: "jlopez", role: "SUPERVISOR" }));
+    const { authHeaders } = await import("./apiClient.js");
+    expect(authHeaders()).toEqual({});
   });
 
   it("preserves backend error code and trace id", async () => {
@@ -206,6 +231,29 @@ describe("API client modes", () => {
     const taxpayer = await taxpayerService.getById(999);
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(taxpayer.name).toBe("Dato API");
+  });
+
+  it("does not fall back to mockDb when an API-mode request has a network error", async () => {
+    vi.stubEnv("VITE_USE_MOCKS", "false");
+    vi.stubEnv("VITE_AUTH_MODE", "mock");
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+    const { taxpayerService } = await import("./rentasService.js");
+    await expect(taxpayerService.getById(1)).rejects.toThrow("Failed to fetch");
+  });
+
+  it("keeps mock authentication independent from API domain mode", async () => {
+    vi.stubEnv("VITE_USE_MOCKS", "false");
+    vi.stubEnv("VITE_AUTH_MODE", "mock");
+    const { authService } = await import("./rentasService.js");
+    await expect(authService.login({ username: "mrivas", password: "rentas123" }))
+      .resolves.toMatchObject({ user: { role: "PERSONAL" } });
+  });
+
+  it("fails explicitly instead of using mock users in Core mode", async () => {
+    vi.stubEnv("VITE_AUTH_MODE", "core");
+    const { authService } = await import("./rentasService.js");
+    await expect(authService.login({ username: "mrivas", password: "rentas123" }))
+      .rejects.toMatchObject({ code: "CORE_AUTH_PENDING", status: 503 });
   });
 
   it("uses numeric zeroes for dashboard counts absent from the backend summary", () => {

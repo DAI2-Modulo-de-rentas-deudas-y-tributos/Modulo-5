@@ -7,7 +7,7 @@ import Button from "../components/common/Button.jsx";
 import logo from "../assets/logo.png";
 import { useAuth } from "../context/AuthContext.jsx";
 import { homePathForRole } from "../config/workspaces.js";
-import { USE_MOCKS } from "../services/apiClient.js";
+import { AUTH_MODE, USE_MOCKS } from "../services/apiClient.js";
 
 /**
  * Ingreso al módulo. Entran los agentes municipales y también el contribuyente a su
@@ -145,7 +145,7 @@ export default function LoginPage() {
             </Button>
           </form>
 
-          {USE_MOCKS && (
+          {AUTH_MODE === "mock" && USE_MOCKS && (
             <div className="mt-6 rounded-lg border border-neutral-200 bg-white p-4">
               <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-neutral-400">
                 Datos de prueba

@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { authService } from "../services/rentasService.js";
+import { AUTH_MODE } from "../services/apiClient.js";
 
 const AuthContext = createContext(null);
 
@@ -7,6 +8,8 @@ const SESSION_KEY = "rentas.user";
 const TOKEN_KEY = "rentas.token";
 
 function readStoredUser() {
+  // Una sesión demo previa nunca autentica una futura ejecución en modo Core.
+  if (AUTH_MODE === "core") return null;
   try {
     const raw = sessionStorage.getItem(SESSION_KEY);
     return raw ? JSON.parse(raw) : null;
