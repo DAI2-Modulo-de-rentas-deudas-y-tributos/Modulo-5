@@ -37,6 +37,11 @@ export default function MisPagosPage() {
             <span>{row.conceptName}</span>
             <span className="text-[12px] tabular-nums text-neutral-400">Deuda #{row.debtId}</span>
           </div>
+        ) : Number(row.allocatedAmount) > 0 ? (
+          <StatusBadge
+            tone={Number(row.unallocatedAmount) > 0 ? "warning" : "success"}
+            label={Number(row.unallocatedAmount) > 0 ? "Imputado parcialmente" : "Imputado"}
+          />
         ) : (
           <StatusBadge tone="warning" label="Sin imputar" />
         ),

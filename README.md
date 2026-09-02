@@ -46,6 +46,22 @@ Cuando el backend sea incorporado:
 docker compose --profile application up --build
 ```
 
+### Variables de entorno de integración
+
+- `VITE_API_BASE_URL`: URL pública del backend; no contiene secretos.
+- `VITE_USE_MOCKS`: `true` usa el dataset offline; `false` usa HTTP real.
+- `VITE_AUTH_MODE`: `mock` conserva el login demo; `core` queda reservado para el
+  contrato Core/JWT futuro.
+- `VITE_DEV_IDENTITY_HEADERS`: envía `X-Dev-*` sólo con auth mock y habilitación
+  explícita. Default `false`.
+- `RENTAS_SECURITY_DEV_MODE`: habilita el puente de identidad sólo para integración
+  local. Default `false`; no debe habilitarse en producción.
+
+Para datos reales con autenticación demo use `VITE_USE_MOCKS=false`,
+`VITE_AUTH_MODE=mock`, `VITE_DEV_IDENTITY_HEADERS=true` y
+`RENTAS_SECURITY_DEV_MODE=true`. Con `VITE_API_BASE_URL` vacío, el proxy Vite
+enruta `/api` al backend local. CORS de deployment queda pendiente de la URL final.
+
 ## Automatización
 
 El CI siempre valida la estructura DevOps y Terraform. Los jobs de frontend y

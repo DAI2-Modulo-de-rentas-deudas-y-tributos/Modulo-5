@@ -26,7 +26,12 @@ const dateTimeFormatter = new Intl.DateTimeFormat("es-AR", {
 export const formatCurrency = (value) =>
   value === null || value === undefined ? "—" : currencyFormatter.format(value);
 
-export const formatDate = (value) => (value ? dateFormatter.format(new Date(value)) : "—");
+const dateValue = (value) =>
+  typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)
+    ? new Date(`${value}T00:00:00`)
+    : new Date(value);
+
+export const formatDate = (value) => (value ? dateFormatter.format(dateValue(value)) : "—");
 
 export const formatDateTime = (value) =>
   value ? dateTimeFormatter.format(new Date(value)) : "—";
@@ -92,9 +97,13 @@ export const STATUS_LABELS = {
   EFECTIVO: "Efectivo",
   TARJETA_DEBITO: "Tarjeta de débito",
   TARJETA_CREDITO: "Tarjeta de crédito",
+  TARJETA: "Tarjeta",
   TRANSFERENCIA: "Transferencia",
   QR: "Billetera virtual / QR",
   VENTANILLA: "Ventanilla",
+  PARTIALLY_PAID: "Pago parcial",
+  ELECTRONICO: "Electrónico",
+  EXTERNO: "Externo",
   HOMEBANKING: "Homebanking",
   DEBITO_AUTOMATICO: "Débito automático",
   // Ciclo interno del plan de pago, posterior al otorgamiento.
@@ -126,6 +135,11 @@ export const STATUS_LABELS = {
   CAJERO: "Cajero",
   AUDITOR: "Auditor",
   SISTEMA: "Sistema",
+  ROLE_RENTAS: "Rentas",
+  ROLE_CASHIER: "Caja",
+  ROLE_AUDITOR: "Auditor",
+  ROLE_TAXPAYER: "Contribuyente",
+  SUCCESS: "Correcto",
 };
 
 /** Acciones registradas en la auditoría, en el idioma del expediente. */
@@ -141,6 +155,14 @@ export const AUDIT_ACTION_LABELS = {
   TICKET_STATUS_UPDATED: "Estado de ticket actualizado",
   EVENT_MOVED_TO_DLQ: "Evento enviado a DLQ",
   DEBT_REPORTED_OVERDUE: "Deuda vencida informada a M8",
+  INSTALLMENT_PAYMENT_ALLOCATED: "Pago aplicado a cuota",
+  LIQUIDATION_CREATED: "Liquidación creada",
+  PAYMENT_ALLOCATED: "Pago imputado",
+  PAYMENT_PLAN_REQUESTED: "Plan de pago solicitado",
+  PAYMENT_REVERSAL_APPROVED: "Reversión aprobada",
+  PAYMENT_REVERSAL_REQUESTED: "Reversión solicitada",
+  PLAN_CONFIGURATION_CREATED: "Configuración de plan creada",
+  TAX_CONFIGURATION_APPROVED: "Configuración tributaria aprobada",
 };
 
 export const actionLabelFor = (value) => AUDIT_ACTION_LABELS[value] ?? value ?? "—";
@@ -155,6 +177,14 @@ export const ENTITY_LABELS = {
   EXEMPTION: "Exención",
   TICKET: "Ticket",
   EVENT: "Evento",
+  Liquidation: "Liquidación",
+  Payment: "Pago",
+  PaymentAllocation: "Imputación de pago",
+  PaymentPlan: "Plan de pago",
+  PaymentPlanConfiguration: "Configuración de plan",
+  PaymentPlanRequest: "Solicitud de plan",
+  PaymentReversal: "Reversión de pago",
+  TaxConfiguration: "Configuración tributaria",
 };
 
 export const entityLabelFor = (value) => ENTITY_LABELS[value] ?? value ?? "—";

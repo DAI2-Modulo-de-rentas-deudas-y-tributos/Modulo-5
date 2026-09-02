@@ -6,7 +6,7 @@
  * RequestPaymentReversalRequest, etc. Cuando el backend exista basta con quitar la
  * rama de mocks: la firma y el shape de respuesta no cambian.
  */
-import { USE_MOCKS, delay, request, ApiError } from "./apiClient.js";
+import { USE_MOCKS, AUTH_MODE, delay, request, ApiError } from "./apiClient.js";
 import * as db from "./mockDb.js";
 
 /** Copia mutable en memoria: las acciones de la demo persisten durante la sesión. */
@@ -97,8 +97,8 @@ const round2 = (value) => Math.round(value * 100) / 100;
 
 export const authService = {
   async login({ username, password }) {
-    if (!USE_MOCKS) {
-      return request("/api/v1/auth/login", { method: "POST", body: { username, password } });
+    if (AUTH_MODE === "core") {
+      throw new ApiError("La autenticación Core/JWT todavía no tiene un contrato integrado.", 503, null, "CORE_AUTH_PENDING");
     }
     await delay();
     const user = db.USERS.find(
@@ -112,9 +112,7 @@ export const authService = {
   },
 
   async logout() {
-    if (!USE_MOCKS) {
-      await request("/api/v1/auth/logout", { method: "POST" }).catch(() => null);
-    }
+    // En modo mock la sesión es local. Core/JWT sigue pendiente de contrato.
   },
 };
 
@@ -161,6 +159,30 @@ const activeVersionOf = (concept) =>
 const nextVersionNumber = (concept) =>
   Math.max(0, ...(concept.versions ?? []).map((v) => v.version)) + 1;
 
+async function apiTaxConfigModel() {
+  const [concepts, configurations] = await Promise.all([
+    request("/api/v1/tax-concepts?size=100"),
+    request("/api/v1/tax-configurations?size=100"),
+  ]);
+  return concepts.map((concept) => {
+    const versions = configurations.filter((item) => item.taxConceptId === concept.id);
+    return {
+      ...concept,
+      versions,
+      activeVersion: versions.find((item) => item.status === "ACTIVE") ?? null,
+      pendingVersion: versions.find((item) => item.status === "PENDING_APPROVAL") ?? null,
+      draftVersion: versions.find((item) => item.status === "DRAFT") ?? null,
+    };
+  });
+}
+
+async function apiConceptByCode(code) {
+  const concepts = await request(`/api/v1/tax-concepts?q=${encodeURIComponent(code)}&size=100`);
+  const concept = concepts.find((item) => item.code === code);
+  if (!concept) throw new ApiError("Concepto inexistente.", 404);
+  return concept;
+}
+
 /**
  * Configuración de tributos.
  *
@@ -173,8 +195,8 @@ export const taxConfigService = {
   /** Conceptos con su versión vigente y si tienen algo esperando aprobación. */
   async list({ type = "", status = "" } = {}) {
     if (!USE_MOCKS) {
-      const params = new URLSearchParams({ type, status });
-      return request(`/api/v1/tax-config?${params}`);
+      const concepts = await apiTaxConfigModel();
+      return concepts.filter((item) => (!type || item.type === type) && (!status || item.status === status));
     }
     await delay();
     return store.conceptDefinitions
@@ -190,7 +212,11 @@ export const taxConfigService = {
 
   /** Ficha del concepto con todo su historial de versiones. */
   async detail(code) {
-    if (!USE_MOCKS) return request(`/api/v1/tax-config/${code}`);
+    if (!USE_MOCKS) {
+      const concept = (await apiTaxConfigModel()).find((item) => item.code === code);
+      if (!concept) throw new ApiError("Concepto inexistente.", 404);
+      return { ...concept, settlementCount: null, openDebtCount: null };
+    }
     await delay();
     const concept = conceptByCode(code);
     if (!concept) throw new ApiError("Concepto inexistente.", 404);
@@ -222,17 +248,20 @@ export const taxConfigService = {
     requestedBy,
   }) {
     if (!USE_MOCKS) {
-      return request(`/api/v1/tax-config/${code}/versions`, {
+      const concept = await apiConceptByCode(code);
+      return request("/api/v1/tax-configurations", {
         method: "POST",
         body: {
+          taxConceptId: concept.id,
           calculationType,
           rate,
+          fixedAmount: calculationType === "FIJO" ? rate : 0,
           minimumAmount,
           maximumAmount,
+          partialPaymentAllowed: true,
+          paymentPlanAllowed: true,
           validFrom,
           validUntil,
-          conceptStatus,
-          note,
         },
       });
     }
@@ -296,7 +325,11 @@ export const taxConfigService = {
   /** El borrador pasa a la bandeja del Supervisor. */
   async submitForApproval({ code, version, requestedBy }) {
     if (!USE_MOCKS) {
-      return request(`/api/v1/tax-config/${code}/versions/${version}/submit`, { method: "POST" });
+      const concept = await apiConceptByCode(code);
+      const versions = await request(`/api/v1/tax-configurations?conceptId=${concept.id}&size=100`);
+      const target = versions.find((item) => item.version === Number(version));
+      if (!target) throw new ApiError("Versión inexistente.", 404);
+      return request(`/api/v1/tax-configurations/${target.id}/submit`, { method: "POST" });
     }
     await delay();
     const concept = conceptByCode(code);
@@ -314,7 +347,11 @@ export const taxConfigService = {
 
   /** Bandeja del Supervisor: todo lo que espera aprobación, de lo más viejo a lo nuevo. */
   async pendingApprovals() {
-    if (!USE_MOCKS) return request("/api/v1/tax-config/pending");
+    if (!USE_MOCKS) {
+      return (await apiTaxConfigModel()).flatMap((concept) => concept.versions
+        .filter((item) => item.status === "PENDING_APPROVAL")
+        .map((item) => ({ ...item, code: concept.code, name: concept.name, type: concept.type, currentVersion: concept.activeVersion })));
+    }
     await delay();
     return store.conceptDefinitions
       .flatMap((concept) =>
@@ -337,10 +374,12 @@ export const taxConfigService = {
    */
   async resolveVersion({ code, version, status, resolvedBy, resolverRole, reason }) {
     if (!USE_MOCKS) {
-      return request(`/api/v1/tax-config/${code}/versions/${version}/status`, {
-        method: "PUT",
-        body: { status, reason },
-      });
+      const concept = await apiConceptByCode(code);
+      const versions = await request(`/api/v1/tax-configurations?conceptId=${concept.id}&size=100`);
+      const target = versions.find((item) => item.version === Number(version));
+      if (!target) throw new ApiError("Versión inexistente.", 404);
+      const action = status === "REJECTED" ? "reject" : "approve";
+      return request(`/api/v1/tax-configurations/${target.id}/${action}`, { method: "POST", body: action === "reject" ? { reason } : { observation: reason ?? null } });
     }
     await delay();
     if (resolverRole !== "SUPERVISOR") {
@@ -389,7 +428,8 @@ export const taxConfigService = {
 export const settlementService = {
   async list({ period = "", conceptCode = "", status = "", taxpayerId = "" } = {}) {
     if (!USE_MOCKS) {
-      const params = new URLSearchParams({ period, conceptCode, status, taxpayerId });
+      const params = new URLSearchParams({ period, status, taxpayerId });
+      if (conceptCode) params.set("conceptId", String((await apiConceptByCode(conceptCode)).id));
       return request(`/api/v1/settlements?${params}`);
     }
     await delay();
@@ -405,9 +445,10 @@ export const settlementService = {
   /** GenerateSettlementRequest → SettlementResponse */
   async generate({ taxpayerId, conceptCode, period, baseAmount, dueDate }) {
     if (!USE_MOCKS) {
+      const concept = await apiConceptByCode(conceptCode);
       return request("/api/v1/settlements", {
         method: "POST",
-        body: { taxpayerId, conceptCode, period, baseAmount, dueDate },
+        body: { taxpayerId, conceptId: concept.id, period, baseAmount, dueDate },
       });
     }
     await delay();
@@ -454,10 +495,18 @@ export const settlementService = {
    */
   async previewBatch({ conceptCode, period, baseAmount, dueDate, taxpayerType = "" }) {
     if (!USE_MOCKS) {
-      return request("/api/v1/settlements/batch/preview", {
+      const [concept, taxpayers] = await Promise.all([
+        apiConceptByCode(conceptCode),
+        taxpayerService.search({ type: taxpayerType }),
+      ]);
+      const run = await request("/api/v1/liquidation-runs", {
         method: "POST",
-        body: { conceptCode, period, baseAmount, dueDate, taxpayerType },
+        body: { taxConceptId: concept.id, period, dueDate, items: taxpayers.map((item) => ({ taxpayerId: item.id, taxableBase: Number(baseAmount) })) },
       });
+      const preview = await request(`/api/v1/liquidation-runs/${run.id}/preview`, { method: "POST" });
+      const items = (preview.items ?? []).filter((item) => item.status !== "ERROR");
+      const errors = (preview.items ?? []).filter((item) => item.status === "ERROR");
+      return { ...preview, items, errors, warnings: [], totals: { toGenerate: items.length, skipped: errors.length, flagged: 0, amount: preview.run?.estimatedTotalAmount ?? 0, discounted: 0 } };
     }
     await delay();
 
@@ -544,10 +593,17 @@ export const settlementService = {
    */
   async generateBatch({ conceptCode, period, baseAmount, dueDate, taxpayerType = "" }) {
     if (!USE_MOCKS) {
-      return request("/api/v1/settlements/batch", {
+      const [concept, taxpayers] = await Promise.all([
+        apiConceptByCode(conceptCode),
+        taxpayerService.search({ type: taxpayerType }),
+      ]);
+      const run = await request("/api/v1/liquidation-runs", {
         method: "POST",
-        body: { conceptCode, period, baseAmount, dueDate, taxpayerType },
+        body: { taxConceptId: concept.id, period, dueDate, items: taxpayers.map((item) => ({ taxpayerId: item.id, taxableBase: Number(baseAmount) })) },
       });
+      const preview = await request(`/api/v1/liquidation-runs/${run.id}/preview`, { method: "POST" });
+      const items = (preview.items ?? []).filter((item) => item.status !== "ERROR");
+      return { run: preview.run, generated: items.map((item) => ({ ...item, status: "DRAFT" })), errors: (preview.items ?? []).filter((item) => item.status === "ERROR"), warnings: [], totals: { amount: preview.run?.estimatedTotalAmount ?? 0 } };
     }
 
     const preview = await settlementService.previewBatch({
@@ -654,7 +710,7 @@ export const debtService = {
   /** Informa la deuda vencida a Desarrollo Social (evento overdueDebt → M8). */
   async reportOverdue(debtId) {
     if (!USE_MOCKS) {
-      return request(`/api/v1/debts/${debtId}/report-overdue`, { method: "POST" });
+      throw new ApiError("El reporte outbound de deuda vencida depende del contrato M8 pendiente.", 501, null, "M8_OUTBOUND_PENDING");
     }
     await delay();
     const debt = store.debts.find((d) => d.id === Number(debtId));
@@ -712,9 +768,15 @@ export const debtAdjustmentService = {
   /** RequestDebtAdjustmentRequest: el analista propone el cambio con su motivo. */
   async request({ debtId, newAmount, newDueDate, reason, requestedBy }) {
     if (!USE_MOCKS) {
-      return request("/api/v1/debt-adjustments", {
+      const debt = await request(`/api/v1/debts/${debtId}`);
+      if (newDueDate && newDueDate !== debt.dueDate) {
+        throw new ApiError("El backend real no admite ajustar el vencimiento.", 501, null, "DUE_DATE_ADJUSTMENT_UNSUPPORTED");
+      }
+      const delta = Number(newAmount) - Number(debt.outstandingAmount);
+      if (!Number.isFinite(delta) || delta === 0) throw new ApiError("El ajuste debe cambiar el importe.", 400);
+      return request("/api/v1/adjustments", {
         method: "POST",
-        body: { debtId, newAmount, newDueDate, reason },
+        body: { debtId, type: delta < 0 ? "DISCOUNT" : "SURCHARGE", amount: Math.abs(delta), reason },
       });
     }
     await delay();
@@ -763,10 +825,8 @@ export const debtAdjustmentService = {
   /** El Supervisor autoriza o rechaza. Autorizar no aplica el cambio todavía. */
   async resolve({ adjustmentId, status, resolvedBy, resolverRole, reason }) {
     if (!USE_MOCKS) {
-      return request(`/api/v1/debt-adjustments/${adjustmentId}/status`, {
-        method: "PUT",
-        body: { status, reason },
-      });
+      const action = status === "REJECTED" ? "reject" : "approve";
+      return request(`/api/v1/adjustments/${adjustmentId}/${action}`, { method: "POST", body: action === "reject" ? { reason } : { observation: reason ?? null } });
     }
     await delay();
     if (resolverRole !== "SUPERVISOR") {
@@ -797,7 +857,7 @@ export const debtAdjustmentService = {
    */
   async execute({ adjustmentId, executedBy }) {
     if (!USE_MOCKS) {
-      return request(`/api/v1/debt-adjustments/${adjustmentId}/execute`, { method: "POST" });
+      return request(`/api/v1/adjustments/${adjustmentId}`);
     }
     await delay();
     const adjustment = store.debtAdjustments.find((a) => a.id === Number(adjustmentId));
@@ -876,7 +936,8 @@ export const billService = {
   /** IssueBillRequest → BillResponse. El PDF vive en S3, nunca en la base. */
   async issue({ debtId }) {
     if (!USE_MOCKS) {
-      return request("/api/v1/bills", { method: "POST", body: { debtId } });
+      const debt = await request(`/api/v1/debts/${debtId}`);
+      return request("/api/v1/bills", { method: "POST", body: { taxpayerId: debt.taxpayerId, debtIds: [Number(debtId)], dueDate: debt.dueDate } });
     }
     await delay();
     const debt = store.debts.find((d) => d.id === Number(debtId));
@@ -972,9 +1033,10 @@ export const paymentService = {
   /** AllocatePaymentRequest → PaymentAllocationResponse (pagos sin imputar). */
   async allocate({ paymentId, debtId }) {
     if (!USE_MOCKS) {
+      const payment = await request(`/api/v1/payments/${paymentId}`);
       return request(`/api/v1/payments/${paymentId}/allocations`, {
         method: "POST",
-        body: { debtId },
+        body: { debtId, amount: payment.unallocatedAmount },
       });
     }
     await delay();
@@ -1109,7 +1171,10 @@ export const creditBalanceService = {
 
   /** Deudas del contribuyente a las que se le puede aplicar el saldo. */
   async applicableDebts(creditId) {
-    if (!USE_MOCKS) return request(`/api/v1/credit-balances/${creditId}/applicable-debts`);
+    if (!USE_MOCKS) {
+      const credit = await request(`/api/v1/credit-balances/${creditId}`);
+      return request(`/api/v1/taxpayers/${credit.taxpayerId}/debts?size=100`);
+    }
     await delay();
     const credit = store.creditBalances.find((c) => c.id === Number(creditId));
     if (!credit) throw new ApiError("Saldo a favor inexistente.", 404);
@@ -1324,9 +1389,9 @@ export const paymentPlanService = {
    */
   async escalate({ requestId, escalatedBy, note }) {
     if (!USE_MOCKS) {
-      return request(`/api/v1/payment-plans/${requestId}/escalate`, {
+      return request(`/api/v1/payment-plan-requests/${requestId}/submit-exception`, {
         method: "POST",
-        body: { note },
+        body: { reason: note },
       });
     }
     await delay();
@@ -1352,10 +1417,8 @@ export const paymentPlanService = {
   /** ResolvePaymentPlanRequest → publica updatePaymentPlanStatus (GRANTED | REJECTED). */
   async resolve({ requestId, status, installments, reason, resolvedBy, resolverRole }) {
     if (!USE_MOCKS) {
-      return request(`/api/v1/payment-plans/${requestId}/status`, {
-        method: "PUT",
-        body: { status, installments, reason },
-      });
+      const action = status === "REJECTED" ? "reject" : "grant";
+      return request(`/api/v1/payment-plan-requests/${requestId}/${action}`, { method: "POST", body: action === "reject" ? { reason } : { downPaymentAmount: 0 } });
     }
     await delay();
     const plan = store.paymentPlans.find((p) => p.requestId === Number(requestId));
@@ -1465,8 +1528,9 @@ export const refinancingService = {
   /** Planes que el operador puede refinanciar, con el motivo cuando no se puede. */
   async eligiblePlans({ taxpayerId = "", onlyEligible = false } = {}) {
     if (!USE_MOCKS) {
-      const params = new URLSearchParams({ taxpayerId, onlyEligible: String(onlyEligible) });
-      return request(`/api/v1/payment-plans/refinancing/eligible?${params}`);
+      const params = new URLSearchParams({ taxpayerId, size: "100" });
+      const plans = await request(`/api/v1/payment-plans?${params}`);
+      return plans.map((plan) => ({ ...plan, eligible: plan.status === "EXPIRED", reasons: plan.status === "EXPIRED" ? [] : ["El backend sólo admite refinanciar planes vencidos."], outstandingAmount: plan.outstandingAmount })).filter((plan) => !onlyEligible || plan.eligible);
     }
     await delay();
     return store.paymentPlans
@@ -1493,9 +1557,9 @@ export const refinancingService = {
    */
   async request({ planId, installments, downPayment = 0, requestedBy, note }) {
     if (!USE_MOCKS) {
-      return request("/api/v1/payment-plans/refinancing", {
+      return request(`/api/v1/payment-plans/${planId}/refinancing-requests`, {
         method: "POST",
-        body: { planId, installments, downPayment, note },
+        body: { installments },
       });
     }
     await delay();
@@ -1537,9 +1601,9 @@ export const refinancingService = {
   /** Deriva la evaluación al Supervisor. Igual que en los planes, es estado interno. */
   async escalate({ requestId, escalatedBy, note }) {
     if (!USE_MOCKS) {
-      return request(`/api/v1/payment-plans/refinancing/${requestId}/escalate`, {
+      return request(`/api/v1/refinancing-requests/${requestId}/submit-exception`, {
         method: "POST",
-        body: { note },
+        body: { reason: note },
       });
     }
     await delay();
@@ -1566,10 +1630,9 @@ export const refinancingService = {
    */
   async resolve({ requestId, status, resolvedBy, resolverRole, reason }) {
     if (!USE_MOCKS) {
-      return request(`/api/v1/payment-plans/refinancing/${requestId}/status`, {
-        method: "PUT",
-        body: { status, reason },
-      });
+      const exceptional = resolverRole === "SUPERVISOR";
+      const action = status === "REJECTED" ? (exceptional ? "reject-exception" : "reject") : (exceptional ? "approve-exception" : "grant");
+      return request(`/api/v1/refinancing-requests/${requestId}/${action}`, { method: "POST", body: action.includes("reject") ? { reason } : { observation: reason ?? null } });
     }
     await delay();
     const solicitud = store.refinancings.find((r) => r.requestId === Number(requestId));
@@ -1654,7 +1717,7 @@ export const refinancingService = {
   async list({ status = "" } = {}) {
     if (!USE_MOCKS) {
       const params = new URLSearchParams({ status });
-      return request(`/api/v1/payment-plans/refinancing?${params}`);
+      return request(`/api/v1/refinancing-requests?${params}`);
     }
     await delay();
     return store.refinancings.filter((r) => !status || r.status === status);
@@ -1673,8 +1736,8 @@ function addMonths(iso, months) {
 export const exemptionService = {
   async list({ status = "", internalStatus = "" } = {}) {
     if (!USE_MOCKS) {
-      const params = new URLSearchParams({ status, internalStatus });
-      return request(`/api/v1/exemptions?${params}`);
+      const params = new URLSearchParams({ status, size: "100" });
+      return request(`/api/v1/exemption-requests?${params}`);
     }
     await delay();
     return store.exemptions
@@ -1689,10 +1752,9 @@ export const exemptionService = {
    */
   async advanceWorkflow({ requestId, internalStatus, note, actor }) {
     if (!USE_MOCKS) {
-      return request(`/api/v1/exemptions/${requestId}/workflow`, {
-        method: "PUT",
-        body: { internalStatus, note },
-      });
+      const action = { PENDING_REVIEW: "start-review", DOCUMENTATION_REQUIRED: "request-documentation", PENDING_RESOLUTION: "submit-resolution" }[internalStatus];
+      if (!action) throw new ApiError("Ese paso requiere adjuntar documentación mediante su operación específica.", 409);
+      return request(`/api/v1/exemption-requests/${requestId}/${action}`, { method: "POST", body: action === "request-documentation" ? { message: note } : action === "submit-resolution" ? { observation: note ?? null } : undefined });
     }
     await delay();
     const exemption = store.exemptions.find((e) => e.requestId === Number(requestId));
@@ -1724,10 +1786,12 @@ export const exemptionService = {
   /** Registra la documentación que el ciudadano presentó por mesa de entradas. */
   async attachDocumentation({ requestId, attachments, actor }) {
     if (!USE_MOCKS) {
-      return request(`/api/v1/exemptions/${requestId}/attachments`, {
-        method: "POST",
-        body: { attachments },
-      });
+      if (!attachments?.length) throw new ApiError("Adjuntá al menos un archivo.", 400);
+      let result;
+      for (const file of attachments) {
+        result = await request(`/api/v1/exemption-requests/${requestId}/documentation`, { method: "POST", body: { externalDocumentId: file.externalDocumentId ?? file.name ?? String(file), documentType: file.type ?? "DOCUMENT", fileName: file.name ?? String(file) } });
+      }
+      return result;
     }
     await delay();
     const exemption = store.exemptions.find((e) => e.requestId === Number(requestId));
@@ -1764,19 +1828,20 @@ export const exemptionService = {
     attachments = [],
   }) {
     if (!USE_MOCKS) {
-      // Los archivos van aparte, como multipart: acá viaja sólo la referencia.
-      return request("/api/v1/exemptions", {
+      const concept = await apiConceptByCode(conceptCode);
+      const created = await request("/api/v1/exemption-requests", {
         method: "POST",
         body: {
-          citizenId,
-          conceptCode,
+          taxpayerId: citizenId,
+          taxConceptId: concept.id,
           reason,
-          requestedPercentage,
-          requestedFrom,
-          requestedUntil,
-          attachments,
+          percentage: requestedPercentage,
+          validFrom: requestedFrom,
+          validUntil: requestedUntil,
         },
       });
+      if (attachments.length) await exemptionService.attachDocumentation({ requestId: created.id, attachments });
+      return created;
     }
     await delay();
     const taxpayer = store.taxpayers.find((t) => t.id === Number(citizenId));
@@ -1817,10 +1882,8 @@ export const exemptionService = {
   /** ResolveExemptionRequest → publica updateExemptionStatus (APPROVED | REJECTED). */
   async resolve({ requestId, status, percentage, validFrom, validUntil, reason, resolvedBy }) {
     if (!USE_MOCKS) {
-      return request(`/api/v1/exemptions/${requestId}/status`, {
-        method: "PUT",
-        body: { status, percentage, validFrom, validUntil, reason },
-      });
+      const action = status === "REJECTED" ? "reject" : "approve";
+      return request(`/api/v1/exemption-requests/${requestId}/${action}`, { method: "POST", body: action === "reject" ? { reason } : { percentage, validFrom, validUntil, observation: reason ?? null } });
     }
     await delay();
     const exemption = store.exemptions.find((e) => e.requestId === Number(requestId));
@@ -2165,9 +2228,10 @@ export const cashierService = {
   /** RegisterCounterPaymentRequest → CounterPaymentReceiptResponse */
   async registerCounterPayment({ debtId, billId, amountPaid, method, registeredBy }) {
     if (!USE_MOCKS) {
+      const debt = await request(`/api/v1/debts/${debtId}`);
       return request("/api/v1/cashier/payments", {
         method: "POST",
-        body: { debtId, billId, amountPaid, method, registeredBy },
+        body: { taxpayerId: debt.taxpayerId, debtId, billId, amountPaid, method, registeredBy },
       });
     }
     if (!debtId) throw new ApiError("Seleccioná la deuda o boleta que se está cobrando.", 400);
@@ -2490,7 +2554,7 @@ export const auditService = {
   },
 
   async conceptDetail(code) {
-    if (!USE_MOCKS) return request(`/api/v1/audit/concepts/${code}`);
+    if (!USE_MOCKS) return apiConceptByCode(code);
     await delay();
     const concept = conceptOf(code);
     if (!concept) throw new ApiError("Concepto inexistente.", 404);
@@ -2885,8 +2949,7 @@ export const auditService = {
   /** Detalle de un indicador: las filas concretas que lo componen. */
   async indicatorBreakdown(key, { from = "", to = "", conceptCode = "", taxpayerId = "" } = {}) {
     if (!USE_MOCKS) {
-      const params = new URLSearchParams({ from, to, conceptCode, taxpayerId });
-      return request(`/api/v1/audit/indicators/${key}?${params}`);
+      throw new ApiError("El backend no expone el breakdown genérico de indicadores.", 501, null, "INDICATOR_BREAKDOWN_UNSUPPORTED");
     }
     await delay();
 
@@ -2964,7 +3027,31 @@ const DUE_SOON_DAYS = 15;
 export const portalService = {
   /** Resumen de la cuenta: lo que el ciudadano ve al entrar. */
   async accountSummary(taxpayerId) {
-    if (!USE_MOCKS) return request(`/api/v1/portal/${taxpayerId}/account-summary`);
+    if (!USE_MOCKS) {
+      const [summary, debts] = await Promise.all([
+        request(`/api/v1/portal/${taxpayerId}/account-summary`),
+        portalService.debts({ taxpayerId }),
+      ]);
+      const obligations = debts
+        .filter((debt) => Number(debt.outstandingAmount) > 0)
+        .sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate)));
+      const next = obligations[0];
+      return {
+        ...summary,
+        obligations,
+        nextDueDate: next
+          ? {
+              debtId: next.id,
+              conceptName: next.conceptName,
+              amount: next.outstandingAmount,
+              dueDate: next.dueDate,
+              daysLeft: next.daysLeft,
+              overdue: next.status === "OVERDUE",
+            }
+          : null,
+        counts: { ...summary.counts, debts: obligations.length },
+      };
+    }
     await delay();
     const id = Number(taxpayerId);
     const taxpayer = store.taxpayers.find((t) => t.id === id);
@@ -3120,7 +3207,14 @@ export const portalService = {
   async debts({ taxpayerId, status = "" }) {
     if (!USE_MOCKS) {
       const params = new URLSearchParams({ status });
-      return request(`/api/v1/portal/${taxpayerId}/debts?${params}`);
+      const [debts, bills] = await Promise.all([
+        request(`/api/v1/portal/${taxpayerId}/debts?${params}`),
+        request(`/api/v1/portal/${taxpayerId}/bills`),
+      ]);
+      return debts.map((debt) => ({
+        ...debt,
+        billId: bills.find((bill) => bill.debtId === debt.id)?.id ?? null,
+      }));
     }
     await delay();
     const id = Number(taxpayerId);
