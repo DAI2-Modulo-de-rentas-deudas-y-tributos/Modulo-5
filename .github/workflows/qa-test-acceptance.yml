@@ -1,0 +1,151 @@
+name: Run acceptance tests on AWS TEST
+
+run-name: "QA TEST: ${{ inputs.scenario }} (${{ inputs.bulk_size }} items)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: "Escenario de aceptación"
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - pdf
+          - bulk
+      bulk_size:
+        description: "Cantidad total de ítems de la corrida masiva"
+        required: true
+        default: "50"
+        type: choice
+        options:
+          - "10"
+          - "50"
+          - "200"
+      max_duration_seconds:
+        description: "Tiempo máximo permitido para la corrida masiva"
+        required: true
+        default: "120"
+        type: choice
+        options:
+          - "60"
+          - "120"
+          - "300"
+      confirmation:
+        description: "Escriba RUN_QA_TESTS; las pruebas crean datos efímeros en TEST"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: qa-acceptance-test
+  cancel-in-progress: false
+
+jobs:
+  acceptance:
+    name: qa-test-acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: test
+
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      ECS_CLUSTER: modulo-5-rentas-test-cluster
+      ECS_SERVICE: modulo-5-rentas-test-backend
+      RDS_INSTANCE: modulo-5-rentas-test-postgres
+      AMPLIFY_APP_NAME: modulo-5-rentas-test-frontend
+      TEST_API_BEARER_TOKEN: ${{ secrets.TEST_API_BEARER_TOKEN }}
+
+    steps:
+      - name: Validate request
+        shell: bash
+        env:
+          QA_CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          [[ "${QA_CONFIRMATION}" == "RUN_QA_TESTS" ]] || {
+            echo "La ejecución requiere la confirmación RUN_QA_TESTS."
+            exit 1
+          }
+          : "${AWS_REGION:?Falta AWS_REGION en el environment test}"
+
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Configure temporary AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: "060712744495"
+          mask-aws-account-id: true
+          role-session-name: qa-test-${{ github.run_id }}
+
+      - name: Verify TEST is running
+        shell: bash
+        run: |
+          set -euo pipefail
+          read -r desired running status <<< "$(aws ecs describe-services             --cluster "${ECS_CLUSTER}"             --services "${ECS_SERVICE}"             --query 'services[0].[desiredCount,runningCount,status]'             --output text)"
+          db_status="$(aws rds describe-db-instances             --db-instance-identifier "${RDS_INSTANCE}"             --query 'DBInstances[0].DBInstanceStatus'             --output text)"
+
+          if [[ "${desired}" != "1" || "${running}" != "1" || "${status}" != "ACTIVE" || "${db_status}" != "available" ]]; then
+            echo "AWS TEST no está listo: ECS desired=${desired}, running=${running}, status=${status}; RDS=${db_status}."
+            echo "Ejecute primero el workflow 'Control AWS TEST runtime' con operation=start y START_TEST."
+            exit 1
+          fi
+
+      - name: Resolve TEST API URL
+        id: api
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_id="$(aws amplify list-apps             --query "apps[?name=='${AMPLIFY_APP_NAME}'].appId | [0]"             --output text)"
+          if [[ -z "${app_id}" || "${app_id}" == "None" ]]; then
+            echo "No se encontró la aplicación Amplify ${AMPLIFY_APP_NAME}."
+            exit 1
+          fi
+
+          api_base_url="$(aws amplify get-app             --app-id "${app_id}"             --query 'app.environmentVariables.VITE_API_BASE_URL'             --output text)"
+          if [[ -z "${api_base_url}" || "${api_base_url}" == "None" ]]; then
+            echo "Amplify no tiene configurada VITE_API_BASE_URL."
+            exit 1
+          fi
+
+          echo "api_base_url=${api_base_url}" >> "${GITHUB_OUTPUT}"
+          echo "API de TEST resuelta correctamente."
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Run acceptance scenarios
+        id: acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/test/aws_test_acceptance.py             --api-base-url "${{ steps.api.outputs.api_base_url }}"             --scenario "${{ inputs.scenario }}"             --bulk-size "${{ inputs.bulk_size }}"             --max-duration-seconds "${{ inputs.max_duration_seconds }}"             --output-dir artifacts/qa-test
+
+      - name: Publish acceptance summary
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f artifacts/qa-test/summary.md ]]; then
+            cat artifacts/qa-test/summary.md >> "${GITHUB_STEP_SUMMARY}"
+          else
+            echo "### Aceptación AWS TEST" >> "${GITHUB_STEP_SUMMARY}"
+            echo "No se pudo generar el resumen de evidencias." >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Upload acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: qa-test-${{ inputs.scenario }}-${{ github.run_id }}
+          path: artifacts/qa-test/**
+          if-no-files-found: warn
+          retention-days: 7
