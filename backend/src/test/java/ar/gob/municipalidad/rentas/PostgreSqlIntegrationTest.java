@@ -81,6 +81,7 @@ class PostgreSqlIntegrationTest {
     @Autowired BillingService billing;
     @Autowired IndicatorService indicators;
     @Autowired PlatformTransactionManager transactionManager;
+    @Autowired LiquidationRunService bulkRuns;
 
     @AfterEach void clearSecurity(){SecurityContextHolder.clearContext();}
 
@@ -222,6 +223,32 @@ class PostgreSqlIntegrationTest {
         Bill bill=billing.create(new ApiDtos.CreateBillRequest(first.taxpayerId,List.of(first.id,second.id),LocalDate.now().plusDays(10)));statistics.clear();responses.bills(new PageImpl<>(List.of(bill)));assertThat(statistics.getPrepareStatementCount()).isEqualTo(1);
         statistics.clear();indicators.summary(null,null);assertThat(statistics.getPrepareStatementCount()).isEqualTo(3);
         statistics.clear();workflow.defaulted(PageRequest.of(0,20));assertThat(statistics.getPrepareStatementCount()).isBetween(1L,2L);
+    }
+
+    @Test void concurrentBulkExecutionCommitsOnceOnPostgreSql() throws Exception {
+        authenticate();
+        TaxConcept concept = concept("PG_BULK_" + UUID.randomUUID(), TaxConceptType.FEE, "M5");
+        TaxConfiguration config = catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(
+            concept.id, CalculationType.FIXED, null, new BigDecimal("100.25"), null, null,
+            true, true, LocalDate.now().minusDays(1), null));
+        catalog.submit(config.id); catalog.approve(config.id);
+        List<ApiDtos.LiquidationRunItemRequest> population = new ArrayList<>();
+        for (int i = 0; i < 20; i++) {
+            TaxpayerReference owner = taxpayer(TaxpayerType.CITIZEN, "PG-BULK-" + UUID.randomUUID(), uniqueDigits(8), null);
+            population.add(new ApiDtos.LiquidationRunItemRequest(owner.id, BigDecimal.ZERO));
+        }
+        LiquidationRun run = bulkRuns.create(new ApiDtos.CreateLiquidationRunRequest(concept.id,
+            YearMonth.now().toString(), LocalDate.now().plusDays(30), population));
+        bulkRuns.preview(run.id); bulkRuns.submit(run.id); bulkRuns.approve(run.id, "QA");
+        List<Throwable> failures = runTogether(() -> bulkRuns.execute(run.id), () -> bulkRuns.execute(run.id));
+        assertThat(failures.stream().filter(Objects::isNull)).hasSize(1);
+        assertThat(failures.stream().filter(Objects::nonNull)).singleElement().satisfies(error ->
+            assertThat(error).isInstanceOfSatisfying(BusinessException.class,
+                business -> assertThat(business.code).isEqualTo("RUN_NOT_APPROVED")));
+        assertThat(bulkRuns.detail(run.id).run().status).isEqualTo(LiquidationRunStatus.EXECUTED);
+        assertThat(jdbc.queryForObject("select count(*) from liquidation where tax_concept_id=?", Long.class, concept.id)).isEqualTo(20);
+        assertThat(jdbc.queryForObject("select count(*) from debt where tax_concept_id=?", Long.class, concept.id)).isEqualTo(20);
+        assertThat(jdbc.queryForObject("select sum(outstanding_balance) from debt where tax_concept_id=?", BigDecimal.class, concept.id)).isEqualByComparingTo("2005.00");
     }
 
     private void assertEquation(Payment payment){Payment stored=paymentRepository.findById(payment.id).orElseThrow();assertThat(stored.allocatedAmount.add(stored.unallocatedAmount)).isEqualByComparingTo(stored.amount);}

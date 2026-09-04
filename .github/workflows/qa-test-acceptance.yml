@@ -1,6 +1,6 @@
 name: Run acceptance tests on AWS TEST
 
-run-name: "QA TEST: ${{ inputs.scenario }} (${{ inputs.bulk_size }} items)"
+run-name: "QA TEST: ${{ inputs.scenario }} (${{ inputs.bulk_size }} contribuyentes válidos)"
 
 on:
   workflow_dispatch:
@@ -15,7 +15,7 @@ on:
           - pdf
           - bulk
       bulk_size:
-        description: "Cantidad total de ítems de la corrida masiva"
+        description: "Contribuyentes válidos requeridos; se agrega un error controlado"
         required: true
         default: "50"
         type: choice
@@ -123,12 +123,32 @@ jobs:
         with:
           python-version: "3.13"
 
+      - name: Install PDF validation tools
+        run: |
+          python -m pip install -r scripts/test/requirements.txt
+          sudo apt-get update
+          sudo apt-get install -y poppler-utils
+
       - name: Run acceptance scenarios
         id: acceptance
         shell: bash
         run: |
           set -euo pipefail
-          python scripts/test/aws_test_acceptance.py             --api-base-url "${{ steps.api.outputs.api_base_url }}"             --scenario "${{ inputs.scenario }}"             --bulk-size "${{ inputs.bulk_size }}"             --max-duration-seconds "${{ inputs.max_duration_seconds }}"             --output-dir artifacts/qa-test
+          python scripts/test/aws_test_acceptance.py \
+            --api-base-url "${{ steps.api.outputs.api_base_url }}" \
+            --scenario "${{ inputs.scenario }}" \
+            --bulk-size "${{ inputs.bulk_size }}" \
+            --max-duration-seconds "${{ inputs.max_duration_seconds }}" \
+            --output-dir artifacts/qa-test
+
+      - name: Render downloaded PDFs for visual review
+        if: always()
+        shell: bash
+        run: |
+          shopt -s nullglob
+          for document in artifacts/qa-test/*.pdf; do
+            pdftoppm -r 90 -png "${document}" "${document%.pdf}"
+          done
 
       - name: Publish acceptance summary
         if: always()
