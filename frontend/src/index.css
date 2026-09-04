@@ -15,6 +15,50 @@ body {
   color: #1a1a1a;
 }
 
+/* La hoja de trámite del login. Es el mismo objeto que la boleta impresa —banda,
+   cuerpo, corte y talón—, así que comparte sus recursos: la perforación y la línea
+   de código de barras. */
+
+/* La perforación que separa el talón. Va como trama y no como `border-dashed`
+   para poder fijar el paso del punteado y que lea como corte de formulario. */
+.hoja-corte {
+  height: 1px;
+  background-image: repeating-linear-gradient(
+    to right,
+    #d4d4d4 0 5px,
+    transparent 5px 11px
+  );
+}
+
+/* La línea de código al pie: barras de ancho desparejo, como la que lee la caja al
+   cobrar. Es gráfica —no codifica nada— y por eso va con `aria-hidden`. */
+.hoja-codigo {
+  background-image: repeating-linear-gradient(
+    to right,
+    #0f2c59 0 1px,
+    transparent 1px 3px,
+    #0f2c59 3px 5px,
+    transparent 5px 8px,
+    #0f2c59 8px 9px,
+    transparent 9px 12px,
+    #0f2c59 12px 15px,
+    transparent 15px 18px
+  );
+  opacity: 0.16;
+}
+
+/* Único movimiento de la pantalla: la hoja se apoya al cargar. */
+@keyframes hoja-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
+.hoja-entrada {
+  animation: hoja-in 320ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
 /* Entrada de los diálogos: el fondo aparece y el panel sube apenas. */
 @keyframes modal-fade {
   from {
