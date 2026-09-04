@@ -162,7 +162,7 @@ def create_active_concept(client: ApiClient, label: str, run_id: str,
     )
     client.json("POST", f"/tax-configurations/{configuration['id']}/submit")
     approved = client.json("POST", f"/tax-configurations/{configuration['id']}/approve")
-    require(approved.get("status") == "APPROVED", "La configuración de QA no quedó aprobada")
+    require(approved.get("status") == "ACTIVE", "La configuración de QA no quedó activa")
     return concept
 
 
