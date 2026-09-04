@@ -10,14 +10,10 @@ import Alert from "../../components/ui/Alert.jsx";
 import FormField from "../../components/ui/FormField.jsx";
 import useResource from "../../hooks/useResource.js";
 import useTaxpayerIndex from "../../hooks/useTaxpayerIndex.js";
+import useTaxConcepts from "../../hooks/useTaxConcepts.js";
 import { settlementService } from "../../services/rentasService.js";
 import GeneracionMasivaModal from "./GeneracionMasivaModal.jsx";
-import { CONCEPTS } from "../../services/mockDb.js";
 import { formatCurrency, formatDate, formatPercentage } from "../../lib/format.js";
-
-const CONCEPT_OPTIONS = CONCEPTS.filter((c) =>
-  ["TASA_SERVICIOS", "ABL", "PATENTE"].includes(c.code),
-).map((c) => ({ value: c.code, label: c.label }));
 
 /**
  * Liquidaciones: primer paso del flujo. Se genera en borrador, se revisa el
@@ -33,6 +29,7 @@ export default function LiquidacionesPage() {
   const loader = useCallback(() => settlementService.list(filters), [filters]);
   const { data: settlements, loading, error, reload } = useResource(loader, []);
   const { nameOf, options: taxpayerOptions } = useTaxpayerIndex();
+  const { options: conceptOptions, labelOf: conceptLabelOf } = useTaxConcepts();
 
   const onFilterChange = (name, value) =>
     setFilters((previous) => ({ ...previous, [name]: value }));
@@ -65,7 +62,7 @@ export default function LiquidacionesPage() {
     {
       key: "conceptCode",
       header: "Concepto",
-      render: (row) => CONCEPTS.find((c) => c.code === row.conceptCode)?.label ?? row.conceptCode,
+      render: (row) => conceptLabelOf(row.conceptCode),
     },
     { key: "period", header: "Período" },
     {
@@ -143,7 +140,7 @@ export default function LiquidacionesPage() {
             {
               name: "conceptCode",
               label: "Concepto",
-              options: CONCEPT_OPTIONS,
+              options: conceptOptions,
             },
             {
               name: "status",
@@ -182,6 +179,7 @@ export default function LiquidacionesPage() {
       <NewSettlementModal
         open={creating}
         taxpayerOptions={taxpayerOptions}
+        conceptOptions={conceptOptions}
         onClose={() => setCreating(false)}
         onCreated={(settlement) => {
           setCreating(false);
@@ -196,6 +194,7 @@ export default function LiquidacionesPage() {
 
       {batchOpen && (
         <GeneracionMasivaModal
+          conceptOptions={conceptOptions}
           onClose={() => setBatchOpen(false)}
           onGenerated={(result) => {
             setBatchOpen(false);
@@ -213,7 +212,7 @@ export default function LiquidacionesPage() {
 }
 
 /** GenerateSettlementRequest: contribuyente + concepto + período + base imponible. */
-function NewSettlementModal({ open, taxpayerOptions, onClose, onCreated }) {
+function NewSettlementModal({ open, taxpayerOptions, conceptOptions, onClose, onCreated }) {
   const empty = {
     taxpayerId: "",
     conceptCode: "",
@@ -295,7 +294,7 @@ function NewSettlementModal({ open, taxpayerOptions, onClose, onCreated }) {
           type="select"
           value={form.conceptCode}
           onChange={onChange}
-          options={CONCEPT_OPTIONS}
+          options={conceptOptions}
           error={errors.conceptCode}
           required
         />

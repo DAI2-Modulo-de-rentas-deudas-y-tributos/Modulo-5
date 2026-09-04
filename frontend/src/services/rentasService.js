@@ -210,6 +210,22 @@ export const taxConfigService = {
       }));
   },
 
+  /**
+   * Catálogo de conceptos para los combos de las pantallas operativas.
+   *
+   * Los formularios no pueden ofrecer un código que el módulo no tenga dado de alta:
+   * la operación fallaría recién al registrarla. Por defecto sólo devuelve los
+   * conceptos activos, que son los únicos sobre los que se puede operar hoy.
+   */
+  async concepts({ onlyActive = true } = {}) {
+    if (!USE_MOCKS) {
+      const concepts = await request("/api/v1/tax-concepts?size=100");
+      return onlyActive ? concepts.filter((c) => c.status === "ACTIVE") : concepts;
+    }
+    await delay();
+    return store.conceptDefinitions.filter((c) => !onlyActive || c.status === "ACTIVE");
+  },
+
   /** Ficha del concepto con todo su historial de versiones. */
   async detail(code) {
     if (!USE_MOCKS) {
@@ -249,13 +265,17 @@ export const taxConfigService = {
   }) {
     if (!USE_MOCKS) {
       const concept = await apiConceptByCode(code);
+      // El código de cálculo viaja en español: `adaptApiRequest` lo traduce al enum
+      // del backend (CALC_TO_API) y normaliza los importes vacíos del formulario.
       return request("/api/v1/tax-configurations", {
         method: "POST",
         body: {
           taxConceptId: concept.id,
           calculationType,
           rate,
-          fixedAmount: calculationType === "FIJO" ? rate : 0,
+          // El formulario no pide alícuota cuando el cálculo es fijo: el importe de
+          // esa forma de cálculo es el mínimo cargado, no cero.
+          fixedAmount: calculationType === "FIJO" ? rate || minimumAmount : 0,
           minimumAmount,
           maximumAmount,
           partialPaymentAllowed: true,
