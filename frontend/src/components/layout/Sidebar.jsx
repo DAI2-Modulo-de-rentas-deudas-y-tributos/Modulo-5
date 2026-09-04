@@ -17,11 +17,12 @@ export default function Sidebar({
   footerLines = [],
 }) {
 
+  // El acento coral marca dónde está parado el agente; el resto queda en navy.
   const linkClasses = ({ isActive }) =>
-    `flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium transition-colors ${
+    `relative flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] transition-all duration-200 ${
       isActive
-        ? "bg-white/10 text-white"
-        : "text-white/60 hover:bg-white/5 hover:text-white"
+        ? "bg-white/10 font-semibold text-white before:absolute before:left-0 before:top-1/2 before:h-5 before:w-[3px] before:-translate-y-1/2 before:rounded-r-full before:bg-[#D63031]"
+        : "font-medium text-white/60 hover:bg-white/5 hover:text-white"
     }`;
 
   return (
@@ -39,7 +40,7 @@ export default function Sidebar({
           open ? "translate-x-0" : "-translate-x-full"
         }`}
       >
-        <div className="flex items-center justify-between gap-2 px-5 py-5">
+        <div className="flex items-center justify-between gap-2 border-b border-white/5 px-5 py-5">
           <div className="flex items-center gap-2">
             <img src={logo} alt="Ciudad UADE" className="h-6 w-auto object-contain" />
             <div className="leading-tight">
@@ -88,7 +89,7 @@ export default function Sidebar({
           })}
         </nav>
 
-        <div className="border-t border-white/10 px-5 py-4">
+        <div className="border-t border-white/10 bg-black/10 px-5 py-4">
           <p className="text-[11px] text-white/40 leading-relaxed">
             {footerLines.map((line, index) => (
               <span key={line}>

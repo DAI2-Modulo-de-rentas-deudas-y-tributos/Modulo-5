@@ -14,7 +14,7 @@ export default function FilterBar({
   actions,
 }) {
   return (
-    <div className="flex flex-col gap-3 border-b border-neutral-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex flex-col gap-3 border-b border-neutral-100 bg-neutral-50/40 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex flex-1 flex-col gap-3 sm:flex-row sm:items-center">
         {onSearchChange && (
           <div className="relative sm:w-72">
@@ -28,7 +28,7 @@ export default function FilterBar({
               onChange={(event) => onSearchChange(event.target.value)}
               placeholder={searchPlaceholder}
               aria-label={searchPlaceholder}
-              className="w-full rounded-lg border border-neutral-200 bg-neutral-50 py-2 pl-9 pr-3 text-[14px] text-neutral-900 placeholder-neutral-400 outline-none transition-colors focus:border-[#D63031]/40 focus:bg-white focus:ring-2 focus:ring-[#D63031]/10"
+              className="w-full rounded-lg border border-neutral-200 bg-white py-2 pl-9 pr-3 text-[14px] text-neutral-900 placeholder-neutral-400 outline-none transition-colors hover:border-neutral-300 focus:border-[#D63031]/40 focus:bg-white focus:ring-2 focus:ring-[#D63031]/10"
             />
           </div>
         )}
@@ -41,7 +41,7 @@ export default function FilterBar({
               value={values[filter.name] ?? ""}
               aria-label={filter.label}
               onChange={(event) => onFilterChange(filter.name, event.target.value)}
-              className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-[13px] font-medium text-neutral-700 outline-none transition-colors focus:border-[#D63031]/40 focus:bg-white focus:ring-2 focus:ring-[#D63031]/10"
+              className="rounded-lg border border-neutral-200 bg-white px-3 py-2 text-[13px] font-medium text-neutral-700 outline-none transition-colors hover:border-neutral-300 focus:border-[#D63031]/40 focus:ring-2 focus:ring-[#D63031]/10"
             />
           ) : (
             <select
@@ -49,7 +49,7 @@ export default function FilterBar({
               value={values[filter.name] ?? ""}
               aria-label={filter.label}
               onChange={(event) => onFilterChange(filter.name, event.target.value)}
-              className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-[13px] font-medium text-neutral-700 outline-none transition-colors focus:border-[#D63031]/40 focus:bg-white focus:ring-2 focus:ring-[#D63031]/10"
+              className="cursor-pointer rounded-lg border border-neutral-200 bg-white px-3 py-2 text-[13px] font-medium text-neutral-700 outline-none transition-colors hover:border-neutral-300 focus:border-[#D63031]/40 focus:ring-2 focus:ring-[#D63031]/10"
             >
               <option value="">{filter.label}: todos</option>
               {filter.options.map((option) => (

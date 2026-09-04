@@ -15,6 +15,29 @@ body {
   color: #1a1a1a;
 }
 
+/* Entrada de los diálogos: el fondo aparece y el panel sube apenas. */
+@keyframes modal-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 /* Impresión de comprobantes: sólo el ticket llega al papel. */
 @media print {
   body * {
