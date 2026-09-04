@@ -167,7 +167,7 @@ def create_active_concept(client: ApiClient, label: str, run_id: str,
 
 
 def load_taxpayers(client: ApiClient) -> list[dict[str, Any]]:
-    page = client.json("GET", "/taxpayers", query={"page": 0, "size": 200, "sort": "id,asc"})
+    page = client.json("GET", "/taxpayers", query={"page": 0, "size": 200, "sort": "createdAt,asc"})
     taxpayers = page.get("content", [])
     require(bool(taxpayers), "TEST no tiene contribuyentes. Debe cargarse al menos uno antes de ejecutar la aceptación.")
     return taxpayers
