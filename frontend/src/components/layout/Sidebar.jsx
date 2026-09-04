@@ -62,10 +62,9 @@ export default function Sidebar({
 
         <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 pb-6">
           <NavLink to={homePath} end className={linkClasses} onClick={onClose}>
-            {(() => {
-              const Icon = icons.LayoutDashboard;
-              return <Icon className="h-4 w-4 shrink-0" strokeWidth={1.5} />;
-            })()}
+            {/* El inicio del área se distingue por su rótulo, no por un glifo. El hueco
+                deja los rótulos alineados con los de los módulos, que sí llevan icono. */}
+            <span className="h-4 w-4 shrink-0" aria-hidden="true" />
             {homeLabel}
           </NavLink>
 
