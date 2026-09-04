@@ -66,6 +66,8 @@ Thumbs.db
 *.log
 tmp/
 temp/
+__pycache__/
+artifacts/qa-test/
 
 # Configuración local de asistentes de código
 # CLAUDE.md sí se versiona: es el contexto compartido del proyecto.
