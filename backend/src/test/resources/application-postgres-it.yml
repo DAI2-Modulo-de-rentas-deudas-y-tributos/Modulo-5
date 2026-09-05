@@ -5,4 +5,7 @@ spring:
   flyway:
     enabled: true
 rentas:
-  security.dev-mode: false
+  security.dev-mode: true
+  # Evita que el publicador programado contamine los contadores SQL de las
+  # pruebas de performance; el claim concurrente se valida explícitamente.
+  outbox-delay-ms: 600000

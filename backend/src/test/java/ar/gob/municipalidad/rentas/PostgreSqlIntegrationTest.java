@@ -26,7 +26,10 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalTime;
+import java.time.OffsetDateTime;
 import java.time.YearMonth;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.Objects;
@@ -81,12 +84,19 @@ class PostgreSqlIntegrationTest {
     @Autowired BillingService billing;
     @Autowired IndicatorService indicators;
     @Autowired PlatformTransactionManager transactionManager;
+    @Autowired DemoAuthController demoAuth;
+    @Autowired DemoUserRepository demoUsers;
+    @Autowired LateChargeRuleRepository lateChargeRules;
+    @Autowired LateChargeService lateCharges;
+    @Autowired DueDateService dueDates;
+    @Autowired ReconciliationService reconciliations;
 
     @AfterEach void clearSecurity(){SecurityContextHolder.clearContext();}
 
     @Test void contextStartsAndFlywayAppliesEveryMigration(){
-        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(12);
-        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(12);
+        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(14);
+        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(14);
+        assertThat(jdbc.queryForList("select code from tax_concept where code in ('TASA_SERVICIOS','ABL','PATENTE') order by code",String.class)).containsExactly("ABL","PATENTE","TASA_SERVICIOS");
     }
 
     @Test void economicChecksAndIdempotencyUniquesExist(){
@@ -154,7 +164,7 @@ class PostgreSqlIntegrationTest {
         OutboxEvent event=new OutboxEvent();event.id=UUID.randomUUID();event.eventType="validation";event.targetModule="TEST";event.aggregateType="Validation";event.aggregateId=event.id.toString();event.payload="{}";event.status=OutboxStatus.PENDING;event.createdAt=java.time.OffsetDateTime.now();outbox.save(event);
         CountDownLatch ready=new CountDownLatch(2),start=new CountDownLatch(1);ExecutorService pool=Executors.newFixedThreadPool(2);
         try {
-            var task=(java.util.concurrent.Callable<Integer>)()->{ready.countDown();start.await();return new TransactionTemplate(transactionManager).execute(status->{var claimed=outbox.findPublishable(PageRequest.of(0,50));if(!claimed.isEmpty()){try{Thread.sleep(150);}catch(InterruptedException ex){Thread.currentThread().interrupt();throw new IllegalStateException(ex);}claimed.forEach(x->x.status=OutboxStatus.PUBLISHED);}return claimed.size();});};
+            var task=(java.util.concurrent.Callable<Integer>)()->{ready.countDown();start.await();return new TransactionTemplate(transactionManager).execute(status->{var claimed=outbox.findPublishable(PageRequest.of(0,50));if(!claimed.isEmpty()){try{Thread.sleep(150);}catch(InterruptedException ex){Thread.currentThread().interrupt();throw new IllegalStateException(ex);}claimed.forEach(x->x.status=OutboxStatus.PUBLISHED);}return (int)claimed.stream().filter(x->x.id.equals(event.id)).count();});};
             Future<Integer> first=pool.submit(task),second=pool.submit(task);assertThat(ready.await(5,TimeUnit.SECONDS)).isTrue();start.countDown();
             assertThat(first.get(10,TimeUnit.SECONDS)+second.get(10,TimeUnit.SECONDS)).isEqualTo(1);
             assertThat(outbox.findById(event.id).orElseThrow().status).isEqualTo(OutboxStatus.PUBLISHED);
@@ -222,6 +232,22 @@ class PostgreSqlIntegrationTest {
         Bill bill=billing.create(new ApiDtos.CreateBillRequest(first.taxpayerId,List.of(first.id,second.id),LocalDate.now().plusDays(10)));statistics.clear();responses.bills(new PageImpl<>(List.of(bill)));assertThat(statistics.getPrepareStatementCount()).isEqualTo(1);
         statistics.clear();indicators.summary(null,null);assertThat(statistics.getPrepareStatementCount()).isEqualTo(3);
         statistics.clear();workflow.defaulted(PageRequest.of(0,20));assertThat(statistics.getPrepareStatementCount()).isBetween(1L,2L);
+    }
+
+    @Test void demoAuthLateChargesDueDatesAndReconciliationRunOnPostgreSql(){
+        authenticate();String suffix=UUID.randomUUID().toString();String dni=uniqueDigits(8);
+        TaxpayerReference taxpayer=taxpayer(TaxpayerType.CITIZEN,"PG-FULL-"+suffix,dni,null);
+        var created=demoAuth.create(new DemoAuthController.CreateUserRequest("pg."+suffix,"clave-segura","Usuario PostgreSQL",DemoRole.TAXPAYER,taxpayer.id));
+        assertThat(demoUsers.findById(created.id()).orElseThrow().passwordHash).startsWith("$2");
+        assertThat(demoAuth.login(new DemoAuthController.LoginRequest("pg."+suffix,"clave-segura")).user().taxpayerId()).isEqualTo(taxpayer.id);
+        Debt debt=debt("PG-FISCAL",taxpayer.id);debt.dueDate=LocalDate.now().minusDays(10);debts.save(debt);
+        var preview=lateCharges.preview(debt.id,LocalDate.now());assertThat(preview.daysOverdue()).isEqualTo(10);assertThat(preview.totalAdjustment()).isPositive();
+        var applied=lateCharges.apply(debt.id,LocalDate.now());assertThat(applied.applied()).isTrue();assertThat(lateCharges.apply(debt.id,LocalDate.now()).applied()).isFalse();
+        var processing=dueDates.process(LocalDate.now().plusDays(1));assertThat(processing.debtsOverdue()).isGreaterThanOrEqualTo(1);
+        Payment payment=new Payment();payment.taxpayerId=taxpayer.id;payment.paymentMethod=PaymentMethod.TRANSFER;payment.amount=payment.unallocatedAmount=new BigDecimal("25.00");payment.allocatedAmount=BigDecimal.ZERO.setScale(2);payment.status=PaymentStatus.CONFIRMED;payment.allocationStatus=PaymentAllocationStatus.UNALLOCATED;payment.origin=PaymentOrigin.ELECTRONIC;payment.receiptNumber="PG-REC-"+suffix;payment.registeredBy="postgres-it";payment.paidAt=payment.createdAt=OffsetDateTime.of(LocalDate.now().minusDays(2),LocalTime.of(23,30),ZoneOffset.ofHours(-3));paymentRepository.save(payment);
+        var batch=reconciliations.importBatch(new FiscalProcessingController.ImportReconciliationRequest("PG-BATCH-"+suffix,List.of(new FiscalProcessingController.ReconciliationItemRequest("PG-TX-"+suffix,dni,new BigDecimal("25"),payment.paidAt))));
+        assertThat(batch.reconciledItems()).isEqualTo(1);assertThat(batch.items()).singleElement().satisfies(x->assertThat(x.matchedPaymentId()).isEqualTo(payment.id));
+        assertThat(jdbc.queryForObject("select count(*) from late_charge_application where debt_id=?",Integer.class,debt.id)).isEqualTo(2);
     }
 
     private void assertEquation(Payment payment){Payment stored=paymentRepository.findById(payment.id).orElseThrow();assertThat(stored.allocatedAmount.add(stored.unallocatedAmount)).isEqualByComparingTo(stored.amount);}
