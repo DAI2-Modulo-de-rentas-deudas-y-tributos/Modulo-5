@@ -2,7 +2,7 @@
 
 Backend independiente en Spring Boot 3 y Java 17 para conceptos tributarios, liquidaciones, deudas, pagos, planes, exenciones, auditoría e integración asíncrona.
 
-Estado local: las 134 operaciones REST que corresponden a M5 están implementadas. Las tres rutas de autenticación de la matriz (`login`, `logout`, `me`) quedan **PENDIENTES DE INTEGRACIÓN CORE/JWT**. La trazabilidad completa está en `BACKEND_COMPLETENESS.md`.
+Estado local: la API incluye operaciones de dominio, autenticación DEMO/DEV persistente, recargos, procesamiento de vencimientos y conciliación electrónica. Core/JWT productivo permanece **PENDIENTE**; la autenticación DEMO no lo reemplaza.
 
 ## Requisitos y verificación
 
@@ -68,6 +68,8 @@ Docker Compose lee `.env` automáticamente. Una ejecución directa mediante Mave
 | `SERVER_PORT` | Puerto HTTP directo o puerto publicado por Compose. | No; default `8080`. |
 | `OUTBOX_DELAY_MS` | Intervalo entre ciclos de publicación del Outbox. | No; default `5000`. |
 | `BROKER_ADAPTER` | Selector reservado del adaptador; hoy sólo existe `local-log`. | No; default `local-log`. |
+| `RENTAS_SECURITY_DEV_MODE` | Habilita identidad y endpoints DEMO/DEV. | No; default `false`. Prohibido en producción. |
+| `RENTAS_DEMO_BOOTSTRAP_PASSWORD` | Contraseña común de bootstrap para cinco usuarios locales, almacenada sólo como hash BCrypt. | No; sin default. Secreto local/CI efímero. |
 
 Las variables de descarga del Maven Wrapper (`MVNW_REPOURL`, `MVNW_USERNAME`, `MVNW_PASSWORD`, `MAVEN_USER_HOME` y `MVNW_VERBOSE`) son opcionales y pertenecen a la herramienta de build, no a la configuración de ejecución de M5. `MVNW_PASSWORD`, si se usa con un repositorio Maven privado, debe configurarse como secreto de CI o del entorno local.
 
@@ -87,7 +89,9 @@ Sin headers se utiliza una identidad local de empleado. Para probar ownership se
 
 Cada solicitud recibe `X-Correlation-Id`; un valor entrante sólo se conserva si tiene formato seguro. El mismo identificador se usa en errores, logs y auditoría.
 
-En ambientes reales debe sustituirse este borde por el JWT emitido por Core, conservando `CurrentIdentity` como puerto de acceso a usuario, roles y contribuyente. M5 no implementa usuarios ni contraseñas propias.
+Con `RENTAS_DEMO_BOOTSTRAP_PASSWORD` definido se crean `demo.rentas`, `demo.supervisor`, `demo.caja`, `demo.auditoria` y `demo.contribuyente`; el valor real no se documenta. También pueden administrarse por `/api/v1/dev-auth/users`. Las contraseñas se guardan con BCrypt y `TAXPAYER` exige un `taxpayerId` existente.
+
+En ambientes reales debe sustituirse este borde por el JWT emitido por Core, conservando `CurrentIdentity` como puerto de acceso a usuario, roles y contribuyente. Las tablas y rutas `demo_*` son únicamente una facilidad local explícita.
 
 ## Listados, filtros y respuestas
 
@@ -107,7 +111,67 @@ Cada liquidación persiste componentes `BASE`, `DISCOUNT`, `EXEMPTION`, `SOCIAL_
 
 ## Eventos y Outbox
 
-No hay endpoints `/events/*`: un adapter de broker debe entregar `EventEnvelope` a los handlers locales. La recepción registra `eventId`, payload, módulo origen/destino, timestamps, resultado e idempotencia técnica y de negocio.
+No hay endpoints productivos `/events/*`: un adapter de broker debe entregar `EventEnvelope` a los handlers locales. La recepción registra `eventId`, payload, módulo origen/destino, timestamps, resultado e idempotencia técnica y de negocio.
+
+### Simulación local de eventos de tickets de M2
+
+Mientras el broker real no esté conectado, QA puede entregar `ticketCreated` y `ticketUpdated`
+al mismo consumidor mediante un adaptador HTTP exclusivo del modo de desarrollo. El endpoint
+no se registra cuando `RENTAS_SECURITY_DEV_MODE=false`.
+
+Con PostgreSQL y el backend local iniciados con `RENTAS_SECURITY_DEV_MODE=true`:
+
+```powershell
+$headers = @{
+  "X-Dev-User" = "qa-supervisor"
+  "X-Dev-Roles" = "SUPERVISOR"
+}
+
+$createdEventId = [guid]::NewGuid().ToString()
+$created = @{
+  eventId = $createdEventId
+  eventType = "ticketCreated"
+  occurredAt = "2026-09-03T10:00:00-03:00"
+  sourceModule = "M2"
+  data = @{
+    ticketId = 1001
+    citizenId = 123
+    category = "RENTAS"
+    description = "El pago no aparece imputado"
+    priority = "HIGH"
+  }
+} | ConvertTo-Json -Depth 5
+
+Invoke-RestMethod -Method Post `
+  -Uri "http://localhost:8080/api/v1/dev/integrations/m2/events" `
+  -Headers $headers -ContentType "application/json" -Body $created
+```
+
+Repetir exactamente el mismo body permite verificar la idempotencia por `eventId`: se devuelve
+el ticket existente y no se duplica el caso ni su evidencia de procesamiento.
+
+```powershell
+$updatedEventId = [guid]::NewGuid().ToString()
+$updated = @{
+  eventId = $updatedEventId
+  eventType = "ticketUpdated"
+  occurredAt = "2026-09-03T10:05:00-03:00"
+  sourceModule = "M2"
+  data = @{
+    ticketId = 1001
+    additionalInformation = "El ciudadano adjuntó información"
+  }
+} | ConvertTo-Json -Depth 5
+
+Invoke-RestMethod -Method Post `
+  -Uri "http://localhost:8080/api/v1/dev/integrations/m2/events" `
+  -Headers $headers -ContentType "application/json" -Body $updated
+```
+
+El resultado se consulta en `GET /api/v1/tickets` y la evidencia técnica en
+`GET /api/v1/integrations/events`. Para tomar el ticket, un agente con rol `RENTAS` ejecuta
+`POST /api/v1/tickets/{id}/assign`: el caso pasa a `IN_PROGRESS` y M5 agrega
+`updateTicketStatus` al transactional outbox para M2.
 
 El Outbox usa `PENDING`, `FAILED`, `PUBLISHED` y `DEAD_LETTER`, con contador de reintentos, último intento, error y fecha de publicación. El adapter actual (`BROKER_ADAPTER=local-log`) sólo publica al log.
 
@@ -122,7 +186,7 @@ Antes de conectar Kafka/RabbitMQ siguen pendientes de acuerdo externo: broker, t
 - `DomainEntities` / `Repositories`: persistencia e invariantes.
 - `integration/event`, `consumer`, `mapper`, `producer` y `validation`: contratos confirmados M1/M2/M8, normalización y Outbox desacoplado.
 - `IntegrationServices`: adapters genéricos existentes y publicación abstracta.
-- `db/migration`: doce migraciones Flyway.
+- `db/migration`: catorce migraciones Flyway (V1–V14).
 
 M5 no consulta bases de M1, M2, M4, M7 ni M8: conserva referencias locales y se integra por mensajes.
 

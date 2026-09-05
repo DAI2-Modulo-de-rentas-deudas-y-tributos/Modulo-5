@@ -1,189 +1,108 @@
-# Reporte final de integración frontend/backend M5
+# Reporte final de integración full-stack M5
 
-## Estado final
+## Alcance validado
 
-`FRONTEND_BACKEND_FULL_STACK_VALIDATED`
+La rama `feature/fullstack-real-integration`, creada desde `develop` en `9f8f52408748e016e59b2cf2cad4810d3b1a9184`, conecta frontend Vite, backend Spring Boot y PostgreSQL 17 real. Con `VITE_USE_MOCKS=false`, todos los writes de dominio usan HTTP y persistencia backend; los errores HTTP se propagan y no activan un fallback a fixtures o `mockDb`.
 
-La integración técnica se validó de extremo a extremo con navegador real, frontend Vite en modo API, backend Spring Boot y PostgreSQL 17 real. Se recorrieron los cinco roles y se corrigieron incompatibilidades objetivas de presentación/adaptación encontradas durante el recorrido.
+## Entorno real
 
-La aprobación estricta `LIVE_PC_VALIDATED` no se declara: la aplicación no ofrece controles visuales de paginación y los flujos económicos A-F no quedaron todos repetidos desde controles de UI en esta ejecución. La evidencia E2E real existente continúa verde en API/PostgreSQL, pero no sustituye esos dos requisitos visuales explícitos.
-
-`LIVE_PC_VALIDATION_NOT_APPROVED`
-
-Frontend URL exacta informada por Vite: `http://127.0.0.1:5173/`
-
-## Full stack
-
-| Componente | Resultado |
+| Componente | Evidencia |
 |---|---|
 | Docker | Docker Desktop 29.7.2 operativo |
-| PostgreSQL local | `postgres:17-alpine`, PostgreSQL 17.11, healthy, Compose aislado `m5integrationfinal` |
-| Backend | Spring Boot conectado a PostgreSQL; Actuator `200 UP`; `/api/v1/health` 200 |
-| Frontend | Vite en `http://127.0.0.1:5173/`, proxy `/api` hacia backend real |
-| Datos de dominio | `VITE_USE_MOCKS=false`; `DOMAIN_MOCKDB_USED=false` durante E2E |
+| PostgreSQL | `postgres:17-alpine`, servidor 17.11, Compose aislado `m5fullstack` |
+| Flyway | base vacía migrada exitosamente de V1 a V14 |
+| Hibernate | `ddl-auto=validate`, modelo JPA validado contra PostgreSQL |
+| Backend | Actuator `200 UP`; `/api/v1/health` 200 |
+| Frontend | Vite en modo API real y proxy hacia Spring Boot |
+| OpenAPI | 132 paths, 147 operaciones, cero `/api/v1/events*` públicos |
 
-Flyway aplicó V1-V12 sobre una base nueva y Hibernate validó el modelo con `ddl-auto=validate`.
+## Autenticación DEMO/DEV persistente
 
-## Live PC test
+- `demo_user` persiste username, hash BCrypt, rol, vínculo opcional a taxpayer y estado.
+- El bootstrap local sólo corre cuando dev mode está habilitado y `RENTAS_DEMO_BOOTSTRAP_PASSWORD` no está vacío.
+- `integration.taxpayer` fue creado mediante el backend, comprobado por SQL y usado para iniciar sesión desde el frontend.
+- Los cinco roles se autenticaron correctamente; contraseña incorrecta devolvió 401 y logout eliminó la sesión local.
+- La identidad/rol de las requests posteriores proviene de la respuesta del backend. El acceso del contribuyente a otro taxpayer devolvió 403.
+- Con `rentas.security.dev-mode=false`, los controladores dev-auth y simulación M2 no se registran.
 
-| Evidencia | Resultado |
-|---|---|
-| Browser | Codex In-app Browser real para PERSONAL; smoke manual informado para los otros cuatro roles |
-| Frontend | `http://127.0.0.1:5173/`, Vite real |
-| Backend | `http://127.0.0.1:8080`, Spring Boot real, contenedor `healthy` |
-| Database | `postgres:17-alpine`, PostgreSQL 17.11 real, contenedor `healthy` |
-| Domain mocks used | `false` (`VITE_USE_MOCKS=false`) |
-| Network | UI → `apiClient` → adapters → proxy `/api` → backend → PostgreSQL; endpoints de taxpayers/debts respondieron 200 por el proxy |
-| Console | Smoke final desde pestaña nueva: 0 warnings y 0 errors |
-| Refresh/persistence | Contribuyentes reales continuaron visibles tras recarga directa |
-| Routing | Rutas internas `/rentas`, `/caja`, `/auditor` y `/portal` cargaron sin 404 durante el recorrido |
-| Role switch | PERSONAL, SUPERVISOR, CAJERO, AUDITOR y CONTRIBUYENTE cambiaron navegación/permisos |
-| Pagination | Metadata Spring Page preservada; no existe paginador visual para cambiar de página |
-| Filters | Filtro visual de contribuyentes validado con datos reales |
-| Enums | Se eliminaron enums crudos observados, incluido `PARTIALLY_PAID` |
-| Error UI | Estado inválido de exención mostró mensaje comprensible y no produjo crash |
+## Pruebas UI → API → PostgreSQL
 
-Resultado por rol:
+Desde formularios frontend reales se crearon y verificaron por HTTP/SQL:
 
-- PERSONAL: browser smoke automatizado; dashboard, contribuyentes, detalle, tributos, liquidaciones, deudas, boletas, pagos, ajustes, planes, refinanciación, exenciones y tickets recorridos. Smoke limpio final verde.
-- SUPERVISOR: `MANUAL VISUAL SMOKE: PASSED`.
-- CAJERO: `MANUAL VISUAL SMOKE: PASSED`.
-- AUDITOR: `MANUAL VISUAL SMOKE: PASSED`.
-- CONTRIBUYENTE: `MANUAL VISUAL SMOKE: PASSED`.
+- configuración tributaria propuesta, enviada y aprobada;
+- liquidación individual y deuda asociada;
+- boleta;
+- pago con imputación y saldo de deuda actualizado;
+- solicitud de plan;
+- solicitud de exención usando conceptos obtenidos por API;
+- preview/aplicación de recargos, procesamiento de vencimientos y conciliación electrónica.
 
-Defectos corregidos durante el recorrido:
+Después de reiniciar el backend sin borrar PostgreSQL, las filas continuaron en la base y volvieron a verse por API/portal. Resultado: `PERSISTENCE_RESTART_VALIDATED`.
 
-- crashes por shapes incompletos en Planes, Caja, Auditor e indicadores;
-- adaptación incorrecta de recursos anidados del contribuyente;
-- fechas civiles desplazadas un día;
-- enums crudos, importes/campos ausentes y estados de imputación engañosos;
-- resumen del portal contradictorio y falta de obligaciones reales;
-- regresiones cubiertas por tests nuevos de adapters y formato.
+## Procesamiento fiscal nuevo
 
-Estado E2E visual:
+### Recargos e intereses
 
-- A pago total: resultado persistido visible y validado por API/SQL; no repetido íntegramente desde UI en esta ejecución.
-- B pago parcial: resultado real visible (`Pago parcial`, saldo 60); no repetido íntegramente desde UI.
-- C sobrepago: resultado persistido validado por API/SQL; no repetido íntegramente desde UI.
-- D plan: plan/cuotas persistidos y pantalla corregida; no creado nuevamente desde UI.
-- E reversión: integridad principal/interés validada por API/SQL/Testcontainers; no repetida desde UI.
-- F configuración: transición persistida validada por API/SQL; no repetida desde UI.
+El backend calcula con `BigDecimal` días vencidos, principal, tasas, recargo, interés, ajustes previos y total. Preview no escribe. La confirmación es transaccional, auditada e idempotente por deuda/fecha/regla. Se corrigió además el cotejo temporal de conciliaciones para comparar fechas en `America/Argentina/Buenos_Aires`, evitando el cambio de día causado por `timestamptz`/UTC después de las 21:00.
 
-Arranque limpio final:
+### Vencimientos
 
-- PostgreSQL detenido/iniciado sin borrar volúmenes y recuperado `healthy`.
-- Backend reconstruido desde Dockerfile y recreado con `RENTAS_SECURITY_DEV_MODE=true` sólo para integración local.
-- Flyway validó 12 migraciones y confirmó schema en V12; Hibernate inicializó correctamente.
-- Actuator `UP`, health API 200, OpenAPI 122 paths/136 operaciones y cero `/api/v1/events*`.
-- Vite reiniciado en el puerto informado `5173` con datos de dominio reales.
-- Smoke PERSONAL final: login → dashboard → contribuyentes → refresh → deudas, sin errores de consola.
+La acción administrativa procesa deudas y cuotas vencidas, genera los ajustes pendientes, identifica planes incumplidos y crea la solicitud de caducidad según su configuración. La ejecución queda auditada y una repetición para la misma fecha no duplica efectos.
 
-## E2E real sobre PostgreSQL
+### Conciliación electrónica
 
-- A: liquidación, deuda, boleta y pago total; deuda `PAID`, saldo 0.
-- B: pago parcial de 40 sobre deuda 100; deuda `PARTIALLY_PAID`, saldo 60.
-- C: sobrepago 120 sobre deuda 100; allocated 100, unallocated 20 y crédito 20.
-- D: solicitud concedida, plan y dos cuotas creadas.
-- E: cuota con principal 50 e interés 6; reversión restituyó sólo principal y dejó pago/allocation `REVERSED`.
-- F: configuración tributaria `DRAFT → submit → approve`, estado `ACTIVE`, versión 1.
+Los lotes e ítems se persisten con referencias únicas. El matching produce `CONCILIATED`, `OBSERVED` o `NOT_FOUND`; los observados pueden resolverse manualmente con control de pertenencia y auditoría. La importación repetida del mismo lote es idempotente.
 
-## Seguridad y roles HTTP
+## Integridad económica y concurrencia
 
-- PERSONAL, SUPERVISOR, CAJERO, AUDITOR y CONTRIBUYENTE: lecturas y flujos representativos 200.
-- Ownership ajeno: 403 `FORBIDDEN_OWNERSHIP`.
-- Escritura de AUDITOR: 403 `ACCESS_DENIED`.
-- Contrato de error: 400, 403, 404 y 409 con `code`, `message` y `traceId`.
-- `RENTAS_SECURITY_DEV_MODE` y `VITE_DEV_IDENTITY_HEADERS` tienen default `false`.
-- En modo Core el frontend envía cero headers `X-Dev-*`; Core/JWT productivo continúa bloqueado externamente.
+- Pago: `amount = allocatedAmount + unallocatedAmount`.
+- Imputación de cuota: `principalApplied + interestApplied = amount`; sólo principal reduce deuda.
+- Sobrepago: genera `CreditBalance` por el remanente.
+- Reversión: restaura sólo principal, marca pago/imputación `REVERSED` y no duplica ejecución.
+- Locks reales cubren pagos concurrentes, crédito, planes, reversión, M7 y outbox.
+- El claim de outbox usa `FOR UPDATE SKIP LOCKED`; cada worker toma un evento una sola vez.
+- Las consultas paginadas de liquidaciones, deudas y boletas, indicadores agregados y planes vencidos permanecen acotadas sin regresiones N+1.
 
-## Paginación y enums
+## Migraciones
 
-Se validaron respuestas Spring Page reales para taxpayers, debts, liquidations y payments. `content`, `number`, `size`, `totalElements`, `totalPages` y `last` se preservan en `array.page`, sin truncamiento silencioso y con `size <= 100`.
+- V1–V12 permanecen intactas.
+- V13 siembra idempotentemente `TASA_SERVICIOS`, `ABL` y `PATENTE`.
+- V14 agrega autenticación demo y persistencia para reglas/aplicaciones de recargo, ejecuciones de vencimientos y conciliación.
+- `flyway_schema_history` registró V1–V14 exitosas sobre un esquema vacío.
 
-La capa adapter traduce en ambos sentidos los enums reales de CalculationType, TaxConceptType, DebtOriginType, DebtStatus, PaymentStatus, PaymentMethod, PaymentOrigin, PaymentPlan, Installment y Exemption. Se corrigieron, entre otros, `FIXED→FIJO`, `FEE→TASA`, `LIQUIDATION→SETTLEMENT`, métodos/orígenes de pago y estados de planes, cuotas y exenciones. Los writes inversos comprobados incluyen `PORCENTAJE→PERCENTAGE` y `TARJETA_CREDITO→CARD`.
+## M2, M4 y M7
 
-El dashboard usa cero numérico cuando el backend no informa planes o exenciones; no introduce datos ficticios y no devuelve `null`, `undefined` ni `NaN`. El caso tiene prueba de regresión verde.
+- M2: `ticketCreated` y `ticketUpdated` consumen el envelope común, usan inbox/eventId, EventLog y DLQ. En dev se simulan por `POST /api/v1/dev/integrations/m2/events`; el procedimiento está en README.
+- M4: las pruebas contractuales preliminares pasan sin efectos económicos. Se preserva `BLOCKED_M4_TAXPAYER_RESOLUTION` hasta recibir `establishmentId → taxpayer`.
+- M7: source `transito`, resolución DNI/CUIT, `finalAmount`, idempotencia por evento/obligación, rollback y concurrencia pasan en PostgreSQL real.
+- Core/JWT, broker y contratos outbound permanecen externos; no se inventaron.
 
-## Diez capacidades MISSING_BACKEND
+## Seguridad
 
-| # | Operación | Pantalla | Capacidad ausente o equivalente | Clasificación |
-|---:|---|---|---|---|
-| 1 | `settlement.issue` | Liquidaciones | Segundo comando de emisión; crear liquidación ya emite y genera deuda | `NOT_REQUIRED` |
-| 2 | `debt.reportOverdue` | Deudas | Reportar deuda vencida hacia M8 | `EXTERNAL_BLOCKED` |
-| 3 | `adjustment.execute` | Ajustes | Ejecución separada; approve ya aplica el ajuste | `NOT_REQUIRED` |
-| 4 | `credit.applicableDebts` | Saldos a favor | Lista dedicada de deudas aplicables; se compone con deudas del contribuyente y el backend valida al aplicar | `NON_CRITICAL_UI` |
-| 5 | `refinancing.eligiblePlans` | Refinanciación | Lista dedicada de planes elegibles; el backend valida al solicitar | `NON_CRITICAL_UI` |
-| 6 | `cashier.taxpayerFile` | Caja | Legajo 360° completo; summary existente es parcial | `NON_CRITICAL_UI` |
-| 7 | `cashier.agents` | Caja | Catálogo de agentes, propiedad de Core | `EXTERNAL_BLOCKED` |
-| 8 | `cashier.dailySummary` | Caja | Agregado diario dedicado; pagos por fecha permiten composición parcial | `NON_CRITICAL_UI` |
-| 9 | `audit.indicators/breakdown` | Auditoría | Desglose genérico por filas; existen summary e indicadores específicos | `NON_CRITICAL_UI` |
-| 10 | `portal.notices` | Portal contribuyente | Recurso de avisos dedicado; hoy se derivan desde deudas propias | `NON_CRITICAL_UI` |
+- Roles efectivos: `RENTAS`, `SUPERVISOR`, `CASHIER`, `AUDITOR`, `TAXPAYER`.
+- AUDITOR puede leer y no escribir.
+- TAXPAYER sólo accede a recursos propios.
+- CASHIER conserva únicamente sus acciones; RENTAS puede registrar pagos desde la pantalla operativa.
+- Errores centralizados: `status`, `code`, `message`, `traceId`, `details`.
+- Flags dev tienen default `false`.
 
-Ninguno es `CRITICAL_UI_BLOCKER` para las historias principales E2E A-F. Deben abrirse tareas posteriores para los seis `NON_CRITICAL_UI`; los dos `EXTERNAL_BLOCKED` dependen de M8/Core; los dos `NOT_REQUIRED` requieren alinear la semántica visual y no crear endpoints duplicados.
+## Calidad
 
-## Tests finales
+- Backend: `mvnw.cmd clean verify` terminó `BUILD SUCCESS`; 132 pruebas, 132 aprobadas, 0 failures, 0 errors y 0 skipped.
+- PostgreSQL Testcontainers: 13/13 aprobadas contra `postgres:17-alpine` y PostgreSQL 17.11.
+- JaCoCo: líneas 88,30% (951/1077), instrucciones 86,65% (19605/22625) y branches 56,95% (586/1029); gate de líneas ≥85% aprobado.
+- Frontend: 24 archivos y 304 pruebas aprobadas; `npm run build` exitoso.
+- El bundle conserva un warning no bloqueante por tamaño; no afecta la corrección funcional.
 
-### Frontend
+## Variables de entorno y secretos
 
-- 20 archivos de test.
-- 269 tests detectados y aprobados; 0 fallidos.
-- `npm run build`: exitoso; 1778 módulos transformados.
-- Bundle principal: 1.082,94 kB minificado, 287,17 kB gzip. Warning >500 kB no bloqueante.
+- Agregada: `RENTAS_DEMO_BOOTSTRAP_PASSWORD`.
+- Tipo: secreto opcional, sólo LOCAL/DEV; no tiene valor real ni default sensible.
+- Uso: crear los cinco usuarios de bootstrap únicamente cuando `RENTAS_SECURITY_DEV_MODE=true`.
+- Configuración: terminal/Compose/secret store local o de CI de integración; nunca producción ni archivos `.env` versionados.
+- `.env.example`, `backend/.env.example` y README contienen sólo `CHANGE_ME`/placeholders seguros.
+- No se agregaron otros secretos ni se mostraron credenciales locales.
 
-### Backend
+## Entrega
 
-- `mvnw.cmd clean verify`: `BUILD SUCCESS`.
-- 97 tests; 97 aprobados; 0 failures; 0 errors; 0 skipped.
-- Testcontainers 1.21.3 conectó con Docker Desktop 29.7.2.
-- `PostgreSqlIntegrationTest`: 11/11 aprobados sobre `postgres:17-alpine`, PostgreSQL 17.11.
-- Flyway V1-V12 aplicadas; no fue necesaria V13.
-- Hibernate validate exitoso.
-- JaCoCo: líneas 88,65%, instrucciones 86,80%, branches 56,40%; gate de líneas >=85% aprobado.
-
-Los 11 casos PostgreSQL ejecutados fueron:
-
-1. `confirmedContractProjectionAndExternalEventIdConstraintsExist`
-2. `concurrentOutboxWorkersLockEachEventOnce`
-3. `installmentPaymentAndReversalPreservePrincipalInterestBreakdown`
-4. `optimizedQueriesRemainBoundedOnPostgreSql`
-5. `contextStartsAndFlywayAppliesEveryMigration`
-6. `paymentsOverpaymentsCreditAndLocksRunOnPostgreSql`
-7. `preliminaryM4ContractsRunOnPostgreSqlWithoutEconomicEffects`
-8. `planReversalAndCreditSingleExecutionLocksRunOnPostgreSql`
-9. `economicChecksAndIdempotencyUniquesExist`
-10. `recommendedOperationalIndexesExist`
-11. `m7ContractIdempotencyResolutionRollbackAndConcurrencyRunOnPostgreSql`
-
-## OpenAPI e integraciones externas
-
-- OpenAPI: 122 paths, 136 operaciones, cero endpoints `/api/v1/events*`.
-- M4: contrato preliminar validado en PostgreSQL sin efectos económicos; se preserva `BLOCKED_M4_TAXPAYER_RESOLUTION` hasta obtener `establishmentId → taxpayer`.
-- M7 inbound: contrato, resolución DNI/CUIT, importe final, idempotencia, rollback y concurrencia validados en PostgreSQL.
-- Core/JWT: `EXTERNAL_BLOCKED`.
-- Broker y outbound M4/M7/M8: `EXTERNAL_BLOCKED`.
-- CORS de deployment: `CORS_DEPLOYMENT_PENDING` hasta conocer la URL final de Amplify; local usa proxy Vite.
-
-## Pendientes para aprobar LIVE_PC_VALIDATED
-
-- Implementar o acordar el alcance del paginador visual; hoy no hay control de cambio de página en las tablas requeridas.
-- Repetir A-F desde la UI cuando las pantallas expongan las acciones y los contratos externos desbloqueados permitan ejecutarlas sin falsear el dominio.
-- Inspección detallada de request/response payload en una herramienta Network: el navegador controlado expuso consola pero no un inspector de red; la ruta real se corroboró mediante proxy, respuestas HTTP, UI y PostgreSQL.
-
-## Variables de entorno / secretos
-
-- Agregadas: `VITE_AUTH_MODE`, `VITE_DEV_IDENTITY_HEADERS`, `RENTAS_SECURITY_DEV_MODE`.
-- Defaults: seguros (`false` para los dos flags de identidad/desarrollo).
-- Secretos nuevos: ninguno.
-- `.env` real: ninguno.
-- Credencial local de PostgreSQL: el rol del volumen se realineó en runtime con la configuración local ya declarada por Compose; el valor no se mostró ni se agregó a documentación.
-- CI/CD: no habilitar identidad dev en producción; configurar sólo los secretos ya requeridos por el entorno.
-- `.env.example`: actualizado con placeholders/defaults seguros.
-
-No se agregaron, eliminaron ni renombraron variables de entorno. No se crearon secretos nuevos. La única modificación de secreto fue la realineación local indicada arriba; no requiere cambio de CI/CD ni de `.env.example`.
-
-## Acciones Git/entrega
-
-- Commit: no realizado.
-- Push: no realizado.
-- Merge: no realizado.
-- Deploy: no realizado.
+Los commits, PR y checks remotos se registran en el cierre de la tarea. El PR se dirige a `develop`; no se realiza merge ni deploy.

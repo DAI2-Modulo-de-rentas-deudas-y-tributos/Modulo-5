@@ -23,3 +23,4 @@ rentas:
   broker-adapter: ${BROKER_ADAPTER:local-log}
   outbox-delay-ms: ${OUTBOX_DELAY_MS:5000}
   security.dev-mode: ${RENTAS_SECURITY_DEV_MODE:false}
+  security.demo-bootstrap-password: ${RENTAS_DEMO_BOOTSTRAP_PASSWORD:}

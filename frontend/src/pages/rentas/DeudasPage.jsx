@@ -6,11 +6,12 @@ import DataTable from "../../components/common/DataTable.jsx";
 import FilterBar from "../../components/common/FilterBar.jsx";
 import StatusBadge from "../../components/common/StatusBadge.jsx";
 import Button from "../../components/common/Button.jsx";
+import Modal from "../../components/common/Modal.jsx";
 import StatTile from "../../components/common/StatTile.jsx";
 import Alert from "../../components/ui/Alert.jsx";
 import useResource from "../../hooks/useResource.js";
 import useTaxpayerIndex from "../../hooks/useTaxpayerIndex.js";
-import { debtService } from "../../services/rentasService.js";
+import { administrationService, debtService } from "../../services/rentasService.js";
 import { ORIGIN_TYPES } from "../../services/mockDb.js";
 import { formatCurrency, formatDate, labelFor } from "../../lib/format.js";
 
@@ -27,6 +28,8 @@ export default function DeudasPage() {
   const [filters, setFilters] = useState({ status: "", originType: "" });
   const [feedback, setFeedback] = useState(null);
   const [reporting, setReporting] = useState(null);
+  const [lateCharge, setLateCharge] = useState(null);
+  const [processing, setProcessing] = useState(false);
 
   const loader = useCallback(
     () => debtService.list({ ...filters, taxpayerId }),
@@ -62,6 +65,25 @@ export default function DeudasPage() {
     }
   };
 
+  const onPreviewLateCharge = async (debt) => {
+    setFeedback(null);
+    try { setLateCharge({ debt, preview: await debtService.previewLateCharge(debt.id, new Date().toISOString().slice(0, 10)), applying: false }); }
+    catch (caught) { setFeedback({ variant: "error", title: "No se pudo calcular", message: caught.message }); }
+  };
+
+  const onApplyLateCharge = async () => {
+    setLateCharge((value) => ({ ...value, applying: true }));
+    try { const result = await debtService.applyLateCharge(lateCharge.debt.id, lateCharge.preview.calculationDate);setLateCharge(null);setFeedback({ variant: "success", title: "Recargo aplicado", message: `Se aplicaron ${formatCurrency(result.totalAdjustment)} a la deuda #${result.debtId}.` });reload(); }
+    catch (caught) { setLateCharge((value) => ({ ...value, applying: false }));setFeedback({ variant: "error", title: "No se pudo aplicar", message: caught.message }); }
+  };
+
+  const onProcessDueDates = async () => {
+    setProcessing(true);setFeedback(null);
+    try { const result=await administrationService.processDueDates(new Date().toISOString().slice(0,10));setFeedback({ variant:"success",title:"Vencimientos procesados",message:`${result.debtsOverdue} deudas vencidas, ${result.adjustmentsGenerated} ajustes y ${result.installmentsOverdue} cuotas actualizadas.`});reload(); }
+    catch(caught){setFeedback({variant:"error",title:"No se pudieron procesar",message:caught.message});}
+    finally{setProcessing(false);}
+  };
+
   const columns = [
     { key: "id", header: "N°", render: (row) => <span className="tabular-nums">#{row.id}</span> },
     { key: "taxpayer", header: "Contribuyente", render: (row) => nameOf(row.taxpayerId) },
@@ -95,8 +117,10 @@ export default function DeudasPage() {
       header: "",
       align: "right",
       render: (row) =>
-        row.status === "OVERDUE" &&
-        (row.reportedToM8 ? (
+        row.status === "OVERDUE" && (
+          <div className="flex justify-end gap-2">
+          <Button size="sm" variant="secondary" onClick={() => onPreviewLateCharge(row)}>Calcular recargo</Button>
+        {row.reportedToM8 ? (
           <StatusBadge tone="info" label="Informada a M8" />
         ) : (
           <Button
@@ -107,7 +131,9 @@ export default function DeudasPage() {
           >
             Informar a M8
           </Button>
-        )),
+        )}
+          </div>
+        ),
     },
   ];
 
@@ -156,6 +182,7 @@ export default function DeudasPage() {
       <Card
         title="Detalle de deudas"
         description="La deuda vencida se informa a Desarrollo Social mediante el evento overdueDebt."
+        actions={<Button size="sm" variant="primary" loading={processing} onClick={onProcessDueDates}>Procesar vencimientos</Button>}
       >
         <FilterBar
           filters={[
@@ -184,6 +211,17 @@ export default function DeudasPage() {
           emptyDescription="No hay obligaciones que coincidan con los filtros aplicados."
         />
       </Card>
+
+      {lateCharge && <Modal open title={`Recargos de deuda #${lateCharge.debt.id}`} description={`Regla ${lateCharge.preview.ruleCode} al ${formatDate(lateCharge.preview.calculationDate)}`} onClose={() => setLateCharge(null)} footer={<><Button variant="secondary" onClick={() => setLateCharge(null)}>Cancelar</Button><Button variant="primary" loading={lateCharge.applying} onClick={onApplyLateCharge}>Confirmar aplicación</Button></>}>
+        <dl className="grid grid-cols-2 gap-3 text-sm">
+          <div><dt>Días vencidos</dt><dd className="font-semibold">{lateCharge.preview.daysOverdue}</dd></div>
+          <div><dt>Capital</dt><dd className="font-semibold">{formatCurrency(lateCharge.preview.principal)}</dd></div>
+          <div><dt>Recargo ({lateCharge.preview.surchargeRate}%)</dt><dd>{formatCurrency(lateCharge.preview.surchargeAmount)}</dd></div>
+          <div><dt>Interés diario ({lateCharge.preview.interestRate}%)</dt><dd>{formatCurrency(lateCharge.preview.interestAmount)}</dd></div>
+          <div><dt>Ajuste total</dt><dd className="font-semibold">{formatCurrency(lateCharge.preview.totalAdjustment)}</dd></div>
+          <div><dt>Total actualizado</dt><dd className="font-semibold">{formatCurrency(lateCharge.preview.updatedTotal)}</dd></div>
+        </dl>
+      </Modal>}
     </ModuleShell>
   );
 }
