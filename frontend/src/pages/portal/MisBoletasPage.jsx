@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
-import { Download, Printer } from "lucide-react";
+import { Printer } from "lucide-react";
+import BillPdfDownload from "../../components/documentos/BillPdfDownload.jsx";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
 import Card from "../../components/common/Card.jsx";
 import DataTable from "../../components/common/DataTable.jsx";
@@ -85,14 +86,7 @@ export default function MisBoletasPage() {
             <Printer className="h-3.5 w-3.5" strokeWidth={2} />
             Ver e imprimir
           </button>
-          <a
-            href={row.documentUrl}
-            title={row.documentUrl}
-            className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-neutral-500 transition-colors hover:text-[#0F2C59]"
-          >
-            <Download className="h-3.5 w-3.5" strokeWidth={2} />
-            PDF
-          </a>
+          <BillPdfDownload billId={row.id} />
         </div>
       ),
     },

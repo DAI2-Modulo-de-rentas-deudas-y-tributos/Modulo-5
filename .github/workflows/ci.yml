@@ -147,11 +147,25 @@ jobs:
       - name: Test and package backend
         run: mvn -B -ntp clean verify --file backend/pom.xml
 
-      - name: Start backend and verify PostgreSQL integration
+      - name: Setup Python for PDF acceptance
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install PDF validation tools
+        run: |
+          python -m pip install -r scripts/test/requirements.txt
+          sudo apt-get update
+          sudo apt-get install -y poppler-utils postgresql-client
+
+      - name: Parse PDF evidence and verify acceptance runner
+        run: python -m unittest discover -s scripts/test -p 'test_*.py' -v
+
+      - name: Validate PDF and bulk HTTP flows on PostgreSQL
         shell: bash
         run: |
           set -euo pipefail
-          java -jar backend/target/rentas-backend.jar > "${RUNNER_TEMP}/backend.log" 2>&1 &
+          SPRING_PROFILES_ACTIVE=dev java -jar backend/target/rentas-backend.jar > "${RUNNER_TEMP}/backend.log" 2>&1 &
           backend_pid=$!
           trap 'kill "${backend_pid}" 2>/dev/null || true' EXIT
 
@@ -159,13 +173,49 @@ jobs:
             if curl --fail --silent http://localhost:8080/actuator/health > /dev/null; then
               curl --fail --silent http://localhost:8080/api/v1/health \
                 | grep --quiet '"status":"UP"'
-              exit 0
+              break
             fi
             sleep 2
           done
 
-          cat "${RUNNER_TEMP}/backend.log"
-          exit 1
+          if ! curl --fail --silent http://localhost:8080/actuator/health > /dev/null; then
+            cat "${RUNNER_TEMP}/backend.log"
+            exit 1
+          fi
+          python scripts/test/aws_test_acceptance.py \
+            --api-base-url http://localhost:8080 \
+            --scenario pdf \
+            --output-dir backend/target/pdf-evidence/http
+          PGPASSWORD="${SPRING_DATASOURCE_PASSWORD}" psql \
+            --host=127.0.0.1 --username="${SPRING_DATASOURCE_USERNAME}" --dbname=rentas \
+            --set=ON_ERROR_STOP=1 --file=scripts/test/seed_bulk_ci.sql
+          for size in 10 50 200; do
+            python scripts/test/aws_test_acceptance.py \
+              --api-base-url http://localhost:8080 \
+              --scenario bulk --bulk-size "${size}" --max-duration-seconds 120 \
+              --output-dir "backend/target/bulk-evidence/${size}"
+          done
+
+      - name: Render PDF evidence
+        if: always()
+        shell: bash
+        run: |
+          shopt -s nullglob
+          for document in backend/target/pdf-evidence/*.pdf backend/target/pdf-evidence/http/*.pdf; do
+            pdftoppm -r 90 -png "${document}" "${document%.pdf}"
+          done
+
+      - name: Upload PDF and bulk evidence and test reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: operational-acceptance-${{ github.run_id }}
+          path: |
+            backend/target/pdf-evidence/
+            backend/target/bulk-evidence/
+            backend/target/surefire-reports/
+          retention-days: 7
+          if-no-files-found: warn
 
       - name: Build backend container image
         run: docker build --tag modulo-5-rentas-backend:${{ github.sha }} backend

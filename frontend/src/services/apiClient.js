@@ -40,12 +40,13 @@ export function authHeaders() {
   return {};
 }
 
-export async function request(path, { method = "GET", body, signal } = {}) {
+export async function request(path, { method = "GET", body, signal, responseType } = {}) {
   const adapted = adaptApiRequest(path, { method, body, signal });
   const response = await fetch(`${API_BASE_URL}${adapted.path}`, {
     method: adapted.options.method,
     signal: adapted.options.signal,
     headers: {
+      ...(responseType === "blob" ? { Accept: "application/pdf" } : {}),
       ...(adapted.options.body === undefined ? {} : { "Content-Type": "application/json" }),
       ...authHeaders(),
     },
@@ -53,6 +54,19 @@ export async function request(path, { method = "GET", body, signal } = {}) {
   });
 
   const contentType = response.headers.get("content-type") ?? "";
+  if (response.ok && responseType === "blob") {
+    if (contentType.split(";")[0].trim().toLowerCase() !== "application/pdf") {
+      throw new ApiError("El servidor no devolvió un PDF válido.", response.status);
+    }
+    const blob = await response.blob();
+    const signature = new Uint8Array(await blob.slice(0, 5).arrayBuffer());
+    if (String.fromCharCode(...signature) !== "%PDF-") {
+      throw new ApiError("El documento PDF está vacío o dañado.", response.status);
+    }
+    const disposition = response.headers.get("content-disposition") ?? "";
+    const filename = disposition.match(/filename="([^"\r\n]+)"/i)?.[1] ?? "boleta.pdf";
+    return { blob, filename: filename.replace(/[\\/]/g, "_") };
+  }
   const payload = response.status === 204 ? null : contentType.includes("application/json")
     ? await response.json().catch(() => null)
     : await response.text().catch(() => null);

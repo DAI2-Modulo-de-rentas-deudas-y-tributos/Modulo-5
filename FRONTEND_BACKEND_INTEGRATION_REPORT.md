@@ -88,10 +88,10 @@ Los lotes e ítems se persisten con referencias únicas. El matching produce `CO
 
 ## Calidad
 
-- Backend: `mvnw.cmd clean verify` terminó `BUILD SUCCESS`; 109 pruebas, 109 aprobadas, 0 failures, 0 errors y 0 skipped.
-- PostgreSQL Testcontainers: 12/12 aprobadas contra `postgres:17-alpine` y PostgreSQL 17.11.
-- JaCoCo: líneas 87,85% (918/1045), instrucciones 86,36% (19473/22548) y branches 56,11% (574/1023); gate de líneas ≥85% aprobado.
-- Frontend: 22 archivos y 291 pruebas aprobadas; `npm run build` exitoso.
+- Backend: `mvnw.cmd clean verify` terminó `BUILD SUCCESS`; 132 pruebas, 132 aprobadas, 0 failures, 0 errors y 0 skipped.
+- PostgreSQL Testcontainers: 13/13 aprobadas contra `postgres:17-alpine` y PostgreSQL 17.11.
+- JaCoCo: líneas 88,30% (951/1077), instrucciones 86,65% (19605/22625) y branches 56,95% (586/1029); gate de líneas ≥85% aprobado.
+- Frontend: 24 archivos y 304 pruebas aprobadas; `npm run build` exitoso.
 - El bundle conserva un warning no bloqueante por tamaño; no afecta la corrección funcional.
 
 ## Variables de entorno y secretos

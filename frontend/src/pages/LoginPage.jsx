@@ -1,6 +1,5 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useLocation, useNavigate, Navigate } from "react-router-dom";
-import { Building2, Lock } from "lucide-react";
 import FormField from "../components/ui/FormField.jsx";
 import Alert from "../components/ui/Alert.jsx";
 import Button from "../components/common/Button.jsx";
@@ -9,10 +8,23 @@ import { useAuth } from "../context/AuthContext.jsx";
 import { homePathForRole } from "../config/workspaces.js";
 import { AUTH_MODE, USE_MOCKS } from "../services/apiClient.js";
 
+/** Cuentas del entorno de mocks. En el talón porque es lo que uno deja a mano. */
+const CUENTAS_DE_PRUEBA = [
+  { username: "mrivas", password: "rentas123", role: "Personal de Rentas" },
+  { username: "jlopez", password: "rentas123", role: "Supervisor" },
+  { username: "pcabrera", password: "caja123", role: "Cajero" },
+  { username: "acastro", password: "audit123", role: "Auditor" },
+  { username: "jperez", password: "ciudadano123", role: "Contribuyente" },
+];
+
 /**
  * Ingreso al módulo. Entran los agentes municipales y también el contribuyente a su
  * propio legajo; en ningún caso hay autorregistro: las cuentas las da de alta el
  * municipio y el rol decide a qué área se llega.
+ *
+ * La pantalla está dibujada como una hoja de trámite —banda de encabezado, cuerpo,
+ * línea de corte y talón—, el mismo lenguaje de `BoletaDocument`: el ingreso y el
+ * comprobante son documentos de la misma oficina.
  */
 export default function LoginPage() {
   const { login, isAuthenticated, user } = useAuth();
@@ -32,6 +44,12 @@ export default function LoginPage() {
     const { name, value } = event.target;
     setForm((previous) => ({ ...previous, [name]: value }));
     setErrors((previous) => ({ ...previous, [name]: undefined }));
+  };
+
+  const usarCuenta = (cuenta) => {
+    setForm({ username: cuenta.username, password: cuenta.password });
+    setErrors({});
+    setSubmitError(null);
   };
 
   const validate = () => {
@@ -59,60 +77,41 @@ export default function LoginPage() {
     }
   };
 
+  const conCuentasDePrueba = AUTH_MODE === "mock" && USE_MOCKS;
+
   return (
-    <div className="flex min-h-screen flex-col lg:flex-row">
-      {/* Panel institucional */}
-      <section className="relative flex flex-col justify-between overflow-hidden bg-[#0F2C59] px-8 py-10 lg:w-[45%] lg:px-14 lg:py-14">
-        <div className="absolute -right-16 -top-16 h-64 w-64 rounded-full border-4 border-white/5" />
-        <div className="absolute -bottom-24 -left-10 h-72 w-72 rounded-full border-4 border-[#D63031]/20" />
-
-        <div className="relative flex items-center gap-2">
-          <img src={logo} alt="Ciudad UADE" className="h-7 w-auto object-contain" />
-          <span className="text-[15px] font-bold text-white">Ciudad UADE</span>
-        </div>
-
-        <div className="relative mt-12 lg:mt-0">
-          <div className="mb-4 flex items-center gap-3">
-            <div className="h-[2px] w-8 bg-[#D63031]" />
-            <span className="text-[12px] font-bold uppercase tracking-[0.2em] text-[#D63031]">
-              Módulo 5
-            </span>
+    <main className="flex min-h-screen items-center justify-center bg-[#FAFAFA] px-5 py-10">
+      <div
+        className="hoja-entrada w-full max-w-[460px] overflow-hidden rounded-xl border border-neutral-200
+                   bg-white shadow-[0_24px_60px_-32px_rgba(15,44,89,0.45)]"
+      >
+        {/* Banda de encabezado: la oficina que emite, como en la boleta impresa. */}
+        <header className="flex items-start justify-between gap-4 bg-[#0F2C59] px-6 py-5 sm:px-8">
+          <div className="flex items-center gap-2.5">
+            <img src={logo} alt="Ciudad UADE" className="h-7 w-auto object-contain" />
+            <div className="leading-tight">
+              <p className="text-[13px] font-bold text-white">Ciudad UADE</p>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-white/45">
+                Dirección General de Rentas
+              </p>
+            </div>
           </div>
-          <h1 className="text-[2.25rem] font-extrabold leading-tight tracking-[-0.02em] text-white lg:text-[2.75rem]">
-            Módulo de{" "}
-            <span className="bg-gradient-to-r from-[#D63031] to-[#e74c3c] bg-clip-text text-transparent">
-              Rentas
-            </span>
-          </h1>
-          <p className="mt-4 max-w-sm text-[15px] leading-relaxed text-white/60">
-            Liquidaciones, deudas, boletas, pagos, planes de pago, exenciones, la caja de
-            atención y el portal del contribuyente de la Municipalidad de Ciudad UADE.
+          <p className="hidden shrink-0 pt-0.5 text-[11px] tabular-nums text-white/40 sm:block">
+            Gestión 2026
           </p>
-        </div>
+        </header>
+        <div className="h-0.5 bg-[#D63031]" />
 
-        <p className="relative mt-12 flex items-center gap-2 text-[12px] text-white/40 lg:mt-0">
-          <Building2 className="h-3.5 w-3.5" strokeWidth={1.5} />
-          Agentes municipales y contribuyentes — Gestión 2026
-        </p>
-      </section>
+        <div className="px-6 py-7 sm:px-8">
+          <h2 className="text-[26px] font-extrabold leading-none tracking-[-0.02em] text-[#0F2C59]">
+            Iniciar sesión
+          </h2>
+          <p className="mt-2.5 text-[13px] leading-relaxed text-neutral-500">
+            Agentes municipales y contribuyentes entran con el usuario que les dio el
+            municipio. No hay registro público.
+          </p>
 
-      {/* Formulario */}
-      <section className="flex flex-1 items-center justify-center bg-[#FAFAFA] px-5 py-12">
-        <div className="w-full max-w-sm">
-          <div className="mb-7">
-            <span className="inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-neutral-500">
-              <Lock className="h-3 w-3 text-[#D63031]" strokeWidth={2} />
-              Acceso restringido
-            </span>
-            <h2 className="mt-4 text-[26px] font-extrabold tracking-[-0.02em] text-[#0F2C59]">
-              Iniciar sesión
-            </h2>
-            <p className="mt-1.5 text-[14px] text-neutral-500">
-              Ingresá con tu usuario del padrón de agentes.
-            </p>
-          </div>
-
-          <form onSubmit={onSubmit} noValidate className="flex flex-col gap-4">
+          <form onSubmit={onSubmit} noValidate className="mt-6 flex flex-col gap-4">
             {submitError && (
               <Alert variant="error" title="No pudimos validar tus datos">
                 {submitError}
@@ -133,7 +132,6 @@ export default function LoginPage() {
               label="Contraseña"
               name="password"
               type="password"
-              placeholder="••••••••"
               value={form.password}
               onChange={onChange}
               error={errors.password}
@@ -144,43 +142,60 @@ export default function LoginPage() {
               {submitting ? "Verificando…" : "Ingresar"}
             </Button>
           </form>
+        </div>
 
-          {AUTH_MODE === "mock" && USE_MOCKS && (
-            <div className="mt-6 rounded-lg border border-neutral-200 bg-white p-4">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-neutral-400">
-                Datos de prueba
-              </p>
-              <ul className="mt-2 flex flex-col gap-1 text-[12px] text-neutral-500">
-                <li>
-                  <code className="font-semibold text-[#0F2C59]">mrivas</code> / rentas123 —
-                  Personal de Rentas
-                </li>
-                <li>
-                  <code className="font-semibold text-[#0F2C59]">jlopez</code> / rentas123 —
-                  Supervisor
-                </li>
-                <li>
-                  <code className="font-semibold text-[#0F2C59]">pcabrera</code> / caja123 —
-                  Cajero
-                </li>
-                <li>
-                  <code className="font-semibold text-[#0F2C59]">acastro</code> / audit123 —
-                  Auditor
-                </li>
-                <li>
-                  <code className="font-semibold text-[#0F2C59]">jperez</code> / ciudadano123 —
-                  Contribuyente
-                </li>
-              </ul>
+        {/* Talón: la parte que se conserva —a quién escribirle y con qué entrar—. */}
+        <div className="hoja-corte" aria-hidden="true" />
+        <footer className="px-6 pb-6 pt-5 sm:px-8">
+          {conCuentasDePrueba && (
+            <div className="mb-5">
+              <div className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:justify-between sm:gap-3">
+                <p className="text-[12px] font-semibold text-neutral-600">Cuentas de prueba</p>
+                <p className="text-[11px] text-neutral-300">Elegí una y se completa el formulario</p>
+              </div>
+
+              <div className="mt-2 grid grid-cols-[auto_auto_1fr] items-baseline gap-x-3">
+                {CUENTAS_DE_PRUEBA.map((cuenta) => (
+                  <Fragment key={cuenta.username}>
+                    <button
+                      type="button"
+                      onClick={() => usarCuenta(cuenta)}
+                      className="col-span-3 grid grid-cols-subgrid rounded-md py-1 text-left
+                                 transition-colors hover:bg-[#0F2C59]/[0.04]
+                                 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#D63031]/25"
+                    >
+                      <span className="pl-1.5 font-mono text-[12px] text-[#0F2C59]">
+                        {cuenta.username}
+                      </span>
+                      <span className="font-mono text-[12px] text-neutral-400">
+                        {cuenta.password}
+                      </span>
+                      <span className="pr-1.5 text-right text-[12px] text-neutral-400">
+                        {cuenta.role}
+                      </span>
+                    </button>
+                  </Fragment>
+                ))}
+              </div>
             </div>
           )}
 
-          <p className="mt-6 text-center text-[12px] text-neutral-400">
-            ¿Problemas para ingresar? Escribí a{" "}
-            <span className="font-medium text-neutral-600">soporte@ciudaduade.gob.ar</span>
+          <p className="text-[12px] leading-relaxed text-neutral-400">
+            ¿No podés entrar? Escribí a{" "}
+            <a
+              href="mailto:soporte@ciudaduade.gob.ar"
+              className="font-medium text-neutral-600 underline decoration-neutral-300 underline-offset-2
+                         transition-colors hover:text-[#0F2C59] hover:decoration-[#0F2C59]/40
+                         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#D63031]/25"
+            >
+              soporte@ciudaduade.gob.ar
+            </a>
+            .
           </p>
-        </div>
-      </section>
-    </div>
+
+          <div className="hoja-codigo mt-5 h-7 w-40" aria-hidden="true" />
+        </footer>
+      </div>
+    </main>
   );
 }

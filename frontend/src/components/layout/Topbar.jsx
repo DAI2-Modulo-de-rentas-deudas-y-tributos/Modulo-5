@@ -15,7 +15,7 @@ export default function Topbar({ onOpenMenu, areaLabel = "Área de trabajo", are
     .toUpperCase();
 
   return (
-    <header className="sticky top-0 z-20 flex items-center justify-between gap-4 border-b border-neutral-200 bg-white/90 px-5 py-3 backdrop-blur">
+    <header className="sticky top-0 z-20 flex items-center justify-between gap-4 border-b border-neutral-200/80 bg-white/85 px-5 py-3 backdrop-blur-md">
       <button
         type="button"
         onClick={onOpenMenu}
@@ -40,7 +40,7 @@ export default function Topbar({ onOpenMenu, areaLabel = "Área de trabajo", are
           aria-haspopup="menu"
           aria-expanded={menuOpen}
         >
-          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#0F2C59] text-[12px] font-bold text-white">
+          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-[#0F2C59] to-[#163d75] text-[12px] font-bold text-white ring-2 ring-white">
             {initials}
           </span>
           <span className="hidden text-left leading-tight sm:block">
@@ -55,7 +55,7 @@ export default function Topbar({ onOpenMenu, areaLabel = "Área de trabajo", are
         {menuOpen && (
           <div
             role="menu"
-            className="absolute right-0 mt-2 w-60 rounded-xl border border-neutral-200 bg-white p-1.5 shadow-[0_8px_30px_-12px_rgba(15,44,89,0.3)]"
+            className="absolute right-0 mt-2 w-60 rounded-xl border border-neutral-200/70 bg-white p-1.5 shadow-[0_16px_40px_-16px_rgba(15,44,89,0.4)]"
           >
             <div className="px-3 py-2">
               <p className="text-[13px] font-semibold text-neutral-800">{user.fullName}</p>
