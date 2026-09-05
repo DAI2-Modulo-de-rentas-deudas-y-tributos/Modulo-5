@@ -2,13 +2,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "../App.jsx";
+import { ingresarComoAgente } from "./helpers/ingresar.js";
 
 /** Las dos mejoras de consulta del auditor, desde la pantalla. */
 async function entrarAAuditoria(user, modulo) {
   render(<App />);
-  await user.type(screen.getByLabelText(/usuario/i), "acastro");
-  await user.type(screen.getByLabelText(/contraseña/i), "audit123");
-  await user.click(screen.getByRole("button", { name: /ingresar/i }));
+  await ingresarComoAgente(user, "acastro", "audit123");
   await waitFor(() => expect(screen.getByRole("heading", { name: /hola, ana/i })).toBeDefined());
   await user.click(screen.getByRole("link", { name: modulo }));
   await waitFor(() => expect(screen.queryByText(/cargando información/i)).toBeNull());

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "../App.jsx";
+import { ingresarComoAgente } from "./helpers/ingresar.js";
 
 /**
  * Ventanilla de caja: el cajero entra a su propia área y completa el circuito
@@ -9,9 +10,7 @@ import App from "../App.jsx";
  */
 async function loginAsCajero(user) {
   render(<App />);
-  await user.type(screen.getByLabelText(/usuario/i), "pcabrera");
-  await user.type(screen.getByLabelText(/contraseña/i), "caja123");
-  await user.click(screen.getByRole("button", { name: /ingresar/i }));
+  await ingresarComoAgente(user, "pcabrera", "caja123");
   await waitFor(() => expect(screen.getByRole("heading", { name: /hola, paula/i })).toBeDefined());
 }
 

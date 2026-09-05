@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "../App.jsx";
+import { ingresarComoAgente } from "./helpers/ingresar.js";
 
 /**
  * Generación masiva de liquidaciones: el operador configura, previsualiza y recién
@@ -9,9 +10,7 @@ import App from "../App.jsx";
  */
 async function abrirGeneracionMasiva(user) {
   render(<App />);
-  await user.type(screen.getByLabelText(/usuario/i), "mrivas");
-  await user.type(screen.getByLabelText(/contraseña/i), "rentas123");
-  await user.click(screen.getByRole("button", { name: /ingresar/i }));
+  await ingresarComoAgente(user, "mrivas", "rentas123");
   await waitFor(() => expect(screen.getByRole("heading", { name: /hola,/i })).toBeDefined());
 
   await user.click(screen.getByRole("link", { name: /liquidaciones/i }));
