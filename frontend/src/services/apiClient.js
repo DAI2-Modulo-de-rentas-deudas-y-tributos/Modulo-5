@@ -32,7 +32,7 @@ export function authHeaders() {
     if (!user) return {};
     return {
       "X-Dev-User": user.username ?? String(user.id ?? "mock-user"),
-      "X-Dev-Roles": (ROLE_MAP[user.role] ?? []).join(","),
+      "X-Dev-Roles": user.devAuthorities?.join(",") ?? (ROLE_MAP[user.role] ?? []).join(","),
       ...(user.taxpayerId ? { "X-Dev-Taxpayer-Id": String(user.taxpayerId) } : {}),
     };
   }

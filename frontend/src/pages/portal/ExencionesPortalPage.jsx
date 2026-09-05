@@ -9,12 +9,10 @@ import Alert from "../../components/ui/Alert.jsx";
 import FormField from "../../components/ui/FormField.jsx";
 import FileUpload from "../../components/common/FileUpload.jsx";
 import useResource from "../../hooks/useResource.js";
+import useTaxConcepts from "../../hooks/useTaxConcepts.js";
 import { portalService } from "../../services/rentasService.js";
-import { CONCEPTS } from "../../services/mockDb.js";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { formatDate, formatPercentage } from "../../lib/format.js";
-
-const CONCEPT_OPTIONS = CONCEPTS.map((c) => ({ value: c.code, label: c.label }));
 
 /**
  * Exenciones del contribuyente. El ciudadano solicita; la resolución la toma Rentas
@@ -131,6 +129,7 @@ export default function ExencionesPortalPage() {
 
 /** RequestExemptionRequest → publica exemptionRequested hacia M8. */
 function RequestExemptionModal({ taxpayerId, onClose, onDone }) {
+  const { options: conceptOptions, loading: loadingConcepts, error: conceptError } = useTaxConcepts();
   const [form, setForm] = useState({
     conceptCode: "",
     reason: "",
@@ -208,10 +207,12 @@ function RequestExemptionModal({ taxpayerId, onClose, onDone }) {
           type="select"
           value={form.conceptCode}
           onChange={onChange}
-          options={CONCEPT_OPTIONS}
+          options={conceptOptions}
+          disabled={loadingConcepts}
           error={errors.conceptCode}
           required
         />
+        {conceptError && <Alert variant="error" title="No se pudieron cargar los conceptos">{conceptError}</Alert>}
         <FormField
           label="Motivo"
           name="reason"
