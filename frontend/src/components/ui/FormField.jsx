@@ -9,6 +9,9 @@ export default function FormField({
   required = false,
   options = [],
   disabled = false,
+  prefix,
+  suffix,
+  autoComplete,
 }) {
   const baseClasses =
     "w-full rounded-lg border bg-neutral-50 px-3.5 py-2.5 text-[14px] text-neutral-900 placeholder-neutral-400 outline-none transition-colors " +
@@ -68,6 +71,39 @@ export default function FormField({
     );
   }
 
+  if (prefix || suffix) {
+    return (
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor={name} className="text-[13px] font-medium text-neutral-700">
+          {label}
+          {required && <span className="text-[#D63031] ml-0.5">*</span>}
+        </label>
+        <div
+          className={`flex items-center gap-2.5 rounded-lg border bg-neutral-50 px-3.5 py-2.5 transition-colors
+                      focus-within:border-[#D63031]/40 focus-within:bg-white focus-within:ring-2 focus-within:ring-[#D63031]/10
+                      ${borderClass} ${disabled ? "opacity-50" : ""}`}
+        >
+          {prefix}
+          <input
+            id={name}
+            name={name}
+            type={type}
+            placeholder={placeholder}
+            value={value}
+            onChange={onChange}
+            required={required}
+            disabled={disabled}
+            autoComplete={autoComplete}
+            className="min-w-0 flex-1 bg-transparent text-[14px] text-neutral-900 placeholder-neutral-400
+                       outline-none disabled:cursor-not-allowed"
+          />
+          {suffix}
+        </div>
+        {error && <p className="text-[12px] text-red-500">{error}</p>}
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-1.5">
       <label htmlFor={name} className="text-[13px] font-medium text-neutral-700">
@@ -83,6 +119,7 @@ export default function FormField({
         onChange={onChange}
         required={required}
         disabled={disabled}
+        autoComplete={autoComplete}
         className={`${baseClasses} ${borderClass}`}
       />
       {error && <p className="text-[12px] text-red-500">{error}</p>}
