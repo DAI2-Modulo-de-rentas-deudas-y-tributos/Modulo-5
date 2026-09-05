@@ -79,7 +79,7 @@ interface CreditBalanceApplicationRepository extends JpaRepository<CreditBalance
 interface PaymentReversalRepository extends FilteredRepository<PaymentReversalRequest,Long> { @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select r from PaymentReversalRequest r where r.id=:id") Optional<PaymentReversalRequest> findByIdForUpdate(Long id); boolean existsByPaymentIdAndStatusIn(Long paymentId,Collection<PaymentReversalStatus> statuses); }
 interface ProcessedEventRepository extends JpaRepository<ProcessedEvent,UUID> { boolean existsByExternalEventId(String eventId); }
 interface IntegrationEventLogRepository extends FilteredRepository<IntegrationEventLog,Long> { Optional<IntegrationEventLog> findFirstByEventIdOrderByIdDesc(UUID eventId); Optional<IntegrationEventLog> findFirstByExternalEventIdOrderByIdDesc(String eventId); Page<IntegrationEventLog> findByStatusIn(Collection<IntegrationEventStatus> statuses,Pageable pageable); }
-interface OutboxRepository extends JpaRepository<OutboxEvent,UUID> { @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select e from OutboxEvent e where e.status in (ar.gob.municipalidad.rentas.OutboxStatus.PENDING,ar.gob.municipalidad.rentas.OutboxStatus.FAILED) order by e.createdAt") List<OutboxEvent> findPublishable(Pageable pageable); }
+interface OutboxRepository extends JpaRepository<OutboxEvent,UUID> { @Query(value="select * from outbox_event where status in ('PENDING','FAILED') order by created_at for update skip locked",nativeQuery=true) List<OutboxEvent> findPublishable(Pageable pageable); }
 interface AuditRepository extends FilteredRepository<AuditEntry,Long> { List<AuditEntry> findByEntityTypeAndEntityIdOrderByOccurredAt(String entityType,String entityId); }
 interface PaymentPlanConfigurationRepository extends FilteredRepository<PaymentPlanConfiguration,Long> {
     Optional<PaymentPlanConfiguration> findFirstByOrderByVersionDesc();
@@ -123,4 +123,20 @@ interface ExemptionRequestDocumentRepository extends JpaRepository<ExemptionRequ
 interface ExemptionRepository extends FilteredRepository<Exemption,Long> {
     List<Exemption> findByTaxpayerIdAndTaxConceptIdAndStatus(Long taxpayerId,Long conceptId,String status);
     List<Exemption> findByTaxpayerId(Long taxpayerId);
+}
+interface DemoUserRepository extends JpaRepository<DemoUser,Long> { Optional<DemoUser> findByUsernameIgnoreCase(String username); boolean existsByUsernameIgnoreCase(String username); }
+interface LateChargeRuleRepository extends JpaRepository<LateChargeRule,Long> {
+    @Query("select r from LateChargeRule r where r.active=true and r.validFrom<=:date and (r.validUntil is null or r.validUntil>=:date) order by r.validFrom desc")
+    List<LateChargeRule> findApplicable(@Param("date") LocalDate date,Pageable pageable);
+}
+interface LateChargeApplicationRepository extends JpaRepository<LateChargeApplication,Long> {
+    Optional<LateChargeApplication> findByDebtIdAndRuleIdAndCalculationDate(Long debtId,Long ruleId,LocalDate date);
+    List<LateChargeApplication> findByDebtId(Long debtId);
+}
+interface DueDateProcessingRepository extends JpaRepository<DueDateProcessing,Long> { Optional<DueDateProcessing> findByProcessingDate(LocalDate date); }
+interface ElectronicReconciliationBatchRepository extends JpaRepository<ElectronicReconciliationBatch,Long> { Optional<ElectronicReconciliationBatch> findByExternalBatchReference(String reference); }
+interface ElectronicReconciliationItemRepository extends JpaRepository<ElectronicReconciliationItem,Long> {
+    Optional<ElectronicReconciliationItem> findByExternalReference(String reference);
+    Page<ElectronicReconciliationItem> findByBatchId(Long batchId,Pageable pageable);
+    Page<ElectronicReconciliationItem> findByStatusIn(Collection<ReconciliationStatus> statuses,Pageable pageable);
 }
