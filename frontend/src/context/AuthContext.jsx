@@ -26,12 +26,23 @@ export function AuthProvider({ children }) {
     setInitializing(false);
   }, []);
 
-  const login = useCallback(async (credentials) => {
+  /**
+   * Autentica y, si el llamador lo acepta, abre la sesión.
+   *
+   * `accept` existe por la pantalla de ingreso, que tiene una puerta por área: unas
+   * credenciales pueden ser válidas y aun así no corresponder a la puerta elegida.
+   * En ese caso el perfil vuelve con `accepted: false` y la sesión no se abre, para
+   * que el login pueda avisar y ofrecer la puerta correcta sin dejar al usuario
+   * adentro de un área que no es la suya.
+   */
+  const login = useCallback(async (credentials, { accept } = {}) => {
     const { token, user: profile } = await authService.login(credentials);
+    if (accept && !accept(profile)) return { profile, accepted: false };
+
     sessionStorage.setItem(TOKEN_KEY, token);
     sessionStorage.setItem(SESSION_KEY, JSON.stringify(profile));
     setUser(profile);
-    return profile;
+    return { profile, accepted: true };
   }, []);
 
   const logout = useCallback(async () => {

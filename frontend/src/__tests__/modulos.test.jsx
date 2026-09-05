@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "../App.jsx";
+import { ingresarComoAgente } from "./helpers/ingresar.js";
 import { MODULES } from "../config/modules.js";
 
 /**
@@ -10,9 +11,7 @@ import { MODULES } from "../config/modules.js";
  */
 async function loginAs(user, username) {
   render(<App />);
-  await user.type(screen.getByLabelText(/usuario/i), username);
-  await user.type(screen.getByLabelText(/contraseña/i), "rentas123");
-  await user.click(screen.getByRole("button", { name: /ingresar/i }));
+  await ingresarComoAgente(user, username, "rentas123");
   await waitFor(() => expect(screen.getByRole("heading", { name: /hola,/i })).toBeDefined());
 }
 
