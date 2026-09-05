@@ -35,6 +35,23 @@ describe("ingreso al área de trabajo", () => {
 
     expect(await screen.findByText(/ingresá tu usuario/i)).toBeDefined();
     expect(screen.getByText(/ingresá tu contraseña/i)).toBeDefined();
+    expect(screen.getByLabelText(/usuario/i).getAttribute("aria-invalid")).toBe("true");
+    expect(screen.getByLabelText(/contraseña/i).getAttribute("aria-describedby")).toBe("password-error");
+  });
+
+  it("permite mostrar y ocultar la contraseña y conserva los datos al cambiar de acceso", async () => {
+    render(<App />);
+    await user.type(screen.getByLabelText(/usuario/i), "jperez");
+    await user.type(screen.getByLabelText(/contraseña/i), "ciudadano123");
+    expect(screen.getByLabelText(/contraseña/i).type).toBe("password");
+    await user.click(screen.getByRole("button", { name: "Mostrar" }));
+    expect(screen.getByLabelText(/contraseña/i).type).toBe("text");
+    await user.click(screen.getByRole("button", { name: "Ocultar" }));
+    expect(screen.getByLabelText(/contraseña/i).type).toBe("password");
+    await user.click(screen.getByRole("button", { name: /trabajo en el municipio/i }));
+    expect(screen.getByLabelText(/usuario/i).value).toBe("jperez");
+    expect(screen.getByLabelText(/contraseña/i).value).toBe("ciudadano123");
+    expect(screen.getByRole("button", { name: "Personal de Rentas" }).getAttribute("aria-pressed")).toBe("true");
   });
 
   it("informa credenciales inválidas", async () => {

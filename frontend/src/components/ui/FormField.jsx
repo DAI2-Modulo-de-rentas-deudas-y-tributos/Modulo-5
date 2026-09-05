@@ -30,6 +30,8 @@ export default function FormField({
         <textarea
           id={name}
           name={name}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? `${name}-error` : undefined}
           rows={4}
           placeholder={placeholder}
           value={value}
@@ -38,7 +40,7 @@ export default function FormField({
           disabled={disabled}
           className={`${baseClasses} ${borderClass} resize-none`}
         />
-        {error && <p className="text-[12px] text-red-500">{error}</p>}
+        {error && <p id={`${name}-error`} role="alert" className="text-[12px] text-red-500">{error}</p>}
       </div>
     );
   }
@@ -53,6 +55,8 @@ export default function FormField({
         <select
           id={name}
           name={name}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? `${name}-error` : undefined}
           value={value}
           onChange={onChange}
           required={required}
@@ -66,7 +70,7 @@ export default function FormField({
             </option>
           ))}
         </select>
-        {error && <p className="text-[12px] text-red-500">{error}</p>}
+        {error && <p id={`${name}-error`} role="alert" className="text-[12px] text-red-500">{error}</p>}
       </div>
     );
   }
@@ -87,6 +91,8 @@ export default function FormField({
           <input
             id={name}
             name={name}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? `${name}-error` : undefined}
             type={type}
             placeholder={placeholder}
             value={value}
@@ -99,7 +105,7 @@ export default function FormField({
           />
           {suffix}
         </div>
-        {error && <p className="text-[12px] text-red-500">{error}</p>}
+        {error && <p id={`${name}-error`} role="alert" className="text-[12px] text-red-500">{error}</p>}
       </div>
     );
   }
@@ -113,6 +119,8 @@ export default function FormField({
       <input
         id={name}
         name={name}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? `${name}-error` : undefined}
         type={type}
         placeholder={placeholder}
         value={value}
@@ -122,7 +130,7 @@ export default function FormField({
         autoComplete={autoComplete}
         className={`${baseClasses} ${borderClass}`}
       />
-      {error && <p className="text-[12px] text-red-500">{error}</p>}
+      {error && <p id={`${name}-error`} role="alert" className="text-[12px] text-red-500">{error}</p>}
     </div>
   );
 }
