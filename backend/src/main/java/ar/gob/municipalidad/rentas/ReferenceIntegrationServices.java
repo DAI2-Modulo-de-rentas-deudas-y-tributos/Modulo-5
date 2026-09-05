@@ -34,9 +34,24 @@ class TaxpayerIntegrationService {
 
 @Service
 class TicketIntegrationService {
-    private final TicketCaseRepository tickets;private final TaxpayerRepository taxpayers;private final IntegrationInbox inbox;
-    TicketIntegrationService(TicketCaseRepository tickets,TaxpayerRepository taxpayers,IntegrationInbox inbox){this.tickets=tickets;this.taxpayers=taxpayers;this.inbox=inbox;}
-    @Transactional TicketCase consume(ApiDtos.EventEnvelope<ApiDtos.TicketEventData> event){CatalogService.require(Set.of("ticketCreated","ticketUpdated").contains(event.eventType()),"UNSUPPORTED_EVENT_TYPE","Evento de M2 no soportado");ApiDtos.TicketEventData d=event.data();Optional<TicketCase> existing=tickets.findByExternalTicketId(d.externalTicketId());if(inbox.processed(event.eventId()))return existing.orElseThrow();IntegrationEventLog log=inbox.receive(event);TicketCase ticket=existing.orElseGet(TicketCase::new);if(ticket.id==null){ticket.externalTicketId=d.externalTicketId();ticket.createdAt=d.createdAt()==null?event.occurredAt():d.createdAt();}ticket.externalCitizenId=d.externalCitizenId();ticket.taxpayerId=d.externalCitizenId()==null?null:taxpayers.findByTaxpayerTypeAndExternalId(TaxpayerType.CITIZEN,d.externalCitizenId()).map(x->x.id).orElse(null);ticket.category=d.category();ticket.description=d.description();ticket.priority=d.priority();ticket.status=d.status();ticket.updatedAt=OffsetDateTime.now();if(ticket.status==TicketCaseStatus.COMPLETED)ticket.completedAt=ticket.updatedAt;tickets.save(ticket);inbox.complete(event,log);return ticket;}
+    private final TicketCaseRepository tickets;private final TicketCaseUpdateRepository updates;private final TaxpayerRepository taxpayers;private final IntegrationInbox inbox;private final ConfirmedContractValidator validator;
+    TicketIntegrationService(TicketCaseRepository tickets,TicketCaseUpdateRepository updates,TaxpayerRepository taxpayers,IntegrationInbox inbox,ConfirmedContractValidator validator){this.tickets=tickets;this.updates=updates;this.taxpayers=taxpayers;this.inbox=inbox;this.validator=validator;}
+    @Transactional TicketCase consume(ApiDtos.EventEnvelope<ApiDtos.TicketEventData> event){
+        validator.validate(event);CatalogService.require("M2".equals(event.sourceModule()),"INVALID_SOURCE_MODULE","Los eventos de tickets sólo admiten sourceModule M2");CatalogService.require(Set.of("ticketCreated","ticketUpdated").contains(event.eventType()),"UNSUPPORTED_EVENT_TYPE","Evento de M2 no soportado");
+        ApiDtos.TicketEventData data=event.data();validator.validate(data);String externalTicketId=data.ticketId().toString();Optional<TicketCase> existing=tickets.findByExternalTicketId(externalTicketId);if(inbox.processed(event.eventId()))return existing.orElseThrow();
+        validateData(event.eventType(),data,existing);
+        IntegrationEventLog log=inbox.receive(event);TicketCase ticket=switch(event.eventType()){case "ticketCreated"->createOrUpdate(event,data,existing,externalTicketId);case "ticketUpdated"->addInformation(event,data,existing);default->throw new IllegalStateException("Tipo de evento validado previamente");};inbox.complete(event,log);return ticket;
+    }
+    private void validateData(String eventType,ApiDtos.TicketEventData data,Optional<TicketCase> existing){
+        if("ticketCreated".equals(eventType)){CatalogService.require(data.citizenId()!=null,"INVALID_EVENT","ticketCreated requiere citizenId");CatalogService.require(data.category()!=null&&!data.category().isBlank(),"INVALID_EVENT","ticketCreated requiere category");CatalogService.require(data.description()!=null&&!data.description().isBlank(),"INVALID_EVENT","ticketCreated requiere description");CatalogService.require(data.priority()!=null,"INVALID_EVENT","ticketCreated requiere priority");}
+        else{CatalogService.require(data.additionalInformation()!=null&&!data.additionalInformation().isBlank(),"INVALID_EVENT","ticketUpdated requiere additionalInformation");CatalogService.require(existing.isPresent(),"NOT_FOUND","Ticket externo "+data.ticketId()+" no encontrado");}
+    }
+    private TicketCase createOrUpdate(ApiDtos.EventEnvelope<ApiDtos.TicketEventData> event,ApiDtos.TicketEventData data,Optional<TicketCase> existing,String externalTicketId){
+        TicketCase ticket=existing.orElseGet(TicketCase::new);if(ticket.id==null){ticket.externalTicketId=externalTicketId;ticket.status=TicketCaseStatus.OPEN;ticket.createdAt=event.occurredAt();}ticket.externalCitizenId=data.citizenId().toString();ticket.taxpayerId=taxpayers.findByTaxpayerTypeAndExternalId(TaxpayerType.CITIZEN,ticket.externalCitizenId).map(x->x.id).orElse(null);ticket.category=data.category();ticket.description=data.description();ticket.priority=data.priority();ticket.updatedAt=event.occurredAt();return tickets.save(ticket);
+    }
+    private TicketCase addInformation(ApiDtos.EventEnvelope<ApiDtos.TicketEventData> event,ApiDtos.TicketEventData data,Optional<TicketCase> existing){
+        TicketCase ticket=existing.orElseThrow();TicketCaseUpdate update=new TicketCaseUpdate();update.ticketCaseId=ticket.id;update.type=TicketUpdateType.INTERNAL_NOTE;update.message=data.additionalInformation();update.createdBy="M2";update.createdAt=event.occurredAt();updates.save(update);ticket.updatedAt=event.occurredAt();return tickets.save(ticket);
+    }
 }
 
 @Service

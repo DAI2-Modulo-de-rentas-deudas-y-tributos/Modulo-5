@@ -4,15 +4,14 @@ Monorepo del módulo de Rentas, tributos, deudas y planes de pago.
 
 ## Componentes
 
-- `frontend/`: espacio reservado para la aplicación web React.
-- `backend/`: espacio reservado para la aplicación Spring Boot.
+- `frontend/`: aplicación web React/Vite del Módulo 5.
+- `backend/`: API Spring Boot con persistencia PostgreSQL/Flyway.
 - `contracts/`: contratos y esquemas de eventos.
 - `infra/`: infraestructura AWS administrada con Terraform.
 - `docs/`: arquitectura y decisiones técnicas.
 
-El código de frontend y backend será implementado por el equipo de desarrollo.
-La configuración DevOps define los contratos necesarios para probar, construir
-y desplegar esas aplicaciones cuando se incorporen.
+El modo full-stack usa PostgreSQL como fuente de verdad y no recurre al dataset
+frontend cuando `VITE_USE_MOCKS=false`.
 
 ## Tecnologías acordadas
 
@@ -56,11 +55,17 @@ docker compose --profile application up --build
   explícita. Default `false`.
 - `RENTAS_SECURITY_DEV_MODE`: habilita el puente de identidad sólo para integración
   local. Default `false`; no debe habilitarse en producción.
+- `RENTAS_DEMO_BOOTSTRAP_PASSWORD`: secreto exclusivamente local que, si se define
+  junto con dev-mode, crea usuarios DEMO para los cinco roles. No tiene default y
+  nunca debe guardarse en Git.
 
 Para datos reales con autenticación demo use `VITE_USE_MOCKS=false`,
 `VITE_AUTH_MODE=mock`, `VITE_DEV_IDENTITY_HEADERS=true` y
 `RENTAS_SECURITY_DEV_MODE=true`. Con `VITE_API_BASE_URL` vacío, el proxy Vite
 enruta `/api` al backend local. CORS de deployment queda pendiente de la URL final.
+
+La autenticación de ese modo se valida contra `demo_user` en PostgreSQL con BCrypt.
+No reemplaza Core/JWT: con dev-mode desactivado, `/api/v1/dev-auth/*` no está disponible.
 
 ## Automatización
 

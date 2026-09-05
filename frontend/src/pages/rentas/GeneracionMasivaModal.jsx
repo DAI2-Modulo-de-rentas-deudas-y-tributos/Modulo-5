@@ -9,12 +9,9 @@ import FormField from "../../components/ui/FormField.jsx";
 import Spinner from "../../components/ui/Spinner.jsx";
 import StepIndicatorGeneric from "../../components/ui/StepIndicatorGeneric.jsx";
 import { settlementService } from "../../services/rentasService.js";
-import { CONCEPTS } from "../../services/mockDb.js";
 import { formatCurrency, formatPercentage } from "../../lib/format.js";
 
 const STEPS = [{ label: "Configurar" }, { label: "Previsualizar" }, { label: "Resultado" }];
-
-const CONCEPT_OPTIONS = CONCEPTS.map((c) => ({ value: c.code, label: c.label }));
 
 const SCOPE_OPTIONS = [
   { value: "", label: "Todos los contribuyentes" },
@@ -29,7 +26,7 @@ const SCOPE_OPTIONS = [
  * de crear doscientos registros: cuántos se generan, cuántos quedan afuera y por qué.
  * El lote se crea en borrador; emitir sigue siendo un acto explícito.
  */
-export default function GeneracionMasivaModal({ onClose, onGenerated }) {
+export default function GeneracionMasivaModal({ conceptOptions = [], onClose, onGenerated }) {
   const [form, setForm] = useState({
     conceptCode: "",
     period: "",
@@ -183,7 +180,7 @@ export default function GeneracionMasivaModal({ onClose, onGenerated }) {
             type="select"
             value={form.conceptCode}
             onChange={onChange}
-            options={CONCEPT_OPTIONS}
+            options={conceptOptions}
             error={errors.conceptCode}
             required
           />

@@ -7,7 +7,7 @@ const METHOD_FROM_API = { CASH: "EFECTIVO", CARD: "TARJETA", TRANSFER: "TRANSFER
 const ORIGIN_FROM_API = { LIQUIDATION: "SETTLEMENT" };
 const PAYMENT_ORIGIN_FROM_API = { CASHIER: "VENTANILLA", ELECTRONIC: "ELECTRONICO", EXTERNAL: "EXTERNO" };
 const PLAN_STATUS_FROM_API = { ACTIVE: "CURRENT", COMPLETED: "FULFILLED", EXPIRED: "DEFAULTED", REFINANCED: "REFINANCED", CANCELLED: "CANCELLED" };
-const INSTALLMENT_STATUS_FROM_API = { PENDING: "PENDING", PARTIALLY_PAID: "PARTIAL", PAID: "SETTLED", CANCELLED: "CANCELLED" };
+const INSTALLMENT_STATUS_FROM_API = { PENDING: "PENDING", PARTIALLY_PAID: "PARTIAL", OVERDUE: "OVERDUE", PAID: "SETTLED", CANCELLED: "CANCELLED" };
 
 export function pageItems(value) {
   if (!value || Array.isArray(value) || !Array.isArray(value.content)) return value ?? [];
@@ -52,8 +52,9 @@ export function adaptApiRequest(originalPath, options = {}) {
   else if (/^\/api\/v1\/tax-config\/[^/?]+$/.test(path)) path = `/api/v1/tax-concepts?q=${encodeURIComponent(path.split("/").pop())}&size=${SIZE}`;
   else if (/\/tax-config\/[^/]+\/versions$/.test(path)) {
     path = "/api/v1/tax-configurations";
-    body = { taxConceptId: body.taxConceptId ?? body.conceptId, calculationType: CALC_TO_API[body.calculationType] ?? body.calculationType, rate: body.rate ?? 0, fixedAmount: body.fixedAmount ?? body.value ?? 0, minimumAmount: body.minimumAmount ?? 0, maximumAmount: body.maximumAmount ?? null, partialPaymentAllowed: body.partialPaymentAllowed ?? true, paymentPlanAllowed: body.paymentPlanAllowed ?? true, validFrom: body.validFrom, validUntil: body.validUntil ?? null };
-  } else if (/\/tax-config\/versions\/\d+\/(submit|approve|reject)$/.test(path)) {
+    body = taxConfigurationBody(body);
+  } else if (path === "/api/v1/tax-configurations" && verb === "POST") body = taxConfigurationBody(body);
+  else if (/\/tax-config\/versions\/\d+\/(submit|approve|reject)$/.test(path)) {
     const [, id, action] = path.match(/versions\/(\d+)\/(submit|approve|reject)/);
     path = `/api/v1/tax-configurations/${id}/${action}`;
     body = action === "submit" ? undefined : action === "reject" ? { reason: body?.reason ?? "Rechazada" } : { observation: body?.reason ?? null };
@@ -114,6 +115,35 @@ export function adaptApiRequest(originalPath, options = {}) {
   else if (path === "/api/v1/dashboard/metrics") path = "/api/v1/indicators/summary";
 
   return { path, options: { ...options, method: requestMethod, body } };
+}
+
+/** Número que viene del formulario (texto, y a veces vacío) o el valor por defecto. */
+const numberOr = (value, fallback) =>
+  value === "" || value === null || value === undefined || Number.isNaN(Number(value))
+    ? fallback
+    : Number(value);
+
+/**
+ * Cuerpo de POST /api/v1/tax-configurations.
+ *
+ * Única traducción del alta de versiones: el backend espera el enum CalculationType
+ * en inglés y BigDecimal, así que ni los códigos internos en español ni los campos
+ * vacíos del formulario pueden viajar tal cual. Lo usan las dos entradas —el path
+ * legado y el definitivo— para que manden exactamente el mismo cuerpo.
+ */
+function taxConfigurationBody(body = {}) {
+  return {
+    taxConceptId: body.taxConceptId ?? body.conceptId,
+    calculationType: CALC_TO_API[body.calculationType] ?? body.calculationType,
+    rate: numberOr(body.rate, 0),
+    fixedAmount: numberOr(body.fixedAmount ?? body.value, 0),
+    minimumAmount: numberOr(body.minimumAmount, 0),
+    maximumAmount: numberOr(body.maximumAmount, null),
+    partialPaymentAllowed: body.partialPaymentAllowed ?? true,
+    paymentPlanAllowed: body.paymentPlanAllowed ?? true,
+    validFrom: body.validFrom,
+    validUntil: body.validUntil || null,
+  };
 }
 
 function paymentBody(body) { const amount = body.amount ?? body.amountPaid; return { taxpayerId: body.taxpayerId, billId: body.billId ?? null, paymentMethod: method(body.paymentMethod ?? body.method), amount, allocations: body.allocations ?? (body.debtId ? [{ debtId: body.debtId, installmentId: null, amount }] : []) }; }

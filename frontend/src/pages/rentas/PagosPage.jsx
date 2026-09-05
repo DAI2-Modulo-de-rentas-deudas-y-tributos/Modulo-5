@@ -10,7 +10,7 @@ import Alert from "../../components/ui/Alert.jsx";
 import FormField from "../../components/ui/FormField.jsx";
 import useResource from "../../hooks/useResource.js";
 import useTaxpayerIndex from "../../hooks/useTaxpayerIndex.js";
-import { debtService, paymentService } from "../../services/rentasService.js";
+import { debtService, paymentService, reconciliationService } from "../../services/rentasService.js";
 import { formatCurrency, formatDateTime } from "../../lib/format.js";
 
 const CHANNELS = [
@@ -159,6 +159,8 @@ export default function PagosPage() {
         />
       </Card>
 
+      <ReconciliationPanel />
+
       {modal?.type === "register" && (
         <RegisterPaymentModal
           taxpayerOptions={taxpayerOptions}
@@ -198,6 +200,40 @@ export default function PagosPage() {
       )}
     </ModuleShell>
   );
+}
+
+function ReconciliationPanel() {
+  const [modal,setModal]=useState(null);const [feedback,setFeedback]=useState(null);
+  const loader=useCallback(()=>reconciliationService.observed(),[]);const {data:observed,loading,reload}=useResource(loader,[]);
+  const columns=[
+    {key:"externalReference",header:"Referencia"},
+    {key:"taxpayerDocument",header:"Documento"},
+    {key:"amount",header:"Importe",align:"right",render:(row)=>formatCurrency(row.amount)},
+    {key:"status",header:"Estado",render:(row)=><StatusBadge status={row.status}/>},
+    {key:"actions",header:"",align:"right",render:(row)=><Button size="sm" variant="secondary" onClick={()=>setModal({type:"resolve",item:row})}>Resolver</Button>},
+  ];
+  return <Card title="Conciliación electrónica" description="Importá lotes del canal electrónico y resolvé movimientos observados." actions={<Button size="sm" variant="primary" onClick={()=>setModal({type:"import"})}>Importar lote</Button>}>
+    {feedback&&<Alert variant={feedback.variant} title={feedback.title} onDismiss={()=>setFeedback(null)}>{feedback.message}</Alert>}
+    <DataTable columns={columns} rows={observed??[]} rowKey={(row)=>row.id} loading={loading} emptyIconName="BadgeCheck" emptyTitle="Sin movimientos observados" emptyDescription="Los pagos importados conciliaron o todavía no se cargó un lote." />
+    {modal?.type==="import"&&<ImportReconciliationModal onClose={()=>setModal(null)} onDone={(batch)=>{setModal(null);setFeedback({variant:"success",title:"Lote importado",message:`${batch.reconciledItems} conciliados, ${batch.observedItems} observados y ${batch.notFoundItems} no encontrados.`});reload();}}/>}
+    {modal?.type==="resolve"&&<ResolveReconciliationModal item={modal.item} onClose={()=>setModal(null)} onDone={()=>{setModal(null);setFeedback({variant:"success",title:"Movimiento resuelto",message:"La conciliación manual quedó persistida y auditada."});reload();}}/>}
+  </Card>;
+}
+
+function ImportReconciliationModal({onClose,onDone}){
+  const [batchReference,setBatchReference]=useState("");const [payload,setPayload]=useState('[\n  {"externalReference":"TX-001","taxpayerDocument":"00000000","amount":1000,"paidAt":"2026-09-04T12:00:00-03:00"}\n]');const [error,setError]=useState(null);const [submitting,setSubmitting]=useState(false);
+  const submit=async(event)=>{event.preventDefault();setError(null);try{const items=JSON.parse(payload);if(!batchReference.trim()||!Array.isArray(items)||items.length===0)throw new Error("Indicá la referencia y al menos un movimiento válido.");setSubmitting(true);onDone(await reconciliationService.importBatch(batchReference,items));}catch(caught){setError(caught.message);}finally{setSubmitting(false);}};
+  return <Modal open title="Importar conciliación" description="El lote queda almacenado en PostgreSQL y no puede repetirse." onClose={onClose} footer={<><Button variant="secondary" onClick={onClose}>Cancelar</Button><Button variant="primary" loading={submitting} onClick={submit}>Importar</Button></>}>
+    {error&&<Alert variant="error" title="No se pudo importar">{error}</Alert>}<form onSubmit={submit} className="flex flex-col gap-4"><FormField label="Referencia del lote" name="batchReference" value={batchReference} onChange={(e)=>setBatchReference(e.target.value)} required/><FormField label="Movimientos (JSON)" name="items" type="textarea" value={payload} onChange={(e)=>setPayload(e.target.value)} required/></form>
+  </Modal>;
+}
+
+function ResolveReconciliationModal({item,onClose,onDone}){
+  const [paymentId,setPaymentId]=useState("");const [reason,setReason]=useState("");const [error,setError]=useState(null);const [submitting,setSubmitting]=useState(false);
+  const submit=async(event)=>{event.preventDefault();if(!paymentId||!reason.trim()){setError("Indicá el pago y el motivo de la resolución.");return;}setSubmitting(true);try{await reconciliationService.resolve(item.id,Number(paymentId),reason);onDone();}catch(caught){setError(caught.message);}finally{setSubmitting(false);}};
+  return <Modal open title={`Resolver ${item.externalReference}`} description={`${item.taxpayerDocument} · ${formatCurrency(item.amount)}`} onClose={onClose} footer={<><Button variant="secondary" onClick={onClose}>Cancelar</Button><Button variant="primary" loading={submitting} onClick={submit}>Conciliar</Button></>}>
+    {error&&<Alert variant="error" title="No se pudo resolver">{error}</Alert>}<form onSubmit={submit} className="flex flex-col gap-4"><FormField label="ID de pago" name="paymentId" type="number" value={paymentId} onChange={(e)=>setPaymentId(e.target.value)} required/><FormField label="Motivo" name="reason" type="textarea" value={reason} onChange={(e)=>setReason(e.target.value)} required/></form>
+  </Modal>;
 }
 
 /** RegisterPaymentRequest → PaymentResponse */

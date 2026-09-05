@@ -100,13 +100,26 @@ export const authService = {
     if (AUTH_MODE === "core") {
       throw new ApiError("La autenticación Core/JWT todavía no tiene un contrato integrado.", 503, null, "CORE_AUTH_PENDING");
     }
-    await delay();
-    const user = db.USERS.find(
-      (u) => u.username === username.trim().toLowerCase() && u.password === password,
-    );
-    if (!user) {
-      throw new ApiError("Usuario o contraseña incorrectos.", 401);
+    if (!USE_MOCKS) {
+      const result = await request("/api/v1/dev-auth/login", { method: "POST", body: { username, password } });
+      const UI_ROLES = { RENTAS: "PERSONAL", SUPERVISOR: "SUPERVISOR", CASHIER: "CAJERO", AUDITOR: "AUDITOR", TAXPAYER: "CONTRIBUYENTE" };
+      const ROLE_LABELS = { RENTAS: "Personal de Rentas", SUPERVISOR: "Supervisor de Rentas", CASHIER: "Cajero de Rentas", AUDITOR: "Auditor de Rentas", TAXPAYER: "Contribuyente" };
+      return {
+        token: result.token,
+        user: {
+          ...result.user,
+          fullName: result.user.displayName,
+          roleLabel: ROLE_LABELS[result.user.role],
+          email: result.user.username,
+          backendRole: result.user.role,
+          devAuthorities: result.user.authorities,
+          role: UI_ROLES[result.user.role],
+        },
+      };
     }
+    await delay();
+    const user = db.USERS.find((u) => u.username === username.trim().toLowerCase() && u.password === password);
+    if (!user) throw new ApiError("Usuario o contraseña incorrectos.", 401);
     const { password: _omit, ...profile } = user;
     return { token: `mock.${btoa(user.username)}.token`, user: profile };
   },
@@ -210,6 +223,22 @@ export const taxConfigService = {
       }));
   },
 
+  /**
+   * Catálogo de conceptos para los combos de las pantallas operativas.
+   *
+   * Los formularios no pueden ofrecer un código que el módulo no tenga dado de alta:
+   * la operación fallaría recién al registrarla. Por defecto sólo devuelve los
+   * conceptos activos, que son los únicos sobre los que se puede operar hoy.
+   */
+  async concepts({ onlyActive = true } = {}) {
+    if (!USE_MOCKS) {
+      const concepts = await request("/api/v1/tax-concepts?size=100");
+      return onlyActive ? concepts.filter((c) => c.status === "ACTIVE") : concepts;
+    }
+    await delay();
+    return store.conceptDefinitions.filter((c) => !onlyActive || c.status === "ACTIVE");
+  },
+
   /** Ficha del concepto con todo su historial de versiones. */
   async detail(code) {
     if (!USE_MOCKS) {
@@ -249,13 +278,17 @@ export const taxConfigService = {
   }) {
     if (!USE_MOCKS) {
       const concept = await apiConceptByCode(code);
+      // El código de cálculo viaja en español: `adaptApiRequest` lo traduce al enum
+      // del backend (CALC_TO_API) y normaliza los importes vacíos del formulario.
       return request("/api/v1/tax-configurations", {
         method: "POST",
         body: {
           taxConceptId: concept.id,
           calculationType,
           rate,
-          fixedAmount: calculationType === "FIJO" ? rate : 0,
+          // El formulario no pide alícuota cuando el cálculo es fijo: el importe de
+          // esa forma de cálculo es el mínimo cargado, no cero.
+          fixedAmount: calculationType === "FIJO" ? rate || minimumAmount : 0,
           minimumAmount,
           maximumAmount,
           partialPaymentAllowed: true,
@@ -727,6 +760,38 @@ export const debtService = {
       dueDate: debt.dueDate,
     });
     return debt;
+  },
+
+  async previewLateCharge(debtId, calculationDate) {
+    if (!USE_MOCKS) return request(`/api/v1/debts/${debtId}/late-charge-preview`, { method: "POST", body: { calculationDate } });
+    throw new ApiError("La previsualización de recargos requiere el backend real.", 501, null, "REAL_BACKEND_REQUIRED");
+  },
+
+  async applyLateCharge(debtId, calculationDate) {
+    if (!USE_MOCKS) return request(`/api/v1/debts/${debtId}/late-charges`, { method: "POST", body: { calculationDate } });
+    throw new ApiError("La aplicación de recargos requiere el backend real.", 501, null, "REAL_BACKEND_REQUIRED");
+  },
+};
+
+export const administrationService = {
+  async processDueDates(processingDate) {
+    if (!USE_MOCKS) return request("/api/v1/administration/process-due-dates", { method: "POST", body: { processingDate } });
+    throw new ApiError("El procesamiento de vencimientos requiere el backend real.", 501, null, "REAL_BACKEND_REQUIRED");
+  },
+};
+
+export const reconciliationService = {
+  async importBatch(batchReference, items) {
+    if (!USE_MOCKS) return request("/api/v1/payment-reconciliations/batches", { method: "POST", body: { batchReference, items } });
+    throw new ApiError("La conciliación requiere el backend real.", 501, null, "REAL_BACKEND_REQUIRED");
+  },
+  async observed() {
+    if (!USE_MOCKS) return request("/api/v1/payment-reconciliations/observed?size=100");
+    return [];
+  },
+  async resolve(itemId, paymentId, reason) {
+    if (!USE_MOCKS) return request(`/api/v1/payment-reconciliations/items/${itemId}/resolve`, { method: "POST", body: { paymentId, reason } });
+    throw new ApiError("La conciliación requiere el backend real.", 501, null, "REAL_BACKEND_REQUIRED");
   },
 };
 

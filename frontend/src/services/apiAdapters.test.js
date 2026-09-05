@@ -241,12 +241,16 @@ describe("API client modes", () => {
     await expect(taxpayerService.getById(1)).rejects.toThrow("Failed to fetch");
   });
 
-  it("keeps mock authentication independent from API domain mode", async () => {
+  it("authenticates against the backend when business API mode is active", async () => {
     vi.stubEnv("VITE_USE_MOCKS", "false");
     vi.stubEnv("VITE_AUTH_MODE", "mock");
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ token: "dev-session", user: { id: 9, username: "integration.user", displayName: "Integración", role: "RENTAS", authorities: ["RENTAS"], active: true } }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
     const { authService } = await import("./rentasService.js");
-    await expect(authService.login({ username: "mrivas", password: "rentas123" }))
-      .resolves.toMatchObject({ user: { role: "PERSONAL" } });
+    await expect(authService.login({ username: "integration.user", password: "clave-segura" }))
+      .resolves.toMatchObject({ user: { fullName: "Integración", roleLabel: "Personal de Rentas", role: "PERSONAL", backendRole: "RENTAS", devAuthorities: ["RENTAS"] } });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0][0]).toContain("/api/v1/dev-auth/login");
   });
 
   it("fails explicitly instead of using mock users in Core mode", async () => {

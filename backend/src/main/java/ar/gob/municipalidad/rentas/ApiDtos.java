@@ -128,8 +128,8 @@ public final class ApiDtos {
         @NotBlank String taxpayerExternalId,@NotNull @Positive BigDecimal amount,@NotNull LocalDate dueDate) {}
     public record TaxpayerEventData(@NotNull TaxpayerType taxpayerType,@NotBlank String externalId,String dni,String cuit,
         @NotBlank String displayName,@NotNull TaxpayerStatus status) {}
-    public record TicketEventData(@NotBlank String externalTicketId,String externalCitizenId,@NotBlank String category,
-        @NotBlank String description,@NotNull TicketPriority priority,@NotNull TicketCaseStatus status,OffsetDateTime createdAt) {}
+    public record TicketEventData(@NotNull Long ticketId,Long citizenId,String category,
+        String description,TicketPriority priority,String additionalInformation) {}
     public record SocialBenefitEventData(@NotBlank String externalBenefitId,@NotBlank String externalCitizenId,
         @NotBlank String benefitType,@NotNull SocialBenefitStatus status,@DecimalMin("0.00") @DecimalMax("100.00") BigDecimal discountPercentage,
         @NotNull LocalDate validFrom,LocalDate validUntil,List<String> taxConceptCodes) {}
@@ -143,5 +143,5 @@ public final class ApiDtos {
     public record TaxpayerSummaryResponse(Long taxpayerId,BigDecimal outstandingDebt,BigDecimal paidAmount,long openDebts,long activePlans,long activeBenefits) {}
     public record DebtSummaryResponse(Long taxpayerId,long totalDebts,long openDebts,long paidDebts,long overdueDebts,BigDecimal outstandingAmount) {}
     public record ReprocessEventRequest(String reason) {}
-    public record ErrorResponse(OffsetDateTime timestamp, int status, String code, String message, String path, String traceId) {}
+    public record ErrorResponse(OffsetDateTime timestamp, int status, String code, String message, String path, String traceId, Object details) {}
 }

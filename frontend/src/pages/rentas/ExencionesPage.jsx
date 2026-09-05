@@ -12,14 +12,10 @@ import FormField from "../../components/ui/FormField.jsx";
 import FileUpload from "../../components/common/FileUpload.jsx";
 import useResource from "../../hooks/useResource.js";
 import useTaxpayerIndex from "../../hooks/useTaxpayerIndex.js";
+import useTaxConcepts from "../../hooks/useTaxConcepts.js";
 import { exemptionService } from "../../services/rentasService.js";
-import { CONCEPTS } from "../../services/mockDb.js";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { formatDate, formatDateTime, formatPercentage, labelFor } from "../../lib/format.js";
-
-const CONCEPT_OPTIONS = CONCEPTS.filter((c) =>
-  ["TASA_SERVICIOS", "ABL", "PATENTE"].includes(c.code),
-).map((c) => ({ value: c.code, label: c.label }));
 
 /**
  * Exenciones: `exemptionRequested` abre el flujo hacia M8 y la resolución viaja
@@ -37,6 +33,7 @@ export default function ExencionesPage() {
   const loader = useCallback(() => exemptionService.list({ status }), [status]);
   const { data: exemptions, loading, error, reload } = useResource(loader, []);
   const { nameOf, options: taxpayerOptions } = useTaxpayerIndex();
+  const { options: conceptOptions } = useTaxConcepts();
 
   const columns = [
     {
@@ -173,6 +170,7 @@ export default function ExencionesPage() {
       {creating && (
         <NewExemptionModal
           taxpayerOptions={taxpayerOptions}
+          conceptOptions={conceptOptions}
           onClose={() => setCreating(false)}
           onDone={(exemption) => {
             setCreating(false);
@@ -228,7 +226,7 @@ export default function ExencionesPage() {
 }
 
 /** Alta por mesa de entradas → publica exemptionRequested hacia M8. */
-function NewExemptionModal({ taxpayerOptions, onClose, onDone }) {
+function NewExemptionModal({ taxpayerOptions, conceptOptions, onClose, onDone }) {
   const [form, setForm] = useState({
     citizenId: "",
     conceptCode: "",
@@ -319,7 +317,7 @@ function NewExemptionModal({ taxpayerOptions, onClose, onDone }) {
           type="select"
           value={form.conceptCode}
           onChange={onChange}
-          options={CONCEPT_OPTIONS}
+          options={conceptOptions}
           error={errors.conceptCode}
           required
         />
