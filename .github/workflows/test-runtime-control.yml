@@ -1,0 +1,190 @@
+name: Control AWS TEST runtime
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: "Accion sobre RDS y ECS"
+        required: true
+        default: status
+        type: choice
+        options:
+          - status
+          - start
+          - stop
+      confirmation:
+        description: "Para start: START_TEST. Para stop: STOP_TEST"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: test-runtime-control
+  cancel-in-progress: false
+
+jobs:
+  control:
+    name: ${{ inputs.operation }}-test-runtime
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    environment: test
+
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      ECS_CLUSTER: "modulo-5-rentas-test-cluster"
+      ECS_SERVICE: "modulo-5-rentas-test-backend"
+      ECS_TASK_FAMILY: "modulo-5-rentas-test-backend"
+      ECS_CONTAINER_NAME: "backend"
+      RDS_INSTANCE: "modulo-5-rentas-test-postgres"
+      REQUESTED_OPERATION: ${{ inputs.operation }}
+      OPERATION_CONFIRMATION: ${{ inputs.confirmation }}
+
+    steps:
+      - name: Validate request
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${AWS_REGION:?Missing AWS_REGION in the test environment}"
+
+          case "${REQUESTED_OPERATION}" in
+            status)
+              ;;
+            start)
+              [[ "${OPERATION_CONFIRMATION}" == "START_TEST" ]] || {
+                echo "Start requires confirmation START_TEST."
+                exit 1
+              }
+              ;;
+            stop)
+              [[ "${OPERATION_CONFIRMATION}" == "STOP_TEST" ]] || {
+                echo "Stop requires confirmation STOP_TEST."
+                exit 1
+              }
+              ;;
+            *)
+              echo "Unsupported operation: ${REQUESTED_OPERATION}"
+              exit 1
+              ;;
+          esac
+
+      - name: Configure temporary AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: "060712744495"
+          mask-aws-account-id: true
+          role-session-name: test-runtime-${{ github.run_id }}
+
+      - name: Start TEST
+        if: inputs.operation == 'start'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          task_image=$(aws ecs describe-task-definition \
+            --task-definition "${ECS_TASK_FAMILY}" \
+            --query "taskDefinition.containerDefinitions[?name=='${ECS_CONTAINER_NAME}'].image | [0]" \
+            --output text)
+
+          if [[ -z "${task_image}" || "${task_image}" == "None" || "${task_image}" == *":bootstrap" ]]; then
+            echo "TEST does not have a promoted backend image. Promote the backend before starting the runtime."
+            exit 1
+          fi
+
+          rds_status=$(aws rds describe-db-instances \
+            --db-instance-identifier "${RDS_INSTANCE}" \
+            --query 'DBInstances[0].DBInstanceStatus' \
+            --output text)
+
+          case "${rds_status}" in
+            stopped)
+              aws rds start-db-instance --db-instance-identifier "${RDS_INSTANCE}" > /dev/null
+              ;;
+            stopping)
+              aws rds wait db-instance-stopped --db-instance-identifier "${RDS_INSTANCE}"
+              aws rds start-db-instance --db-instance-identifier "${RDS_INSTANCE}" > /dev/null
+              ;;
+            starting|available)
+              ;;
+            *)
+              echo "RDS cannot be started from status ${rds_status}."
+              exit 1
+              ;;
+          esac
+
+          aws rds wait db-instance-available --db-instance-identifier "${RDS_INSTANCE}"
+
+          aws ecs update-service \
+            --cluster "${ECS_CLUSTER}" \
+            --service "${ECS_SERVICE}" \
+            --desired-count 1 \
+            > /dev/null
+
+          aws ecs wait services-stable \
+            --cluster "${ECS_CLUSTER}" \
+            --services "${ECS_SERVICE}"
+
+      - name: Stop TEST
+        if: inputs.operation == 'stop'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          aws ecs update-service \
+            --cluster "${ECS_CLUSTER}" \
+            --service "${ECS_SERVICE}" \
+            --desired-count 0 \
+            > /dev/null
+
+          aws ecs wait services-stable \
+            --cluster "${ECS_CLUSTER}" \
+            --services "${ECS_SERVICE}"
+
+          rds_status=$(aws rds describe-db-instances \
+            --db-instance-identifier "${RDS_INSTANCE}" \
+            --query 'DBInstances[0].DBInstanceStatus' \
+            --output text)
+
+          case "${rds_status}" in
+            available)
+              aws rds stop-db-instance --db-instance-identifier "${RDS_INSTANCE}" > /dev/null
+              ;;
+            starting)
+              aws rds wait db-instance-available --db-instance-identifier "${RDS_INSTANCE}"
+              aws rds stop-db-instance --db-instance-identifier "${RDS_INSTANCE}" > /dev/null
+              ;;
+            stopping|stopped)
+              ;;
+            *)
+              echo "RDS cannot be stopped from status ${rds_status}."
+              exit 1
+              ;;
+          esac
+
+          aws rds wait db-instance-stopped --db-instance-identifier "${RDS_INSTANCE}"
+
+      - name: Publish runtime status
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### AWS TEST runtime"
+            echo
+            echo "Requested operation: `${REQUESTED_OPERATION}`"
+            echo
+            echo '```text'
+            aws ecs describe-services \
+              --cluster "${ECS_CLUSTER}" \
+              --services "${ECS_SERVICE}" \
+              --query 'services[0].{desired:desiredCount,running:runningCount,pending:pendingCount,status:status}' \
+              --output table || true
+            aws rds describe-db-instances \
+              --db-instance-identifier "${RDS_INSTANCE}" \
+              --query 'DBInstances[0].{status:DBInstanceStatus,endpoint:Endpoint.Address}' \
+              --output table || true
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"

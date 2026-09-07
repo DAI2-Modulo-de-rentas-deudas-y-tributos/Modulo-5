@@ -1,0 +1,2 @@
+# Solo validación de PDFs en CI/QA; no agrega dependencias al backend desplegado.
+pypdf==6.10.0

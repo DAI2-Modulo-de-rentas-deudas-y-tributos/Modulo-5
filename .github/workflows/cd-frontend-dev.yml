@@ -1,0 +1,188 @@
+name: Deploy frontend AWS DEV
+
+on:
+  push:
+    branches:
+      - develop
+    paths:
+      - frontend/**
+      - .github/workflows/cd-frontend-dev.yml
+      - amplify.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: frontend-dev
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    name: detect-frontend
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.frontend.outputs.ready }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Detect frontend application
+        id: frontend
+        shell: bash
+        run: |
+          if [[ -f frontend/package.json && -f frontend/package-lock.json ]]; then
+            echo "ready=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "ready=false" >> "${GITHUB_OUTPUT}"
+            echo "Frontend application is not present; deployment is skipped."
+          fi
+
+  deploy:
+    name: deploy-frontend
+    needs: detect
+    if: needs.detect.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: dev
+
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AMPLIFY_APP_NAME: "modulo-5-rentas-dev-frontend"
+      AMPLIFY_BRANCH: "develop"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Configure temporary AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: "060712744495"
+          mask-aws-account-id: true
+          role-session-name: frontend-dev-${{ github.run_id }}
+
+      - name: Resolve Amplify configuration
+        id: amplify
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${AWS_REGION:?Missing AWS_REGION in the dev environment}"
+
+          app_id=$(aws amplify list-apps \
+            --query "apps[?name=='${AMPLIFY_APP_NAME}'].appId | [0]" \
+            --output text)
+
+          if [[ -z "${app_id}" || "${app_id}" == "None" ]]; then
+            echo "Amplify app ${AMPLIFY_APP_NAME} was not found."
+            exit 1
+          fi
+
+          api_base_url=$(aws amplify get-app \
+            --app-id "${app_id}" \
+            --query 'app.environmentVariables.VITE_API_BASE_URL' \
+            --output text)
+
+          : "${api_base_url:?Amplify app does not expose VITE_API_BASE_URL}"
+          echo "app-id=${app_id}" >> "${GITHUB_OUTPUT}"
+          echo "api-base-url=${api_base_url}" >> "${GITHUB_OUTPUT}"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend artifact
+        working-directory: frontend
+        env:
+          VITE_API_BASE_URL: ${{ steps.amplify.outputs.api-base-url }}
+        run: |
+          npm ci
+          npm run build
+
+      - name: Package frontend artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d frontend/dist
+          pushd frontend/dist > /dev/null
+          zip -qr "${RUNNER_TEMP}/frontend-dist.zip" .
+          popd > /dev/null
+
+      - name: Deploy artifact to Amplify Hosting
+        id: deployment
+        shell: bash
+        env:
+          AMPLIFY_APP_ID: ${{ steps.amplify.outputs.app-id }}
+        run: |
+          set -euo pipefail
+
+          deployment=$(aws amplify create-deployment \
+            --app-id "${AMPLIFY_APP_ID}" \
+            --branch-name "${AMPLIFY_BRANCH}")
+
+          job_id=$(jq -r '.jobId' <<< "${deployment}")
+          upload_url=$(jq -r '.zipUploadUrl' <<< "${deployment}")
+
+          curl --fail --silent --show-error \
+            --request PUT \
+            --header "Content-Type: application/zip" \
+            --upload-file "${RUNNER_TEMP}/frontend-dist.zip" \
+            "${upload_url}"
+
+          aws amplify start-deployment \
+            --app-id "${AMPLIFY_APP_ID}" \
+            --branch-name "${AMPLIFY_BRANCH}" \
+            --job-id "${job_id}" \
+            > /dev/null
+
+          for attempt in {1..120}; do
+            status=$(aws amplify get-job \
+              --app-id "${AMPLIFY_APP_ID}" \
+              --branch-name "${AMPLIFY_BRANCH}" \
+              --job-id "${job_id}" \
+              --query 'job.summary.status' \
+              --output text)
+
+            case "${status}" in
+              SUCCEED)
+                echo "job-id=${job_id}" >> "${GITHUB_OUTPUT}"
+                exit 0
+                ;;
+              FAILED|CANCELLED)
+                echo "Amplify deployment ended with status ${status}."
+                exit 1
+                ;;
+            esac
+
+            sleep 10
+          done
+
+          echo "Amplify deployment timed out."
+          exit 1
+
+      - name: Publish deployment summary
+        shell: bash
+        env:
+          AMPLIFY_APP_ID: ${{ steps.amplify.outputs.app-id }}
+        run: |
+          default_domain=$(aws amplify get-app \
+            --app-id "${AMPLIFY_APP_ID}" \
+            --query 'app.defaultDomain' \
+            --output text)
+
+          {
+            echo "### Frontend DEV desplegado"
+            echo
+            echo "- URL: https://${AMPLIFY_BRANCH}.${default_domain}"
+            echo "- Job: \`${{ steps.deployment.outputs.job-id }}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"

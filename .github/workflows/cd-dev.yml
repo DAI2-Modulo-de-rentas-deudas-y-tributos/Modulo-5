@@ -1,0 +1,99 @@
+name: Deploy AWS DEV infrastructure
+
+on:
+  push:
+    branches:
+      - develop
+    paths:
+      - .github/workflows/cd-dev.yml
+      - infra/environments/dev/**
+      - infra/modules/network/**
+      - infra/modules/security/**
+      - infra/modules/database/**
+      - infra/modules/edge/**
+      - infra/modules/ecs/**
+      - infra/modules/hosting/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: terraform-dev
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: terraform-apply-dev
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: dev
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: infra/environments/dev
+
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      TF_STATE_KEY: ${{ vars.TF_STATE_KEY }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.15.8"
+          terraform_wrapper: false
+
+      - name: Configure temporary AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: "060712744495"
+          mask-aws-account-id: true
+          role-session-name: terraform-dev-${{ github.run_id }}
+
+      - name: Check environment variables
+        run: |
+          set -euo pipefail
+          : "${TF_STATE_BUCKET:?Missing TF_STATE_BUCKET in the dev environment}"
+          : "${TF_STATE_KEY:?Missing TF_STATE_KEY in the dev environment}"
+          : "${AWS_REGION:?Missing AWS_REGION in the dev environment}"
+
+      - name: Initialize remote state
+        run: |
+          terraform init -input=false -reconfigure \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${TF_STATE_KEY}" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="encrypt=true" \
+            -backend-config="use_lockfile=true"
+
+      - name: Validate
+        run: terraform validate -no-color
+
+      - name: Plan
+        run: terraform plan -input=false -lock-timeout=5m -no-color -out=dev.tfplan
+
+      - name: Apply
+        run: terraform apply -input=false -lock-timeout=5m -auto-approve dev.tfplan
+
+      - name: Publish deployment summary
+        run: |
+          {
+            echo "### AWS DEV actualizado"
+            echo
+            echo '```text'
+            terraform output -no-color
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"

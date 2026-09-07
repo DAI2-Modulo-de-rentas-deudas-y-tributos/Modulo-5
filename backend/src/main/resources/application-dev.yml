@@ -1,0 +1,2 @@
+logging.level.ar.gob.municipalidad.rentas: INFO
+rentas.security.dev-mode: true
