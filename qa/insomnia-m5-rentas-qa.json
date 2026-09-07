@@ -1,0 +1,2886 @@
+{
+  "_type": "export",
+  "__export_format": 4,
+  "__export_date": "2026-09-08T00:00:00.000Z",
+  "__export_source": "insomnia.desktop.app:v8.6.1",
+  "resources": [
+    {
+      "_id": "wrk_1bac9345323e4389",
+      "_type": "workspace",
+      "parentId": null,
+      "name": "M5 Rentas - QA (validacion E2E feature/front-lindo-2)",
+      "description": "Peticiones reales usadas en la validacion end-to-end de M5 Rentas contra backend real (Spring Boot) y PostgreSQL real, sin mocks. Organizado por modulo, siguiendo qa/validacion-e2e-m5.xlsx.",
+      "scope": "collection"
+    },
+    {
+      "_id": "env_77229b389718498f",
+      "_type": "environment",
+      "parentId": "wrk_1bac9345323e4389",
+      "name": "Local (docker-compose)",
+      "data": {
+        "baseUrl": "http://localhost:8080/api/v1",
+        "demoPassword": "DemoQA2026!"
+      },
+      "dataPropertyOrder": {
+        "&": [
+          "baseUrl",
+          "demoPassword"
+        ]
+      },
+      "color": null,
+      "isPrivate": false,
+      "metaSortKey": -1788637568422
+    },
+    {
+      "_id": "fld_f464e63c15f54fa5",
+      "_type": "request_group",
+      "parentId": "wrk_1bac9345323e4389",
+      "name": "00. Autenticacion (dev-auth)",
+      "description": "Login de los 5 usuarios demo sembrados por RENTAS_DEMO_BOOTSTRAP_PASSWORD. Requiere backend con RENTAS_SECURITY_DEV_MODE=true y RENTAS_DEMO_BOOTSTRAP_PASSWORD seteados.",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": 1
+    },
+    {
+      "_id": "req_b4cfba6a435442c0",
+      "_type": "request",
+      "parentId": "fld_f464e63c15f54fa5",
+      "name": "Login Personal de Rentas (demo.rentas)",
+      "description": "Login real contra /api/v1/dev-auth/login. Devuelve el usuario y confirma el rol Personal de Rentas.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/dev-auth/login",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"username\": \"demo.rentas\",\n  \"password\": \"{{ _.demoPassword }}\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 2,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_6f8ea2c1a3114bd9",
+      "_type": "request",
+      "parentId": "fld_f464e63c15f54fa5",
+      "name": "Login Supervisor (demo.supervisor)",
+      "description": "Login real contra /api/v1/dev-auth/login. Devuelve el usuario y confirma el rol Supervisor.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/dev-auth/login",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"username\": \"demo.supervisor\",\n  \"password\": \"{{ _.demoPassword }}\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 3,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_9e19ca18f8094d4e",
+      "_type": "request",
+      "parentId": "fld_f464e63c15f54fa5",
+      "name": "Login Cajero (demo.caja)",
+      "description": "Login real contra /api/v1/dev-auth/login. Devuelve el usuario y confirma el rol Cajero.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/dev-auth/login",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"username\": \"demo.caja\",\n  \"password\": \"{{ _.demoPassword }}\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 4,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_a5e7d455803542d7",
+      "_type": "request",
+      "parentId": "fld_f464e63c15f54fa5",
+      "name": "Login Auditor (demo.auditoria)",
+      "description": "Login real contra /api/v1/dev-auth/login. Devuelve el usuario y confirma el rol Auditor.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/dev-auth/login",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"username\": \"demo.auditoria\",\n  \"password\": \"{{ _.demoPassword }}\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 5,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_1eb24fe29f374595",
+      "_type": "request",
+      "parentId": "fld_f464e63c15f54fa5",
+      "name": "Login Contribuyente (demo.contribuyente)",
+      "description": "Login real contra /api/v1/dev-auth/login. Devuelve el usuario y confirma el rol Contribuyente.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/dev-auth/login",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"username\": \"demo.contribuyente\",\n  \"password\": \"{{ _.demoPassword }}\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 6,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "fld_92a87afcb32e417e",
+      "_type": "request_group",
+      "parentId": "wrk_1bac9345323e4389",
+      "name": "01. Tributos y liquidaciones",
+      "description": "Casos 1-5 de la hoja Casos de Prueba.",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": 7
+    },
+    {
+      "_id": "req_b58c5b504c6843d8",
+      "_type": "request",
+      "parentId": "fld_92a87afcb32e417e",
+      "name": "1a. Crear concepto tributario (RENTAS)",
+      "description": "Caso 1: backend SI soporta alta de conceptos (el frontend no lo expone, ver defecto de severidad Baja).",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/tax-concepts",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"code\": \"TASA_TEST_QA\",\n  \"name\": \"Tasa de prueba QA\",\n  \"description\": \"Concepto de prueba\",\n  \"type\": \"FEE\",\n  \"originModule\": \"M5\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 8,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_ef1db8f12c6b49bc",
+      "_type": "request",
+      "parentId": "fld_92a87afcb32e417e",
+      "name": "1b. Crear configuracion (version) del concepto",
+      "description": "Ajustar taxConceptId al id devuelto en 1a. Queda en borrador.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/tax-configurations",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"taxConceptId\": 5,\n  \"calculationType\": \"PORCENTAJE\",\n  \"rate\": 2,\n  \"minimumAmount\": 100,\n  \"maximumAmount\": 100000,\n  \"validFrom\": \"2026-09-01\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 9,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_33711b9e427341ac",
+      "_type": "request",
+      "parentId": "fld_92a87afcb32e417e",
+      "name": "1c. Enviar configuracion a aprobacion",
+      "description": "",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/tax-configurations/1/submit",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 10,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_98eecf31b46845d7",
+      "_type": "request",
+      "parentId": "fld_92a87afcb32e417e",
+      "name": "2. Aprobar configuracion (SUPERVISOR)",
+      "description": "Caso 2: solo Supervisor puede aprobar. La v1 pasa a regir.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/tax-configurations/1/approve",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.supervisor"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "SUPERVISOR"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 11,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_cd59ef136df54d13",
+      "_type": "request",
+      "parentId": "fld_92a87afcb32e417e",
+      "name": "3a. Generar liquidacion individual",
+      "description": "Caso 3: base 5000 x 2% = 100 (dentro de minimo/maximo).",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/liquidations",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"taxpayerId\": 1,\n  \"taxConceptId\": 5,\n  \"period\": \"2026-09\",\n  \"taxableBase\": 5000,\n  \"dueDate\": \"2026-09-30\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 12,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_fc963b36508f49d6",
+      "_type": "request",
+      "parentId": "fld_92a87afcb32e417e",
+      "name": "3b. Verificar clamp a MINIMO (base muy chica)",
+      "description": "Debe devolver importe = minimo configurado (100), no 0.02.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/liquidations",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"taxpayerId\": 1,\n  \"taxConceptId\": 5,\n  \"period\": \"2026-10\",\n  \"taxableBase\": 1,\n  \"dueDate\": \"2026-10-30\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 13,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_023ee6e4f1434e86",
+      "_type": "request",
+      "parentId": "fld_92a87afcb32e417e",
+      "name": "3c. Verificar clamp a MAXIMO (base muy grande)",
+      "description": "Debe devolver importe = maximo configurado (100000).",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/liquidations",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"taxpayerId\": 1,\n  \"taxConceptId\": 5,\n  \"period\": \"2026-11\",\n  \"taxableBase\": 50000000,\n  \"dueDate\": \"2026-11-30\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 14,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_187852750c514180",
+      "_type": "request",
+      "parentId": "fld_92a87afcb32e417e",
+      "name": "4. Repetir misma liquidacion (debe rechazar duplicado)",
+      "description": "Caso 4: debe responder 422 DUPLICATE_LIQUIDATION (mismo taxpayer+concepto+periodo).",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/liquidations",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"taxpayerId\": 1,\n  \"taxConceptId\": 5,\n  \"period\": \"2026-09\",\n  \"taxableBase\": 5000,\n  \"dueDate\": \"2026-09-30\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 15,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_018ab77cd0d14716",
+      "_type": "request",
+      "parentId": "fld_92a87afcb32e417e",
+      "name": "5. Intentar eliminar liquidacion emitida (DEFECTO)",
+      "description": "Caso 5 - DEFECTO Media: no existe DELETE; responde 500 INTERNAL_ERROR en vez de un 404/405 claro. La liquidacion NO se borra (dato preservado) pero el mensaje de error es incorrecto.",
+      "method": "DELETE",
+      "url": "{{ _.baseUrl }}/liquidations/1",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 16,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "fld_2afbec6061ef48c4",
+      "_type": "request_group",
+      "parentId": "wrk_1bac9345323e4389",
+      "name": "02. Vencimientos",
+      "description": "Casos 1-3.",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": 17
+    },
+    {
+      "_id": "req_50627f5acd054686",
+      "_type": "request",
+      "parentId": "fld_2afbec6061ef48c4",
+      "name": "1a. Crear liquidacion con vencimiento pasado",
+      "description": "dueDate en el pasado para poder procesarla como vencida.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/liquidations",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"taxpayerId\": 1,\n  \"taxConceptId\": 5,\n  \"period\": \"2026-08\",\n  \"taxableBase\": 5000,\n  \"dueDate\": \"2026-08-01\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 18,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_729ac9a4918343a6",
+      "_type": "request",
+      "parentId": "fld_2afbec6061ef48c4",
+      "name": "1b. Preview de recargo/interes (sin aplicar)",
+      "description": "Ajustar el id de deuda. Devuelve daysOverdue, surchargeAmount, interestAmount sin persistir.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/debts/4/late-charge-preview",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 19,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_c32d5248f86e4176",
+      "_type": "request",
+      "parentId": "fld_2afbec6061ef48c4",
+      "name": "1c/2. Procesar vencimientos (idempotente por dia)",
+      "description": "Caso 1 y 2: marca deudas vencidas, aplica recargo+interes. Reejecutar el mismo dia NO debe duplicar el interes.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/administration/process-due-dates",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 20,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_132aabdcc10242a6",
+      "_type": "request",
+      "parentId": "fld_2afbec6061ef48c4",
+      "name": "3. Planes incumplidos (consulta viva)",
+      "description": "Caso 3: detecta en tiempo real los planes cuyas cuotas vencidas superan el maximo permitido, independiente del batch.",
+      "method": "GET",
+      "url": "{{ _.baseUrl }}/payment-plans/defaulted",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 21,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "fld_f288dce106e54cd9",
+      "_type": "request_group",
+      "parentId": "wrk_1bac9345323e4389",
+      "name": "03. Boletas y pagos",
+      "description": "Casos 1-6.",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": 22
+    },
+    {
+      "_id": "req_8936b1fb0d9e4d76",
+      "_type": "request",
+      "parentId": "fld_f288dce106e54cd9",
+      "name": "1a. Emitir boleta",
+      "description": "",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/bills",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"taxpayerId\": 1,\n  \"debtIds\": [\n    1\n  ],\n  \"dueDate\": \"2026-09-30\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 23,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_1424b602ca564ce9",
+      "_type": "request",
+      "parentId": "fld_f288dce106e54cd9",
+      "name": "1b. Descargar boleta en PDF",
+      "description": "Devuelve el PDF (application/pdf) para descargar/imprimir.",
+      "method": "GET",
+      "url": "{{ _.baseUrl }}/bills/1/document",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 24,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_7564e500fb374ff5",
+      "_type": "request",
+      "parentId": "fld_f288dce106e54cd9",
+      "name": "2. Pago total",
+      "description": "Debt debe quedar PAID, outstandingBalance 0.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/payments",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"taxpayerId\": 1,\n  \"billId\": 1,\n  \"paymentMethod\": \"CASH\",\n  \"amount\": 100,\n  \"allocations\": [\n    {\n      \"debtId\": 1,\n      \"amount\": 100\n    }\n  ]\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.caja"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "CASHIER"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 25,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_dca14a069efa409a",
+      "_type": "request",
+      "parentId": "fld_f288dce106e54cd9",
+      "name": "3. Pago parcial",
+      "description": "Debt debe quedar PARTIALLY_PAID.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/payments",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"taxpayerId\": 1,\n  \"paymentMethod\": \"CASH\",\n  \"amount\": 40,\n  \"allocations\": [\n    {\n      \"debtId\": 2,\n      \"amount\": 40\n    }\n  ]\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.caja"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "CASHIER"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 26,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_bfa66b321953471b",
+      "_type": "request",
+      "parentId": "fld_f288dce106e54cd9",
+      "name": "4a. Pago SIN imputar",
+      "description": "",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/payments",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"taxpayerId\": 1,\n  \"paymentMethod\": \"CASH\",\n  \"amount\": 50,\n  \"allocations\": []\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.caja"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "CASHIER"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 27,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_8ad9497a4cdd43c1",
+      "_type": "request",
+      "parentId": "fld_f288dce106e54cd9",
+      "name": "4b. Listado de pagos sin imputar",
+      "description": "",
+      "method": "GET",
+      "url": "{{ _.baseUrl }}/payments/unallocated",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 28,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_6929bc18ca4b4679",
+      "_type": "request",
+      "parentId": "fld_f288dce106e54cd9",
+      "name": "4c. Imputar el pago a una deuda",
+      "description": "Ajustar el id de pago segun lo devuelto en 4a.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/payments/3/allocations",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"debtId\": 2,\n  \"amount\": 50\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 29,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_8edd431bf0954630",
+      "_type": "request",
+      "parentId": "fld_f288dce106e54cd9",
+      "name": "5a. Pago con sobrepago (genera saldo a favor)",
+      "description": "Si el saldo de la deuda es menor a 30, el excedente pasa a CreditBalance AVAILABLE automaticamente.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/payments",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"taxpayerId\": 1,\n  \"paymentMethod\": \"CASH\",\n  \"amount\": 30,\n  \"allocations\": [\n    {\n      \"debtId\": 2,\n      \"amount\": 30\n    }\n  ]\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.caja"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "CASHIER"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 30,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_3042569f02f54cb3",
+      "_type": "request",
+      "parentId": "fld_f288dce106e54cd9",
+      "name": "5b. Ver saldos a favor del contribuyente",
+      "description": "",
+      "method": "GET",
+      "url": "{{ _.baseUrl }}/taxpayers/1/credit-balances",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 31,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_518d765b556140ac",
+      "_type": "request",
+      "parentId": "fld_f288dce106e54cd9",
+      "name": "5c. Aplicar saldo a favor a otra deuda",
+      "description": "",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/credit-balances/1/apply",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"debtId\": 3,\n  \"amount\": 20\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 32,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_2d51180e57ba4e8c",
+      "_type": "request",
+      "parentId": "fld_f288dce106e54cd9",
+      "name": "6. Comprobante de un pago",
+      "description": "Caso 6: comparar contra PostgreSQL: SELECT * FROM debt / payment.",
+      "method": "GET",
+      "url": "{{ _.baseUrl }}/payments/1/receipt",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 33,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "fld_9dcdf71d1ee04f0a",
+      "_type": "request_group",
+      "parentId": "wrk_1bac9345323e4389",
+      "name": "04. Reversiones",
+      "description": "Casos 1-3. Circuito de 3 roles.",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": 34
+    },
+    {
+      "_id": "req_98d4a5663aaf4c9a",
+      "_type": "request",
+      "parentId": "fld_9dcdf71d1ee04f0a",
+      "name": "1a. Cajero solicita reversion de un pago",
+      "description": "",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/payments/2/reversal-requests",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"reason\": \"Pago registrado por error de monto\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.caja"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "CASHIER"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 35,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_df2b3d0e83674db7",
+      "_type": "request",
+      "parentId": "fld_9dcdf71d1ee04f0a",
+      "name": "1b. Supervisor aprueba la reversion",
+      "description": "",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/payment-reversals/1/approve",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.supervisor"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "SUPERVISOR"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 36,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_50151cb7b70f4cc5",
+      "_type": "request",
+      "parentId": "fld_9dcdf71d1ee04f0a",
+      "name": "1c. Personal de Rentas ejecuta la reversion",
+      "description": "Al ejecutar, la deuda/saldo afectado se restaura.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/payment-reversals/1/execute",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 37,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_10d336c082c34d78",
+      "_type": "request",
+      "parentId": "fld_9dcdf71d1ee04f0a",
+      "name": "2. Reintentar ejecutar la misma reversion (debe rechazar)",
+      "description": "Caso 2: debe responder 422 REVERSAL_NOT_APPROVED.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/payment-reversals/1/execute",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 38,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_e2587f33ba1e4b6c",
+      "_type": "request",
+      "parentId": "fld_9dcdf71d1ee04f0a",
+      "name": "3. Auditoria de la reversion",
+      "description": "Caso 3: debe verse REQUESTED / APPROVED / EXECUTED con usuario y timestamp de cada paso.",
+      "method": "GET",
+      "url": "{{ _.baseUrl }}/audit/entities/PaymentReversal/1",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "X-Dev-User",
+          "value": "demo.auditoria"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "AUDITOR"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 39,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "fld_1aacb1bc68b64a0d",
+      "_type": "request_group",
+      "parentId": "wrk_1bac9345323e4389",
+      "name": "05. Planes de pago",
+      "description": "Casos 1-5.",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": 40
+    },
+    {
+      "_id": "req_2eec4bb184f34f45",
+      "_type": "request",
+      "parentId": "fld_1aacb1bc68b64a0d",
+      "name": "0. Crear configuracion de plan de pago",
+      "description": "",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/payment-plan-configurations",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"minimumInstallments\": 2,\n  \"maximumInstallments\": 12,\n  \"minimumDownPaymentPercentage\": 10,\n  \"interestRate\": 5,\n  \"graceDays\": 0,\n  \"maxOverdueInstallments\": 2,\n  \"partialInstallmentPaymentAllowed\": true,\n  \"refinancingAllowed\": true,\n  \"maxRefinancingCount\": 2,\n  \"validFrom\": \"2026-01-01\",\n  \"active\": true\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 41,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_ccd3f6ce874e488d",
+      "_type": "request",
+      "parentId": "fld_1aacb1bc68b64a0d",
+      "name": "1. Simular plan (probar con distintas cuotas)",
+      "description": "Caso 1: repetir cambiando 'installments' (2, 6, 12) y comparar anticipo/capital/interes.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/payment-plans/simulations",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"taxpayerId\": 2,\n  \"debtIds\": [\n    5\n  ],\n  \"installments\": 6\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 42,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_61d4947249d74562",
+      "_type": "request",
+      "parentId": "fld_1aacb1bc68b64a0d",
+      "name": "2a. Contribuyente solicita el plan",
+      "description": "",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/payment-plan-requests",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"taxpayerId\": 2,\n  \"debtIds\": [\n    5\n  ],\n  \"installments\": 6\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.contribuyente"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "TAXPAYER"
+        },
+        {
+          "name": "X-Dev-Taxpayer-Id",
+          "value": "2"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 43,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_f66b3d3ed0114e07",
+      "_type": "request",
+      "parentId": "fld_1aacb1bc68b64a0d",
+      "name": "2b. Personal de Rentas otorga el plan",
+      "description": "",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/payment-plan-requests/1/grant",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"downPaymentAmount\": 1200\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 44,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_9bb05bc993124d4e",
+      "_type": "request",
+      "parentId": "fld_1aacb1bc68b64a0d",
+      "name": "2c. Ver cuotas generadas",
+      "description": "",
+      "method": "GET",
+      "url": "{{ _.baseUrl }}/payment-plans/1/installments",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 45,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_f1eac3ab64fb403f",
+      "_type": "request",
+      "parentId": "fld_1aacb1bc68b64a0d",
+      "name": "3a. Pagar una cuota completa",
+      "description": "",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/payments",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"taxpayerId\": 2,\n  \"paymentMethod\": \"CASH\",\n  \"amount\": 1890,\n  \"allocations\": [\n    {\n      \"installmentId\": 2,\n      \"amount\": 1890\n    }\n  ]\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.caja"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "CASHIER"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 46,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_187905d32cf64c66",
+      "_type": "request",
+      "parentId": "fld_1aacb1bc68b64a0d",
+      "name": "3b. Pago parcial de cuota (config lo permite)",
+      "description": "Solo funciona si partialInstallmentPaymentAllowed=true en la config vigente.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/payments",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"taxpayerId\": 2,\n  \"paymentMethod\": \"CASH\",\n  \"amount\": 900,\n  \"allocations\": [\n    {\n      \"installmentId\": 3,\n      \"amount\": 900\n    }\n  ]\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.caja"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "CASHIER"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 47,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_e6147291b31e401d",
+      "_type": "request",
+      "parentId": "fld_1aacb1bc68b64a0d",
+      "name": "3c. Pago parcial de cuota (config NO lo permite -> debe rechazar)",
+      "description": "Debe responder 422 PARTIAL_INSTALLMENT_PAYMENT_NOT_ALLOWED con una config que tenga ese flag en false.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/payments",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"taxpayerId\": 1,\n  \"paymentMethod\": \"CASH\",\n  \"amount\": 500,\n  \"allocations\": [\n    {\n      \"installmentId\": 9,\n      \"amount\": 500\n    }\n  ]\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.caja"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "CASHIER"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 48,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_957470bf94e64305",
+      "_type": "request",
+      "parentId": "fld_1aacb1bc68b64a0d",
+      "name": "4a. Detectar planes incumplidos",
+      "description": "",
+      "method": "GET",
+      "url": "{{ _.baseUrl }}/payment-plans/defaulted",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 49,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_170f7677d49b437b",
+      "_type": "request",
+      "parentId": "fld_1aacb1bc68b64a0d",
+      "name": "4b. Solicitar caducidad de un plan",
+      "description": "",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/payment-plans/1/expiration-requests",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"reason\": \"Supera el maximo de cuotas vencidas permitido\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 50,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_598d93eeada14569",
+      "_type": "request",
+      "parentId": "fld_1aacb1bc68b64a0d",
+      "name": "4c. Aprobar caducidad (SUPERVISOR)",
+      "description": "",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/payment-plan-expirations/1/approve",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.supervisor"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "SUPERVISOR"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 51,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_a444f37533544527",
+      "_type": "request",
+      "parentId": "fld_1aacb1bc68b64a0d",
+      "name": "5a. Simular refinanciacion (plan debe estar ACTIVE)",
+      "description": "OJO: el plan debe estar ACTIVE. Un plan ya EXPIRED responde 422 PLAN_NOT_ACTIVE (ver defecto de secuencia registrado).",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/payment-plans/2/refinancing/simulations",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"installments\": 4\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 52,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_7bd3493515094e97",
+      "_type": "request",
+      "parentId": "fld_1aacb1bc68b64a0d",
+      "name": "5b. Solicitar refinanciacion",
+      "description": "",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/payment-plans/2/refinancing-requests",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"installments\": 4\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 53,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_bb81ae1cdc854b87",
+      "_type": "request",
+      "parentId": "fld_1aacb1bc68b64a0d",
+      "name": "5c. Otorgar refinanciacion",
+      "description": "El plan original pasa a REFINANCED; se crea un plan nuevo ACTIVE con el saldo.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/refinancing-requests/1/grant",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 54,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "fld_c6d865bd478c4fab",
+      "_type": "request_group",
+      "parentId": "wrk_1bac9345323e4389",
+      "name": "06. Exenciones",
+      "description": "Casos 1-4.",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": 55
+    },
+    {
+      "_id": "req_09c85beb38dd49f6",
+      "_type": "request",
+      "parentId": "fld_c6d865bd478c4fab",
+      "name": "1a. Contribuyente crea solicitud de exencion",
+      "description": "",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/exemption-requests",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"taxpayerId\": 1,\n  \"taxConceptId\": 5,\n  \"reason\": \"Situacion socioeconomica\",\n  \"percentage\": 100,\n  \"validFrom\": \"2026-09-01\",\n  \"validUntil\": \"2027-08-31\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.contribuyente1"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "TAXPAYER"
+        },
+        {
+          "name": "X-Dev-Taxpayer-Id",
+          "value": "1"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 56,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_f22f4cd070954c27",
+      "_type": "request",
+      "parentId": "fld_c6d865bd478c4fab",
+      "name": "1b. Rentas inicia revision",
+      "description": "",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/exemption-requests/1/start-review",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 57,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_9cb96fa79e7e4aa9",
+      "_type": "request",
+      "parentId": "fld_c6d865bd478c4fab",
+      "name": "1c. Rentas solicita documentacion",
+      "description": "",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/exemption-requests/1/request-documentation",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"message\": \"Adjuntar certificado de ANSES\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 58,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_a641bf615aaf4517",
+      "_type": "request",
+      "parentId": "fld_c6d865bd478c4fab",
+      "name": "1d. Contribuyente presenta documentacion",
+      "description": "",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/exemption-requests/1/documentation",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"externalDocumentId\": \"DOC-123\",\n  \"documentType\": \"CERTIFICADO_ANSES\",\n  \"fileName\": \"certificado.pdf\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.contribuyente1"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "TAXPAYER"
+        },
+        {
+          "name": "X-Dev-Taxpayer-Id",
+          "value": "1"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 59,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_1a2b3aac793e4be6",
+      "_type": "request",
+      "parentId": "fld_c6d865bd478c4fab",
+      "name": "2a. Enviar solicitud a resolucion",
+      "description": "",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/exemption-requests/1/submit-resolution",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 60,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_cc00b81f367545ce",
+      "_type": "request",
+      "parentId": "fld_c6d865bd478c4fab",
+      "name": "2b. Supervisor APRUEBA la exencion",
+      "description": "",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/exemption-requests/1/approve",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"percentage\": 100,\n  \"validFrom\": \"2026-09-01\",\n  \"validUntil\": \"2027-08-31\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.supervisor"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "SUPERVISOR"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 61,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_f0b0b08e422b4aa1",
+      "_type": "request",
+      "parentId": "fld_c6d865bd478c4fab",
+      "name": "2c. Supervisor RECHAZA otra solicitud",
+      "description": "",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/exemption-requests/2/reject",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"reason\": \"No cumple los requisitos\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.supervisor"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "SUPERVISOR"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 62,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_aec5f5b45f2f4cde",
+      "_type": "request",
+      "parentId": "fld_c6d865bd478c4fab",
+      "name": "3a. Liquidacion DENTRO de la vigencia de la exencion",
+      "description": "Debe aplicar el 100% (finalAmount 0).",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/liquidations",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"taxpayerId\": 1,\n  \"taxConceptId\": 5,\n  \"period\": \"2027-01\",\n  \"taxableBase\": 5000,\n  \"dueDate\": \"2027-01-31\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 63,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_001c102331e44371",
+      "_type": "request",
+      "parentId": "fld_c6d865bd478c4fab",
+      "name": "3b. Liquidacion FUERA de vigencia (DEFECTO: igual aplica la exencion)",
+      "description": "DEFECTO Alta: periodo posterior a validUntil (2027-08-31) y de todas formas aplica el 100% de exencion. Deberia dar finalAmount 100, no 0.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/liquidations",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"taxpayerId\": 1,\n  \"taxConceptId\": 5,\n  \"period\": \"2028-01\",\n  \"taxableBase\": 5000,\n  \"dueDate\": \"2028-01-31\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 64,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_fae78a9536004c88",
+      "_type": "request",
+      "parentId": "fld_c6d865bd478c4fab",
+      "name": "4. Auditoria del ciclo de vida de la exencion",
+      "description": "DEFECTO Media: solo se ve la aprobacion final, no la creacion/revision/documentacion previas.",
+      "method": "GET",
+      "url": "{{ _.baseUrl }}/audit/entities/Exemption/1",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "X-Dev-User",
+          "value": "demo.auditoria"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "AUDITOR"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 65,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "fld_ba283db5a82e4d3e",
+      "_type": "request_group",
+      "parentId": "wrk_1bac9345323e4389",
+      "name": "07. Conciliacion",
+      "description": "Casos 1-4.",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": 66
+    },
+    {
+      "_id": "req_41d72c5092954827",
+      "_type": "request",
+      "parentId": "fld_ba283db5a82e4d3e",
+      "name": "1. Importar lote (valido + importe incorrecto + doc inexistente)",
+      "description": "Item1 con monto exacto de un pago real -> Conciliado. Item2 con monto incorrecto -> Observado. Item3 con documento de contribuyente inexistente -> No encontrado. IMPORTANTE: el matching usa documento+monto+fecha, NO la referencia externa.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/payment-reconciliations/batches",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"batchReference\": \"LOTE-DEMO-001\",\n  \"items\": [\n    {\n      \"externalReference\": \"REC-EJEMPLO-1\",\n      \"taxpayerDocument\": \"00000000\",\n      \"amount\": 100.0,\n      \"paidAt\": \"2026-09-05T18:21:39.449926Z\"\n    },\n    {\n      \"externalReference\": \"REC-EJEMPLO-2\",\n      \"taxpayerDocument\": \"00000000\",\n      \"amount\": 999.0,\n      \"paidAt\": \"2026-09-05T18:21:54.624828Z\"\n    },\n    {\n      \"externalReference\": \"REC-EJEMPLO-3\",\n      \"taxpayerDocument\": \"11111111\",\n      \"amount\": 50.0,\n      \"paidAt\": \"2026-09-05T18:21:39.449926Z\"\n    }\n  ]\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 67,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_74d7d6dd8d5d4121",
+      "_type": "request",
+      "parentId": "fld_ba283db5a82e4d3e",
+      "name": "2. Resolver manualmente una observacion",
+      "description": "",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/payment-reconciliations/items/2/resolve",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"paymentId\": 4,\n  \"reason\": \"Verificado manualmente contra extracto bancario\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 68,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_25f36a2576ff4381",
+      "_type": "request",
+      "parentId": "fld_ba283db5a82e4d3e",
+      "name": "3. Reintentar resolver lo ya conciliado (debe rechazar)",
+      "description": "Debe responder 422 RECONCILIATION_ALREADY_RESOLVED.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/payment-reconciliations/items/2/resolve",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"paymentId\": 4,\n  \"reason\": \"reintento\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 69,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_1ca61d1ee67f4af5",
+      "_type": "request",
+      "parentId": "fld_ba283db5a82e4d3e",
+      "name": "4. Auditoria de conciliacion",
+      "description": "Filtrar en la respuesta por entityType ElectronicReconciliationBatch/Item.",
+      "method": "GET",
+      "url": "{{ _.baseUrl }}/audit?size=50",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "X-Dev-User",
+          "value": "demo.auditoria"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "AUDITOR"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 70,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "fld_53be8b236f1c4bf0",
+      "_type": "request_group",
+      "parentId": "wrk_1bac9345323e4389",
+      "name": "08. Roles y seguridad",
+      "description": "Casos 1-7. Pensada para correr cada request 'tal cual' desde Insomnia/Postman, mostrando que el backend rechaza sin depender del frontend.",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": 71
+    },
+    {
+      "_id": "req_1c65cc01c43d424f",
+      "_type": "request",
+      "parentId": "fld_53be8b236f1c4bf0",
+      "name": "1a. Contribuyente ve datos ajenos (debe rechazar)",
+      "description": "Logueado como taxpayer 2 pidiendo los datos del taxpayer 1. Debe dar 403 FORBIDDEN_OWNERSHIP.",
+      "method": "GET",
+      "url": "{{ _.baseUrl }}/taxpayers/1/debts",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "X-Dev-User",
+          "value": "demo.contribuyente"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "TAXPAYER"
+        },
+        {
+          "name": "X-Dev-Taxpayer-Id",
+          "value": "2"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 72,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_8c74052aee1c4295",
+      "_type": "request",
+      "parentId": "fld_53be8b236f1c4bf0",
+      "name": "1b. Contribuyente ve sus propios datos (debe permitir)",
+      "description": "",
+      "method": "GET",
+      "url": "{{ _.baseUrl }}/taxpayers/2/debts",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "X-Dev-User",
+          "value": "demo.contribuyente"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "TAXPAYER"
+        },
+        {
+          "name": "X-Dev-Taxpayer-Id",
+          "value": "2"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 73,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_3495a39c191840fa",
+      "_type": "request",
+      "parentId": "fld_53be8b236f1c4bf0",
+      "name": "2. Cajero intenta configurar un tributo (debe rechazar)",
+      "description": "Debe dar 403 ACCESS_DENIED.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/tax-concepts",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"code\": \"NO_DEBERIA\",\n  \"name\": \"x\",\n  \"type\": \"FEE\",\n  \"originModule\": \"M5\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.caja"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "CASHIER"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 74,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_4966e1c181bf43f0",
+      "_type": "request",
+      "parentId": "fld_53be8b236f1c4bf0",
+      "name": "3. Rentas intenta aprobar una reversion (reservado a Supervisor)",
+      "description": "Debe dar 403 ACCESS_DENIED.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/payment-reversals/1/approve",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 75,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_88a8806cb5aa44e4",
+      "_type": "request",
+      "parentId": "fld_53be8b236f1c4bf0",
+      "name": "4. Auditor intenta registrar un pago (solo lectura)",
+      "description": "Debe dar 403 ACCESS_DENIED.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/payments",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"taxpayerId\": 1,\n  \"paymentMethod\": \"CASH\",\n  \"amount\": 10,\n  \"allocations\": []\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.auditoria"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "AUDITOR"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 76,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_d0c67c5cc5e745a6",
+      "_type": "request",
+      "parentId": "fld_53be8b236f1c4bf0",
+      "name": "5. Supervisor aprueba/rechaza (control positivo)",
+      "description": "Ver los approve/reject ya usados en 04 y 06 como evidencia del rol Supervisor.",
+      "method": "GET",
+      "url": "{{ _.baseUrl }}/exemption-requests",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "X-Dev-User",
+          "value": "demo.supervisor"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "SUPERVISOR"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 77,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_cbd734e2d6e14675",
+      "_type": "request",
+      "parentId": "fld_53be8b236f1c4bf0",
+      "name": "7a. Operacion sin NINGUN header de identidad",
+      "description": "OBSERVACION: en RENTAS_SECURITY_DEV_MODE=true, sin headers el backend usa una identidad de empleado por defecto con permisos de RENTAS (no rechaza). Documentado como comportamiento exclusivo de dev-mode.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/tax-concepts",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"code\": \"SIN_HEADERS_DEMO\",\n  \"name\": \"x\",\n  \"type\": \"FEE\",\n  \"originModule\": \"M5\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 78,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "fld_43da8f12ddff46a2",
+      "_type": "request_group",
+      "parentId": "wrk_1bac9345323e4389",
+      "name": "09. Pruebas tecnicas",
+      "description": "Casos 1-15. Paginacion, filtros, validaciones, mensajes de error, Swagger, salud.",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": 79
+    },
+    {
+      "_id": "req_de87178387384fd9",
+      "_type": "request",
+      "parentId": "fld_43da8f12ddff46a2",
+      "name": "1. Paginacion (size=2)",
+      "description": "",
+      "method": "GET",
+      "url": "{{ _.baseUrl }}/debts",
+      "body": {},
+      "parameters": [
+        {
+          "name": "size",
+          "value": "2",
+          "disabled": false
+        },
+        {
+          "name": "page",
+          "value": "0",
+          "disabled": false
+        }
+      ],
+      "headers": [
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 80,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_03177b45b9034981",
+      "_type": "request",
+      "parentId": "fld_43da8f12ddff46a2",
+      "name": "2a. Filtro de busqueda (q)",
+      "description": "",
+      "method": "GET",
+      "url": "{{ _.baseUrl }}/tax-concepts",
+      "body": {},
+      "parameters": [
+        {
+          "name": "q",
+          "value": "TASA",
+          "disabled": false
+        },
+        {
+          "name": "size",
+          "value": "100",
+          "disabled": false
+        }
+      ],
+      "headers": [
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 81,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_0094b3efb65c4414",
+      "_type": "request",
+      "parentId": "fld_43da8f12ddff46a2",
+      "name": "2b. Filtro invalido (debe rechazar)",
+      "description": "",
+      "method": "GET",
+      "url": "{{ _.baseUrl }}/debts",
+      "body": {},
+      "parameters": [
+        {
+          "name": "estadoInventado",
+          "value": "X",
+          "disabled": false
+        }
+      ],
+      "headers": [
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 82,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_2aec9032f6fc4912",
+      "_type": "request",
+      "parentId": "fld_43da8f12ddff46a2",
+      "name": "3a. Validacion: monto negativo",
+      "description": "",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/payments",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"taxpayerId\": 1,\n  \"paymentMethod\": \"CASH\",\n  \"amount\": -50,\n  \"allocations\": []\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.caja"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "CASHIER"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 83,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_f3a00ed4a4ab4e09",
+      "_type": "request",
+      "parentId": "fld_43da8f12ddff46a2",
+      "name": "3b. Validacion: campo requerido faltante",
+      "description": "",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/payments",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"paymentMethod\": \"CASH\",\n  \"amount\": 50,\n  \"allocations\": []\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.caja"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "CASHIER"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 84,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_9b9da83bead54676",
+      "_type": "request",
+      "parentId": "fld_43da8f12ddff46a2",
+      "name": "6. Solicitudes repetidas (DEFECTO Alta)",
+      "description": "DEFECTO: enviar este mismo request 2 veces seguidas (o en 2 pestañas de Insomnia al mismo tiempo) crea 2 pagos duplicados. No hay Idempotency-Key.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/payments",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"taxpayerId\": 1,\n  \"paymentMethod\": \"CASH\",\n  \"amount\": 15,\n  \"allocations\": []\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.caja"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "CASHIER"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 85,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_0d61c906b77e4f68",
+      "_type": "request",
+      "parentId": "fld_43da8f12ddff46a2",
+      "name": "7. Pagos simultaneos sobre la misma deuda",
+      "description": "Para la demo: disparar este request 2 veces en simultaneo (Ctrl+Enter en 2 pestañas) sobre una deuda de saldo menor a 120 y verificar que el segundo pago solo asigna el remanente, sin corromper el saldo.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/payments",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"taxpayerId\": 1,\n  \"paymentMethod\": \"CASH\",\n  \"amount\": 60,\n  \"allocations\": [\n    {\n      \"debtId\": 4,\n      \"amount\": 60\n    }\n  ]\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Dev-User",
+          "value": "demo.caja"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "CASHIER"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 86,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_98d7a853da354323",
+      "_type": "request",
+      "parentId": "fld_43da8f12ddff46a2",
+      "name": "8. Reversiones simultaneas",
+      "description": "Con una reversion ya aprobada: disparar este mismo request 2 veces en simultaneo. Solo una debe tener exito (200), la otra 422 REVERSAL_NOT_APPROVED.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/payment-reversals/1/execute",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "X-Dev-User",
+          "value": "demo.rentas"
+        },
+        {
+          "name": "X-Dev-Roles",
+          "value": "RENTAS"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 87,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_4ebe5bd2132b446b",
+      "_type": "request",
+      "parentId": "fld_43da8f12ddff46a2",
+      "name": "9. Salud tras reinicio del backend",
+      "description": "Reiniciar el proceso backend (misma DB) y volver a pegar aca + a los listados de debts/payments: los datos deben seguir iguales.",
+      "method": "GET",
+      "url": "http://localhost:8080/actuator/health",
+      "body": {},
+      "parameters": [],
+      "headers": [],
+      "authentication": {},
+      "metaSortKey": 88,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_da41b08eecb44f74",
+      "_type": "request",
+      "parentId": "fld_43da8f12ddff46a2",
+      "name": "11a. OpenAPI JSON",
+      "description": "Alternativa: abrir http://localhost:8080/swagger-ui/index.html en el navegador.",
+      "method": "GET",
+      "url": "http://localhost:8080/v3/api-docs",
+      "body": {},
+      "parameters": [],
+      "headers": [],
+      "authentication": {},
+      "metaSortKey": 89,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_334e2d68f3094240",
+      "_type": "request",
+      "parentId": "fld_43da8f12ddff46a2",
+      "name": "11b. Swagger UI (abrir en navegador)",
+      "description": "",
+      "method": "GET",
+      "url": "http://localhost:8080/swagger-ui/index.html",
+      "body": {},
+      "parameters": [],
+      "headers": [],
+      "authentication": {},
+      "metaSortKey": 90,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    }
+  ]
+}
