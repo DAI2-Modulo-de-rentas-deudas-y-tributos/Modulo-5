@@ -30,7 +30,10 @@ const daysUntil = (date) => {
 };
 function qs(path, fields = {}) {
   const source = urlOf(path).searchParams;
-  const target = new URLSearchParams({ size: SIZE });
+  const target = new URLSearchParams({ size: source.get("size") || SIZE });
+  for (const key of ["page", "sort"]) {
+    for (const value of source.getAll(key)) target.append(key, value);
+  }
   Object.entries(fields).forEach(([from, to]) => { const value = source.get(from); if (value) target.set(to, value); });
   return target.toString();
 }
@@ -42,7 +45,7 @@ export function adaptApiRequest(originalPath, options = {}) {
   const verb = options.method ?? "GET";
   let requestMethod = verb;
 
-  if (path.startsWith("/api/v1/taxpayers?")) path = `/api/v1/taxpayers?${qs(path, { query: "q", type: "type" })}`;
+  if (path.startsWith("/api/v1/taxpayers?")) path = `/api/v1/taxpayers?${qs(path, { query: "q", q: "q", type: "type", status: "status" })}`;
   else if (path.startsWith("/api/v1/tax-config/pending")) path = `/api/v1/tax-configurations?status=PENDING_APPROVAL&size=${SIZE}`;
   else if (/^\/api\/v1\/tax-config\?/.test(path)) path = `/api/v1/tax-configurations?${qs(path, { status: "status" })}`;
   else if (/^\/api\/v1\/tax-config\/[^/?]+$/.test(path)) path = `/api/v1/tax-concepts?q=${encodeURIComponent(path.split("/").pop())}&size=${SIZE}`;
@@ -59,12 +62,12 @@ export function adaptApiRequest(originalPath, options = {}) {
     if (path === "/api/v1/settlements" && verb === "POST") { path = "/api/v1/liquidations"; body = single(); }
     else if (path === "/api/v1/settlements/preview") { path = "/api/v1/liquidations/preview"; body = single(); }
     else if (path.includes("/batch")) { path = "/api/v1/liquidation-runs"; body = { taxConceptId: body.taxConceptId ?? body.conceptId, period: body.period, dueDate: body.dueDate, items: (body.items ?? body.taxpayers ?? []).map((x) => ({ taxpayerId: x.taxpayerId ?? x.id, taxableBase: x.taxableBase ?? x.baseAmount ?? 0 })) }; }
-    else if (path.endsWith("/issue")) { path = `/api/v1/liquidations/${path.match(/\d+/)?.[0]}`; requestMethod = "GET"; }
+    else if (path.endsWith("/issue")) { path = `/api/v1/liquidations/${path.match(/\/settlements\/(\d+)\/issue$/)?.[1]}`; requestMethod = "GET"; }
     else path = path.includes("?") ? `/api/v1/liquidations?${qs(path, { taxpayerId: "taxpayerId", conceptId: "conceptId", period: "period", status: "status", from: "from", to: "to" })}` : path.replace("/settlements", "/liquidations");
   } else if (path.endsWith("/account-statement")) path = path.replace(/\/account-statement$/, "/summary");
   else if (path.startsWith("/api/v1/debts/report-overdue")) path = `/api/v1/debts?status=OVERDUE&size=${SIZE}`;
   else if (path.startsWith("/api/v1/debts?")) {
-    path = `/api/v1/debts?${qs(path, { taxpayerId: "taxpayerId", status: "status", originType: "originType", from: "from", to: "to" })}`;
+    path = `/api/v1/debts?${qs(path, { taxpayerId: "taxpayerId", conceptId: "conceptId", taxConceptId: "taxConceptId", status: "status", originType: "originType", from: "from", to: "to" })}`;
   }
   else if (path.startsWith("/api/v1/debt-adjustments")) {
     if (path.endsWith("/execute")) requestMethod = "GET";
@@ -78,14 +81,10 @@ export function adaptApiRequest(originalPath, options = {}) {
   else if (path.startsWith("/api/v1/payments?")) {
     const source = urlOf(path).searchParams;
     const status = source.get("status");
-    if (status === "UNALLOCATED") path = `/api/v1/payments/unallocated?size=${SIZE}`;
-    else {
-      const target = new URLSearchParams({ size: SIZE });
-      if (source.get("taxpayerId")) target.set("taxpayerId", source.get("taxpayerId"));
-      if (status) target.set("status", status === "REGISTERED" ? "CONFIRMED" : status);
-      if (source.get("date")) { target.set("from", source.get("date")); target.set("to", source.get("date")); }
-      path = `/api/v1/payments?${target}`;
-    }
+    const target = new URLSearchParams(qs(path, { taxpayerId: "taxpayerId", billId: "billId", q: "q", method: "method", paymentMethod: "paymentMethod", from: "from", to: "to", origin: "origin", allocationStatus: "allocationStatus" }));
+    if (status) target.set("status", ["REGISTERED", "UNALLOCATED"].includes(status) ? "CONFIRMED" : status);
+    if (source.get("date")) { target.set("from", source.get("date")); target.set("to", source.get("date")); }
+    path = `/api/v1/payments?${target}`;
   }
   else if (/\/payments\/\d+\/allocate$/.test(path)) { path = path.replace(/\/allocate$/, "/allocations"); body = { debtId: body.debtId ?? null, installmentId: body.installmentId ?? null, amount: body.amount ?? body.amountApplied }; }
   else if (/\/payments\/\d+\/(reverse|reversal)$/.test(path)) { path = path.replace(/\/(reverse|reversal)$/, "/reversal-requests"); body = { reason: body?.reason }; }
@@ -93,10 +92,9 @@ export function adaptApiRequest(originalPath, options = {}) {
   else if (/\/credit-balances\/\d+\/applications$/.test(path)) { path = path.replace(/\/applications$/, "/apply"); body = { debtId: body?.debtId, amount: body?.amount ?? body?.amountApplied }; }
   else if (path === "/api/v1/payment-plans/simulate") { path = "/api/v1/payment-plans/simulations"; body = { taxpayerId: body.taxpayerId, debtIds: body.debtIds, installments: body.installments }; }
   else if (path === "/api/v1/payment-plans" && verb === "POST") { path = "/api/v1/payment-plan-requests"; body = { taxpayerId: body.taxpayerId, debtIds: body.debtIds, installments: body.installments }; }
-  else if (path.startsWith("/api/v1/payment-plans?")) path = `/api/v1/payment-plan-requests?${qs(path, { taxpayerId: "taxpayerId", status: "status", from: "from", to: "to" })}`;
   else if (/\/payment-plans\/\d+\/escalate$/.test(path)) { path = path.replace(/\/payment-plans\/(\d+)\/escalate$/, "/payment-plan-requests/$1/submit-exception"); body = { reason: body.reason ?? body.note }; }
   else if (/\/payment-plans\/\d+\/(approve|reject)$/.test(path)) { const [, id, action] = path.match(/payment-plans\/(\d+)\/(approve|reject)/); path = `/api/v1/payment-plan-requests/${id}/${action === "approve" ? "grant" : "reject"}`; body = action === "reject" ? { reason: body?.reason ?? "Rechazado" } : { downPaymentAmount: body?.downPayment ?? 0 }; }
-  else if (/\/payment-plans\/\d+\/refinancing\/simulate$/.test(path)) { path = path.replace(/\/refinancing\/simulate$/, "/refinancing/simulation"); body = { installments: body.installments }; }
+  else if (/\/payment-plans\/\d+\/refinancing\/simulate$/.test(path)) { path = path.replace(/\/refinancing\/simulate$/, "/refinancing/simulations"); body = { installments: body.installments }; }
   else if (/\/payment-plans\/\d+\/refinancing$/.test(path)) { path += "-requests"; body = { installments: body.installments }; }
   else if (path.startsWith("/api/v1/refinancings")) { path = path.replace("/refinancings", "/refinancing-requests").replace(/\/escalate$/, "/submit-exception").replace(/\/approve$/, "/grant"); if (path.endsWith("submit-exception")) body = { reason: body.reason }; if (path.endsWith("reject")) body = { reason: body?.reason ?? "Rechazado" }; }
   else if (path.startsWith("/api/v1/exemptions/requests")) path = path.replace("/exemptions/requests", "/exemption-requests");
@@ -109,7 +107,36 @@ export function adaptApiRequest(originalPath, options = {}) {
   else if (path.startsWith("/api/v1/portal/")) path = portal(path);
   else if (path === "/api/v1/dashboard/metrics") path = "/api/v1/indicators/summary";
 
-  return { path, options: { ...options, method: requestMethod, body } };
+  return { path: normalizeQuery(path, originalPath), options: { ...options, method: requestMethod, body } };
+}
+
+/** Translate screen states only after resolving the resource's real route. */
+function normalizeQuery(path, originalPath) {
+  if (!path.includes("?")) return path;
+  const target = urlOf(path);
+  const original = urlOf(originalPath).searchParams;
+  const status = original.get("status") || original.get("tab");
+  const resource = target.pathname.split("/").pop();
+  const workflows = ["payment-plan-requests", "refinancing-requests", "exemption-requests"];
+
+  if (workflows.includes(resource)) {
+    target.searchParams.delete("internalStatus");
+    if (status === "REQUESTED") target.searchParams.delete("status");
+    else if (status) target.searchParams.set("status", status);
+    // REQUESTED includes several backend stages; filter those after adaptation.
+    const internal = original.get("internalStatus");
+    if (internal && (!status || status === "REQUESTED")) {
+      const exact = resource === "exemption-requests"
+        ? { DOCUMENTATION_REQUIRED: "DOCUMENTATION_REQUIRED", PENDING_RESOLUTION: "PENDING_RESOLUTION" }[internal]
+        : { PENDING_REVIEW: "PENDING", PENDING_SUPERVISOR: "PENDING_EXCEPTION_APPROVAL" }[internal];
+      if (exact) target.searchParams.set("status", exact);
+    }
+  } else if (["debts", "bills"].includes(resource) && status === "SETTLED") {
+    target.searchParams.set("status", "PAID");
+  } else if (resource === "payments" && ["REGISTERED", "UNALLOCATED"].includes(status)) {
+    target.searchParams.set("status", "CONFIRMED");
+  }
+  return `${target.pathname}${target.search}`;
 }
 
 /** Número que viene del formulario (texto, y a veces vacío) o el valor por defecto. */
@@ -149,7 +176,11 @@ function cashier(path, body) {
   if (path.includes("/receipts/")) return { path: path.replace("/cashier/receipts/", "/payments/") + "/receipt", body };
   if (path.includes("/taxpayers/")) return { path: path.replace("/cashier", "").replace(/\/file$/, "/summary"), body };
   if (path.endsWith("/agents")) return { path: "/api/v1/health", body };
-  return { path: `/api/v1/payments?${qs(path, { date: "from" })}`, body };
+  const params = new URLSearchParams(qs(path));
+  const date = urlOf(path).searchParams.get("date") || new Date().toISOString().slice(0, 10);
+  params.set("from", date);
+  params.set("to", date);
+  return { path: `/api/v1/payments?${params}`, body };
 }
 function audit(path) {
   const mappings = [["dashboard", "indicators/summary"], ["taxpayers", "taxpayers"], ["concepts", "tax-concepts"], ["settlements", "liquidations"], ["debts", "debts"], ["payments", "payments"], ["reversals", "payment-reversals"], ["payment-plans", "payment-plan-requests"], ["exemptions", "exemption-requests"], ["tickets", "tickets"], ["integrations", "integrations/events"], ["trail", "audit"], ["indicators", "indicators/summary"]];
@@ -166,7 +197,7 @@ export function adaptApiResponse(original, actual, payload) {
   const data = pageItems(payload);
   if (original.includes("/notices") && Array.isArray(data)) return data.filter((d) => d.overdue).map((d) => ({ id: `deuda-${d.id}`, severity: "error", title: "Tenés una deuda vencida", detail: `Saldo pendiente: ${d.outstandingBalance}`, path: "/portal/deudas" }));
   if (Array.isArray(data)) {
-    const rows = data.map((row) => adaptRow(actual, row));
+    const rows = filterRows(original, actual, data.map((row) => adaptRow(actual, row)));
     if (original.startsWith("/api/v1/cashier/daily-summary")) return cashierSummary(original, rows);
     if (data.page) Object.defineProperty(rows, "page", { enumerable: false, value: data.page });
     return rows;
@@ -178,6 +209,40 @@ export function adaptApiResponse(original, actual, payload) {
   if (original === "/api/v1/cashier/agents") return [];
   return adaptRow(actual, data);
 }
+
+function filterRows(original, actual, rows) {
+  const params = urlOf(original).searchParams;
+  const resource = urlOf(actual).pathname.split("/").pop();
+  const status = params.get("status") || params.get("tab");
+  if (["payment-plan-requests", "refinancing-requests", "exemption-requests"].includes(resource)) {
+    if (status === "REQUESTED") rows = rows.filter((row) => row.status === "REQUESTED");
+    if (params.get("internalStatus")) rows = rows.filter((row) => row.internalStatus === params.get("internalStatus"));
+  }
+  if (resource === "payments") {
+    if (["REGISTERED", "UNALLOCATED"].includes(status)) rows = rows.filter((row) => row.status === status);
+    if (params.get("registeredBy")) rows = rows.filter((row) => row.registeredBy === params.get("registeredBy"));
+  }
+  // The taxpayer-specific bill endpoint deliberately accepts no status filter.
+  if (resource === "bills" && status) rows = rows.filter((row) => row.status === (status === "PAID" ? "SETTLED" : status));
+  return rows;
+}
+
+/** El backend guarda los valores auditados como texto JSON; la vista los lista por campo. */
+function comoObjeto(texto) {
+  if (texto == null) return null;
+  if (typeof texto !== "string") return texto;
+  try {
+    return JSON.parse(texto);
+  } catch {
+    return { valor: texto };
+  }
+}
+
+function requestWorkflow(row) {
+  const internalStatus = { PENDING: "PENDING_REVIEW", PENDING_EXCEPTION_APPROVAL: "PENDING_SUPERVISOR" }[row.status];
+  return { ...row, backendStatus: row.status, status: internalStatus ? "REQUESTED" : row.status, ...(internalStatus ? { internalStatus } : {}) };
+}
+
 function adaptRow(path, row) {
   if (!row || typeof row !== "object") return row;
   const pathname = urlOf(path).pathname;
@@ -185,11 +250,13 @@ function adaptRow(path, row) {
   if (path.includes("/tax-configurations")) return { ...row, conceptId: row.taxConceptId, calculationType: CALC_FROM_API[row.calculationType] ?? row.calculationType };
   if (path.includes("/liquidations")) return { ...row, conceptId: row.taxConceptId, conceptName: row.conceptName ?? `Concepto #${row.taxConceptId}`, taxpayerName: row.taxpayerName ?? `Contribuyente #${row.taxpayerId}`, amount: row.finalAmount, createdAt: row.issuedAt, origin: row.origin ?? { module: "M5" } };
   if (path.includes("/debts")) return { ...row, conceptId: row.taxConceptId, conceptCode: row.conceptCode ?? `#${row.taxConceptId}`, conceptName: row.conceptName ?? `Concepto #${row.taxConceptId}`, taxpayerName: row.taxpayerName ?? `Contribuyente #${row.taxpayerId}`, outstandingAmount: row.outstandingBalance, settlementId: row.liquidationId, originId: row.liquidationId ?? row.externalObligationId, originType: row.originType, daysLeft: row.daysLeft ?? daysUntil(row.dueDate), status: row.status === "PAID" ? "SETTLED" : row.overdue && row.status !== "CANCELLED" ? "OVERDUE" : row.status };
-  if (path.includes("/bills")) return { ...row, conceptName: row.conceptName ?? (row.debts?.[0]?.debtId ? `Deuda #${row.debts[0].debtId}` : "Boleta municipal"), amount: row.totalAmount, issuedAt: row.createdAt ?? row.issueDate, debtId: row.debts?.[0]?.debtId ?? null, daysLeft: row.daysLeft ?? daysUntil(row.dueDate), barcode: row.number, documentUrl: `/api/v1/bills/${row.id}/document` };
+  if (path.includes("/bills")) return { ...row, conceptName: row.conceptName ?? (row.debts?.[0]?.debtId ? `Deuda #${row.debts[0].debtId}` : "Boleta municipal"), amount: row.totalAmount, issuedAt: row.createdAt ?? row.issueDate, debtId: row.debts?.[0]?.debtId ?? null, daysLeft: row.daysLeft ?? daysUntil(row.dueDate), status: row.status === "PAID" ? "SETTLED" : row.status, barcode: row.number, documentUrl: `/api/v1/bills/${row.id}/document` };
+  if (pathname.endsWith("/receipt")) return row;
   if (path.includes("/allocations")) return row;
   if (path.includes("/payments") && !path.includes("payment-plans")) return { ...row, taxpayerName: row.taxpayerName ?? `Contribuyente #${row.taxpayerId}`, amountPaid: row.amount, method: row.paymentMethod, remainingBalance: row.unallocatedAmount, status: row.status === "REVERSED" ? "REVERSED" : Number(row.unallocatedAmount) > 0 ? "UNALLOCATED" : "REGISTERED", channel: PAYMENT_ORIGIN_FROM_API[row.origin] ?? row.origin };
   if (path.includes("/credit-balances")) return { ...row, amount: row.availableAmount };
-  if (path.includes("/payment-plan-requests")) return { ...row, requestId: row.id, debtIds: row.debtIds ?? [], debts: row.debts ?? [], installments: row.requestedInstallments, totalDebt: row.totalDebt ?? row.totalDebtAtRequest, downPayment: row.downPayment ?? row.estimatedDownPayment ?? 0, totalAmount: row.estimatedTotalAmount, planId: row.paymentPlanId };
+  if (path.includes("/payment-plan-requests")) return { ...requestWorkflow(row), requestId: row.id, debtIds: row.debtIds ?? [], debts: row.debts ?? [], installments: row.requestedInstallments, totalDebt: row.totalDebt ?? row.totalDebtAtRequest, downPayment: row.downPayment ?? row.estimatedDownPayment ?? 0, totalAmount: row.estimatedTotalAmount, planId: row.paymentPlanId };
+  if (path.includes("/refinancing-requests")) return { ...requestWorkflow(row), requestId: row.id, planId: row.originalPlanId, installments: row.requestedInstallments, outstandingAmount: row.outstandingPrincipalAtRequest, totalAmount: row.estimatedTotalAmount };
   if (path.includes("/payment-plans") && path.includes("/installments")) return { ...row, status: INSTALLMENT_STATUS_FROM_API[row.status] ?? row.status };
   if (path.includes("/payment-plans")) return { ...row, planId: row.id, installments: row.installmentCount, totalAmount: row.totalPlanAmount, outstandingAmount: row.outstandingPlanAmount, lifecycle: PLAN_STATUS_FROM_API[row.status] ?? row.status };
   if (path.includes("/adjustments")) return { ...row, requestId: row.id, status: row.status === "APPROVED" ? "EXECUTED" : row.status };
@@ -199,8 +266,8 @@ function adaptRow(path, row) {
     return { ...row, requestId: row.requestId ?? row.id, citizenId: row.taxpayerId, conceptId: row.taxConceptId, conceptCode: row.conceptCode ?? `#${row.taxConceptId}`, conceptName: row.conceptName ?? `Concepto #${row.taxConceptId}`, requestedPercentage: row.requestedPercentage ?? row.percentage, requestedFrom: row.requestedFrom ?? row.validFrom, requestedUntil: row.requestedUntil ?? row.validUntil, status: pending ? "REQUESTED" : row.status, internalStatus, attachments: row.attachments ?? [], hasSocialBenefit: row.hasSocialBenefit ?? false };
   }
   if (path.includes("/tickets")) return { ...row, ticketId: row.id, citizenId: row.taxpayerId, subject: row.category };
-  if (path.includes("/integrations/events")) return { ...row, destinationModule: row.targetModule, attempts: row.retryCount };
-  if (pathname === "/api/v1/audit") return { ...row, username: row.userId, role: row.userRole, at: row.occurredAt, entity: { type: row.entityType, id: row.entityId }, result: "SUCCESS" };
+  if (path.includes("/integrations/events")) return { ...row, destinationModule: row.targetModule, attempts: row.retryCount, error: row.errorMessage ?? null, result: row.status === "DLQ" ? "FAILED" : "SUCCESS" };
+  if (/^\/api\/v1\/audit(\/\d+)?$/.test(pathname)) return { ...row, username: row.userId, role: row.userRole, at: row.occurredAt, entity: { type: row.entityType, id: row.entityId }, result: "SUCCESS", before: comoObjeto(row.previousData), after: comoObjeto(row.newData), references: row.correlationId ? [row.correlationId] : [] };
   if (/^\/api\/v1\/taxpayers(?:\/\d+)?$/.test(pathname)) return { ...row, type: row.taxpayerType, documentType: row.dni ? "DNI" : "CUIT", document: row.dni ?? row.cuit, name: row.displayName };
   return row;
 }

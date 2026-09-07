@@ -42,6 +42,7 @@ export const DEUDAS = [
   { id: 3001, taxpayerId: 123, taxConceptId: 1, liquidationId: 7001, originType: "LIQUIDATION", status: "PENDING", originalAmount: 85000, outstandingBalance: 85000, dueDate: "2026-09-30", overdue: false, createdAt: "2026-08-01T10:00:00-03:00" },
   { id: 3002, taxpayerId: 123, taxConceptId: 3, originType: "LIQUIDATION", status: "PENDING", originalAmount: 40000, outstandingBalance: 40000, dueDate: "2026-08-10", overdue: true, createdAt: "2026-07-01T10:00:00-03:00" },
   { id: 3003, taxpayerId: 78, taxConceptId: 2, liquidationId: 7002, originType: "LIQUIDATION", status: "PENDING", originalAmount: 35000, outstandingBalance: 35000, dueDate: "2026-09-15", overdue: false, createdAt: "2026-08-01T10:00:00-03:00" },
+  { id: 3200, taxpayerId: 123, taxConceptId: 1, originType: "EXTERNAL_OBLIGATION", status: "PENDING", originalAmount: 85000, outstandingBalance: 85000, dueDate: "2026-08-15", overdue: true, createdAt: "2026-07-15T10:00:00-03:00" },
 ];
 
 export const BOLETAS = [
@@ -76,12 +77,15 @@ export const TICKETS = [
 
 export const EVENTOS = [
   { id: 1, eventId: "11111111-1111-1111-1111-111111111111", eventType: "infractionConfirmed", sourceModule: "M7", targetModule: "M5", direction: "INBOUND", status: "PROCESSED", occurredAt: "2026-08-24T14:30:00-03:00", receivedAt: "2026-08-24T14:30:05-03:00", processedAt: "2026-08-24T14:30:06-03:00", payload: "{}" },
-  { id: 2, eventId: "22222222-2222-2222-2222-222222222222", eventType: "ticketCreated", sourceModule: "M2", targetModule: "M5", direction: "INBOUND", status: "DLQ", occurredAt: "2026-08-24T15:00:00-03:00", receivedAt: "2026-08-24T15:00:05-03:00", errorMessage: "Contribuyente inexistente", retryCount: 3, payload: "{}" },
+  { id: 2, eventId: "22222222-2222-2222-2222-222222222222", eventType: "permitUpdate", sourceModule: "M4", targetModule: "M5", direction: "INBOUND", status: "DLQ", occurredAt: "2026-08-24T15:00:00-03:00", receivedAt: "2026-08-24T15:00:05-03:00", errorMessage: "Contribuyente inexistente", retryCount: 3, payload: JSON.stringify({ permitId: 250, taxpayerType: "ORGANIZATION", taxpayerId: 78, status: "SUSPENDED" }, null, 2) },
 ];
 
 export const AUDITORIA = [
   { id: 1, userId: "mrivas", userRole: "ROLE_RENTAS", entityType: "Debt", entityId: "3001", action: "DEBT_CREATED", occurredAt: "2026-08-01T10:00:00-03:00" },
   { id: 2, userId: "pcabrera", userRole: "ROLE_CASHIER", entityType: "Payment", entityId: "9005", action: "PAYMENT_REGISTERED", occurredAt: "2026-08-25T09:40:00-03:00" },
+  { id: 3, userId: "jlopez", userRole: "ROLE_SUPERVISOR", entityType: "Payment", entityId: "9005", action: "PAYMENT_REVERSED", occurredAt: "2026-08-26T10:00:00-03:00",
+    previousData: JSON.stringify({ status: "CONFIRMED", amount: 25000 }), newData: JSON.stringify({ status: "REVERSED", amount: 0, reason: "Pago registrado por error" }),
+    correlationId: "corr-9005" },
 ];
 
 export const INDICADORES = {

@@ -13,6 +13,20 @@ import { auditService } from "../../services/rentasService.js";
 import { MODULE_LABELS } from "../../config/etiquetasModulos.js";
 import { formatDateTime } from "../../lib/format.js";
 
+/**
+ * El backend guarda el payload como texto JSON. Serializarlo de nuevo lo mostraría
+ * escapado, así que se intenta formatearlo y, si no es JSON válido, se muestra crudo.
+ */
+function formatearPayload(payload) {
+  if (payload == null) return "—";
+  if (typeof payload !== "string") return JSON.stringify(payload, null, 2);
+  try {
+    return JSON.stringify(JSON.parse(payload), null, 2);
+  } catch {
+    return payload;
+  }
+}
+
 /** Detalle del evento: el payload tal como llegó y qué produjo dentro de Rentas. */
 export default function IntegracionDetallePage() {
   const { eventId } = useParams();
@@ -96,7 +110,7 @@ export default function IntegracionDetallePage() {
       <Card title="Payload" description="El campo `data` del envelope común, tal como viajó.">
         <div className="px-5 py-4">
           <pre className="overflow-x-auto rounded-lg border border-neutral-200 bg-neutral-50 p-4 text-[12px] leading-relaxed text-neutral-700">
-            {JSON.stringify(event.payload, null, 2)}
+            {formatearPayload(event.payload)}
           </pre>
         </div>
       </Card>

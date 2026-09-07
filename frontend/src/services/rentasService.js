@@ -919,8 +919,20 @@ export const auditService = {
     return request(`/api/v1/audit/debts?${params}`);
   },
 
+  /**
+   * Detalle de la deuda con lo que la tocó.
+   *
+   * El backend expone la deuda, sus imputaciones y su rastro de auditoría por
+   * separado; la pantalla los muestra juntos. Sin componerlos, `debt.payments` y
+   * `debt.history` llegan indefinidos y la vista se rompe al dibujarlos.
+   */
   async debtDetail(id) {
-    return request(`/api/v1/audit/debts/${id}`);
+    const [debt, allocations, history] = await Promise.all([
+      request(`/api/v1/debts/${id}`),
+      request(`/api/v1/payment-allocations?debtId=${id}&size=100`).catch(() => []),
+      request(`/api/v1/audit/entities/Debt/${id}`).catch(() => []),
+    ]);
+    return { ...debt, payments: allocations ?? [], history: history ?? [] };
   },
 
   // ---------------------------------------------------------------------- Pagos

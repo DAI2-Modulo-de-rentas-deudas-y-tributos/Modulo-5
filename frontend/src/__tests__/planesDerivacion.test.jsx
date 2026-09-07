@@ -3,7 +3,7 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import App from "../App.jsx";
 import { ingresarComoAgente } from "./helpers/ingresar.js";
-import { instalarBackendFalso } from "./fixtures/backendFalso.js";
+import { instalarBackendFalso, pagina } from "./fixtures/backendFalso.js";
 
 /**
  * Derivación de una solicitud de plan al Supervisor, desde la pantalla.
@@ -63,6 +63,17 @@ describe("derivación de planes al supervisor", () => {
   });
 
   it("deriva y avisa que no se publicó ningún evento", async () => {
+    // Derivada, la solicitud pasa a esperar al Supervisor y el analista ya no la resuelve.
+    let derivada = false;
+    instalarBackendFalso({
+      "POST /api/v1/payment-plan-requests/{id}/submit-exception": () => {
+        derivada = true;
+        return { id: 800, status: "PENDING_EXCEPTION_APPROVAL" };
+      },
+      "GET /api/v1/payment-plan-requests": () => pagina([
+        { id: 800, taxpayerId: 123, status: derivada ? "PENDING_EXCEPTION_APPROVAL" : "PENDING", exceptional: derivada, totalDebtAtRequest: 125000, requestedInstallments: 6, estimatedDownPayment: 0, requestedAt: "2026-08-20T10:00:00-03:00" },
+      ]),
+    });
     await entrarAPlanes(user, "mrivas");
     await user.click(await screen.findByRole("button", { name: /^derivar$/i }));
 
