@@ -185,19 +185,28 @@ describe("construcción de los requests", () => {
 });
 
 describe("lectura de la respuesta", () => {
-  it("la ficha del contribuyente reúne lo que devuelven los recursos anidados", async () => {
-    // La ruta de caja se reescribe al resumen real del contribuyente.
-    const backend = instalarBackendFalso({
-      "GET /api/v1/taxpayers/{id}/summary": {
-        taxpayer: { id: 123, taxpayerType: "CITIZEN", dni: "40111222", displayName: "Juan Pérez", status: "ACTIVE" },
-        totalOutstanding: 85000,
-      },
+  it("la ficha de caja cruza deudas, pagos y boletas con sus totales", async () => {
+    // El backend expone cada frente por separado; juntarlos y totalizar es del cliente.
+    instalarBackendFalso({
+      "GET /api/v1/taxpayers/{id}": { id: 123, taxpayerType: "CITIZEN", dni: "40111222", displayName: "Juan Pérez", status: "ACTIVE" },
+      "GET /api/v1/taxpayers/{id}/debts": pagina([
+        { id: 3001, taxpayerId: 123, taxConceptId: 1, status: "PENDING", outstandingBalance: 85000, dueDate: "2026-09-30", overdue: false },
+        { id: 3002, taxpayerId: 123, taxConceptId: 3, status: "PENDING", outstandingBalance: 40000, dueDate: "2026-08-10", overdue: true },
+      ]),
+      "GET /api/v1/payments": pagina([
+        { id: 9005, taxpayerId: 123, amount: 25000, paymentMethod: "CASH", unallocatedAmount: 0, status: "CONFIRMED" },
+      ]),
+      "GET /api/v1/taxpayers/{id}/bills": pagina([]),
     });
 
     const ficha = await cashierService.taxpayerFile(123);
 
-    expect(backend.llamadas[0].ruta).toBe("/api/v1/taxpayers/123/summary");
-    expect(ficha.totalOutstanding).toBe(85000);
+    expect(ficha.taxpayer.name).toBe("Juan Pérez");
+    expect(ficha.debts).toHaveLength(2);
+    expect(ficha.totals.outstanding).toBe(125000);
+    // Sólo la vencida cuenta como exigible.
+    expect(ficha.totals.overdue).toBe(40000);
+    expect(ficha.totals.paid).toBe(25000);
   });
 
   it("no inventa datos cuando el backend devuelve una colección vacía", async () => {

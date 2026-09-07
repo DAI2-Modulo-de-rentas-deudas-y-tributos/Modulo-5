@@ -101,17 +101,6 @@ export default function GeneracionMasivaModal({ conceptOptions = [], onClose, on
       render: (row) => <StatusBadge status={row.status} />,
     },
     {
-      key: "discountPercentage",
-      header: "Descuento",
-      align: "right",
-      render: (row) =>
-        row.discountPercentage > 0 ? (
-          <StatusBadge tone="success" label={formatPercentage(row.discountPercentage)} />
-        ) : (
-          <span className="text-neutral-300">—</span>
-        ),
-    },
-    {
       key: "amount",
       header: "Importe",
       align: "right",
@@ -231,9 +220,8 @@ export default function GeneracionMasivaModal({ conceptOptions = [], onClose, on
 
       {step === 1 && (
         <div className="flex flex-col gap-4">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="grid grid-cols-3 gap-3">
             <Metric label="A generar" value={preview.totals.toGenerate} tone="navy" />
-            <Metric label="Con descuento" value={preview.totals.discounted} tone="success" />
             <Metric
               label="Omitidos"
               value={preview.totals.skipped}
@@ -248,18 +236,6 @@ export default function GeneracionMasivaModal({ conceptOptions = [], onClose, on
                 {preview.errors.map((e) => (
                   <li key={e.taxpayerId}>
                     <strong>{e.taxpayerName}</strong>: {e.reason}
-                  </li>
-                ))}
-              </ul>
-            </Alert>
-          )}
-
-          {preview.warnings.length > 0 && (
-            <Alert variant="info" title={`${preview.warnings.length} se generan con advertencia`}>
-              <ul className="mt-1 flex flex-col gap-1">
-                {preview.warnings.map((w) => (
-                  <li key={w.taxpayerId}>
-                    <strong>{w.taxpayerName}</strong>: {w.reason}
                   </li>
                 ))}
               </ul>

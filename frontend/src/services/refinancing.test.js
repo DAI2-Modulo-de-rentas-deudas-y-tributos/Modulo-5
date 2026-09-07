@@ -11,7 +11,14 @@ import { instalarBackendFalso, pagina } from "../__tests__/fixtures/backendFalso
  * recalcula, sólo la muestra y explica por qué un plan no se puede refinanciar.
  */
 
-const plan = (id, status, outstandingAmount) => ({ id, planId: id, status, lifecycle: status, outstandingAmount });
+/** El backend nombra el saldo `outstandingPlanAmount`; el adaptador lo renombra. */
+const plan = (id, status, outstandingPlanAmount, extra = {}) => ({
+  id, status, outstandingPlanAmount, installmentCount: 6, totalPlanAmount: 137500,
+  configurationId: 1, refinancingCount: 0, ...extra,
+});
+
+const CONFIG_PERMITE = { id: 1, refinancingAllowed: true, maxRefinancingCount: 2, minimumInstallments: 3, maximumInstallments: 12 };
+const CONFIG_PROHIBE = { id: 1, refinancingAllowed: false, maxRefinancingCount: 0, minimumInstallments: 3, maximumInstallments: 12 };
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -32,32 +39,57 @@ describe("alternativas de cuotas", () => {
 });
 
 describe("elegibilidad para refinanciar", () => {
-  it("el plan vencido es elegible", async () => {
+  it("el plan activo cuya configuración lo permite es elegible", async () => {
     instalarBackendFalso({
-      "GET /api/v1/payment-plan-requests": pagina([plan(851, "EXPIRED", 5108.34)]),
+      "GET /api/v1/payment-plans": pagina([plan(851, "ACTIVE", 5108.34)]),
+      "GET /api/v1/payment-plan-configurations/{id}": CONFIG_PERMITE,
     });
 
-    const [vencido] = await refinancingService.eligiblePlans();
+    const [activo] = await refinancingService.eligiblePlans();
 
-    expect(vencido.eligible).toBe(true);
-    expect(vencido.reasons).toEqual([]);
-    expect(vencido.outstandingAmount).toBe(5108.34);
+    expect(activo.eligible).toBe(true);
+    expect(activo.reasons).toEqual([]);
   });
 
-  it("el plan vigente no lo es y explica por qué", async () => {
+  it("un plan que no está activo no lo es, y lo explica", async () => {
     instalarBackendFalso({
-      "GET /api/v1/payment-plan-requests": pagina([plan(850, "ACTIVE", 9000)]),
+      "GET /api/v1/payment-plans": pagina([plan(850, "COMPLETED", 0)]),
     });
 
-    const [vigente] = await refinancingService.eligiblePlans();
+    const [cerrado] = await refinancingService.eligiblePlans();
 
-    expect(vigente.eligible).toBe(false);
-    expect(vigente.reasons.join(" ")).toMatch(/vencido/i);
+    expect(cerrado.eligible).toBe(false);
+    expect(cerrado.reasons.join(" ")).toMatch(/activos/i);
+  });
+
+  it("una configuración que prohíbe refinanciar bloquea el plan", async () => {
+    instalarBackendFalso({
+      "GET /api/v1/payment-plans": pagina([plan(851, "ACTIVE", 5108.34)]),
+      "GET /api/v1/payment-plan-configurations/{id}": CONFIG_PROHIBE,
+    });
+
+    const [bloqueado] = await refinancingService.eligiblePlans();
+
+    expect(bloqueado.eligible).toBe(false);
+    expect(bloqueado.reasons.join(" ")).toMatch(/no permite refinanciar/i);
+  });
+
+  it("un plan que agotó sus refinanciaciones tampoco es elegible", async () => {
+    instalarBackendFalso({
+      "GET /api/v1/payment-plans": pagina([plan(851, "ACTIVE", 5108.34, { refinancingCount: 2 })]),
+      "GET /api/v1/payment-plan-configurations/{id}": CONFIG_PERMITE,
+    });
+
+    const [agotado] = await refinancingService.eligiblePlans();
+
+    expect(agotado.eligible).toBe(false);
+    expect(agotado.reasons.join(" ")).toMatch(/máximo de refinanciaciones/i);
   });
 
   it("filtra sólo los refinanciables cuando se pide", async () => {
     instalarBackendFalso({
-      "GET /api/v1/payment-plan-requests": pagina([plan(850, "ACTIVE", 9000), plan(851, "EXPIRED", 5108.34)]),
+      "GET /api/v1/payment-plans": pagina([plan(850, "COMPLETED", 0), plan(851, "ACTIVE", 5108.34)]),
+      "GET /api/v1/payment-plan-configurations/{id}": CONFIG_PERMITE,
     });
 
     const todos = await refinancingService.eligiblePlans();

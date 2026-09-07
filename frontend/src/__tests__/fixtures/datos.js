@@ -12,6 +12,8 @@ export const CONCEPTOS = [
   { id: 2, code: "ABL", name: "Alumbrado, barrido y limpieza", type: "FEE", originModule: "M5", active: true },
   { id: 3, code: "PATENTE", name: "Patente automotor", type: "FEE", originModule: "M5", active: true },
   { id: 4, code: "TRAFFIC_INFRACTION", name: "Infracción de tránsito", type: "FINE", originModule: "M7", active: true },
+  // Dado de baja: los combos operativos no deben ofrecerlo.
+  { id: 5, code: "CARGO_ESTADIA", name: "Cargo por estadía", type: "CHARGE", originModule: "M5", active: false },
 ];
 
 export const CONFIGURACIONES = [
