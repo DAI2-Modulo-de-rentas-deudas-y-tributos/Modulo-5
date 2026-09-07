@@ -15,20 +15,45 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.slf4j.MDC;
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.List;
 import java.util.UUID;
 
 @Configuration
 @EnableMethodSecurity
 class SecurityConfig {
     @Bean PasswordEncoder passwordEncoder() { return new BCryptPasswordEncoder(); }
-    @Bean SecurityFilterChain securityFilterChain(HttpSecurity http, DevIdentityFilter filter) throws Exception {
+    @Bean CorsConfigurationSource corsConfigurationSource(
+            @Value("${rentas.cors.allowed-origins:}") String allowedOrigins) {
+        List<String> origins = Arrays.stream(allowedOrigins.split(","))
+            .map(String::trim).filter(origin -> !origin.isBlank()).distinct().toList();
+        if (origins.stream().anyMatch(origin -> origin.contains("*") || origin.equals("null"))) {
+            throw new IllegalArgumentException("CORS_ALLOWED_ORIGINS debe contener orígenes explícitos, sin comodines ni null");
+        }
+        CorsConfiguration cors = new CorsConfiguration();
+        cors.setAllowedOrigins(origins);
+        cors.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
+        cors.setAllowedHeaders(List.of("Content-Type", "Accept", "Authorization", "X-Dev-User", "X-Dev-Roles",
+            "X-Dev-Taxpayer-Id", "X-Correlation-Id"));
+        cors.setExposedHeaders(List.of("Content-Disposition", "X-Correlation-Id"));
+        cors.setAllowCredentials(false);
+        cors.setMaxAge(3600L);
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/api/**", cors);
+        return source;
+    }
+    @Bean SecurityFilterChain securityFilterChain(HttpSecurity http, DevIdentityFilter filter,
+            CorsConfigurationSource corsConfigurationSource) throws Exception {
         return http.csrf(csrf -> csrf.disable())
+            .cors(cors -> cors.configurationSource(corsConfigurationSource))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/actuator/health", "/api/v1/health", "/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll()
                 .requestMatchers(HttpMethod.POST, "/api/v1/dev-auth/login").permitAll()

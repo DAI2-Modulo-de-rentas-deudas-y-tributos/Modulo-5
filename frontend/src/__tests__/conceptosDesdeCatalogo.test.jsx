@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import App from "../App.jsx";
 import { ingresarComoAgente } from "./helpers/ingresar.js";
 import { resetTaxConceptsCache } from "../hooks/useTaxConcepts.js";
+import { instalarBackendFalso } from "./fixtures/backendFalso.js";
 
 /**
  * Conceptos de los combos operativos (SCRUM-240).
@@ -34,12 +35,14 @@ describe("conceptos de los combos operativos", () => {
   beforeEach(() => {
     user = userEvent.setup();
     resetTaxConceptsCache();
+    instalarBackendFalso();
   });
 
   afterEach(() => {
     cleanup();
     sessionStorage.clear();
     window.history.pushState({}, "", "/");
+    vi.unstubAllGlobals();
   });
 
   it("la nueva solicitud de exención ofrece los conceptos del catálogo", async () => {
@@ -136,6 +139,15 @@ function codigoDelPrimerCiudadano(dialog) {
 }
 
 describe("catálogo de conceptos del servicio", () => {
+  beforeEach(() => {
+    resetTaxConceptsCache();
+    instalarBackendFalso();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("devuelve sólo los conceptos activos por defecto", async () => {
     const { taxConfigService } = await import("../services/rentasService.js");
 
@@ -149,7 +161,6 @@ describe("catálogo de conceptos del servicio", () => {
 
   it("consulta el catálogo real cuando no se usan mocks", async () => {
     vi.resetModules();
-    vi.stubEnv("VITE_USE_MOCKS", "false");
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({

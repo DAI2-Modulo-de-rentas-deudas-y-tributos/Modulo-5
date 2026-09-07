@@ -105,7 +105,7 @@ function TaxpayerSummaryModal({ taxpayer, onClose }) {
     () => (taxpayer ? cashierService.taxpayerFile(taxpayer.id) : Promise.resolve(null)),
     [taxpayer],
   );
-  const { data: file, loading } = useResource(loader);
+  const { data: file, loading, error } = useResource(loader);
 
   if (!taxpayer) return null;
 
@@ -137,7 +137,9 @@ function TaxpayerSummaryModal({ taxpayer, onClose }) {
         <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-neutral-400">
           Deuda a pagar
         </p>
-        {loading ? (
+        {error ? (
+          <Alert variant="error" title="No pudimos consultar la deuda">{error}</Alert>
+        ) : loading ? (
           <div className="mt-3 flex items-center gap-2">
             <Spinner size="sm" />
             <span className="text-[13px] text-neutral-400">Consultando…</span>
@@ -147,13 +149,13 @@ function TaxpayerSummaryModal({ taxpayer, onClose }) {
             <div>
               <p className="text-[12px] text-neutral-400">Saldo total</p>
               <p className="text-[18px] font-bold tabular-nums text-[#0F2C59]">
-                {formatCurrency(file?.totals.outstanding ?? 0)}
+                {file ? formatCurrency(file.totals.outstanding) : "—"}
               </p>
             </div>
             <div>
               <p className="text-[12px] text-neutral-400">Vencido</p>
               <p className="text-[18px] font-bold tabular-nums text-[#D63031]">
-                {formatCurrency(file?.totals.overdue ?? 0)}
+                {file ? formatCurrency(file.totals.overdue) : "—"}
               </p>
             </div>
           </div>

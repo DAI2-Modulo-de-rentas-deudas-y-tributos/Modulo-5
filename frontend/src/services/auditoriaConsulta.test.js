@@ -1,62 +1,104 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { auditService } from "./rentasService.js";
+import { instalarBackendFalso, pagina } from "../__tests__/fixtures/backendFalso.js";
 
 /**
- * Mejoras de consulta de Auditoría. En archivo propio: varias ramas amplían
- * `rentasService.test.js` y anexar al final del mismo archivo choca al mergear.
+ * Consulta del auditor. Es un área de sólo lectura: lo que se prueba es que cada
+ * pantalla pida el recurso real que le corresponde —las rutas heredadas de auditoría
+ * las traduce el adaptador— y que la respuesta llegue con la forma que la tabla
+ * espera, sin completar huecos con datos inventados.
  */
-describe("ficha del contribuyente con liquidaciones", () => {
-  it("suma las liquidaciones al legajo, que es donde empieza el circuito", async () => {
-    const file = await auditService.taxpayerFile(123);
 
-    expect(file.settlements.length).toBeGreaterThan(0);
-    expect(file.settlements.every((s) => s.taxpayerId === 123)).toBe(true);
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe("legajo del contribuyente", () => {
+  it("cruza los cinco frentes del contribuyente en una sola ficha", async () => {
+    // El backend expone cada frente por separado; juntarlos es del cliente.
+    const backend = instalarBackendFalso({
+      "GET /api/v1/taxpayers/{id}": { id: 123, taxpayerType: "CITIZEN", dni: "40111222", displayName: "Juan Pérez", status: "ACTIVE" },
+      "GET /api/v1/taxpayers/{id}/debts": pagina([
+        { id: 3001, taxpayerId: 123, taxConceptId: 1, status: "PENDING", outstandingBalance: 85000, dueDate: "2026-09-30" },
+      ]),
+    });
+
+    const ficha = await auditService.taxpayerFile(123);
+
+    expect(ficha.taxpayer.name).toBe("Juan Pérez");
+    expect(ficha.debts).toHaveLength(1);
+    expect(ficha.totals.totalDebt).toBe(85000);
+    expect(backend.llamadas.map((l) => l.ruta)).toContain("/api/v1/taxpayers/123");
   });
 
-  it("las devuelve de la más reciente a la más antigua", async () => {
-    const file = await auditService.taxpayerFile(123);
-    const fechas = file.settlements.map((s) => new Date(s.createdAt).getTime());
+  it("las liquidaciones se leen del recurso de liquidaciones", async () => {
+    const backend = instalarBackendFalso({
+      "GET /api/v1/liquidations": pagina([
+        { id: 5001, taxpayerId: 123, taxConceptId: 1, finalAmount: 20000, period: "2026-09" },
+      ]),
+    });
 
-    expect([...fechas].sort((a, b) => b - a)).toEqual(fechas);
+    const liquidaciones = await auditService.settlements({ taxpayer: "123" });
+
+    expect(backend.llamadas[0].ruta).toBe("/api/v1/liquidations");
+    expect(liquidaciones).toHaveLength(1);
+    // El backend no manda el nombre del concepto: se rotula por id, no se inventa.
+    expect(liquidaciones[0].conceptName).toBe("Concepto #1");
   });
 
-  it("cada liquidación trae el nombre del concepto y la versión con la que se calculó", async () => {
-    const file = await auditService.taxpayerFile(123);
-    const liquidacion = file.settlements.find((s) => s.id === 7001);
+  it("no inventa filas cuando no hay liquidaciones", async () => {
+    instalarBackendFalso({ "GET /api/v1/liquidations": pagina([]) });
 
-    expect(liquidacion.conceptName).toBe("Tasa de servicios generales");
-    // Las del dataset son anteriores al sello de versión; la ficha lo muestra como "—".
-    expect(liquidacion.conceptVersion).toBeUndefined();
-  });
-
-  it("el legajo mantiene los cuatro frentes que ya tenía", async () => {
-    const file = await auditService.taxpayerFile(123);
-
-    expect(file.debts.length).toBeGreaterThan(0);
-    expect(file.payments.length).toBeGreaterThan(0);
-    expect(Array.isArray(file.plans)).toBe(true);
-    expect(Array.isArray(file.exemptions)).toBe(true);
+    expect(await auditService.settlements({ taxpayer: "999" })).toEqual([]);
   });
 });
 
-describe("versiones de un concepto", () => {
-  it("el historial llega completo y con sus parámetros", async () => {
+describe("ficha de un concepto", () => {
+  it("lo busca por código en el catálogo real", async () => {
+    const backend = instalarBackendFalso({
+      "GET /api/v1/tax-concepts": pagina([
+        { id: 1, code: "TASA_SERVICIOS", name: "Tasa de servicios generales", type: "FEE", active: true },
+      ]),
+    });
+
     const concepto = await auditService.conceptDetail("TASA_SERVICIOS");
 
-    expect(concepto.versions.length).toBe(3);
-    // La vigente guarda las reglas con las que se liquida hoy.
-    const vigente = concepto.versions.find((v) => v.status === "ACTIVE");
-    expect(vigente.rate).toBe(2);
-    expect(vigente.calculationType).toBe("PORCENTAJE");
+    expect(backend.llamadas[0].ruta).toBe("/api/v1/tax-concepts");
+    expect(concepto.name).toBe("Tasa de servicios generales");
   });
 
-  it("las versiones viejas no guardan parámetros y eso se distingue", async () => {
-    const concepto = await auditService.conceptDetail("TASA_SERVICIOS");
-    const antigua = concepto.versions.find((v) => v.version === 1);
+  it("un código que el catálogo no tiene falla en vez de devolver una ficha vacía", async () => {
+    instalarBackendFalso({ "GET /api/v1/tax-concepts": pagina([]) });
 
-    expect(antigua.calculationType).toBeUndefined();
-    // Pero sí queda registrado qué se cambió y quién.
-    expect(antigua.note).toBeTruthy();
-    expect(antigua.user).toBeTruthy();
+    await expect(auditService.conceptDetail("NO_EXISTE")).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+describe("indicadores", () => {
+  it("se componen del resumen que publica el backend", async () => {
+    const backend = instalarBackendFalso({
+      "GET /api/v1/indicators/summary": {
+        collection: { paymentCount: 3, confirmedAmount: 260 },
+        debt: { openCount: 2, outstandingAmount: 160 },
+        delinquency: { overdueDebtCount: 1, overdueAmount: 80, overduePercentage: 50 },
+      },
+    });
+
+    const indicadores = await auditService.indicators({ from: "2026-09-01", to: "2026-09-30" });
+
+    expect(backend.llamadas[0].ruta).toBe("/api/v1/indicators/summary");
+    expect(indicadores.totalCollected).toBe(260);
+    // La deuda pendiente excluye la vencida, que se informa aparte.
+    expect(indicadores.pendingDebt).toBe(80);
+    expect(indicadores.overdueDebt).toBe(80);
+  });
+
+  it("devuelve ceros, no huecos, cuando el resumen viene vacío", async () => {
+    instalarBackendFalso({ "GET /api/v1/indicators/summary": {} });
+
+    const indicadores = await auditService.indicators();
+
+    expect(indicadores.totalCollected).toBe(0);
+    expect(indicadores.byConcept).toEqual([]);
   });
 });

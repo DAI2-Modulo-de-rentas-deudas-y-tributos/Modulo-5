@@ -1,210 +1,109 @@
-import { describe, expect, it } from "vitest";
-import {
-  creditBalanceService,
-  debtAdjustmentService,
-  debtService,
-  eventService,
-} from "./rentasService.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { creditBalanceService, debtAdjustmentService } from "./rentasService.js";
+import { instalarBackendFalso, pagina } from "../__tests__/fixtures/backendFalso.js";
 
 /**
- * Saldos a favor y ajustes manuales. En archivo propio: varias ramas amplían
- * `rentasService.test.js` y anexar al final del mismo archivo choca al mergear.
+ * Saldos a favor y ajustes de deuda.
+ *
+ * Cuánto se puede aplicar, quién autoriza y qué evento se publica lo resuelve el
+ * backend. Del cliente es evitar que la pantalla ofrezca algo imposible: las deudas
+ * que se listan para aplicar un saldo son las del mismo contribuyente, y un ajuste
+ * que no cambia nada no se manda.
  */
-describe("aplicación de saldo a favor", () => {
-  it("informa el saldo disponible del contribuyente", async () => {
-    const saldos = await creditBalanceService.list({ status: "ACTIVE" });
-    const saldo = saldos.find((c) => c.id === 200);
 
-    expect(saldo.remainingAmount).toBe(20000);
-    expect(saldo.taxpayerId).toBe(123);
-  });
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
-  it("sólo ofrece deudas del mismo contribuyente", async () => {
-    const deudas = await creditBalanceService.applicableDebts(200);
-
-    expect(deudas.length).toBeGreaterThan(0);
-    expect(deudas.every((d) => d.taxpayerId === 123 && d.outstandingAmount > 0)).toBe(true);
-  });
-
-  it("no aplica más que el saldo disponible", async () => {
-    await expect(
-      creditBalanceService.apply({ creditId: 200, debtId: 3200, amount: 50000 }),
-    ).rejects.toThrow(/saldo disponible/i);
-  });
-
-  it("no aplica a la deuda de otro contribuyente", async () => {
-    await expect(
-      creditBalanceService.apply({ creditId: 200, debtId: 3002, amount: 1000 }),
-    ).rejects.toThrow(/otro contribuyente/i);
-  });
-
-  it("aplica parcialmente sin generar un pago ni publicar paymentRegistered", async () => {
-    const antes = (await eventService.list({ eventType: "paymentRegistered" })).length;
-
-    const resultado = await creditBalanceService.apply({
-      creditId: 200,
-      debtId: 3200,
-      amount: 5000,
-      appliedBy: "mrivas",
+describe("aplicación de un saldo a favor", () => {
+  it("sólo ofrece deudas del contribuyente dueño del saldo", async () => {
+    const backend = instalarBackendFalso({
+      "GET /api/v1/credit-balances/{id}": { id: 7001, taxpayerId: 123, amount: 30000, status: "AVAILABLE" },
+      "GET /api/v1/taxpayers/{id}/debts": pagina([
+        { id: 3001, taxpayerId: 123, taxConceptId: 1, status: "PENDING", outstandingBalance: 85000, dueDate: "2026-09-30" },
+      ]),
     });
 
-    expect(resultado.appliedAmount).toBe(5000);
-    expect(resultado.credit.remainingAmount).toBe(15000);
-    expect(resultado.debt.outstandingAmount).toBe(80000);
-    expect(resultado.debtSettled).toBe(false);
+    const deudas = await creditBalanceService.applicableDebts(7001);
 
-    // El dinero ya se había registrado al generarse el saldo: no se cuenta dos veces.
-    const despues = (await eventService.list({ eventType: "paymentRegistered" })).length;
-    expect(despues).toBe(antes);
+    // Resuelve primero de quién es el saldo y recién entonces pide sus deudas.
+    expect(backend.llamadas[0].ruta).toBe("/api/v1/credit-balances/7001");
+    expect(backend.llamadas[1].ruta).toBe("/api/v1/taxpayers/123/debts");
+    expect(deudas).toHaveLength(1);
   });
 
-  it("al cancelar la deuda avisa al módulo de origen con debtSettled", async () => {
-    // La deuda 3003 viene de una infracción de M7 y le quedan 50000.
-    const credito = await creditBalanceService.list({ status: "ACTIVE" });
-    const disponible = credito.find((c) => c.id === 200).remainingAmount;
-
-    const resultado = await creditBalanceService.apply({
-      creditId: 200,
-      debtId: 3003,
-      amount: disponible,
-      appliedBy: "mrivas",
+  it("la aplicación viaja con la deuda y el importe elegidos", async () => {
+    const backend = instalarBackendFalso({
+      "POST /api/v1/credit-balances/{id}/applications": { id: 1, appliedAmount: 25000 },
     });
 
-    expect(resultado.debt.outstandingAmount).toBe(50000 - disponible);
-    // Todavía no se cancela: quedaba más deuda que saldo.
-    expect(resultado.debtSettled).toBe(false);
-    expect(resultado.credit.remainingAmount).toBe(0);
+    await creditBalanceService.apply({ creditId: 7001, debtId: 3001, amount: 25000, appliedBy: "mrivas" });
+
+    // El adaptador traduce la ruta heredada a la operación real del backend.
+    expect(backend.llamadas[0].ruta).toBe("/api/v1/credit-balances/7001/apply");
+    expect(backend.llamadas[0].cuerpo).toEqual({ debtId: 3001, amount: 25000 });
   });
 
-  it("un saldo consumido no se puede volver a aplicar", async () => {
-    await expect(
-      creditBalanceService.apply({ creditId: 200, debtId: 3003, amount: 100 }),
-    ).rejects.toThrow(/ya se consumió/i);
+  it("no inventa saldos cuando el contribuyente no tiene ninguno", async () => {
+    instalarBackendFalso({ "GET /api/v1/credit-balances": pagina([]) });
+
+    expect(await creditBalanceService.list({ taxpayerId: 123 })).toEqual([]);
   });
 });
 
-describe("ajuste manual de deuda", () => {
-  it("exige un motivo", async () => {
-    await expect(
-      debtAdjustmentService.request({ debtId: 3002, newAmount: 100000, reason: "" }),
-    ).rejects.toThrow(/motivo/i);
-  });
+describe("ajuste de deuda", () => {
+  const DEUDA = { id: 3001, outstandingBalance: 85000, dueDate: "2026-09-30", status: "PENDING" };
 
-  it("exige que algo cambie", async () => {
-    const deuda = (await debtService.list()).find((d) => d.id === 3002);
-    await expect(
-      debtAdjustmentService.request({
-        debtId: 3002,
-        newAmount: deuda.outstandingAmount,
-        newDueDate: deuda.dueDate,
-        reason: "Sin cambios",
-      }),
-    ).rejects.toThrow(/al menos un cambio/i);
-  });
-
-  it("la propuesta no toca la deuda hasta ejecutarse", async () => {
-    const antes = (await debtService.list()).find((d) => d.id === 3002).outstandingAmount;
-
-    const ajuste = await debtAdjustmentService.request({
-      debtId: 3002,
-      newAmount: 120000,
-      newDueDate: "2027-01-15",
-      reason: "Error en el importe informado por M4",
-      requestedBy: "mrivas",
+  it("manda una bonificación cuando el importe baja", async () => {
+    const backend = instalarBackendFalso({
+      "GET /api/v1/debts/{id}": DEUDA,
+      "POST /api/v1/adjustments": { id: 1, status: "PENDING" },
     });
 
-    expect(ajuste.status).toBe("PENDING_APPROVAL");
-    expect((await debtService.list()).find((d) => d.id === 3002).outstandingAmount).toBe(antes);
+    await debtAdjustmentService.request({ debtId: 3001, newAmount: 60000, reason: "Error de cálculo", requestedBy: "mrivas" });
+
+    const alta = backend.llamadas.find((l) => l.metodo === "POST");
+    expect(alta.cuerpo).toMatchObject({ debtId: 3001, type: "DISCOUNT", amount: 25000, reason: "Error de cálculo" });
   });
 
-  it("no admite dos ajustes en curso sobre la misma deuda", async () => {
-    await expect(
-      debtAdjustmentService.request({
-        debtId: 3002,
-        newAmount: 90000,
-        reason: "Otro más",
-        requestedBy: "mrivas",
-      }),
-    ).rejects.toThrow(/ya tiene un ajuste en curso/i);
-  });
-
-  it("sólo el Supervisor autoriza", async () => {
-    const ajuste = (await debtAdjustmentService.list({ status: "PENDING_APPROVAL" }))[0];
-    await expect(
-      debtAdjustmentService.resolve({
-        adjustmentId: ajuste.id,
-        status: "APPROVED",
-        resolvedBy: "mrivas",
-        resolverRole: "PERSONAL",
-      }),
-    ).rejects.toThrow(/sólo el supervisor/i);
-  });
-
-  it("no se puede ejecutar sin autorización", async () => {
-    const ajuste = (await debtAdjustmentService.list({ status: "PENDING_APPROVAL" }))[0];
-    await expect(
-      debtAdjustmentService.execute({ adjustmentId: ajuste.id, executedBy: "mrivas" }),
-    ).rejects.toThrow(/todavía no fue autorizado/i);
-  });
-
-  it("autorizar no aplica el cambio: son actos separados", async () => {
-    const ajuste = (await debtAdjustmentService.list({ status: "PENDING_APPROVAL" }))[0];
-
-    const autorizado = await debtAdjustmentService.resolve({
-      adjustmentId: ajuste.id,
-      status: "APPROVED",
-      resolvedBy: "jlopez",
-      resolverRole: "SUPERVISOR",
+  it("manda un recargo cuando el importe sube", async () => {
+    const backend = instalarBackendFalso({
+      "GET /api/v1/debts/{id}": DEUDA,
+      "POST /api/v1/adjustments": { id: 1, status: "PENDING" },
     });
 
-    expect(autorizado.status).toBe("APPROVED");
-    // La deuda sigue igual: falta ejecutarlo.
-    expect((await debtService.list()).find((d) => d.id === 3002).outstandingAmount).toBe(150000);
+    await debtAdjustmentService.request({ debtId: 3001, newAmount: 95000, reason: "Base corregida", requestedBy: "mrivas" });
+
+    const alta = backend.llamadas.find((l) => l.metodo === "POST");
+    expect(alta.cuerpo).toMatchObject({ type: "SURCHARGE", amount: 10000 });
   });
 
-  it("ejecutar aplica el importe y el vencimiento", async () => {
-    const ajuste = (await debtAdjustmentService.list({ status: "APPROVED" }))[0];
+  it("un ajuste que no cambia el importe no sale del cliente", async () => {
+    const backend = instalarBackendFalso({ "GET /api/v1/debts/{id}": DEUDA });
 
-    const { debt } = await debtAdjustmentService.execute({
-      adjustmentId: ajuste.id,
-      executedBy: "mrivas",
-    });
-
-    expect(debt.outstandingAmount).toBe(120000);
-    expect(debt.dueDate).toBe("2027-01-15");
-  });
-
-  it("la deuda ya informada a M8 comunica debtUpdated, no un overdueDebt nuevo", async () => {
-    // La deuda 3004 está informada a M8 (reportedToM8).
-    const ajuste = await debtAdjustmentService.request({
-      debtId: 3004,
-      newAmount: 25000,
-      reason: "Recargo mal calculado",
-      requestedBy: "mrivas",
-    });
-    await debtAdjustmentService.resolve({
-      adjustmentId: ajuste.id,
-      status: "APPROVED",
-      resolvedBy: "jlopez",
-      resolverRole: "SUPERVISOR",
-    });
-
-    const overdueAntes = (await eventService.list({ eventType: "overdueDebt" })).length;
-    await debtAdjustmentService.execute({ adjustmentId: ajuste.id, executedBy: "mrivas" });
-
-    const actualizaciones = await eventService.list({ eventType: "debtUpdated" });
-    const publicado = actualizaciones.find((e) => e.data?.debtId === 3004);
-    expect(publicado.data.previousAmount).toBe(30000);
-    expect(publicado.data.newAmount).toBe(25000);
-    expect(publicado.destinationModule).toBe("M8");
-
-    // No se republicó overdueDebt: se leería como una deuda distinta.
-    expect((await eventService.list({ eventType: "overdueDebt" })).length).toBe(overdueAntes);
-  });
-
-  it("no se ajusta una deuda ya cancelada", async () => {
     await expect(
-      debtAdjustmentService.request({ debtId: 3001, newAmount: 100, reason: "Tarde" }),
-    ).rejects.toThrow(/ya cancelada/i);
+      debtAdjustmentService.request({ debtId: 3001, newAmount: 85000, reason: "sin cambio", requestedBy: "mrivas" }),
+    ).rejects.toMatchObject({ status: 400 });
+    expect(backend.llamadas.some((l) => l.metodo === "POST")).toBe(false);
+  });
+
+  it("autorizar y rechazar son operaciones distintas", async () => {
+    const aprobar = instalarBackendFalso({ "POST /api/v1/adjustments/{id}/approve": { id: 1, status: "APPROVED" } });
+    await debtAdjustmentService.resolve({ adjustmentId: 1, status: "APPROVED", resolvedBy: "jlopez", resolverRole: "SUPERVISOR" });
+    expect(aprobar.llamadas[0].ruta).toBe("/api/v1/adjustments/1/approve");
+    vi.unstubAllGlobals();
+
+    const rechazar = instalarBackendFalso({ "POST /api/v1/adjustments/{id}/reject": { id: 1, status: "REJECTED" } });
+    await debtAdjustmentService.resolve({ adjustmentId: 1, status: "REJECTED", reason: "No corresponde", resolvedBy: "jlopez" });
+    expect(rechazar.llamadas[0].ruta).toBe("/api/v1/adjustments/1/reject");
+    expect(rechazar.llamadas[0].cuerpo).toEqual({ reason: "No corresponde" });
+  });
+
+  it("ejecutar sólo relee el ajuste: el backend ya lo aplicó al aprobarlo", async () => {
+    const backend = instalarBackendFalso({ "GET /api/v1/adjustments/{id}": { id: 1, status: "APPROVED" } });
+
+    await debtAdjustmentService.execute({ adjustmentId: 1, executedBy: "mrivas" });
+
+    expect(backend.llamadas).toEqual([{ metodo: "GET", ruta: "/api/v1/adjustments/1", cuerpo: null }]);
   });
 });

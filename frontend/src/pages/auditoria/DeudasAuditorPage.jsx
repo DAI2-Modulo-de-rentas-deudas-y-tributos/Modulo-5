@@ -8,13 +8,13 @@ import StatusBadge from "../../components/common/StatusBadge.jsx";
 import Alert from "../../components/ui/Alert.jsx";
 import useResource from "../../hooks/useResource.js";
 import { auditService } from "../../services/rentasService.js";
-import { conceptDefinitions } from "../../services/mockDb.js";
+import useTaxConcepts from "../../hooks/useTaxConcepts.js";
 import { formatCurrency, formatDate } from "../../lib/format.js";
 
-const CONCEPT_OPTIONS = conceptDefinitions.map((c) => ({ value: c.code, label: c.name }));
 
 /** Deudas vivas y saldadas, con su saldo y estado actual. */
 export default function DeudasAuditorPage() {
+  const { options: CONCEPT_OPTIONS } = useTaxConcepts();
   const navigate = useNavigate();
   const [filters, setFilters] = useState({
     taxpayer: "",

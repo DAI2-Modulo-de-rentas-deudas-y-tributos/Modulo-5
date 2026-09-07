@@ -293,6 +293,11 @@ function ProposeVersionModal({ concept, requestedBy, onClose, onDone }) {
 
   const guardar = async (enviar) => {
     setError(null);
+    // La vigencia se valida acá: mandar un rango imposible sólo gasta un viaje al backend.
+    if (!form.validFrom || !form.validUntil || form.validUntil <= form.validFrom) {
+      setError("La vigencia tiene que terminar después de empezar.");
+      return;
+    }
     setSubmitting(true);
     try {
       const version = await taxConfigService.proposeVersion({

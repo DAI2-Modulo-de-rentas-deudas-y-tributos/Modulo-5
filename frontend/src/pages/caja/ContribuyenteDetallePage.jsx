@@ -1,6 +1,5 @@
 import { useCallback, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Download } from "lucide-react";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
 import Card from "../../components/common/Card.jsx";
 import DataTable from "../../components/common/DataTable.jsx";
@@ -10,42 +9,22 @@ import Button from "../../components/common/Button.jsx";
 import Alert from "../../components/ui/Alert.jsx";
 import Spinner from "../../components/ui/Spinner.jsx";
 import ReceiptModal from "../../components/caja/ReceiptModal.jsx";
+import BillPdfDownload from "../../components/documentos/BillPdfDownload.jsx";
 import useResource from "../../hooks/useResource.js";
-import { billService, cashierService } from "../../services/rentasService.js";
+import { cashierService } from "../../services/rentasService.js";
 import { formatCurrency, formatDate, formatDateTime, labelFor } from "../../lib/format.js";
 
 /**
  * Ficha completa del contribuyente en ventanilla: deudas, pagos y boletas.
- * Desde acá el cajero puede cobrar una deuda o generarle la boleta al contribuyente.
+ * Desde acá el cajero puede cobrar una deuda o imprimir una boleta emitida por Rentas.
  */
 export default function ContribuyenteDetallePage() {
   const { taxpayerId } = useParams();
   const navigate = useNavigate();
 
   const loader = useCallback(() => cashierService.taxpayerFile(taxpayerId), [taxpayerId]);
-  const { data: file, loading, error, reload } = useResource(loader);
-
-  const [feedback, setFeedback] = useState(null);
-  const [issuingDebtId, setIssuingDebtId] = useState(null);
+  const { data: file, loading, error } = useResource(loader);
   const [receiptId, setReceiptId] = useState(null);
-
-  const issueBill = async (debt) => {
-    setIssuingDebtId(debt.id);
-    setFeedback(null);
-    try {
-      const bill = await billService.issue({ debtId: debt.id });
-      setFeedback({
-        variant: "success",
-        title: "Boleta generada",
-        message: `Boleta #${bill.id} por ${formatCurrency(bill.amount)} lista para imprimir.`,
-      });
-      reload();
-    } catch (caught) {
-      setFeedback({ variant: "error", title: "No se pudo generar la boleta", message: caught.message });
-    } finally {
-      setIssuingDebtId(null);
-    }
-  };
 
   const debtColumns = [
     { key: "id", header: "Deuda", render: (row) => <span className="tabular-nums">#{row.id}</span> },
@@ -63,16 +42,8 @@ export default function ContribuyenteDetallePage() {
       header: "",
       align: "right",
       render: (row) =>
-        row.outstandingAmount > 0 ? (
+        row.outstandingAmount > 0 && !row.inPaymentPlan && !["CANCELLED", "SETTLED"].includes(row.status) ? (
           <div className="flex justify-end gap-2">
-            <Button
-              size="sm"
-              variant="secondary"
-              loading={issuingDebtId === row.id}
-              onClick={() => issueBill(row)}
-            >
-              Generar boleta
-            </Button>
             <Button
               size="sm"
               variant="primary"
@@ -100,7 +71,7 @@ export default function ContribuyenteDetallePage() {
         row.debtId ? (
           <span className="tabular-nums text-neutral-600">Deuda #{row.debtId}</span>
         ) : (
-          <StatusBadge tone="warning" label="Sin imputar" />
+          <StatusBadge tone={row.allocationStatus === "UNALLOCATED" ? "warning" : "info"} label={row.allocationStatus === "UNALLOCATED" ? "Sin imputar" : "Consultar detalle en Rentas"} />
         ),
     },
     {
@@ -133,16 +104,7 @@ export default function ContribuyenteDetallePage() {
       key: "actions",
       header: "",
       align: "right",
-      render: (row) => (
-        <a
-          href={row.documentUrl}
-          title={row.documentUrl}
-          className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#0F2C59] transition-colors hover:text-[#D63031]"
-        >
-          <Download className="h-3.5 w-3.5" strokeWidth={2} />
-          PDF
-        </a>
-      ),
+      render: (row) => <BillPdfDownload billId={row.id} />,
     },
   ];
 
@@ -189,16 +151,6 @@ export default function ContribuyenteDetallePage() {
       homePath="/caja"
       homeLabel="Panel de caja"
     >
-      {feedback && (
-        <Alert
-          variant={feedback.variant}
-          title={feedback.title}
-          onDismiss={() => setFeedback(null)}
-        >
-          {feedback.message}
-        </Alert>
-      )}
-
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <StatTile
           label="Deuda total"

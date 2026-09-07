@@ -93,6 +93,16 @@ export const STATUS_LABELS = {
   HIGH: "Alta",
   MEDIUM: "Media",
   LOW: "Baja",
+  // Medios de pago y orígenes, con los valores del backend.
+  CASH: "Efectivo",
+  CARD: "Tarjeta",
+  TRANSFER: "Transferencia",
+  DIGITAL_WALLET: "Billetera virtual / QR",
+  CASHIER: "Ventanilla",
+  ELECTRONIC: "Electrónico",
+  EXTERNAL: "Externo",
+  LIQUIDATION: "Liquidación propia",
+  EXTERNAL_OBLIGATION: "Obligación externa",
   // Medios de pago de ventanilla.
   EFECTIVO: "Efectivo",
   TARJETA_DEBITO: "Tarjeta de débito",

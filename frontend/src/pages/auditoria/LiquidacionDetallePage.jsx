@@ -10,7 +10,7 @@ import FieldGrid from "../../components/auditoria/FieldGrid.jsx";
 import HistoryTimeline from "../../components/auditoria/HistoryTimeline.jsx";
 import useResource from "../../hooks/useResource.js";
 import { auditService } from "../../services/rentasService.js";
-import { MODULE_LABELS } from "../../services/mockDb.js";
+import { MODULE_LABELS } from "../../config/etiquetasModulos.js";
 import { formatCurrency, formatDate, formatPercentage } from "../../lib/format.js";
 
 /** Detalle de liquidación: el cálculo abierto y la traza hasta el evento de origen. */

@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "../App.jsx";
 import { PORTAL_MODULES } from "../config/portalModules.js";
+import { instalarBackendFalso } from "./fixtures/backendFalso.js";
 
 /**
  * Portal del contribuyente: el ciudadano entra a su propio legajo, consulta y puede
@@ -22,12 +23,14 @@ describe("portal del contribuyente", () => {
 
   beforeEach(() => {
     user = userEvent.setup();
+    instalarBackendFalso();
   });
 
   afterEach(() => {
     cleanup();
     sessionStorage.clear();
     window.history.pushState({}, "", "/");
+    vi.unstubAllGlobals();
   });
 
   it("abre la portada con el resumen de la cuenta", async () => {
@@ -44,7 +47,7 @@ describe("portal del contribuyente", () => {
     await loginAsContribuyente(user);
 
     expect(await screen.findByText(/^avisos$/i)).toBeDefined();
-    expect(screen.getByText(/tenés una deuda vencida|tenés \d+ deudas vencidas/i)).toBeDefined();
+    expect(screen.getAllByText(/tenés una deuda vencida|tenés \d+ deudas vencidas/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/tenés saldo a favor/i)).toBeDefined();
   });
 

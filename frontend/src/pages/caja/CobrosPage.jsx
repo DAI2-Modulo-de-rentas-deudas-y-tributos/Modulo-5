@@ -13,7 +13,7 @@ import StepIndicatorGeneric from "../../components/ui/StepIndicatorGeneric.jsx";
 import ReceiptCard, { printReceipt } from "../../components/caja/ReceiptCard.jsx";
 import useResource from "../../hooks/useResource.js";
 import { cashierService } from "../../services/rentasService.js";
-import { PAYMENT_METHODS } from "../../services/mockDb.js";
+import { PAYMENT_METHODS } from "../../config/catalogosDominio.js";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { formatCurrency, formatDate } from "../../lib/format.js";
 
@@ -103,7 +103,7 @@ export default function CobrosPage() {
       key: "amount",
       header: "Importe",
       align: "right",
-      render: (row) => formatCurrency(row.amount),
+      render: (row) => row.amount == null ? "Consultar deuda" : formatCurrency(row.amount),
     },
     { key: "status", header: "Estado", render: (row) => <StatusBadge status={row.status} /> },
   ];
@@ -197,7 +197,7 @@ export default function CobrosPage() {
             </div>
           )}
 
-          {context && (
+          {context && !loadingContext && !contextError && (
             <ChargeStep
               context={context}
               cashier={user.username}
@@ -214,7 +214,9 @@ export default function CobrosPage() {
             {receipt.receiptNumber} por {formatCurrency(receipt.amountPaid)}
             {receipt.settled
               ? " — la deuda quedó cancelada."
-              : ` — queda un saldo de ${formatCurrency(receipt.remainingBalance ?? 0)}.`}
+              : receipt.remainingBalance == null
+                ? " — no se pudo consultar el saldo actualizado. El pago ya está registrado."
+                : ` — queda un saldo de ${formatCurrency(receipt.remainingBalance)}.`}
           </Alert>
 
           <div className="flex items-center gap-2 text-emerald-600 no-print">
@@ -339,7 +341,7 @@ function ChargeStep({ context, cashier, onCharged, onCancel }) {
               </Alert>
             )}
 
-            {kind === "TAXPAYER" ? (
+            {kind === "TAXPAYER" || debts.length > 1 ? (
               <FormField
                 label="Deuda a cobrar"
                 name="debtId"
