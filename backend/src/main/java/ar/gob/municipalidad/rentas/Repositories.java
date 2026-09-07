@@ -59,7 +59,7 @@ interface ExternalObligationRepository extends FilteredRepository<ExternalObliga
     Page<ExternalObligation> findByStatus(ExternalObligationStatus status,Pageable pageable);
 }
 interface PaymentRepository extends FilteredRepository<Payment,Long> {
-    List<Payment> findByTaxpayerId(Long taxpayerId); Page<Payment> findByTaxpayerId(Long taxpayerId,Pageable pageable); Page<Payment> findByUnallocatedAmountGreaterThan(BigDecimal amount,Pageable pageable);
+    List<Payment> findByTaxpayerId(Long taxpayerId); Page<Payment> findByTaxpayerId(Long taxpayerId,Pageable pageable); Page<Payment> findByUnallocatedAmountGreaterThan(BigDecimal amount,Pageable pageable); Optional<Payment> findByIdempotencyKey(String idempotencyKey);
     @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select p from Payment p where p.id=:id") Optional<Payment> findByIdForUpdate(Long id);
     @Query("""
         select count(p.id) as paymentCount, coalesce(sum(p.amount),0) as confirmedAmount,
