@@ -87,7 +87,7 @@ class DomainFlowTests {
 
     @Test void approvedCurrentExemptionReducesLiquidation() {
         TaxpayerReference taxpayer=taxpayer("CIT-7"); TaxConcept concept=concept("EXEMPT",TaxConceptType.FEE,"M5"); activateFixed(concept.id,"100",true);
-        ExemptionRequest request=exemptionService.create(new ApiDtos.CreateExemptionRequest(taxpayer.id,concept.id,"Vulnerabilidad",new BigDecimal("50"),LocalDate.now(),LocalDate.now().plusYears(1)));
+        ExemptionRequest request=exemptionService.create(new ApiDtos.CreateExemptionRequest(taxpayer.id,concept.id,"Vulnerabilidad",new BigDecimal("50"),YearMonth.now().atDay(1),LocalDate.now().plusYears(1)));
         exemptionService.start(request.id); exemptionService.submit(request.id); exemptionService.approve(request.id);
         assertThat(liquidationService.preview(liquidation(taxpayer.id,concept.id)).finalAmount()).isEqualByComparingTo("50.00");
     }

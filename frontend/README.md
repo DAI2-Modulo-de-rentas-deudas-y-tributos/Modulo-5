@@ -39,14 +39,17 @@ npm test -- -t "cancela la deuda cuando el pago cubre el saldo"
 Copiar `.env.example` a `.env`:
 
 - `VITE_API_BASE_URL` — URL pública del backend. Ninguna variable `VITE_*` lleva secretos.
-- `VITE_USE_MOCKS` — `true` usa el dataset local de `src/services/mockDb.js`. Mientras el
-  backend no exista, la app funciona completa contra esos datos. Con el backend arriba,
-  poner `false`: las firmas de `src/services/rentasService.js` no cambian.
+- `VITE_USE_MOCKS` — `true` usa el dataset local de `src/services/mockDb.js` para
+  datos de negocio. Ausente o `false` (default del ejemplo full-stack) habla con
+  la API. No habilita usuarios hardcodeados.
+- `VITE_AUTH_MODE=mock` — el login siempre va a `POST /api/v1/dev-auth/login`.
+  Las cuentas viven en PostgreSQL (`demo_user`, hash BCrypt). Core/JWT sigue
+  pendiente.
 
-Usuarios del dataset de demostración: `mrivas` / `rentas123` (Personal de Rentas),
-`jlopez` / `rentas123` (Supervisor), `pcabrera` / `caja123` (Cajero),
-`acastro` / `audit123` (Auditor) y `jperez` / `ciudadano123` (Contribuyente). Cada rol
-entra al panel de su área y no ve la del otro.
+Para el stack local: `VITE_USE_MOCKS=false`, `VITE_AUTH_MODE=mock`,
+`VITE_DEV_IDENTITY_HEADERS=true` y backend con `RENTAS_SECURITY_DEV_MODE=true`.
+Crear usuarios con `POST /api/v1/dev-auth/users` (rol SUPERVISOR). No hay
+cuentas de prueba embebidas en la pantalla de ingreso.
 
 ## Estructura
 

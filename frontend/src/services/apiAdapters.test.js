@@ -241,6 +241,17 @@ describe("API client modes", () => {
     await expect(taxpayerService.getById(1)).rejects.toThrow("Failed to fetch");
   });
 
+  it("treats absent or false VITE_USE_MOCKS as real API data", async () => {
+    vi.stubEnv("VITE_USE_MOCKS", "");
+    expect((await import("./apiClient.js")).USE_MOCKS).toBe(false);
+    vi.resetModules();
+    vi.stubEnv("VITE_USE_MOCKS", "false");
+    expect((await import("./apiClient.js")).USE_MOCKS).toBe(false);
+    vi.resetModules();
+    vi.stubEnv("VITE_USE_MOCKS", "true");
+    expect((await import("./apiClient.js")).USE_MOCKS).toBe(true);
+  });
+
   it("authenticates against the backend when business API mode is active", async () => {
     vi.stubEnv("VITE_USE_MOCKS", "false");
     vi.stubEnv("VITE_AUTH_MODE", "mock");
@@ -250,6 +261,17 @@ describe("API client modes", () => {
     await expect(authService.login({ username: "integration.user", password: "clave-segura" }))
       .resolves.toMatchObject({ user: { fullName: "Integración", roleLabel: "Personal de Rentas", role: "PERSONAL", backendRole: "RENTAS", devAuthorities: ["RENTAS"] } });
     expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0][0]).toContain("/api/v1/dev-auth/login");
+  });
+
+  it("still authenticates against the backend when business mocks are enabled", async () => {
+    vi.stubEnv("VITE_USE_MOCKS", "true");
+    vi.stubEnv("VITE_AUTH_MODE", "mock");
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ token: "dev-session", user: { id: 44, username: "cursor.supervisor", displayName: "Cursor Supervisor", role: "SUPERVISOR", authorities: ["RENTAS", "SUPERVISOR"], active: true } }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { authService } = await import("./rentasService.js");
+    await expect(authService.login({ username: "cursor.supervisor", password: "clave-local-ok" }))
+      .resolves.toMatchObject({ user: { fullName: "Cursor Supervisor", role: "SUPERVISOR", backendRole: "SUPERVISOR" } });
     expect(fetchMock.mock.calls[0][0]).toContain("/api/v1/dev-auth/login");
   });
 

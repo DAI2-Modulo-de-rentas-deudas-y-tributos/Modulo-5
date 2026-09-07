@@ -10,8 +10,8 @@ Monorepo del módulo de Rentas, tributos, deudas y planes de pago.
 - `infra/`: infraestructura AWS administrada con Terraform.
 - `docs/`: arquitectura y decisiones técnicas.
 
-El modo full-stack usa PostgreSQL como fuente de verdad y no recurre al dataset
-frontend cuando `VITE_USE_MOCKS=false`.
+El modo full-stack usa PostgreSQL como fuente de verdad. `VITE_USE_MOCKS` es
+opt-in: sólo `true` activa el dataset frontend; ausente o `false` usa la API.
 
 ## Tecnologías acordadas
 
@@ -48,9 +48,11 @@ docker compose --profile application up --build
 ### Variables de entorno de integración
 
 - `VITE_API_BASE_URL`: URL pública del backend; no contiene secretos.
-- `VITE_USE_MOCKS`: `true` usa el dataset offline; `false` usa HTTP real.
-- `VITE_AUTH_MODE`: `mock` conserva el login demo; `core` queda reservado para el
-  contrato Core/JWT futuro.
+- `VITE_USE_MOCKS`: `true` usa el dataset offline de negocio; ausente o `false`
+  usa HTTP real. No controla el login.
+- `VITE_AUTH_MODE`: `mock` valida usuario/contraseña contra
+  `POST /api/v1/dev-auth/login` (PostgreSQL + BCrypt); `core` queda reservado
+  para el contrato Core/JWT futuro.
 - `VITE_DEV_IDENTITY_HEADERS`: envía `X-Dev-*` sólo con auth mock y habilitación
   explícita. Default `false`.
 - `RENTAS_SECURITY_DEV_MODE`: habilita el puente de identidad sólo para integración

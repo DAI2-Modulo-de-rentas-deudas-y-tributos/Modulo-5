@@ -4,6 +4,74 @@ Backend independiente en Spring Boot 3 y Java 17 para conceptos tributarios, liq
 
 Estado local: la API incluye operaciones de dominio, autenticación DEMO/DEV persistente, recargos, procesamiento de vencimientos y conciliación electrónica. Core/JWT productivo permanece **PENDIENTE**; la autenticación DEMO no lo reemplaza.
 
+## Docker en Windows, Linux y macOS (Intel o Apple Silicon)
+
+El Dockerfile usa `eclipse-temurin:17-jdk-jammy` y `17-jre-jammy`,
+con variantes nativas AMD64 y ARM64. Docker selecciona la arquitectura del equipo;
+no agregar `platform: linux/amd64` para un Mac con Apple Silicon.
+Se mantiene Java 17 y la ejecución con usuario sin privilegios.
+
+Con Docker Desktop iniciado, desde la raíz del repositorio (donde está
+`compose.yaml`), y con la configuración local de PostgreSQL ya preparada:
+
+```sh
+docker compose --profile application up -d --build postgres backend
+docker compose --profile application ps
+docker compose logs --tail=100 backend
+curl --fail http://localhost:8080/actuator/health
+```
+
+El healthcheck debe devolver `UP`. Si se configuró otro `BACKEND_PORT`,
+utilizar ese puerto. No hace falta instalar Java o Maven en el host para esta opción.
+La primera construcción descarga las imágenes y dependencias.
+No borrar volúmenes para resolver un problema de arquitectura o contraseña:
+una base ya inicializada conserva sus credenciales.
+
+Para ejecutar Maven directamente en macOS, con JDK 17 instalado, usar desde
+`backend/`: `sh ./mvnw spring-boot:run` (no `mvnw.cmd` ni `npm run dev`).
+Esta alternativa requiere configurar previamente la conexión a PostgreSQL.
+
+### Compañero con Mac (Apple Silicon o Intel)
+
+Requisitos: Docker Desktop, Git, y Node 20+ si el frontend corre fuera de Docker.
+
+Desde la raíz del repositorio, con Docker Desktop iniciado. Copiar `.env.example`
+a `.env` (no commitear el `.env` real) y poner `RENTAS_SECURITY_DEV_MODE=true`
+sólo en esa copia local:
+
+```sh
+docker compose --profile application up -d --build postgres backend
+```
+
+Frontend en otra terminal:
+
+```sh
+cd frontend
+cp .env.example .env
+npm install
+npm run dev
+```
+
+El `.env` de frontend de ejemplo full-stack usa:
+
+```text
+VITE_USE_MOCKS=false
+VITE_AUTH_MODE=mock
+VITE_DEV_IDENTITY_HEADERS=true
+VITE_API_BASE_URL=http://localhost:8080
+```
+
+Los usuarios se crean en PostgreSQL (`POST /api/v1/dev-auth/users` con identidad
+SUPERVISOR DEV). El login del frontend llama a `POST /api/v1/dev-auth/login`.
+No hay usuarios hardcodeados en el runtime del frontend.
+
+Arquitectura de las imágenes base: `eclipse-temurin:17-*-jammy` tiene manifest
+AMD64 y ARM64. En una PC AMD64 el build local no demuestra runtime ARM64:
+
+- `AMD64_LOCAL_BUILD` — se valida al construir en Windows/Linux AMD64.
+- `ARM64_BASE_IMAGES=SUPPORTED` — las bases oficiales incluyen linux/arm64.
+- `APPLE_SILICON_RUNTIME=REQUIRES_MAC_SMOKE` — falta una pasada en Mac.
+
 ## Requisitos y verificación
 
 - JDK 17.
@@ -40,7 +108,7 @@ docker compose up -d postgres
 O backend y base juntos:
 
 ```powershell
-docker compose --profile full up --build
+docker compose --profile application up -d --build postgres backend
 ```
 
 PostgreSQL y backend tienen healthchecks; el backend espera a que PostgreSQL esté saludable.

@@ -16,6 +16,26 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @ActiveProfiles("test") @SpringBootTest @AutoConfigureMockMvc @Transactional
 class SecurityTests {
+    @Test void borrarLiquidacionDevuelve405ConMetodosPermitidos() throws Exception {
+        mvc.perform(delete("/api/v1/liquidations/1").header("X-Dev-Roles","RENTAS"))
+            .andExpect(status().isMethodNotAllowed())
+            .andExpect(jsonPath("$.code").value("METHOD_NOT_ALLOWED"))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Allow",org.hamcrest.Matchers.containsString("GET")));
+    }
+
+    @Test void cabeceraIdempotenciaDevuelveElMismoPagoYRechazaOtroContenido() throws Exception {
+        TaxpayerReference t=new TaxpayerReference();t.taxpayerType=TaxpayerType.CITIZEN;t.externalId="QA-IDEM";t.displayName="QA";
+        t.externalStatus=TaxpayerStatus.ACTIVE;t.createdAt=t.updatedAt=OffsetDateTime.now();taxpayers.saveAndFlush(t);
+        String body="{\"taxpayerId\":"+t.id+",\"paymentMethod\":\"CASH\",\"amount\":10,\"allocations\":[]}";
+        var primero=mvc.perform(post("/api/v1/payments").header("X-Dev-Roles","RENTAS").header("Idempotency-Key","qa-http")
+            .contentType(MediaType.APPLICATION_JSON).content(body)).andExpect(status().isCreated()).andReturn();
+        long id=json.readTree(primero.getResponse().getContentAsString()).path("id").asLong();
+        mvc.perform(post("/api/v1/payments").header("X-Dev-Roles","RENTAS").header("Idempotency-Key","qa-http")
+            .contentType(MediaType.APPLICATION_JSON).content(body)).andExpect(status().isCreated()).andExpect(jsonPath("$.id").value(id));
+        mvc.perform(post("/api/v1/payments").header("X-Dev-Roles","RENTAS").header("Idempotency-Key","qa-http")
+            .contentType(MediaType.APPLICATION_JSON).content(body.replace("\"amount\":10","\"amount\":11")))
+            .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"));
+    }
     @Autowired MockMvc mvc; @Autowired TaxpayerRepository taxpayers; @Autowired BillRepository bills; @Autowired ObjectMapper json;
 
     @Test void auditorCannotWrite() throws Exception {

@@ -160,56 +160,13 @@ export const ORIGIN_TYPES = [
   { value: "TRAFFIC_INFRACTION", label: "Infracción de tránsito (M7)" },
 ];
 
-export const USERS = [
-  {
-    id: 1,
-    username: "mrivas",
-    password: "rentas123",
-    fullName: "Mariana Rivas",
-    role: "PERSONAL",
-    roleLabel: "Personal de Rentas",
-    email: "mrivas@rentas.ciudaduade.gob.ar",
-  },
-  {
-    id: 2,
-    username: "jlopez",
-    password: "rentas123",
-    fullName: "Julián López",
-    role: "SUPERVISOR",
-    roleLabel: "Supervisor de Rentas",
-    email: "jlopez@rentas.ciudaduade.gob.ar",
-  },
-  {
-    id: 3,
-    username: "pcabrera",
-    password: "caja123",
-    fullName: "Paula Cabrera",
-    role: "CAJERO",
-    roleLabel: "Cajero de Rentas",
-    email: "pcabrera@rentas.ciudaduade.gob.ar",
-    /** Puesto de atención al que se imputan los cobros de la jornada. */
-    counter: "Caja 3 — Sede Central",
-  },
-  {
-    id: 4,
-    username: "acastro",
-    password: "audit123",
-    fullName: "Ana Castro",
-    role: "AUDITOR",
-    roleLabel: "Auditor de Rentas",
-    email: "acastro@rentas.ciudaduade.gob.ar",
-  },
-  {
-    id: 5,
-    username: "jperez",
-    password: "ciudadano123",
-    fullName: "Juan Pérez",
-    role: "CONTRIBUYENTE",
-    roleLabel: "Contribuyente",
-    email: "juan.perez@mail.com",
-    /** Unica cuenta que no es de un agente municipal: mira su propio legajo. */
-    taxpayerId: 123,
-  },
+/** Nombres visibles en el dataset mock de caja. Sin contraseñas: el login no usa esto. */
+export const STAFF_DIRECTORY = [
+  { username: "mrivas", fullName: "Mariana Rivas" },
+  { username: "jlopez", fullName: "Julián López" },
+  { username: "pcabrera", fullName: "Paula Cabrera", counter: "Caja 3 — Sede Central" },
+  { username: "acastro", fullName: "Ana Castro" },
+  { username: "jperez", fullName: "Juan Pérez" },
 ];
 
 /**

@@ -95,33 +95,31 @@ const round2 = (value) => Math.round(value * 100) / 100;
 
 // ---------------------------------------------------------------- Autenticación
 
+const UI_ROLES = { RENTAS: "PERSONAL", SUPERVISOR: "SUPERVISOR", CASHIER: "CAJERO", AUDITOR: "AUDITOR", TAXPAYER: "CONTRIBUYENTE" };
+const ROLE_LABELS = { RENTAS: "Personal de Rentas", SUPERVISOR: "Supervisor de Rentas", CASHIER: "Cajero de Rentas", AUDITOR: "Auditor de Rentas", TAXPAYER: "Contribuyente" };
+
+function mapDemoAuthSession(result) {
+  return {
+    token: result.token,
+    user: {
+      ...result.user,
+      fullName: result.user.displayName,
+      roleLabel: ROLE_LABELS[result.user.role],
+      email: result.user.username,
+      backendRole: result.user.role,
+      devAuthorities: result.user.authorities,
+      role: UI_ROLES[result.user.role],
+    },
+  };
+}
+
 export const authService = {
   async login({ username, password }) {
     if (AUTH_MODE === "core") {
       throw new ApiError("La autenticación Core/JWT todavía no tiene un contrato integrado.", 503, null, "CORE_AUTH_PENDING");
     }
-    if (!USE_MOCKS) {
-      const result = await request("/api/v1/dev-auth/login", { method: "POST", body: { username, password } });
-      const UI_ROLES = { RENTAS: "PERSONAL", SUPERVISOR: "SUPERVISOR", CASHIER: "CAJERO", AUDITOR: "AUDITOR", TAXPAYER: "CONTRIBUYENTE" };
-      const ROLE_LABELS = { RENTAS: "Personal de Rentas", SUPERVISOR: "Supervisor de Rentas", CASHIER: "Cajero de Rentas", AUDITOR: "Auditor de Rentas", TAXPAYER: "Contribuyente" };
-      return {
-        token: result.token,
-        user: {
-          ...result.user,
-          fullName: result.user.displayName,
-          roleLabel: ROLE_LABELS[result.user.role],
-          email: result.user.username,
-          backendRole: result.user.role,
-          devAuthorities: result.user.authorities,
-          role: UI_ROLES[result.user.role],
-        },
-      };
-    }
-    await delay();
-    const user = db.USERS.find((u) => u.username === username.trim().toLowerCase() && u.password === password);
-    if (!user) throw new ApiError("Usuario o contraseña incorrectos.", 401);
-    const { password: _omit, ...profile } = user;
-    return { token: `mock.${btoa(user.username)}.token`, user: profile };
+    const result = await request("/api/v1/dev-auth/login", { method: "POST", body: { username, password } });
+    return mapDemoAuthSession(result);
   },
 
   async logout() {
@@ -2166,7 +2164,7 @@ function debtResult(debt) {
 function buildReceipt(payment, billId) {
   const debt = store.debts.find((d) => d.id === payment.debtId) ?? null;
   const taxpayer = taxpayerOf(payment.taxpayerId);
-  const cashier = db.USERS.find((u) => u.username === payment.registeredBy) ?? null;
+  const cashier = db.STAFF_DIRECTORY.find((u) => u.username === payment.registeredBy) ?? null;
   const bill = billId
     ? store.bills.find((b) => b.id === Number(billId))
     : store.bills.find((b) => b.debtId === payment.debtId);
@@ -2363,7 +2361,7 @@ export const cashierService = {
   async agents() {
     if (!USE_MOCKS) return request("/api/v1/cashier/agents");
     await delay(200);
-    return db.USERS.map((u) => ({ value: u.username, label: u.fullName }));
+    return db.STAFF_DIRECTORY.map((u) => ({ value: u.username, label: u.fullName }));
   },
 
   /** Resumen de la jornada del cajero: lo que muestra el panel de caja. */

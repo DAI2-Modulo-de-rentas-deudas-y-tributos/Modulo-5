@@ -2,14 +2,15 @@
  * Cliente HTTP del frontend de Rentas.
  *
  * La URL del backend llega siempre por variable de entorno (`VITE_API_BASE_URL`),
- * nunca hardcodeada. Mientras el backend no exista, `VITE_USE_MOCKS` mantiene la
- * app navegable contra el dataset local de `mockDb.js`.
+ * nunca hardcodeada. `VITE_USE_MOCKS=true` activa el dataset local de `mockDb.js`
+ * para datos de negocio. Ausente o `false` usa la API real. La autenticación no
+ * depende de esta bandera: va por `VITE_AUTH_MODE`.
  */
 import { adaptApiRequest, adaptApiResponse } from "./apiAdapters.js";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 
-export const USE_MOCKS = import.meta.env.VITE_USE_MOCKS !== "false";
+export const USE_MOCKS = import.meta.env.VITE_USE_MOCKS === "true";
 export const AUTH_MODE = import.meta.env.VITE_AUTH_MODE ?? "mock";
 export const DEV_IDENTITY_HEADERS = import.meta.env.VITE_DEV_IDENTITY_HEADERS === "true";
 

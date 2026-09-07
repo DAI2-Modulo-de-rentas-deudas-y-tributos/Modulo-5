@@ -45,7 +45,7 @@ Convenciones: `UI/API` indica que el caso está conectado desde la pantalla y ad
 
 ## Autenticación y autorización
 
-- En modo API, el login usa `POST /api/v1/dev-auth/login`; `db.USERS` queda limitado a `VITE_USE_MOCKS=true`.
+- En modo `VITE_AUTH_MODE=mock`, el login usa `POST /api/v1/dev-auth/login` aunque `VITE_USE_MOCKS=true`. No hay `db.USERS` con contraseñas en runtime.
 - Los usuarios demo se persisten con BCrypt y roles exactos `RENTAS`, `SUPERVISOR`, `CASHIER`, `AUDITOR` y `TAXPAYER`.
 - Los endpoints demo sólo existen con `rentas.security.dev-mode=true`, cuyo default es `false`.
 - La identidad que alimenta `X-Dev-*` proviene de la respuesta autenticada del backend. Un contribuyente no puede consultar recursos de otro (`403 FORBIDDEN_OWNERSHIP`).

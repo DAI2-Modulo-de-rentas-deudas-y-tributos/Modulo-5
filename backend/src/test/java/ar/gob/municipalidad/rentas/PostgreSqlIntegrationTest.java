@@ -47,6 +47,72 @@ import static org.assertj.core.api.Assertions.*;
 @Testcontainers(disabledWithoutDocker=true)
 @DirtiesContext(classMode=DirtiesContext.ClassMode.AFTER_CLASS)
 class PostgreSqlIntegrationTest {
+    @Autowired ExemptionService exenciones;
+    @Autowired AuditRepository auditoria;
+
+    @Test void pagosIdempotentesConcurrentesNoDuplicanEfectos() throws Exception {
+        authenticate();
+        Debt deuda=debt("IDEMPOTENCIA",null);
+        var solicitud=new ApiDtos.RegisterPaymentRequest(deuda.taxpayerId,PaymentMethod.CASH,new BigDecimal("120"),List.of(new ApiDtos.AllocationRequest(deuda.id,new BigDecimal("100"))));
+        String clave=UUID.randomUUID().toString();
+        var resultados=new java.util.concurrent.CopyOnWriteArrayList<Long>();
+        assertThat(runTogether(()->{resultados.add(payments.register(solicitud,clave).id);return null;},
+            ()->{resultados.add(payments.register(solicitud,clave).id);return null;})).containsOnlyNulls();
+        assertThat(resultados).hasSize(2);
+        assertThat(resultados.get(0)).isEqualTo(resultados.get(1));
+        assertThat(paymentRepository.findByTaxpayerId(deuda.taxpayerId)).hasSize(1);
+        Payment pago=paymentRepository.findById(resultados.get(0)).orElseThrow();
+        assertThat(pago.allocatedAmount).isEqualByComparingTo("100");
+        assertThat(pago.unallocatedAmount).isEqualByComparingTo("20");
+        assertThat(allocations.findByPaymentId(pago.id)).hasSize(1);
+        assertThat(creditRepository.findBySourcePaymentId(pago.id).orElseThrow().availableAmount).isEqualByComparingTo("20");
+        assertThat(debts.findById(deuda.id).orElseThrow().outstandingBalance).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from outbox_event where event_type='paymentRegistered' and aggregate_id=?",Long.class,pago.id.toString())).isEqualTo(1);
+        assertThat(auditoria.findByEntityTypeAndEntityIdOrderByOccurredAt("Payment",pago.id.toString())).hasSize(1);
+        var cambiado=new ApiDtos.RegisterPaymentRequest(deuda.taxpayerId,PaymentMethod.CASH,new BigDecimal("121"),solicitud.allocations());
+        assertThatThrownBy(()->payments.register(cambiado,clave)).isInstanceOfSatisfying(BusinessException.class,
+            ex->{assertThat(ex.status).isEqualTo(409);assertThat(ex.code).isEqualTo("IDEMPOTENCY_KEY_REUSED");});
+        assertThat(paymentRepository.findByTaxpayerId(deuda.taxpayerId)).hasSize(1);
+    }
+
+    @Test void claveDePagoSeRevierteConLaTransaccionYEsOpcional() {
+        authenticate();
+        Debt deuda=debt("IDEMPOTENCIA-ROLLBACK",null);
+        String clave=UUID.randomUUID().toString();
+        var invalida=new ApiDtos.RegisterPaymentRequest(deuda.taxpayerId,PaymentMethod.CASH,BigDecimal.TEN,List.of(new ApiDtos.AllocationRequest(-1L,BigDecimal.TEN)));
+        assertThatThrownBy(()->payments.register(invalida,clave)).isInstanceOf(BusinessException.class);
+        assertThat(paymentRepository.findByTaxpayerId(deuda.taxpayerId)).isEmpty();
+        var valida=new ApiDtos.RegisterPaymentRequest(deuda.taxpayerId,PaymentMethod.CASH,BigDecimal.TEN,List.of());
+        Payment pago=payments.register(valida,clave);
+        var equivalente=new ApiDtos.RegisterPaymentRequest(deuda.taxpayerId,PaymentMethod.CASH,new BigDecimal("10.00"),null);
+        assertThat(payments.register(equivalente,clave).id).isEqualTo(pago.id);
+        assertThat(payments.register(valida,(String)null).id).isNotEqualTo(payments.register(valida,(String)null).id);
+        assertThatThrownBy(()->payments.register(valida," ")).isInstanceOfSatisfying(BusinessException.class,ex->assertThat(ex.status).isEqualTo(400));
+        assertThatThrownBy(()->payments.register(valida,"x".repeat(129))).isInstanceOf(BusinessException.class);
+        Debt otra=debt("IDEMPOTENCIA-OTRO",null);
+        assertThat(payments.register(new ApiDtos.RegisterPaymentRequest(otra.taxpayerId,PaymentMethod.CASH,BigDecimal.TEN,List.of()),clave).id).isNotEqualTo(pago.id);
+    }
+
+    @Test void exencionUsaPeriodoFiscalYRegistraTodosLosPasos() {
+        authenticate();
+        Debt deuda=debt("EXENCION-FISCAL",null);
+        LocalDate inicio=YearMonth.now().atDay(1),fin=YearMonth.now().atEndOfMonth();
+        var solicitud=exenciones.create(new ApiDtos.CreateExemptionRequest(deuda.taxpayerId,deuda.taxConceptId,"Validación fiscal",new BigDecimal("100"),inicio,fin));
+        exenciones.start(solicitud.id);
+        exenciones.requestDocumentation(solicitud.id,"Presentar constancia");
+        exenciones.submitDocumentation(solicitud.id,new ApiDtos.SubmitDocumentationRequest("DOC-QA","CONSTANCIA","constancia.pdf"));
+        exenciones.submit(solicitud.id);
+        assertThat(auditoria.findByEntityTypeAndEntityIdOrderByOccurredAt("ExemptionRequest",solicitud.id.toString()))
+            .extracting(x->x.action).containsExactly("EXEMPTION_REQUESTED","EXEMPTION_REVIEW_STARTED",
+                "EXEMPTION_DOCUMENTATION_REQUESTED","EXEMPTION_DOCUMENTATION_SUBMITTED","EXEMPTION_SUBMITTED_FOR_RESOLUTION");
+        exenciones.approve(solicitud.id);
+        assertThat(liquidations.preview(new ApiDtos.LiquidationRequest(deuda.taxpayerId,deuda.taxConceptId,YearMonth.now().toString(),BigDecimal.ZERO,fin.plusMonths(3))).finalAmount()).isZero();
+        var futura=new ApiDtos.LiquidationRequest(deuda.taxpayerId,deuda.taxConceptId,YearMonth.now().plusYears(2).toString(),BigDecimal.ZERO,fin.plusYears(2));
+        assertThat(liquidations.create(futura).finalAmount).isEqualByComparingTo("100");
+        assertThat(liquidations.preview(new ApiDtos.LiquidationRequest(deuda.taxpayerId,deuda.taxConceptId,YearMonth.now().minusMonths(1).toString(),BigDecimal.ZERO,fin)).finalAmount()).isEqualByComparingTo("100");
+        assertThatThrownBy(()->liquidations.preview(new ApiDtos.LiquidationRequest(deuda.taxpayerId,deuda.taxConceptId,"2026-13",BigDecimal.ZERO,fin)))
+            .isInstanceOfSatisfying(BusinessException.class,ex->assertThat(ex.status).isEqualTo(400));
+    }
     @Container static final PostgreSQLContainer<?> POSTGRES=new PostgreSQLContainer<>("postgres:17-alpine");
     @DynamicPropertySource static void database(DynamicPropertyRegistry registry){
         registry.add("spring.datasource.url",POSTGRES::getJdbcUrl);
@@ -95,8 +161,8 @@ class PostgreSqlIntegrationTest {
     @AfterEach void clearSecurity(){SecurityContextHolder.clearContext();}
 
     @Test void contextStartsAndFlywayAppliesEveryMigration(){
-        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(14);
-        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(14);
+        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(15);
+        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(15);
         assertThat(jdbc.queryForList("select code from tax_concept where code in ('TASA_SERVICIOS','ABL','PATENTE') order by code",String.class)).containsExactly("ABL","PATENTE","TASA_SERVICIOS");
     }
 

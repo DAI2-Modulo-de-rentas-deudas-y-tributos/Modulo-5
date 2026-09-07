@@ -170,6 +170,8 @@ class Debt {
 
 @Entity @Table(name="payment")
 class Payment {
+    @Column(name="idempotency_key",length=128) public String idempotencyKey;
+    @Column(name="idempotency_fingerprint",length=64) public String idempotencyFingerprint;
     @Id @GeneratedValue(strategy=GenerationType.IDENTITY) public Long id;
     @Column(name="taxpayer_id",nullable=false) public Long taxpayerId;
     @Column(name="bill_id") public Long billId;
