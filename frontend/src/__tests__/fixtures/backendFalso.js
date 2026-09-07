@@ -49,7 +49,7 @@ const COLECCIONES = [
   [/^\/api\/v1\/tickets$/, () => datos.TICKETS],
   [/^\/api\/v1\/integrations\/events$/, () => datos.EVENTOS],
   [/^\/api\/v1\/audit$/, () => datos.AUDITORIA],
-  [/^\/api\/v1\/adjustments$/, () => []],
+  [/^\/api\/v1\/adjustments$/, () => datos.AJUSTES],
   [/^\/api\/v1\/payment-reversals$/, () => []],
   [/^\/api\/v1\/payment-allocations$/, () => []],
 ];
@@ -75,6 +75,7 @@ const RECURSOS = [
     totalOutstanding: datos.DEUDAS.filter((d) => String(d.taxpayerId) === id).reduce((a, d) => a + d.outstandingBalance, 0),
     overdueCount: datos.DEUDAS.filter((d) => String(d.taxpayerId) === id && d.overdue).length,
   })],
+  [/^\/api\/v1\/adjustments\/(\d+)$/, ([id]) => porId(datos.AJUSTES, id)],
   [/^\/api\/v1\/debts\/(\d+)$/, ([id]) => porId(datos.DEUDAS, id)],
   [/^\/api\/v1\/bills\/(\d+)$/, ([id]) => porId(datos.BOLETAS, id)],
   [/^\/api\/v1\/payments\/(\d+)$/, ([id]) => porId(datos.PAGOS, id)],

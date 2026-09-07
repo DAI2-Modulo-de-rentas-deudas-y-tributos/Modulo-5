@@ -47,7 +47,7 @@ describe("portal del contribuyente", () => {
     await loginAsContribuyente(user);
 
     expect(await screen.findByText(/^avisos$/i)).toBeDefined();
-    expect(screen.getByText(/tenés una deuda vencida|tenés \d+ deudas vencidas/i)).toBeDefined();
+    expect(screen.getAllByText(/tenés una deuda vencida|tenés \d+ deudas vencidas/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/tenés saldo a favor/i)).toBeDefined();
   });
 

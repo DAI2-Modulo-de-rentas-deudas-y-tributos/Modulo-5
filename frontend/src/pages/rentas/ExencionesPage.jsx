@@ -395,6 +395,12 @@ function WorkflowModal({ exemption, actor, onClose, onDone }) {
         onDone(resultado, `Se registraron ${files.length} archivo(s) de la solicitud #${exemption.requestId}.`);
         return;
       }
+      if (accion === "REQUIRE" && !note?.trim()) {
+        // Pedir documentación sin decir cuál deja al ciudadano sin saber qué presentar.
+        setError("Indicá qué documentación falta.");
+        setSubmitting(false);
+        return;
+      }
       const internalStatus = accion === "REQUIRE" ? "DOCUMENTATION_REQUIRED" : "PENDING_RESOLUTION";
       const resultado = await exemptionService.advanceWorkflow({
         requestId: exemption.requestId,

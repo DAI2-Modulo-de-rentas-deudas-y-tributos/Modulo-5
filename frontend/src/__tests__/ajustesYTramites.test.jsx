@@ -3,7 +3,7 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import App from "../App.jsx";
 import { ingresarComoAgente } from "./helpers/ingresar.js";
-import { instalarBackendFalso } from "./fixtures/backendFalso.js";
+import { instalarBackendFalso, pagina } from "./fixtures/backendFalso.js";
 
 /** Ajustes manuales, saldos a favor y el trámite de documentación, desde la pantalla. */
 async function entrar(user, usuario, modulo) {
@@ -93,16 +93,26 @@ describe("ajustes y saldos a favor", () => {
     expect(await screen.findByText(/espera al supervisor/i)).toBeDefined();
   });
 
-  it("el Supervisor autoriza, y recién ahí aparece Ejecutar", async () => {
+  it("el Supervisor autoriza y el backend aplica el ajuste", async () => {
+    // Autorizar y aplicar ocurren en la misma operación del backend: aprobado es aplicado.
+    let autorizado = false;
+    instalarBackendFalso({
+      "POST /api/v1/adjustments/{id}/approve": () => {
+        autorizado = true;
+        return { id: 4001, status: "APPROVED" };
+      },
+      "GET /api/v1/adjustments": () => pagina([
+        { id: 4001, debtId: 3001, type: "DISCOUNT", amount: 25000, reason: "Error en la base imponible", status: autorizado ? "APPROVED" : "PENDING_APPROVAL", requestedBy: "mrivas", requestedAt: "2026-08-26T09:00:00-03:00", previousDebtAmount: 85000, newDebtAmount: 60000 },
+      ]),
+    });
     await entrar(user, "jlopez", /ajustes y saldos/i);
 
     await user.click(await screen.findByRole("button", { name: /autorizar/i }));
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText(/autorizar no aplica el cambio/i)).toBeDefined();
     await user.click(within(dialog).getByRole("button", { name: /confirmar/i }));
 
     expect(await screen.findByText(/ajuste autorizado/i)).toBeDefined();
-    expect(await screen.findByRole("button", { name: /ejecutar/i })).toBeDefined();
+    expect(screen.queryByRole("button", { name: /^autorizar$/i })).toBeNull();
   });
 });
 
@@ -137,6 +147,17 @@ describe("trámite de documentación en exenciones", () => {
   });
 
   it("pide documentación y la solicitud queda marcada", async () => {
+    // Pedida la documentación, la solicitud pasa a esperarla y el listado lo refleja.
+    let pedida = false;
+    instalarBackendFalso({
+      "POST /api/v1/exemption-requests/{id}/request-documentation": () => {
+        pedida = true;
+        return { id: 600, status: "DOCUMENTATION_REQUIRED" };
+      },
+      "GET /api/v1/exemption-requests": () => pagina([
+        { id: 600, taxpayerId: 123, taxConceptId: 1, status: pedida ? "DOCUMENTATION_REQUIRED" : "PENDING", requestedPercentage: 100, reason: "Situación socioeconómica", requestedFrom: "2026-09-01", requestedUntil: "2027-08-31", requestedAt: "2026-08-18T10:00:00-03:00" },
+      ]),
+    });
     await entrar(user, "mrivas", /exenciones/i);
     await user.click((await screen.findAllByRole("button", { name: /trámite/i }))[0]);
 
@@ -164,18 +185,11 @@ describe("información recibida en tickets", () => {
     window.history.pushState({}, "", "/");
   });
 
-  it("marca en el listado los tickets con documentación adjunta", async () => {
+  it("no anuncia adjuntos que el backend no expone", async () => {
     await entrar(user, "mrivas", /tickets/i);
 
-    expect(await screen.findByText(/1 adjunto/i)).toBeDefined();
-  });
-
-  it("muestra la información y los archivos que mandó el ciudadano", async () => {
-    await entrar(user, "mrivas", /tickets/i);
-    await user.click((await screen.findAllByRole("button", { name: /cambiar estado/i }))[0]);
-
-    const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText(/información recibida del ciudadano/i)).toBeDefined();
-    expect(within(dialog).getByText(/comprobante-pago\.pdf/i)).toBeDefined();
+    // TicketResponse no tiene adjuntos: el listado no debe mostrar un contador inventado.
+    expect(await screen.findByRole("table")).toBeDefined();
+    expect(screen.queryByText(/adjunto\(s\)/i)).toBeNull();
   });
 });

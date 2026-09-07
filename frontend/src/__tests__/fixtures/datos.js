@@ -42,7 +42,7 @@ export const DEUDAS = [
   { id: 3001, taxpayerId: 123, taxConceptId: 1, liquidationId: 7001, originType: "LIQUIDATION", status: "PENDING", originalAmount: 85000, outstandingBalance: 85000, dueDate: "2026-09-30", overdue: false, createdAt: "2026-08-01T10:00:00-03:00" },
   { id: 3002, taxpayerId: 123, taxConceptId: 3, originType: "LIQUIDATION", status: "PENDING", originalAmount: 40000, outstandingBalance: 40000, dueDate: "2026-08-10", overdue: true, createdAt: "2026-07-01T10:00:00-03:00" },
   { id: 3003, taxpayerId: 78, taxConceptId: 2, liquidationId: 7002, originType: "LIQUIDATION", status: "PENDING", originalAmount: 35000, outstandingBalance: 35000, dueDate: "2026-09-15", overdue: false, createdAt: "2026-08-01T10:00:00-03:00" },
-  { id: 3200, taxpayerId: 123, taxConceptId: 1, originType: "EXTERNAL_OBLIGATION", status: "PENDING", originalAmount: 85000, outstandingBalance: 85000, dueDate: "2026-08-15", overdue: true, createdAt: "2026-07-15T10:00:00-03:00" },
+  { id: 3200, taxpayerId: 78, taxConceptId: 1, originType: "EXTERNAL_OBLIGATION", status: "PENDING", originalAmount: 85000, outstandingBalance: 85000, dueDate: "2026-08-15", overdue: true, createdAt: "2026-07-15T10:00:00-03:00" },
 ];
 
 export const BOLETAS = [
@@ -69,6 +69,11 @@ export const PLANES = [
 
 export const SOLICITUDES_EXENCION = [
   { id: 600, taxpayerId: 123, taxConceptId: 1, status: "PENDING", requestedPercentage: 100, reason: "Situación socioeconómica", requestedFrom: "2026-09-01", requestedUntil: "2027-08-31", requestedAt: "2026-08-18T10:00:00-03:00" },
+];
+
+export const AJUSTES = [
+  // Propuesto por el analista y esperando al Supervisor: es lo que habilita Autorizar.
+  { id: 4001, debtId: 3001, type: "DISCOUNT", amount: 25000, reason: "Error en la base imponible", status: "PENDING_APPROVAL", requestedBy: "mrivas", requestedAt: "2026-08-26T09:00:00-03:00", previousDebtAmount: 85000, newDebtAmount: 60000 },
 ];
 
 export const TICKETS = [

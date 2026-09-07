@@ -478,10 +478,19 @@ export const creditBalanceService = {
    * disponible ni más que la deuda pendiente.
    */
   async apply({ creditId, debtId, amount, appliedBy }) {
-    return request(`/api/v1/credit-balances/${creditId}/applications`, {
+    const application = await request(`/api/v1/credit-balances/${creditId}/applications`, {
       method: "POST",
       body: { debtId, amount },
     });
+    // La respuesta confirma la aplicación pero no el saldo resultante: se relee la deuda
+    // para poder decir en qué quedó, en vez de mostrar el importe aplicado como si fuera el saldo.
+    const debt = await request(`/api/v1/debts/${debtId}`);
+    return {
+      ...application,
+      appliedAmount: application.amount ?? amount,
+      debt,
+      debtSettled: Number(debt.outstandingAmount) === 0,
+    };
   },
 };
 

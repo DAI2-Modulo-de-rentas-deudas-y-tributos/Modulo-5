@@ -265,7 +265,9 @@ function adaptRow(path, row) {
     const internalStatus = ({ PENDING: "PENDING_REVIEW", UNDER_REVIEW: "PENDING_REVIEW" })[row.status] ?? row.status;
     return { ...row, requestId: row.requestId ?? row.id, citizenId: row.taxpayerId, conceptId: row.taxConceptId, conceptCode: row.conceptCode ?? `#${row.taxConceptId}`, conceptName: row.conceptName ?? `Concepto #${row.taxConceptId}`, requestedPercentage: row.requestedPercentage ?? row.percentage, requestedFrom: row.requestedFrom ?? row.validFrom, requestedUntil: row.requestedUntil ?? row.validUntil, status: pending ? "REQUESTED" : row.status, internalStatus, attachments: row.attachments ?? [], hasSocialBenefit: row.hasSocialBenefit ?? false };
   }
-  if (path.includes("/tickets")) return { ...row, ticketId: row.id, citizenId: row.taxpayerId, subject: row.category };
+  // TicketResponse no expone adjuntos ni la información que el ciudadano adjuntó en M2:
+  // se representa como ausencia, no se inventa.
+  if (path.includes("/tickets")) return { ...row, ticketId: row.id, citizenId: row.taxpayerId, subject: row.category, attachments: row.attachments ?? [], additionalInformation: row.additionalInformation ?? null };
   if (path.includes("/integrations/events")) return { ...row, destinationModule: row.targetModule, attempts: row.retryCount, error: row.errorMessage ?? null, result: row.status === "DLQ" ? "FAILED" : "SUCCESS" };
   if (/^\/api\/v1\/audit(\/\d+)?$/.test(pathname)) return { ...row, username: row.userId, role: row.userRole, at: row.occurredAt, entity: { type: row.entityType, id: row.entityId }, result: "SUCCESS", before: comoObjeto(row.previousData), after: comoObjeto(row.newData), references: row.correlationId ? [row.correlationId] : [] };
   if (/^\/api\/v1\/taxpayers(?:\/\d+)?$/.test(pathname)) return { ...row, type: row.taxpayerType, documentType: row.dni ? "DNI" : "CUIT", document: row.dni ?? row.cuit, name: row.displayName };
