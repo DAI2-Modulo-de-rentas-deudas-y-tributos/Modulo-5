@@ -98,3 +98,17 @@ variable "database_secret_arn" {
   description = "Secreto de credenciales administrado por RDS."
   type        = string
 }
+
+variable "cors_allowed_origins" {
+  description = "Origenes HTTPS exactos autorizados para consumir la API desde un navegador."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for origin in var.cors_allowed_origins :
+      can(regex("^https://[^/]+$", origin)) && !strcontains(origin, "*")
+    ])
+    error_message = "cors_allowed_origins debe contener origenes HTTPS exactos, sin rutas ni comodines."
+  }
+}

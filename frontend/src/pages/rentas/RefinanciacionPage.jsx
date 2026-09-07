@@ -15,7 +15,7 @@ import { useAuth } from "../../context/AuthContext.jsx";
 import { formatCurrency, formatDate, formatPercentage } from "../../lib/format.js";
 
 /**
- * Refinanciación de planes incumplidos.
+ * Refinanciación de planes activos, según la configuración del backend.
  *
  * El plan viejo nunca se borra: al aprobarse queda como antecedente en estado
  * `REFINANCED`, enlazado con el que lo reemplaza. La solicitud y su evaluación son
@@ -145,7 +145,7 @@ export default function RefinanciacionPage() {
       label="Resoluciones"
       title="Refinanciación"
       highlight="de planes"
-      description="Rearmar un plan incumplido sobre su saldo vivo, conservando el original como antecedente."
+      description="Rearmar un plan activo sobre su saldo vivo, conservando el original como antecedente."
       breadcrumb={[{ id: "refinanciacion", label: "Refinanciación" }]}
     >
       {feedback && (
@@ -185,7 +185,7 @@ export default function RefinanciacionPage() {
           loading={loading}
           emptyIconName="CalendarClock"
           emptyTitle="Sin planes refinanciables"
-          emptyDescription="Ningún plan acumula cuotas vencidas suficientes."
+          emptyDescription="No hay planes activos que admitan refinanciación según su configuración."
         />
       </Card>
 

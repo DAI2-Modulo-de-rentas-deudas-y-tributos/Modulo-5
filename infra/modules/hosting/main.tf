@@ -6,7 +6,9 @@ resource "aws_amplify_app" "frontend" {
   enable_branch_auto_deletion = false
 
   environment_variables = {
-    VITE_API_BASE_URL = var.api_base_url
+    VITE_API_BASE_URL         = var.api_base_url
+    VITE_AUTH_MODE            = "mock"
+    VITE_DEV_IDENTITY_HEADERS = "true"
   }
 
   custom_rule {
@@ -31,6 +33,8 @@ resource "aws_amplify_branch" "develop" {
   enable_auto_build = false
 
   environment_variables = {
-    VITE_API_BASE_URL = var.api_base_url
+    VITE_API_BASE_URL         = var.api_base_url
+    VITE_AUTH_MODE            = "mock"
+    VITE_DEV_IDENTITY_HEADERS = "true"
   }
 }

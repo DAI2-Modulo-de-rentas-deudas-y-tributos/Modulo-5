@@ -46,7 +46,7 @@ export default function ReceiptCard({ receipt }) {
             }
           />
           <Line label="Concepto" value={receipt.conceptCode ?? "—"} />
-          <Line label="Deuda" value={receipt.debtId ? `#${receipt.debtId}` : "Sin imputar"} />
+          <Line label="Deuda" value={receipt.debtId ? `#${receipt.debtId}` : receipt.allocationStatus === "UNALLOCATED" ? "Sin imputar" : "Consultar detalle en Rentas"} />
           <Line label="Boleta" value={receipt.billId ? `#${receipt.billId}` : "—"} />
           <Line label="Medio de pago" value={labelFor(receipt.method)} />
           <Line label="Fecha y hora" value={formatDateTime(receipt.issuedAt)} />
@@ -74,7 +74,7 @@ export default function ReceiptCard({ receipt }) {
           <div className="text-right">
             <p className="text-[11px] text-neutral-400">Saldo restante</p>
             <p className="text-[15px] font-bold tabular-nums text-neutral-700">
-              {formatCurrency(receipt.remainingBalance ?? 0)}
+              {receipt.remainingBalance == null ? "No informado" : formatCurrency(receipt.remainingBalance)}
             </p>
           </div>
         </div>

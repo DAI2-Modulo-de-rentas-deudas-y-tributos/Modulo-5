@@ -19,7 +19,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @ActiveProfiles("test")
-@SpringBootTest
+@SpringBootTest(properties =
+    "spring.datasource.url=jdbc:h2:mem:m2-events;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE")
 @AutoConfigureMockMvc
 @Transactional
 class M2TicketEventTests {
@@ -81,7 +82,10 @@ class M2TicketEventTests {
 }
 
 @ActiveProfiles("test")
-@SpringBootTest(properties="rentas.security.dev-mode=false")
+@SpringBootTest(properties = {
+    "rentas.security.dev-mode=false",
+    "spring.datasource.url=jdbc:h2:mem:m2-events-disabled;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE"
+})
 class M2TicketEventSimulationDisabledTests {
     @Autowired ApplicationContext context;
 

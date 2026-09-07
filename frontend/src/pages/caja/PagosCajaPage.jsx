@@ -19,6 +19,7 @@ export default function PagosCajaPage() {
   const [filters, setFilters] = useState({ date: new Date().toISOString().slice(0, 10), status: "", registeredBy: "" });
   const [receiptId, setReceiptId] = useState(null);
   const [agents, setAgents] = useState([]);
+  const [agentsError, setAgentsError] = useState(null);
 
   const loader = useCallback(() => paymentService.list(filters), [filters]);
   const { data: payments, loading, error } = useResource(loader, []);
@@ -26,7 +27,9 @@ export default function PagosCajaPage() {
 
   useEffect(() => {
     let active = true;
-    cashierService.agents().then((list) => active && setAgents(list));
+    cashierService.agents()
+      .then((list) => active && setAgents(list))
+      .catch((failure) => active && setAgentsError(failure.message));
     return () => {
       active = false;
     };
@@ -100,6 +103,7 @@ export default function PagosCajaPage() {
           {error}
         </Alert>
       )}
+      {agentsError && <Alert variant="error" title="No pudimos cargar los responsables">{agentsError}</Alert>}
 
       <Card
         title="Pagos registrados"

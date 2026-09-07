@@ -10,8 +10,8 @@ Monorepo del módulo de Rentas, tributos, deudas y planes de pago.
 - `infra/`: infraestructura AWS administrada con Terraform.
 - `docs/`: arquitectura y decisiones técnicas.
 
-El modo full-stack usa PostgreSQL como fuente de verdad y no recurre al dataset
-frontend cuando `VITE_USE_MOCKS=false`.
+El modo full-stack usa PostgreSQL como fuente de verdad. El frontend no contiene
+un dataset alternativo de producción: todas las operaciones pasan por la API.
 
 ## Tecnologías acordadas
 
@@ -48,8 +48,7 @@ docker compose --profile application up --build
 ### Variables de entorno de integración
 
 - `VITE_API_BASE_URL`: URL pública del backend; no contiene secretos.
-- `VITE_USE_MOCKS`: `true` usa el dataset offline; `false` usa HTTP real.
-- `VITE_AUTH_MODE`: `mock` conserva el login demo; `core` queda reservado para el
+- `VITE_AUTH_MODE`: `mock` usa el login DEMO persistido por el backend; `core` queda reservado para el
   contrato Core/JWT futuro.
 - `VITE_DEV_IDENTITY_HEADERS`: envía `X-Dev-*` sólo con auth mock y habilitación
   explícita. Default `false`.
@@ -59,10 +58,11 @@ docker compose --profile application up --build
   junto con dev-mode, crea usuarios DEMO para los cinco roles. No tiene default y
   nunca debe guardarse en Git.
 
-Para datos reales con autenticación demo use `VITE_USE_MOCKS=false`,
-`VITE_AUTH_MODE=mock`, `VITE_DEV_IDENTITY_HEADERS=true` y
+Para datos reales con autenticación demo use `VITE_AUTH_MODE=mock`,
+`VITE_DEV_IDENTITY_HEADERS=true` y
 `RENTAS_SECURITY_DEV_MODE=true`. Con `VITE_API_BASE_URL` vacío, el proxy Vite
-enruta `/api` al backend local. CORS de deployment queda pendiente de la URL final.
+enruta `/api` al backend local. En DEV/TEST, Terraform inyecta en ECS el origen
+exacto de Amplify mediante `CORS_ALLOWED_ORIGINS`.
 
 La autenticación de ese modo se valida contra `demo_user` en PostgreSQL con BCrypt.
 No reemplaza Core/JWT: con dev-mode desactivado, `/api/v1/dev-auth/*` no está disponible.

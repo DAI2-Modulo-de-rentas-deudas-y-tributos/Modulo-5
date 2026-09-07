@@ -108,6 +108,8 @@ jobs:
         working-directory: frontend
         env:
           VITE_API_BASE_URL: ${{ steps.amplify.outputs.api-base-url }}
+          VITE_AUTH_MODE: mock
+          VITE_DEV_IDENTITY_HEADERS: "true"
         run: |
           npm ci
           npm run build
@@ -190,4 +192,3 @@ jobs:
             echo "- Job: \`${{ steps.deployment.outputs.job-id }}\`"
             echo "- Source commit: \`${{ steps.source.outputs.sha }}\`"
           } >> "${GITHUB_STEP_SUMMARY}"
-

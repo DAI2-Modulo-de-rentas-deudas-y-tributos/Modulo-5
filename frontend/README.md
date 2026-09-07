@@ -38,15 +38,16 @@ npm test -- -t "cancela la deuda cuando el pago cubre el saldo"
 
 Copiar `.env.example` a `.env`:
 
-- `VITE_API_BASE_URL` — URL pública del backend. Ninguna variable `VITE_*` lleva secretos.
-- `VITE_USE_MOCKS` — `true` usa el dataset local de `src/services/mockDb.js`. Mientras el
-  backend no exista, la app funciona completa contra esos datos. Con el backend arriba,
-  poner `false`: las firmas de `src/services/rentasService.js` no cambian.
+- `VITE_API_BASE_URL` — vacía en desarrollo local para usar el proxy de Vite;
+  en un build desplegado contiene el origen HTTPS del backend. Ninguna variable
+  `VITE_*` lleva secretos.
+- `VITE_AUTH_MODE` — `mock` usa la autenticación DEMO/DEV real del backend;
+  `core` queda reservado hasta integrar el contrato JWT.
+- `VITE_DEV_IDENTITY_HEADERS` — `true` sólo contra un backend con dev-mode habilitado.
 
-Usuarios del dataset de demostración: `mrivas` / `rentas123` (Personal de Rentas),
-`jlopez` / `rentas123` (Supervisor), `pcabrera` / `caja123` (Cajero),
-`acastro` / `audit123` (Auditor) y `jperez` / `ciudadano123` (Contribuyente). Cada rol
-entra al panel de su área y no ve la del otro.
+El frontend no incluye usuarios ni datos de negocio alternativos. Los usuarios DEMO
+se crean en PostgreSQL cuando el backend arranca con
+`RENTAS_DEMO_BOOTSTRAP_PASSWORD`; la contraseña se define fuera del repositorio.
 
 ## Estructura
 
@@ -64,7 +65,7 @@ src/
   config/workspaces.js  A qué panel entra cada rol
   context/              Sesión del agente municipal
   pages/                Login, y una página por módulo en pages/{rentas,caja,auditoria,portal}/
-  services/             Cliente HTTP, dataset de demostración y servicios de negocio
+  services/             Cliente HTTP, adaptadores del contrato y servicios de negocio
 ```
 
 Los gráficos de Indicadores son de una sola serie y usan `#2563A8` como relleno de
@@ -72,9 +73,8 @@ datos —un paso más claro del navy institucional, validado por contraste sobre
 mientras que `#0F2C59` queda para texto, que es su rol en el design system. Toda
 visualización ofrece además su vista de tabla.
 
-El comprobante de caja se imprime desde el navegador: `ReceiptCard` lleva la clase
-`print-area` y las reglas `@media print` de `src/index.css` dejan sólo el ticket en el
-papel. Cuando exista el backend, el PDF se generará ahí y se guardará en S3.
+El comprobante de caja se imprime desde el navegador y las boletas PDF se descargan
+desde el endpoint protegido del backend.
 
 ## Design system
 
