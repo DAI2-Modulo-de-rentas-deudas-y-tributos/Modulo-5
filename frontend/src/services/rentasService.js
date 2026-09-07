@@ -272,34 +272,28 @@ export const debtService = {
 
   async previewLateCharge(debtId, calculationDate) {
     return request(`/api/v1/debts/${debtId}/late-charge-preview`, { method: "POST", body: { calculationDate } });
-    throw new ApiError("La previsualización de recargos requiere el backend real.", 501, null, "REAL_BACKEND_REQUIRED");
   },
 
   async applyLateCharge(debtId, calculationDate) {
     return request(`/api/v1/debts/${debtId}/late-charges`, { method: "POST", body: { calculationDate } });
-    throw new ApiError("La aplicación de recargos requiere el backend real.", 501, null, "REAL_BACKEND_REQUIRED");
   },
 };
 
 export const administrationService = {
   async processDueDates(processingDate) {
     return request("/api/v1/administration/process-due-dates", { method: "POST", body: { processingDate } });
-    throw new ApiError("El procesamiento de vencimientos requiere el backend real.", 501, null, "REAL_BACKEND_REQUIRED");
   },
 };
 
 export const reconciliationService = {
   async importBatch(batchReference, items) {
     return request("/api/v1/payment-reconciliations/batches", { method: "POST", body: { batchReference, items } });
-    throw new ApiError("La conciliación requiere el backend real.", 501, null, "REAL_BACKEND_REQUIRED");
   },
   async observed() {
     return request("/api/v1/payment-reconciliations/observed?size=100");
-    return [];
   },
   async resolve(itemId, paymentId, reason) {
     return request(`/api/v1/payment-reconciliations/items/${itemId}/resolve`, { method: "POST", body: { paymentId, reason } });
-    throw new ApiError("La conciliación requiere el backend real.", 501, null, "REAL_BACKEND_REQUIRED");
   },
 };
 
