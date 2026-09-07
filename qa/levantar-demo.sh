@@ -15,9 +15,20 @@ done
 echo "PostgreSQL listo (localhost:5433)."
 
 echo "== 2/4 · Backend =="
-if curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/actuator/health 2>/dev/null | grep -q 200; then
-  echo "Backend ya estaba arriba."
+# No alcanza con mirar /actuator/health: otro proceso (ej. otro proyecto Spring Boot
+# tuyo) puede estar respondiendo 200 ahí en el mismo puerto 8080. Confirmamos que
+# es realmente M5 buscando un path exclusivo suyo en el OpenAPI.
+es_m5() {
+  curl -s http://localhost:8080/v3/api-docs 2>/dev/null | grep -q '"/api/v1/tax-concepts"'
+}
+if es_m5; then
+  echo "Backend ya estaba arriba (confirmado que es M5)."
 else
+  if curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/actuator/health 2>/dev/null | grep -q 200; then
+    echo "ERROR: el puerto 8080 ya lo tiene ocupado OTRO proceso (no es el backend de M5)."
+    echo "Frenalo antes de continuar, por ejemplo: lsof -nP -iTCP:8080 -sTCP:LISTEN"
+    exit 1
+  fi
   cd "$REPO_ROOT/backend"
   export DB_URL="jdbc:postgresql://localhost:5433/rentas"
   export DB_USER="rentas"
@@ -29,9 +40,14 @@ else
   disown
   echo "Arrancando backend (log: /tmp/m5-backend.log)..."
   for i in $(seq 1 40); do
-    curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/actuator/health 2>/dev/null | grep -q 200 && break
+    es_m5 && break
     sleep 2
   done
+  if ! es_m5; then
+    echo "ERROR: el backend no respondio a tiempo. Revisar /tmp/m5-backend.log"
+    echo "(si dice 'Unable to find a single main class ... candidates', borrar backend/target y reintentar)"
+    exit 1
+  fi
   cd "$REPO_ROOT"
 fi
 echo "Backend listo (http://localhost:8080/api/v1 · Swagger en /swagger-ui/index.html)."
