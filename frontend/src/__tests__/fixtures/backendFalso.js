@@ -36,7 +36,10 @@ const COLECCIONES = [
   [/^\/api\/v1\/liquidations$/, () => datos.LIQUIDACIONES],
   [/^\/api\/v1\/liquidation-runs$/, () => []],
   [/^\/api\/v1\/debts$/, () => datos.DEUDAS],
-  [/^\/api\/v1\/bills$/, () => datos.BOLETAS],
+  [/^\/api\/v1\/bills$/, (params) => {
+    const numero = params?.get("number") || params?.get("q");
+    return numero ? datos.BOLETAS.filter((x) => x.number === numero) : datos.BOLETAS;
+  }],
   [/^\/api\/v1\/payments$/, () => datos.PAGOS],
   [/^\/api\/v1\/credit-balances$/, () => datos.SALDOS],
   [/^\/api\/v1\/payment-plan-requests$/, () => datos.SOLICITUDES_PLAN],
@@ -75,6 +78,10 @@ const RECURSOS = [
   [/^\/api\/v1\/debts\/(\d+)$/, ([id]) => porId(datos.DEUDAS, id)],
   [/^\/api\/v1\/bills\/(\d+)$/, ([id]) => porId(datos.BOLETAS, id)],
   [/^\/api\/v1\/payments\/(\d+)$/, ([id]) => porId(datos.PAGOS, id)],
+  [/^\/api\/v1\/payments\/(\d+)\/receipt$/, ([id]) => {
+    const pago = porId(datos.PAGOS, id);
+    return pago && { receiptNumber: pago.receiptNumber, amount: pago.amount, paidAt: pago.paidAt, paymentId: pago.id };
+  }],
   [/^\/api\/v1\/liquidations\/(\d+)$/, ([id]) => porId(datos.LIQUIDACIONES, id)],
   [/^\/api\/v1\/tax-concepts\/(\d+)$/, ([id]) => porId(datos.CONCEPTOS, id)],
   [/^\/api\/v1\/tax-configurations\/(\d+)$/, ([id]) => porId(datos.CONFIGURACIONES, id)],
@@ -134,8 +141,9 @@ export function instalarBackendFalso(rutas = {}) {
           return valor === null ? problema(404, "NOT_FOUND", "No encontrado") : json(valor);
         }
       }
+      const consulta = new URL(String(url), "http://test.local").searchParams;
       for (const [expresion, resolver] of COLECCIONES) {
-        if (expresion.test(ruta)) return json(pagina(resolver()));
+        if (expresion.test(ruta)) return json(pagina(resolver(consulta)));
       }
       return json(pagina([]));
     }

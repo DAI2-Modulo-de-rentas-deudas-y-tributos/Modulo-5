@@ -45,8 +45,8 @@ export const DEUDAS = [
 ];
 
 export const BOLETAS = [
-  { id: 12001, number: "12001", taxpayerId: 123, debtId: 3001, status: "ISSUED", amount: 85000, issueDate: "2026-08-05", dueDate: "2026-09-30" },
-  { id: 12002, number: "12002", taxpayerId: 78, debtId: 3003, status: "ISSUED", amount: 35000, issueDate: "2026-08-05", dueDate: "2026-09-15" },
+  { id: 12001, number: "12001", taxpayerId: 123, status: "ISSUED", totalAmount: 85000, expired: false, issueDate: "2026-08-05", dueDate: "2026-09-30", debts: [{ debtId: 3001, amountAtIssue: 85000 }] },
+  { id: 12002, number: "12002", taxpayerId: 78, status: "ISSUED", totalAmount: 35000, expired: false, issueDate: "2026-08-05", dueDate: "2026-09-15", debts: [{ debtId: 3003, amountAtIssue: 35000 }] },
 ];
 
 export const PAGOS = [

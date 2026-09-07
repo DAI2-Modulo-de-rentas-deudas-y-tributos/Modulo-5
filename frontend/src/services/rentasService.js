@@ -759,7 +759,7 @@ export const cashierService = {
       bill = await request(`/api/v1/bills/${id}`);
       taxpayerId = bill.taxpayerId;
       if (bill.status !== "ISSUED") throw new ApiError("La boleta no admite pagos.", 409, null, "BILL_NOT_PAYABLE");
-      debts = await Promise.all(bill.debts.map((item) => request(`/api/v1/debts/${item.debtId}`)));
+      debts = await Promise.all((bill.debts ?? []).map((item) => request(`/api/v1/debts/${item.debtId}`)));
     } else if (kind === "TAXPAYER") {
       debts = await allPages(`/api/v1/taxpayers/${id}/debts`);
     } else {

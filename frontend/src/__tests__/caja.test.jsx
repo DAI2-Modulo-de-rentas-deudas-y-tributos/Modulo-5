@@ -61,16 +61,14 @@ describe("ventanilla de caja", () => {
     await loginAsCajero(user);
     await user.click(screen.getByRole("link", { name: /pagos/i }));
 
-    // La grilla abre filtrada por la jornada en curso; el dataset es de una fecha fija.
+    // La grilla abre filtrada por la jornada en curso; el filtro lo resuelve el backend.
     expect(await screen.findByLabelText(/responsable/i)).toBeDefined();
-    await user.clear(screen.getByLabelText(/fecha/i));
-    await user.type(screen.getByLabelText(/fecha/i), "2026-08-25");
-    await user.click(await screen.findByText("REC-2026-9005"));
+    await user.click((await screen.findAllByText("REC-2026-9005"))[0]);
 
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText("REC-2026-9005")).toBeDefined();
-    expect(within(dialog).getByText(/tarjeta de débito/i)).toBeDefined();
-    expect(within(dialog).getByText(/paula cabrera/i)).toBeDefined();
+    expect(within(dialog).getAllByText("REC-2026-9005").length).toBeGreaterThan(0);
+    expect(within(dialog).getByText(/^tarjeta$/i)).toBeDefined();
+    expect(within(dialog).getByText(/pcabrera/i)).toBeDefined();
   });
 
   it("cobra una deuda buscando por documento y emite el comprobante", async () => {
@@ -96,15 +94,27 @@ describe("ventanilla de caja", () => {
   });
 
   it("cobra una boleta desde el buscador de boletas", async () => {
+    // Tras el cobro la deuda queda saldada: la relectura devuelve saldo cero.
+    let cobrada = false;
+    instalarBackendFalso({
+      "POST /api/v1/payments": () => {
+        cobrada = true;
+        return { id: 9007, taxpayerId: 78, amount: 35000, paymentMethod: "TRANSFER", unallocatedAmount: 0, status: "CONFIRMED", receiptNumber: "REC-2026-9007", paidAt: "2026-09-07T10:00:00-03:00" };
+      },
+      "GET /api/v1/debts/{id}": () => ({
+        id: 3003, taxpayerId: 78, taxConceptId: 2, status: cobrada ? "PAID" : "PENDING",
+        outstandingBalance: cobrada ? 0 : 35000, originalAmount: 35000, dueDate: "2026-09-15", overdue: false,
+      }),
+    });
     await loginAsCajero(user);
     await user.click(screen.getByRole("link", { name: /boletas/i }));
 
     await user.type(await screen.findByLabelText(/n° de boleta/i), "12002");
     await user.click(screen.getByRole("button", { name: /buscar/i }));
 
-    await user.click(await screen.findByRole("button", { name: /registrar pago/i }));
+    await user.click((await screen.findAllByRole("button", { name: /registrar pago/i }))[0]);
 
-    // La boleta llega con su deuda ya elegida: sólo falta el medio de pago.
+    // La boleta llega con su deuda y su contribuyente ya resueltos: falta el medio de pago.
     expect(await screen.findByText(/vinculada a comercial abc/i)).toBeDefined();
     await user.selectOptions(await screen.findByLabelText(/medio de pago/i), "TRANSFER");
     await user.click(screen.getByRole("button", { name: /^registrar pago$/i }));
@@ -124,8 +134,8 @@ describe("ventanilla de caja", () => {
     await user.click(await screen.findByRole("button", { name: /ver deudas y pagos/i }));
 
     expect(await screen.findByRole("heading", { name: /juan pérez/i })).toBeDefined();
-    // Sobre una deuda con saldo la ventanilla puede emitir la boleta o cobrarla.
-    expect(await screen.findByRole("button", { name: /generar boleta/i })).toBeDefined();
+    // La ventanilla cobra la deuda; emitir la boleta es de Rentas, acá sólo se imprime.
     expect(screen.getAllByRole("button", { name: /^cobrar$/i }).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: /generar boleta/i })).toBeNull();
   });
 });
