@@ -39,12 +39,12 @@ describe("API adapters", () => {
   it("maps confirmed and unallocated payments", () => {
     const allocated = adaptApiResponse("x", "/api/v1/payments/1", { status: "CONFIRMED", paymentMethod: "CASH", origin: "CASHIER", amount: 100, unallocatedAmount: 0 });
     const credit = adaptApiResponse("x", "/api/v1/payments/2", { status: "CONFIRMED", paymentMethod: "CARD", origin: "CASHIER", amount: 120, unallocatedAmount: 20 });
-    expect(allocated).toMatchObject({ status: "REGISTERED", amountPaid: 100, method: "EFECTIVO", channel: "VENTANILLA" });
-    expect(credit).toMatchObject({ status: "UNALLOCATED", remainingBalance: 20, method: "TARJETA" });
+    expect(allocated).toMatchObject({ status: "REGISTERED", amountPaid: 100, method: "CASH", channel: "VENTANILLA" });
+    expect(credit).toMatchObject({ status: "UNALLOCATED", remainingBalance: 20, method: "CARD" });
   });
 
   it("maps real debt, plan, installment and exemption workflow enums", () => {
-    expect(adaptApiResponse("x", "/api/v1/debts/1", { originType: "LIQUIDATION", status: "PAID", outstandingBalance: 0 })).toMatchObject({ originType: "SETTLEMENT", status: "SETTLED" });
+    expect(adaptApiResponse("x", "/api/v1/debts/1", { originType: "LIQUIDATION", status: "PAID", outstandingBalance: 0 })).toMatchObject({ originType: "LIQUIDATION", status: "SETTLED" });
     expect(adaptApiResponse("x", "/api/v1/payment-plans/1", { id: 1, status: "ACTIVE" }).lifecycle).toBe("CURRENT");
     expect(adaptApiResponse("x", "/api/v1/payment-plans/1/installments", { id: 1, status: "PARTIALLY_PAID" }).status).toBe("PARTIAL");
     expect(adaptApiResponse("x", "/api/v1/exemption-requests/1", { id: 1, taxConceptId: 2, status: "PENDING" })).toMatchObject({ status: "REQUESTED", internalStatus: "PENDING_REVIEW", attachments: [] });
@@ -70,7 +70,7 @@ describe("API adapters", () => {
 
     expect(debts[0]).toMatchObject({ status: "SETTLED", outstandingAmount: 0, conceptName: "Concepto #2" });
     expect(Number.isInteger(debts[0].daysLeft)).toBe(true);
-    expect(payments[0]).toMatchObject({ status: "REGISTERED", amountPaid: 50, method: "EFECTIVO" });
+    expect(payments[0]).toMatchObject({ status: "REGISTERED", amountPaid: 50, method: "CASH" });
   });
 
   it("supplies safe collections for real payment plan request DTOs", () => {
@@ -128,7 +128,7 @@ describe("API adapters", () => {
   it("maps settlement and payment requests to real DTOs", () => {
     const liquidation = adaptApiRequest("/api/v1/settlements", { method: "POST", body: { taxpayerId: 1, conceptId: 2, period: "2026-09", amount: 50, dueDate: "2026-09-30" } });
     expect(liquidation).toMatchObject({ path: "/api/v1/liquidations", options: { body: { taxpayerId: 1, taxConceptId: 2, taxableBase: 50 } } });
-    const payment = adaptApiRequest("/api/v1/payments", { method: "POST", body: { taxpayerId: 1, debtId: 3, amountPaid: 100, method: "EFECTIVO" } });
+    const payment = adaptApiRequest("/api/v1/payments", { method: "POST", body: { taxpayerId: 1, debtId: 3, amountPaid: 100, method: "CASH" } });
     expect(payment.options.body).toMatchObject({ paymentMethod: "CASH", amount: 100, allocations: [{ debtId: 3, amount: 100 }] });
   });
 
@@ -269,5 +269,37 @@ describe("API client modes", () => {
     expect(result.planes).toBe(0);
     expect(result.exenciones).toBe(0);
     expect(result.planes + result.exenciones).toBe(0);
+  });
+});
+
+describe("enums del backend", () => {
+  it("no traduce los medios de pago ni el origen de la deuda", async () => {
+    const { enumMappings } = await import("./apiAdapters.js");
+    expect(enumMappings.METHOD_TO_API).toBeUndefined();
+    expect(enumMappings.METHOD_FROM_API).toBeUndefined();
+    expect(enumMappings.ORIGIN_FROM_API).toBeUndefined();
+  });
+
+  it("manda el medio de pago tal cual lo define el backend", () => {
+    const body = adaptApiRequest("/api/v1/payments", {
+      method: "POST",
+      body: { taxpayerId: 1, amount: 100, paymentMethod: "CARD", debtId: 5 },
+    });
+
+    expect(body.options.body.paymentMethod).toBe("CARD");
+  });
+
+  it("devuelve el medio de pago y el origen sin reetiquetar", () => {
+    const row = adaptApiResponse("/api/v1/payments", "/api/v1/payments", {
+      id: 1, taxpayerId: 2, amount: 100, paymentMethod: "CARD", unallocatedAmount: 0, status: "CONFIRMED",
+    });
+
+    expect(row.method).toBe("CARD");
+  });
+
+  it("no reescribe el filtro de origen de las deudas", () => {
+    const adapted = adaptApiRequest("/api/v1/debts?originType=LIQUIDATION", { method: "GET" });
+    expect(adapted.path).toContain("originType=LIQUIDATION");
+    expect(adapted.path).not.toContain("SETTLEMENT");
   });
 });

@@ -2,9 +2,6 @@
 const SIZE = "100";
 const CALC_TO_API = { PORCENTAJE: "PERCENTAGE", FIJO: "FIXED", IMPORTE_EXTERNO: "EXTERNAL" };
 const CALC_FROM_API = { PERCENTAGE: "PORCENTAJE", FIXED: "FIJO", EXTERNAL: "IMPORTE_EXTERNO" };
-const METHOD_TO_API = { EFECTIVO: "CASH", TARJETA: "CARD", TARJETA_DEBITO: "CARD", TARJETA_CREDITO: "CARD", TRANSFERENCIA: "TRANSFER", QR: "DIGITAL_WALLET" };
-const METHOD_FROM_API = { CASH: "EFECTIVO", CARD: "TARJETA", TRANSFER: "TRANSFERENCIA", DIGITAL_WALLET: "QR" };
-const ORIGIN_FROM_API = { LIQUIDATION: "SETTLEMENT" };
 const PAYMENT_ORIGIN_FROM_API = { CASHIER: "VENTANILLA", ELECTRONIC: "ELECTRONICO", EXTERNAL: "EXTERNO" };
 const PLAN_STATUS_FROM_API = { ACTIVE: "CURRENT", COMPLETED: "FULFILLED", EXPIRED: "DEFAULTED", REFINANCED: "REFINANCED", CANCELLED: "CANCELLED" };
 const INSTALLMENT_STATUS_FROM_API = { PENDING: "PENDING", PARTIALLY_PAID: "PARTIAL", OVERDUE: "OVERDUE", PAID: "SETTLED", CANCELLED: "CANCELLED" };
@@ -37,7 +34,6 @@ function qs(path, fields = {}) {
   Object.entries(fields).forEach(([from, to]) => { const value = source.get(from); if (value) target.set(to, value); });
   return target.toString();
 }
-const method = (value) => METHOD_TO_API[value] ?? value ?? "CASH";
 const adjustmentType = (value) => ({ BONIFICACION: "DISCOUNT", RECARGO: "SURCHARGE", INTERES: "INTEREST", CORRECCION: "CORRECTION" })[value] ?? value;
 
 export function adaptApiRequest(originalPath, options = {}) {
@@ -69,7 +65,6 @@ export function adaptApiRequest(originalPath, options = {}) {
   else if (path.startsWith("/api/v1/debts/report-overdue")) path = `/api/v1/debts?status=OVERDUE&size=${SIZE}`;
   else if (path.startsWith("/api/v1/debts?")) {
     path = `/api/v1/debts?${qs(path, { taxpayerId: "taxpayerId", status: "status", originType: "originType", from: "from", to: "to" })}`;
-    path = path.replace("originType=SETTLEMENT", "originType=LIQUIDATION");
   }
   else if (path.startsWith("/api/v1/debt-adjustments")) {
     if (path.endsWith("/execute")) requestMethod = "GET";
@@ -146,7 +141,7 @@ function taxConfigurationBody(body = {}) {
   };
 }
 
-function paymentBody(body) { const amount = body.amount ?? body.amountPaid; return { taxpayerId: body.taxpayerId, billId: body.billId ?? null, paymentMethod: method(body.paymentMethod ?? body.method), amount, allocations: body.allocations ?? (body.debtId ? [{ debtId: body.debtId, installmentId: null, amount }] : []) }; }
+function paymentBody(body) { const amount = body.amount ?? body.amountPaid; return { taxpayerId: body.taxpayerId, billId: body.billId ?? null, paymentMethod: body.paymentMethod ?? body.method, amount, allocations: body.allocations ?? (body.debtId ? [{ debtId: body.debtId, installmentId: null, amount }] : []) }; }
 function cashier(path, body) {
   if (path.startsWith("/api/v1/cashier/search")) return { path: `/api/v1/taxpayers?${qs(path, { query: "q" })}`, body };
   if (path.includes("/charge-context/")) { const [, kind, id] = path.match(/charge-context\/(\w+)\/(\d+)/); return { path: kind === "DEBT" ? `/api/v1/debts/${id}` : kind === "BILL" ? `/api/v1/bills/${id}` : `/api/v1/taxpayers/${id}`, body }; }
@@ -189,10 +184,10 @@ function adaptRow(path, row) {
   if (path.includes("/tax-concepts")) return { ...row, type: ({ FEE: "TASA", FINE: "MULTA", CHARGE: "CARGO" })[row.type] ?? row.type, status: row.active ? "ACTIVE" : "INACTIVE", versions: row.versions ?? [] };
   if (path.includes("/tax-configurations")) return { ...row, conceptId: row.taxConceptId, calculationType: CALC_FROM_API[row.calculationType] ?? row.calculationType };
   if (path.includes("/liquidations")) return { ...row, conceptId: row.taxConceptId, conceptName: row.conceptName ?? `Concepto #${row.taxConceptId}`, taxpayerName: row.taxpayerName ?? `Contribuyente #${row.taxpayerId}`, amount: row.finalAmount, createdAt: row.issuedAt, origin: row.origin ?? { module: "M5" } };
-  if (path.includes("/debts")) return { ...row, conceptId: row.taxConceptId, conceptCode: row.conceptCode ?? `#${row.taxConceptId}`, conceptName: row.conceptName ?? `Concepto #${row.taxConceptId}`, taxpayerName: row.taxpayerName ?? `Contribuyente #${row.taxpayerId}`, outstandingAmount: row.outstandingBalance, settlementId: row.liquidationId, originId: row.liquidationId ?? row.externalObligationId, originType: ORIGIN_FROM_API[row.originType] ?? row.originType, daysLeft: row.daysLeft ?? daysUntil(row.dueDate), status: row.status === "PAID" ? "SETTLED" : row.overdue && row.status !== "CANCELLED" ? "OVERDUE" : row.status };
+  if (path.includes("/debts")) return { ...row, conceptId: row.taxConceptId, conceptCode: row.conceptCode ?? `#${row.taxConceptId}`, conceptName: row.conceptName ?? `Concepto #${row.taxConceptId}`, taxpayerName: row.taxpayerName ?? `Contribuyente #${row.taxpayerId}`, outstandingAmount: row.outstandingBalance, settlementId: row.liquidationId, originId: row.liquidationId ?? row.externalObligationId, originType: row.originType, daysLeft: row.daysLeft ?? daysUntil(row.dueDate), status: row.status === "PAID" ? "SETTLED" : row.overdue && row.status !== "CANCELLED" ? "OVERDUE" : row.status };
   if (path.includes("/bills")) return { ...row, conceptName: row.conceptName ?? (row.debts?.[0]?.debtId ? `Deuda #${row.debts[0].debtId}` : "Boleta municipal"), amount: row.totalAmount, issuedAt: row.createdAt ?? row.issueDate, debtId: row.debts?.[0]?.debtId ?? null, daysLeft: row.daysLeft ?? daysUntil(row.dueDate), barcode: row.number, documentUrl: `/api/v1/bills/${row.id}/document` };
   if (path.includes("/allocations")) return row;
-  if (path.includes("/payments") && !path.includes("payment-plans")) return { ...row, taxpayerName: row.taxpayerName ?? `Contribuyente #${row.taxpayerId}`, amountPaid: row.amount, method: METHOD_FROM_API[row.paymentMethod] ?? row.paymentMethod, remainingBalance: row.unallocatedAmount, status: row.status === "REVERSED" ? "REVERSED" : Number(row.unallocatedAmount) > 0 ? "UNALLOCATED" : "REGISTERED", channel: PAYMENT_ORIGIN_FROM_API[row.origin] ?? row.origin };
+  if (path.includes("/payments") && !path.includes("payment-plans")) return { ...row, taxpayerName: row.taxpayerName ?? `Contribuyente #${row.taxpayerId}`, amountPaid: row.amount, method: row.paymentMethod, remainingBalance: row.unallocatedAmount, status: row.status === "REVERSED" ? "REVERSED" : Number(row.unallocatedAmount) > 0 ? "UNALLOCATED" : "REGISTERED", channel: PAYMENT_ORIGIN_FROM_API[row.origin] ?? row.origin };
   if (path.includes("/credit-balances")) return { ...row, amount: row.availableAmount };
   if (path.includes("/payment-plan-requests")) return { ...row, requestId: row.id, debtIds: row.debtIds ?? [], debts: row.debts ?? [], installments: row.requestedInstallments, totalDebt: row.totalDebt ?? row.totalDebtAtRequest, downPayment: row.downPayment ?? row.estimatedDownPayment ?? 0, totalAmount: row.estimatedTotalAmount, planId: row.paymentPlanId };
   if (path.includes("/payment-plans") && path.includes("/installments")) return { ...row, status: INSTALLMENT_STATUS_FROM_API[row.status] ?? row.status };
@@ -273,4 +268,4 @@ function cashierSummary(original, rows) {
   };
 }
 
-export const enumMappings = { CALC_TO_API, CALC_FROM_API, METHOD_TO_API, METHOD_FROM_API, ORIGIN_FROM_API, PAYMENT_ORIGIN_FROM_API, PLAN_STATUS_FROM_API, INSTALLMENT_STATUS_FROM_API };
+export const enumMappings = { CALC_TO_API, CALC_FROM_API, PAYMENT_ORIGIN_FROM_API, PLAN_STATUS_FROM_API, INSTALLMENT_STATUS_FROM_API };
