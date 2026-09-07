@@ -8,7 +8,7 @@ import StatusBadge from "../../components/common/StatusBadge.jsx";
 import Alert from "../../components/ui/Alert.jsx";
 import useResource from "../../hooks/useResource.js";
 import { auditService } from "../../services/rentasService.js";
-import { PAYMENT_METHODS } from "../../services/mockDb.js";
+import { PAYMENT_METHODS } from "../../config/catalogosDominio.js";
 import { formatCurrency, formatDate, formatDateTime, labelFor } from "../../lib/format.js";
 
 const TABS = [

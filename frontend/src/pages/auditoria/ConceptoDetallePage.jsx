@@ -11,7 +11,7 @@ import FieldGrid from "../../components/auditoria/FieldGrid.jsx";
 import useResource from "../../hooks/useResource.js";
 import { auditService } from "../../services/rentasService.js";
 import { formatCurrency, formatDate, formatPercentage, labelFor } from "../../lib/format.js";
-import { MODULE_LABELS } from "../../services/mockDb.js";
+import { MODULE_LABELS } from "../../config/etiquetasModulos.js";
 
 /** Ficha del concepto y sus versiones: permite auditar con qué regla se liquidó. */
 export default function ConceptoDetallePage() {

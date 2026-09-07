@@ -13,7 +13,7 @@ import StepIndicatorGeneric from "../../components/ui/StepIndicatorGeneric.jsx";
 import ReceiptCard, { printReceipt } from "../../components/caja/ReceiptCard.jsx";
 import useResource from "../../hooks/useResource.js";
 import { cashierService } from "../../services/rentasService.js";
-import { PAYMENT_METHODS } from "../../services/mockDb.js";
+import { PAYMENT_METHODS } from "../../config/catalogosDominio.js";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { formatCurrency, formatDate } from "../../lib/format.js";
 

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
 import Card from "../../components/common/Card.jsx";
 import DataTable from "../../components/common/DataTable.jsx";
@@ -10,7 +10,7 @@ import FormField from "../../components/ui/FormField.jsx";
 import useResource from "../../hooks/useResource.js";
 import useTaxpayerIndex from "../../hooks/useTaxpayerIndex.js";
 import { refinancingService } from "../../services/rentasService.js";
-import { REFINANCING_RULES } from "../../services/mockDb.js";
+import usePlanConfiguration from "../../hooks/usePlanConfiguration.js";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { formatCurrency, formatDate, formatPercentage } from "../../lib/format.js";
 
@@ -167,7 +167,7 @@ export default function RefinanciacionPage() {
 
       <Card
         title="Planes"
-        description={`Se puede refinanciar con ${REFINANCING_RULES.minimumOverdueInstallments} cuota vencida o más.`}
+        description="Sólo se listan los planes que el backend marca como refinanciables."
         actions={
           <Button
             size="sm"
@@ -251,11 +251,16 @@ export default function RefinanciacionPage() {
 
 /** Propone el nuevo plan sobre el saldo vivo, comparando alternativas de cuotas. */
 function ProposeModal({ plan, taxpayerName, requestedBy, onClose, onDone }) {
-  const [installments, setInstallments] = useState(REFINANCING_RULES.installmentChoices[0]);
+  const { installmentChoices, loading: cargandoConfig, error: errorConfig } = usePlanConfiguration();
+  const [installments, setInstallments] = useState(null);
   const [downPayment, setDownPayment] = useState("");
   const [note, setNote] = useState("");
   const [error, setError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (installments === null && installmentChoices.length > 0) setInstallments(installmentChoices[0]);
+  }, [installmentChoices, installments]);
 
   const anticipo = Number(downPayment) || 0;
   const valido = anticipo >= 0 && anticipo < plan.outstandingAmount;
@@ -263,7 +268,7 @@ function ProposeModal({ plan, taxpayerName, requestedBy, onClose, onDone }) {
   const alternativas = useMemo(
     () =>
       valido
-        ? REFINANCING_RULES.installmentChoices.map((n) =>
+        ? installmentChoices.map((n) =>
             refinancingService.simulate({
               outstandingAmount: plan.outstandingAmount,
               installments: n,

@@ -8,13 +8,14 @@ import StatusBadge from "../../components/common/StatusBadge.jsx";
 import Alert from "../../components/ui/Alert.jsx";
 import useResource from "../../hooks/useResource.js";
 import { auditService } from "../../services/rentasService.js";
-import { conceptDefinitions, MODULE_LABELS } from "../../services/mockDb.js";
+import useTaxConcepts from "../../hooks/useTaxConcepts.js";
+import { MODULE_LABELS } from "../../config/etiquetasModulos.js";
 import { formatCurrency } from "../../lib/format.js";
 
-const CONCEPT_OPTIONS = conceptDefinitions.map((c) => ({ value: c.code, label: c.name }));
 
 /** Liquidaciones emitidas: importe, estado y el evento externo que las originó. */
 export default function LiquidacionesAuditorPage() {
+  const { options: CONCEPT_OPTIONS } = useTaxConcepts();
   const navigate = useNavigate();
   const [filters, setFilters] = useState({
     taxpayer: "",

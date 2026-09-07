@@ -10,7 +10,7 @@ import FieldGrid from "../../components/auditoria/FieldGrid.jsx";
 import HistoryTimeline from "../../components/auditoria/HistoryTimeline.jsx";
 import useResource from "../../hooks/useResource.js";
 import { auditService } from "../../services/rentasService.js";
-import { MODULE_LABELS } from "../../services/mockDb.js";
+import { MODULE_LABELS } from "../../config/etiquetasModulos.js";
 import { formatDateTime } from "../../lib/format.js";
 
 /** Detalle del evento: el payload tal como llegó y qué produjo dentro de Rentas. */

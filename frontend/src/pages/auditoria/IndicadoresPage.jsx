@@ -9,10 +9,9 @@ import Spinner from "../../components/ui/Spinner.jsx";
 import BarChart from "../../components/auditoria/BarChart.jsx";
 import useResource from "../../hooks/useResource.js";
 import { auditService } from "../../services/rentasService.js";
-import { conceptDefinitions } from "../../services/mockDb.js";
+import useTaxConcepts from "../../hooks/useTaxConcepts.js";
 import { formatCompactCurrency, formatCurrency, formatPercentage } from "../../lib/format.js";
 
-const CONCEPT_OPTIONS = conceptDefinitions.map((c) => ({ value: c.code, label: c.name }));
 
 const MONTHS = [
   "ene", "feb", "mar", "abr", "may", "jun",
@@ -26,6 +25,7 @@ const periodLabel = (period) => {
 
 /** Indicadores del período. Cada tarjeta se abre para ver qué filas la componen. */
 export default function IndicadoresPage() {
+  const { options: CONCEPT_OPTIONS } = useTaxConcepts();
   const navigate = useNavigate();
   const [filters, setFilters] = useState({ from: "", to: "", conceptCode: "" });
 

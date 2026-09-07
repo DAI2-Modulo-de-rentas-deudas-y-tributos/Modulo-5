@@ -9,7 +9,6 @@ import ReceiptModal from "../../components/caja/ReceiptModal.jsx";
 import useResource from "../../hooks/useResource.js";
 import useTaxpayerIndex from "../../hooks/useTaxpayerIndex.js";
 import { cashierService, paymentService } from "../../services/rentasService.js";
-import { BUSINESS_DATE } from "../../services/mockDb.js";
 import { formatCurrency, formatDateTime, labelFor } from "../../lib/format.js";
 
 /**
@@ -17,7 +16,7 @@ import { formatCurrency, formatDateTime, labelFor } from "../../lib/format.js";
  * del cobro. Es una consulta: reversar un pago es atribución de Personal de Rentas.
  */
 export default function PagosCajaPage() {
-  const [filters, setFilters] = useState({ date: BUSINESS_DATE, status: "", registeredBy: "" });
+  const [filters, setFilters] = useState({ date: new Date().toISOString().slice(0, 10), status: "", registeredBy: "" });
   const [receiptId, setReceiptId] = useState(null);
   const [agents, setAgents] = useState([]);
 

@@ -58,8 +58,10 @@ describe("ventanilla de caja", () => {
     await loginAsCajero(user);
     await user.click(screen.getByRole("link", { name: /pagos/i }));
 
-    // La grilla abre filtrada por la jornada en curso.
+    // La grilla abre filtrada por la jornada en curso; el dataset es de una fecha fija.
     expect(await screen.findByLabelText(/responsable/i)).toBeDefined();
+    await user.clear(screen.getByLabelText(/fecha/i));
+    await user.type(screen.getByLabelText(/fecha/i), "2026-08-25");
     await user.click(await screen.findByText("REC-2026-9005"));
 
     const dialog = await screen.findByRole("dialog");
@@ -81,7 +83,7 @@ describe("ventanilla de caja", () => {
     // El paso de cobro muestra a quién se le cobra antes de pedir el medio de pago.
     const debtSelect = await screen.findByLabelText(/deuda a cobrar/i);
     await user.selectOptions(debtSelect, within(debtSelect).getAllByRole("option")[1]);
-    await user.selectOptions(screen.getByLabelText(/medio de pago/i), "EFECTIVO");
+    await user.selectOptions(screen.getByLabelText(/medio de pago/i), "CASH");
 
     await user.click(screen.getByRole("button", { name: /^registrar pago$/i }));
 
@@ -101,7 +103,7 @@ describe("ventanilla de caja", () => {
 
     // La boleta llega con su deuda ya elegida: sólo falta el medio de pago.
     expect(await screen.findByText(/vinculada a comercial abc/i)).toBeDefined();
-    await user.selectOptions(await screen.findByLabelText(/medio de pago/i), "TRANSFERENCIA");
+    await user.selectOptions(await screen.findByLabelText(/medio de pago/i), "TRANSFER");
     await user.click(screen.getByRole("button", { name: /^registrar pago$/i }));
 
     expect(await screen.findByText(/pago registrado correctamente/i)).toBeDefined();

@@ -12,10 +12,10 @@ import Alert from "../../components/ui/Alert.jsx";
 import useResource from "../../hooks/useResource.js";
 import useTaxpayerIndex from "../../hooks/useTaxpayerIndex.js";
 import { administrationService, debtService } from "../../services/rentasService.js";
-import { ORIGIN_TYPES } from "../../services/mockDb.js";
+import { DEBT_ORIGIN_TYPES } from "../../config/catalogosDominio.js";
 import { formatCurrency, formatDate, labelFor } from "../../lib/format.js";
 
-const ORIGIN_LABELS = Object.fromEntries(ORIGIN_TYPES.map((o) => [o.value, o.label]));
+const ORIGIN_LABELS = Object.fromEntries(DEBT_ORIGIN_TYPES.map((o) => [o.value, o.label]));
 
 /**
  * Deudas: originadas en liquidaciones propias o en eventos de otros módulos
@@ -195,7 +195,7 @@ export default function DeudasPage() {
                 { value: "SETTLED", label: labelFor("SETTLED") },
               ],
             },
-            { name: "originType", label: "Origen", options: ORIGIN_TYPES },
+            { name: "originType", label: "Origen", options: DEBT_ORIGIN_TYPES },
           ]}
           values={filters}
           onFilterChange={onFilterChange}
