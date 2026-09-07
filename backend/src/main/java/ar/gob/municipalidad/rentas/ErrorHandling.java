@@ -13,6 +13,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
@@ -49,6 +50,10 @@ class GlobalExceptionHandler {
     @ExceptionHandler(AccessDeniedException.class)
     ResponseEntity<ApiDtos.ErrorResponse> accessDenied(AccessDeniedException ex,HttpServletRequest request) {
         return response(403,"ACCESS_DENIED","No tiene permisos para realizar esta operación",request);
+    }
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    ResponseEntity<ApiDtos.ErrorResponse> methodNotAllowed(HttpRequestMethodNotSupportedException ex,HttpServletRequest request) {
+        return response(405,"METHOD_NOT_ALLOWED","El método HTTP no está permitido para este recurso",request);
     }
     @ExceptionHandler(Exception.class)
     ResponseEntity<ApiDtos.ErrorResponse> unexpected(Exception ex,HttpServletRequest request) {
