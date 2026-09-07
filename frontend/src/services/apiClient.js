@@ -2,14 +2,12 @@
  * Cliente HTTP del frontend de Rentas.
  *
  * La URL del backend llega siempre por variable de entorno (`VITE_API_BASE_URL`),
- * nunca hardcodeada. Mientras el backend no exista, `VITE_USE_MOCKS` mantiene la
- * app navegable contra el dataset local de `mockDb.js`.
+ * nunca hardcodeada. Toda la información proviene del backend: no hay dataset local.
  */
 import { adaptApiRequest, adaptApiResponse } from "./apiAdapters.js";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 
-export const USE_MOCKS = import.meta.env.VITE_USE_MOCKS !== "false";
 export const AUTH_MODE = import.meta.env.VITE_AUTH_MODE ?? "mock";
 export const DEV_IDENTITY_HEADERS = import.meta.env.VITE_DEV_IDENTITY_HEADERS === "true";
 
@@ -84,9 +82,3 @@ export async function request(path, { method = "GET", body, signal, responseType
   return adaptApiResponse(path, adapted.path, payload);
 }
 
-/** Simula la latencia de red para que los estados de carga se vean en modo mock. */
-export function delay(ms = 350) {
-  // En los tests la latencia simulada sólo agrega segundos al CI.
-  if (import.meta.env.MODE === "test") return Promise.resolve();
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
