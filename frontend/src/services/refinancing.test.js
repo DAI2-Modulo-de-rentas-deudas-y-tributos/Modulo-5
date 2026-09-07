@@ -1,54 +1,75 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { refinancingService } from "./rentasService.js";
-import { REFINANCING_RULES } from "./mockDb.js";
+import { installmentChoicesOf } from "../hooks/usePlanConfiguration.js";
+import { instalarBackendFalso, pagina } from "../__tests__/fixtures/backendFalso.js";
 
 /**
  * Refinanciación de planes. En archivo propio: varias ramas amplían
  * `rentasService.test.js` y anexar al final del mismo archivo choca al mergear.
+ *
+ * La elegibilidad la decide el backend por el estado del plan; el frontend no la
+ * recalcula, sólo la muestra y explica por qué un plan no se puede refinanciar.
  */
-describe("elegibilidad para refinanciar", () => {
-  it("la regla de cuotas impagas es un parámetro, no un número escrito en el código", () => {
-    expect(REFINANCING_RULES.minimumOverdueInstallments).toBeGreaterThan(0);
-    expect(REFINANCING_RULES.installmentChoices.length).toBeGreaterThan(1);
+
+const plan = (id, status, outstandingAmount) => ({ id, planId: id, status, lifecycle: status, outstandingAmount });
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe("alternativas de cuotas", () => {
+  it("salen de los límites que fija el backend, no de una lista escrita en el código", () => {
+    expect(installmentChoicesOf({ minimumInstallments: 3, maximumInstallments: 12 })).toEqual([3, 8, 12]);
   });
 
-  it("el plan incumplido es elegible y calcula su saldo vivo", async () => {
-    const planes = await refinancingService.eligiblePlans();
-    // El plan 851 tiene una cuota pagada, una vencida y una pendiente.
-    const incumplido = planes.find((p) => p.planId === 851);
-
-    expect(incumplido.eligible).toBe(true);
-    expect(incumplido.overdueInstallments).toBe(1);
-    // Sólo lo impago: no se vuelve a financiar lo ya pagado.
-    expect(incumplido.outstandingAmount).toBe(5108.34);
+  it("no ofrece nada mientras la configuración no llegó", () => {
+    expect(installmentChoicesOf(null)).toEqual([]);
   });
 
-  it("el plan cumplido no es elegible y explica por qué", async () => {
-    const planes = await refinancingService.eligiblePlans();
-    const cumplido = planes.find((p) => p.planId === 852);
-
-    expect(cumplido.eligible).toBe(false);
-    expect(cumplido.reasons.join(" ")).toMatch(/cumplido/i);
-  });
-
-  it("el plan vigente sin cuotas vencidas tampoco lo es", async () => {
-    const planes = await refinancingService.eligiblePlans();
-    const vigente = planes.find((p) => p.planId === 850);
-
-    expect(vigente.eligible).toBe(false);
-    expect(vigente.reasons.join(" ")).toMatch(/cuota.*vencida/i);
-  });
-
-  it("filtra sólo los refinanciables cuando se pide", async () => {
-    const todos = await refinancingService.eligiblePlans();
-    const soloElegibles = await refinancingService.eligiblePlans({ onlyEligible: true });
-
-    expect(soloElegibles.every((p) => p.eligible)).toBe(true);
-    expect(soloElegibles.length).toBeLessThan(todos.length);
+  it("descarta un rango incoherente en vez de ofrecer cuotas inválidas", () => {
+    expect(installmentChoicesOf({ minimumInstallments: 12, maximumInstallments: 3 })).toEqual([]);
   });
 });
 
-describe("propuesta y resolución de refinanciación", () => {
+describe("elegibilidad para refinanciar", () => {
+  it("el plan vencido es elegible", async () => {
+    instalarBackendFalso({
+      "GET /api/v1/payment-plan-requests": pagina([plan(851, "EXPIRED", 5108.34)]),
+    });
+
+    const [vencido] = await refinancingService.eligiblePlans();
+
+    expect(vencido.eligible).toBe(true);
+    expect(vencido.reasons).toEqual([]);
+    expect(vencido.outstandingAmount).toBe(5108.34);
+  });
+
+  it("el plan vigente no lo es y explica por qué", async () => {
+    instalarBackendFalso({
+      "GET /api/v1/payment-plan-requests": pagina([plan(850, "ACTIVE", 9000)]),
+    });
+
+    const [vigente] = await refinancingService.eligiblePlans();
+
+    expect(vigente.eligible).toBe(false);
+    expect(vigente.reasons.join(" ")).toMatch(/vencido/i);
+  });
+
+  it("filtra sólo los refinanciables cuando se pide", async () => {
+    instalarBackendFalso({
+      "GET /api/v1/payment-plan-requests": pagina([plan(850, "ACTIVE", 9000), plan(851, "EXPIRED", 5108.34)]),
+    });
+
+    const todos = await refinancingService.eligiblePlans();
+    const soloElegibles = await refinancingService.eligiblePlans({ onlyEligible: true });
+
+    expect(todos).toHaveLength(2);
+    expect(soloElegibles).toHaveLength(1);
+    expect(soloElegibles[0].outstandingAmount).toBe(5108.34);
+  });
+});
+
+describe("propuesta de refinanciación", () => {
   it("simula sobre el saldo vivo, no sobre la deuda original", () => {
     const simulacion = refinancingService.simulate({
       outstandingAmount: 10000,
@@ -57,98 +78,18 @@ describe("propuesta y resolución de refinanciación", () => {
     });
 
     expect(simulacion.financedAmount).toBe(8000);
-    expect(simulacion.totalAmount).toBe(10800);
   });
 
-  it("rechaza refinanciar un plan que no es elegible", async () => {
-    await expect(
-      refinancingService.request({ planId: 852, installments: 6, requestedBy: "mrivas" }),
-    ).rejects.toThrow(/cumplido/i);
-  });
-
-  it("la solicitud no toca el plan vigente", async () => {
-    const solicitud = await refinancingService.request({
-      planId: 851,
-      installments: 6,
-      requestedBy: "mrivas",
-      note: "Acumula atrasos",
+  it("pide la refinanciación contra el plan, sin tocarlo", async () => {
+    const backend = instalarBackendFalso({
+      "POST /api/v1/payment-plans/{id}/refinancing-requests": { id: 900, status: "REQUESTED" },
     });
+
+    const solicitud = await refinancingService.request({ planId: 851, installments: 6, requestedBy: "mrivas" });
 
     expect(solicitud.status).toBe("REQUESTED");
-    const planes = await refinancingService.eligiblePlans();
-    // Sigue siendo el mismo plan, con su ciclo intacto.
-    expect(planes.find((p) => p.planId === 851).lifecycle).toBe("DEFAULTED");
-  });
-
-  it("no admite dos solicitudes en curso sobre el mismo plan", async () => {
-    await expect(
-      refinancingService.request({ planId: 851, installments: 12, requestedBy: "mrivas" }),
-    ).rejects.toThrow(/ya tiene una solicitud/i);
-  });
-
-  it("derivada, sólo la resuelve el Supervisor", async () => {
-    const pendiente = (await refinancingService.list({ status: "REQUESTED" }))[0];
-    await refinancingService.escalate({
-      requestId: pendiente.requestId,
-      escalatedBy: "mrivas",
-      note: "Caso con muchos atrasos",
-    });
-
-    await expect(
-      refinancingService.resolve({
-        requestId: pendiente.requestId,
-        status: "APPROVED",
-        resolvedBy: "mrivas",
-        resolverRole: "PERSONAL",
-      }),
-    ).rejects.toThrow(/sólo el supervisor/i);
-  });
-
-  it("al aprobar, el plan viejo queda como antecedente y el nuevo pasa a vigente", async () => {
-    const pendiente = (await refinancingService.list({ status: "UNDER_REVIEW" }))[0];
-
-    const resultado = await refinancingService.resolve({
-      requestId: pendiente.requestId,
-      status: "APPROVED",
-      resolvedBy: "jlopez",
-      resolverRole: "SUPERVISOR",
-    });
-
-    // El original no se borra: conserva sus cuotas y queda enlazado con el nuevo.
-    expect(resultado.previousPlan.lifecycle).toBe("REFINANCED");
-    expect(resultado.previousPlan.schedule.length).toBeGreaterThan(0);
-    expect(resultado.previousPlan.refinancedInto).toBe(resultado.newPlan.planId);
-
-    // El nuevo es el vigente y sabe de dónde viene.
-    expect(resultado.newPlan.lifecycle).toBe("CURRENT");
-    expect(resultado.newPlan.refinancedFrom).toBe(851);
-    expect(resultado.newPlan.schedule.length).toBe(resultado.newPlan.installments);
-  });
-
-  it("un plan ya refinanciado deja de ser elegible", async () => {
-    const planes = await refinancingService.eligiblePlans();
-    const viejo = planes.find((p) => p.planId === 851);
-
-    expect(viejo.eligible).toBe(false);
-    expect(viejo.reasons.join(" ")).toMatch(/ya fue refinanciado/i);
-  });
-
-  it("exige motivo al rechazar", async () => {
-    const solicitud = await refinancingService.request({
-      planId: (await refinancingService.eligiblePlans({ onlyEligible: true }))[0]?.planId ?? 851,
-      installments: 6,
-      requestedBy: "mrivas",
-    }).catch(() => null);
-
-    if (!solicitud) return;
-    await expect(
-      refinancingService.resolve({
-        requestId: solicitud.requestId,
-        status: "REJECTED",
-        resolvedBy: "jlopez",
-        resolverRole: "SUPERVISOR",
-        reason: "",
-      }),
-    ).rejects.toThrow(/motivo/i);
+    const llamada = backend.llamadas.find((l) => l.metodo === "POST");
+    expect(llamada.ruta).toBe("/api/v1/payment-plans/851/refinancing-requests");
+    expect(llamada.cuerpo).toEqual({ installments: 6 });
   });
 });

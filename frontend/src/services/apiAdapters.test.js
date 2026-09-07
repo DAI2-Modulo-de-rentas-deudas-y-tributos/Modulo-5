@@ -216,14 +216,12 @@ describe("API client modes", () => {
   });
 
   it("preserves backend error code and trace id", async () => {
-    vi.stubEnv("VITE_USE_MOCKS", "false");
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: "INVALID", message: "Dato inválido", traceId: "trace-1" }), { status: 400, headers: { "content-type": "application/json" } })));
     const { request } = await import("./apiClient.js");
     await expect(request("/api/v1/health")).rejects.toMatchObject({ status: 400, code: "INVALID", traceId: "trace-1" });
   });
 
   it("uses fetch, not mockDb, for business data in API mode", async () => {
-    vi.stubEnv("VITE_USE_MOCKS", "false");
     vi.stubEnv("VITE_AUTH_MODE", "mock");
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 999, taxpayerType: "CITIZEN", dni: "1", displayName: "Dato API" }), { status: 200, headers: { "content-type": "application/json" } }));
     vi.stubGlobal("fetch", fetchMock);
@@ -234,7 +232,6 @@ describe("API client modes", () => {
   });
 
   it("does not fall back to mockDb when an API-mode request has a network error", async () => {
-    vi.stubEnv("VITE_USE_MOCKS", "false");
     vi.stubEnv("VITE_AUTH_MODE", "mock");
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
     const { taxpayerService } = await import("./rentasService.js");
@@ -242,7 +239,6 @@ describe("API client modes", () => {
   });
 
   it("authenticates against the backend when business API mode is active", async () => {
-    vi.stubEnv("VITE_USE_MOCKS", "false");
     vi.stubEnv("VITE_AUTH_MODE", "mock");
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ token: "dev-session", user: { id: 9, username: "integration.user", displayName: "Integración", role: "RENTAS", authorities: ["RENTAS"], active: true } }), { status: 200, headers: { "content-type": "application/json" } }));
     vi.stubGlobal("fetch", fetchMock);

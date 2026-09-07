@@ -149,7 +149,6 @@ describe("catálogo de conceptos del servicio", () => {
 
   it("consulta el catálogo real cuando no se usan mocks", async () => {
     vi.resetModules();
-    vi.stubEnv("VITE_USE_MOCKS", "false");
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
