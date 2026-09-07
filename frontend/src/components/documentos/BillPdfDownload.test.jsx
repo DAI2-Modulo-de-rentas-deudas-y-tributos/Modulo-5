@@ -2,11 +2,10 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import BillPdfDownload from "./BillPdfDownload.jsx";
 
-const api = vi.hoisted(() => ({ request: vi.fn(), mocks: false }));
-vi.mock("../../services/apiClient.js", () => ({ request: api.request, get USE_MOCKS() { return api.mocks; } }));
+const api = vi.hoisted(() => ({ request: vi.fn() }));
+vi.mock("../../services/apiClient.js", () => ({ request: api.request }));
 
 beforeEach(() => {
-  api.mocks = false;
   api.request.mockReset();
   vi.stubGlobal("URL", { createObjectURL: vi.fn(() => "blob:qa-pdf"), revokeObjectURL: vi.fn() });
 });
@@ -51,11 +50,3 @@ it("muestra el error y permite reintentar sin navegar", async () => {
   await waitFor(() => expect(api.request).toHaveBeenCalledTimes(2));
 });
 
-it("no intenta descargar referencias S3 ficticias en modo demo", () => {
-  api.mocks = true;
-  render(<BillPdfDownload billId={42} />);
-  const button = screen.getByRole("button", { name: "PDF" });
-  expect(button.disabled).toBe(true);
-  fireEvent.click(button);
-  expect(api.request).not.toHaveBeenCalled();
-});

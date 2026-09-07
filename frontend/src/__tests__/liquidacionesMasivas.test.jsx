@@ -58,34 +58,33 @@ describe("generación masiva de liquidaciones", () => {
     expect(await within(dialog).findByText(/formato aaaa-mm/i)).toBeDefined();
   });
 
-  it("muestra la previsualización con la cantidad y el descuento aplicado", async () => {
+  it("muestra la previsualización con la cantidad y el total", async () => {
     const dialog = await abrirGeneracionMasiva(user);
     await completarFormulario(user, dialog);
     await user.click(within(dialog).getByRole("button", { name: /previsualizar/i }));
 
     expect(await within(dialog).findByText("A generar")).toBeDefined();
     expect(within(dialog).getByText("Total a liquidar")).toBeDefined();
-    // El beneficio social de Juan Pérez se ve como descuento en su fila.
-    expect(within(dialog).getByText("50%")).toBeDefined();
   });
 
   it("informa los que quedan afuera y por qué", async () => {
     const dialog = await abrirGeneracionMasiva(user);
-    // 2026-08 ya tiene la liquidación 7001 de Juan Pérez.
+    // La corrida marca en ERROR a quien ya tiene liquidación del período.
+    instalarBackendFalso({
+      "POST /api/v1/liquidation-runs": { id: 55 },
+      "POST /api/v1/liquidation-runs/{id}/preview": {
+        run: { id: 55, estimatedTotalAmount: 20000 },
+        items: [
+          { id: 1, taxpayerId: 123, status: "PENDING", previewAmount: 20000 },
+          { id: 2, taxpayerId: 78, status: "ERROR", errorMessage: "Ya tiene la liquidación #7001 del período" },
+        ],
+      },
+    });
     await completarFormulario(user, dialog, { period: "2026-08" });
     await user.click(within(dialog).getByRole("button", { name: /previsualizar/i }));
 
     expect(await within(dialog).findByText(/quedan afuera del lote/i)).toBeDefined();
     expect(within(dialog).getByText(/ya tiene la liquidación #7001/i)).toBeDefined();
-  });
-
-  it("advierte sobre bloqueados y fallecidos sin excluirlos", async () => {
-    const dialog = await abrirGeneracionMasiva(user);
-    await completarFormulario(user, dialog);
-    await user.click(within(dialog).getByRole("button", { name: /previsualizar/i }));
-
-    expect(await within(dialog).findByText(/se generan con advertencia/i)).toBeDefined();
-    expect(within(dialog).getByText(/bloqueado en m1/i)).toBeDefined();
   });
 
   it("permite volver atrás para corregir los parámetros", async () => {
@@ -100,6 +99,16 @@ describe("generación masiva de liquidaciones", () => {
 
   it("genera el lote en borrador y lo informa", async () => {
     const dialog = await abrirGeneracionMasiva(user);
+    instalarBackendFalso({
+      "POST /api/v1/liquidation-runs": { id: 56 },
+      "POST /api/v1/liquidation-runs/{id}/preview": {
+        run: { id: 56, estimatedTotalAmount: 40000 },
+        items: [
+          { id: 1, taxpayerId: 123, status: "PENDING", previewAmount: 20000 },
+          { id: 2, taxpayerId: 78, status: "PENDING", previewAmount: 20000 },
+        ],
+      },
+    });
     await completarFormulario(user, dialog, { period: "2027-11" });
     await user.click(within(dialog).getByRole("button", { name: /previsualizar/i }));
 

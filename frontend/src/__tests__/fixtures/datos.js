@@ -23,6 +23,8 @@ export const CONFIGURACIONES = [
   { id: 9, taxConceptId: 1, version: 2, status: "SUPERSEDED", calculationType: null, rate: null, fixedAmount: null, minimumAmount: null, maximumAmount: null, validFrom: "2026-01-01", validUntil: "2026-06-30", createdBy: "mrivas" },
   { id: 10, taxConceptId: 1, version: 3, status: "ACTIVE", calculationType: "PERCENTAGE", rate: 2, fixedAmount: 0, minimumAmount: 20000, maximumAmount: 150000, validFrom: "2026-07-01", validUntil: "2026-12-31", createdBy: "mrivas" },
   { id: 11, taxConceptId: 2, version: 1, status: "ACTIVE", calculationType: "FIXED", rate: 0, fixedAmount: 35000, minimumAmount: 35000, maximumAmount: 35000, validFrom: "2026-01-01", validUntil: "2026-12-31", createdBy: "mrivas" },
+  // Espera al Supervisor: es lo que habilita el botón Evaluar.
+  { id: 13, taxConceptId: 2, version: 2, status: "PENDING_APPROVAL", calculationType: "FIXED", rate: 0, fixedAmount: 42000, minimumAmount: 42000, maximumAmount: 42000, validFrom: "2027-01-01", validUntil: "2027-12-31", createdBy: "mrivas" },
   { id: 12, taxConceptId: 3, version: 1, status: "ACTIVE", calculationType: "PERCENTAGE", rate: 3, fixedAmount: 0, minimumAmount: 10000, maximumAmount: 90000, validFrom: "2026-01-01", validUntil: "2026-12-31", createdBy: "mrivas" },
 ];
 

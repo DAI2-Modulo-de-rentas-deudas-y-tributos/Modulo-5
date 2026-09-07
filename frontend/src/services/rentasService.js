@@ -12,6 +12,44 @@ let sequence = 90000;
 /** Los importes se redondean a centavos: el dinero nunca se muestra con ruido binario. */
 const round2 = (value) => Math.round(value * 100) / 100;
 
+/** Las fichas y sus totales deben incluir todas las páginas del backend. */
+async function allPages(path) {
+  const url = new URL(path, "http://rentas.local");
+  url.searchParams.set("size", "100");
+  const rows = [];
+  for (let page = 0; ; page += 1) {
+    url.searchParams.set("page", String(page));
+    const result = await request(`${url.pathname}${url.search}`);
+    if (!Array.isArray(result)) throw new ApiError("El servidor devolvió una colección inválida.", 502);
+    rows.push(...result);
+    if (!result.page || result.page.last || page + 1 >= result.page.totalPages) return rows;
+    if (result.page.number !== page || result.length === 0) {
+      throw new ApiError("No se pudo completar la consulta paginada.", 502);
+    }
+  }
+}
+
+const openDebts = (debts) => debts.filter((debt) => Number(debt.outstandingAmount) > 0 && !["CANCELLED", "SETTLED"].includes(debt.status));
+const debtTotals = (debts) => {
+  const pending = openDebts(debts);
+  return {
+    pendingCount: pending.length,
+    outstanding: round2(pending.reduce((sum, debt) => sum + Number(debt.outstandingAmount), 0)),
+    overdue: round2(pending.filter((debt) => debt.overdue || debt.status === "OVERDUE").reduce((sum, debt) => sum + Number(debt.outstandingAmount), 0)),
+  };
+};
+
+const paymentReceipt = (payment, taxpayer) => ({
+  ...payment,
+  paymentId: payment.id,
+  taxpayer,
+  issuedAt: payment.paidAt,
+  cashier: payment.registeredBy ? { fullName: payment.registeredBy } : null,
+  // El importe sin imputar del pago no es el saldo de una deuda.
+  remainingBalance: null,
+  settled: false,
+});
+
 // ---------------------------------------------------------------- Autenticación
 
 export const authService = {
@@ -221,9 +259,18 @@ export const settlementService = {
       body: { taxConceptId: concept.id, period, dueDate, items: taxpayers.map((item) => ({ taxpayerId: item.id, taxableBase: Number(baseAmount) })) },
     });
     const preview = await request(`/api/v1/liquidation-runs/${run.id}/preview`, { method: "POST" });
-    const items = (preview.items ?? []).filter((item) => item.status !== "ERROR");
-    const errors = (preview.items ?? []).filter((item) => item.status === "ERROR");
-    return { ...preview, items, errors, warnings: [], totals: { toGenerate: items.length, skipped: errors.length, flagged: 0, amount: preview.run?.estimatedTotalAmount ?? 0, discounted: 0 } };
+    // El ítem de la corrida sólo trae taxpayerId y errorMessage: el nombre lo resuelve
+    // el padrón que ya se consultó para armarla.
+    const nombreDe = (taxpayerId) => taxpayers.find((t) => t.id === taxpayerId)?.name ?? `Contribuyente #${taxpayerId}`;
+    const filas = (preview.items ?? []).map((item) => ({
+      ...item,
+      taxpayerName: nombreDe(item.taxpayerId),
+      amount: item.previewAmount,
+      reason: item.errorMessage ?? item.errorCode ?? null,
+    }));
+    const items = filas.filter((item) => item.status !== "ERROR");
+    const errors = filas.filter((item) => item.status === "ERROR");
+    return { ...preview, items, errors, totals: { toGenerate: items.length, skipped: errors.length, amount: preview.run?.estimatedTotalAmount ?? 0 } };
   },
 
   /**
@@ -443,7 +490,7 @@ export const creditBalanceService = {
 export const paymentPlanService = {
   async list({ status = "", internalStatus = "" } = {}) {
     const params = new URLSearchParams({ status, internalStatus });
-    return request(`/api/v1/payment-plans?${params}`);
+    return request(`/api/v1/payment-plan-requests?${params}`);
   },
 
   /**
@@ -512,8 +559,17 @@ export const refinancingService = {
   /** Planes que el operador puede refinanciar, con el motivo cuando no se puede. */
   async eligiblePlans({ taxpayerId = "", onlyEligible = false } = {}) {
     const params = new URLSearchParams({ taxpayerId, size: "100" });
-    const plans = await request(`/api/v1/payment-plans?${params}`);
-    return plans.map((plan) => ({ ...plan, eligible: plan.status === "EXPIRED", reasons: plan.status === "EXPIRED" ? [] : ["El backend sólo admite refinanciar planes vencidos."], outstandingAmount: plan.outstandingAmount })).filter((plan) => !onlyEligible || plan.eligible);
+    const plans = await allPages(`/api/v1/payment-plans?${params}`);
+    const configurationIds = [...new Set(plans.filter((plan) => plan.status === "ACTIVE").map((plan) => plan.configurationId))];
+    const configurations = new Map(await Promise.all(configurationIds.map(async (id) => [id, await request(`/api/v1/payment-plan-configurations/${id}`)])));
+    return plans.map((plan) => {
+      const configuration = configurations.get(plan.configurationId);
+      const reasons = [];
+      if (plan.status !== "ACTIVE") reasons.push("El backend sólo admite refinanciar planes activos.");
+      else if (!configuration.refinancingAllowed) reasons.push("La configuración de este plan no permite refinanciar.");
+      else if (plan.refinancingCount >= configuration.maxRefinancingCount) reasons.push("El plan alcanzó el máximo de refinanciaciones.");
+      return { ...plan, eligible: reasons.length === 0, reasons };
+    }).filter((plan) => !onlyEligible || plan.eligible);
   },
 
   /**
@@ -669,8 +725,21 @@ export const eventService = {
 export const cashierService = {
   /** Búsqueda unificada: documento, CUIT, nombre, N° de boleta o N° de deuda. */
   async search({ query = "" } = {}) {
-    const params = new URLSearchParams({ query });
-    return request(`/api/v1/cashier/search?${params}`);
+    const term = query.trim();
+    if (!term) return [];
+    const [taxpayers, bills, debt] = await Promise.all([
+      taxpayerService.search({ query: term }),
+      billService.search({ query: term }),
+      /^\d+$/.test(term) ? request(`/api/v1/debts/${term}`).catch((error) => {
+        if (error.status === 404) return null;
+        throw error;
+      }) : null,
+    ]);
+    return [
+      ...taxpayers.map((taxpayer) => ({ kind: "TAXPAYER", id: taxpayer.id, title: taxpayer.name, subtitle: `${taxpayer.documentType} ${taxpayer.document}`, detail: taxpayer.cuit, status: taxpayer.status, amount: null })),
+      ...bills.map((bill) => ({ ...bill, kind: "BILL", title: `Boleta #${bill.id}`, subtitle: bill.barcode, detail: `Contribuyente #${bill.taxpayerId}` })),
+      ...(debt ? [{ ...debt, kind: "DEBT", title: `Deuda #${debt.id}`, subtitle: debt.conceptCode, detail: `Contribuyente #${debt.taxpayerId}`, amount: debt.outstandingAmount }] : []),
+    ];
   },
 
   /**
@@ -679,31 +748,73 @@ export const cashierService = {
    * sólo la obligación elegida.
    */
   async chargeContext({ kind, id }) {
-    return request(`/api/v1/cashier/charge-context/${kind}/${id}`);
+    let taxpayerId = id;
+    let bill = null;
+    let debts;
+    if (kind === "DEBT") {
+      const debt = await request(`/api/v1/debts/${id}`);
+      taxpayerId = debt.taxpayerId;
+      debts = [debt];
+    } else if (kind === "BILL") {
+      bill = await request(`/api/v1/bills/${id}`);
+      taxpayerId = bill.taxpayerId;
+      if (bill.status !== "ISSUED") throw new ApiError("La boleta no admite pagos.", 409, null, "BILL_NOT_PAYABLE");
+      debts = await Promise.all(bill.debts.map((item) => request(`/api/v1/debts/${item.debtId}`)));
+    } else if (kind === "TAXPAYER") {
+      debts = await allPages(`/api/v1/taxpayers/${id}/debts`);
+    } else {
+      throw new ApiError("El tipo de búsqueda no es válido.", 400);
+    }
+    const taxpayer = await taxpayerService.getById(taxpayerId);
+    const payable = openDebts(debts).filter((debt) => !debt.inPaymentPlan);
+    return { kind, taxpayer, bill, debts: payable, totals: debtTotals(debts), selectedDebtId: kind !== "TAXPAYER" && payable.length === 1 ? payable[0].id : null };
   },
 
   /** RegisterCounterPaymentRequest → CounterPaymentReceiptResponse */
   async registerCounterPayment({ debtId, billId, amountPaid, method, registeredBy }) {
     const debt = await request(`/api/v1/debts/${debtId}`);
-    return request("/api/v1/cashier/payments", {
+    const taxpayer = await taxpayerService.getById(debt.taxpayerId);
+    const payment = await request("/api/v1/cashier/payments", {
       method: "POST",
       body: { taxpayerId: debt.taxpayerId, debtId, billId, amountPaid, method, registeredBy },
     });
+    const receipt = { ...paymentReceipt(payment, taxpayer), debtId: Number(debtId), conceptCode: debt.conceptCode, wasOverdue: debt.overdue || debt.status === "OVERDUE" };
+    try {
+      const updatedDebt = await request(`/api/v1/debts/${debtId}`);
+      receipt.remainingBalance = updatedDebt.outstandingAmount;
+      receipt.settled = Number(updatedDebt.outstandingAmount) === 0;
+    } catch {
+      // El pago ya se confirmó: no presentar este fallo de lectura como un alta fallida.
+      receipt.balanceUnavailable = true;
+    }
+    return receipt;
   },
 
   /** Reimpresión: el comprobante de un pago ya registrado. */
   async receipt(paymentId) {
-    return request(`/api/v1/cashier/receipts/${paymentId}`);
+    const [receipt, payment] = await Promise.all([
+      request(`/api/v1/payments/${paymentId}/receipt`),
+      request(`/api/v1/payments/${paymentId}`),
+    ]);
+    const taxpayer = await taxpayerService.getById(payment.taxpayerId);
+    return { ...paymentReceipt(payment, taxpayer), receiptNumber: receipt.receiptNumber, amountPaid: receipt.amount, issuedAt: receipt.paidAt };
   },
 
   /** Ficha de ventanilla: deudas, pagos y boletas del contribuyente en una consulta. */
   async taxpayerFile(taxpayerId) {
-    return request(`/api/v1/cashier/taxpayers/${taxpayerId}/file`);
+    const [taxpayer, debts, payments, bills] = await Promise.all([
+      taxpayerService.getById(taxpayerId),
+      allPages(`/api/v1/taxpayers/${taxpayerId}/debts`),
+      allPages(`/api/v1/payments?taxpayerId=${taxpayerId}`),
+      allPages(`/api/v1/taxpayers/${taxpayerId}/bills`),
+    ]);
+    return { taxpayer, debts, payments, bills, totals: { ...debtTotals(debts), paid: round2(payments.filter((payment) => payment.status !== "REVERSED").reduce((sum, payment) => sum + Number(payment.amountPaid), 0)) } };
   },
 
   /** Agentes que pueden figurar como responsables de un cobro. */
   async agents() {
-    return request("/api/v1/cashier/agents");
+    const payments = await allPages("/api/v1/payments");
+    return [...new Set(payments.map((payment) => payment.registeredBy).filter(Boolean))].map((username) => ({ value: username, label: username }));
   },
 
   /** Resumen de la jornada del cajero: lo que muestra el panel de caja. */
