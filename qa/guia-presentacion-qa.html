@@ -1,0 +1,228 @@
+<title>Guía de presentación QA</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+:root{
+  --navy:#0F2C59; --navy-light:#163d75;
+  --coral:#D63031; --coral-soft:#FBEAEA;
+  --amber:#B45A00; --amber-soft:#FCEEDD;
+  --slate:#3E5872; --slate-soft:#E9EEF3;
+  --ok:#15803D; --ok-soft:#E7F5EC;
+  --bg:#FAFAFA; --card:#FFFFFF;
+  --border:#E4E4E7; --border-strong:#D4D4D8;
+  --text:#1A1A1A; --text-soft:#55606E; --text-faint:#8A93A0;
+  --font-sans:'Inter',system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --font-mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#14181F; --card:#1B212B;
+    --border:#2B323D; --border-strong:#3A4250;
+    --text:#EDEFF3; --text-soft:#AEB6C2; --text-faint:#78818F;
+    --coral-soft:#3A1F20; --amber-soft:#382713; --slate-soft:#1E2A36; --ok-soft:#132A1D;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#14181F; --card:#1B212B;
+  --border:#2B323D; --border-strong:#3A4250;
+  --text:#EDEFF3; --text-soft:#AEB6C2; --text-faint:#78818F;
+  --coral-soft:#3A1F20; --amber-soft:#382713; --slate-soft:#1E2A36; --ok-soft:#132A1D;
+}
+*{box-sizing:border-box;}
+body{margin:0; background:var(--bg); color:var(--text); font-family:var(--font-sans); -webkit-font-smoothing:antialiased;}
+.wrap{max-width:920px; margin:0 auto; padding:40px 24px 90px;}
+
+.head{border-bottom:1px solid var(--border); padding-bottom:26px; margin-bottom:30px;}
+.eyebrow{display:flex; align-items:center; gap:10px; margin-bottom:10px;}
+.eyebrow .bar{width:26px; height:2px; background:var(--coral);}
+.eyebrow span{color:var(--coral); font-size:11px; font-weight:700; letter-spacing:.16em; text-transform:uppercase;}
+.head h1{margin:0; font-size:2rem; font-weight:800; letter-spacing:-.02em; color:var(--navy); text-wrap:balance;}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]) .head h1{ color:#DCE4F5; } }
+:root[data-theme="dark"] .head h1{ color:#DCE4F5; }
+.head p{margin:10px 0 0; color:var(--text-soft); font-size:14.5px; max-width:60ch; line-height:1.6;}
+.meta-row{display:flex; gap:18px; flex-wrap:wrap; margin-top:16px; font-family:var(--font-mono); font-size:12px; color:var(--text-faint);}
+.meta-row b{color:var(--text-soft); font-weight:500;}
+
+.rule{background:var(--slate-soft); border-radius:12px; padding:16px 20px; font-size:13.5px; line-height:1.65; color:var(--text-soft); margin-bottom:34px;}
+.rule b{color:var(--text); font-weight:700;}
+.rule .legend{display:flex; gap:18px; margin-top:10px; flex-wrap:wrap;}
+.legend .tag{display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:600;}
+.legend .dot{width:8px; height:8px; border-radius:50%;}
+.dot.safe{background:var(--ok);} .dot.check{background:var(--amber);} .dot.show{background:var(--slate);}
+
+.section-label{display:flex; align-items:center; gap:12px; margin:0 0 6px; font-size:12px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:var(--text-faint);}
+.section-label::after{content:""; flex:1; height:1px; background:var(--border);}
+.section-intro{font-size:13.5px; color:var(--text-soft); margin:0 0 20px; line-height:1.6; max-width:66ch;}
+
+.step{background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px 20px; margin-bottom:12px;}
+.step-head{display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:6px;}
+.step-title{font-size:14.5px; font-weight:700;}
+.pill{font-size:10px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; padding:3px 9px; border-radius:100px; white-space:nowrap; display:inline-flex; align-items:center; gap:5px;}
+.pill.safe{background:var(--ok-soft); color:var(--ok);}
+.pill.check{background:var(--amber-soft); color:var(--amber);}
+.pill.show{background:var(--slate-soft); color:var(--text-soft);}
+.step p{margin:4px 0; font-size:13.2px; color:var(--text-soft); line-height:1.55;}
+.step .say{background:var(--slate-soft); border-radius:8px; padding:9px 13px; margin-top:8px; font-size:12.8px; font-style:italic; color:var(--text);}
+.step .say::before{content:"“"; font-style:normal; color:var(--text-faint);}
+.step .say::after{content:"”"; font-style:normal; color:var(--text-faint);}
+.step code{font-family:var(--font-mono); font-size:12px; background:var(--slate-soft); padding:1px 5px; border-radius:4px;}
+
+.tickets-block{background:var(--card); border:1px solid var(--border); border-radius:12px; padding:18px 22px; margin-bottom:34px;}
+.ticket-row{display:flex; gap:14px; padding:10px 0; border-bottom:1px solid var(--border);}
+.ticket-row:last-child{border-bottom:none;}
+.ticket-row .num{font-family:var(--font-mono); font-size:12px; color:var(--text-faint); flex-shrink:0; width:20px; padding-top:2px;}
+.ticket-row .body{flex:1;}
+.ticket-row .title{font-size:13.5px; font-weight:700; margin-bottom:3px;}
+.ticket-row .say{font-size:12.8px; color:var(--text-soft); font-style:italic; line-height:1.5;}
+.sev-badge{font-size:9.5px; font-weight:800; letter-spacing:.04em; padding:2px 7px; border-radius:5px; margin-left:8px; vertical-align:middle;}
+.sev-badge.alta{background:var(--coral-soft); color:var(--coral);}
+.sev-badge.media{background:var(--amber-soft); color:var(--amber);}
+.sev-badge.baja{background:var(--slate-soft); color:var(--text-soft);}
+
+.closing{background:var(--ok-soft); border:1px solid var(--border); border-left:4px solid var(--ok); border-radius:12px; padding:18px 22px; font-size:13.5px; line-height:1.6; color:var(--text-soft);}
+.closing b{color:var(--text);}
+
+footer{margin-top:40px; padding-top:18px; border-top:1px solid var(--border); font-size:11.5px; color:var(--text-faint);}
+</style>
+
+<div class="wrap">
+
+  <div class="head">
+    <div class="eyebrow"><span class="bar"></span><span>Módulo 5 — Rentas · Presentación de equipo</span></div>
+    <h1>Guía para tu parte como QA</h1>
+    <p>Dos cosas para mostrar: la colección de Insomnia (las peticiones reales contra el backend) y los tickets (los 7 hallazgos del testeo). Esta guía te dice qué clickear en vivo, qué solo mostrar, y qué decir en cada paso. Calculá 6-8 minutos de exposición.</p>
+    <div class="meta-row">
+      <span><b>Insomnia:</b> qa/insomnia-m5-rentas-qa.json</span>
+      <span><b>Tickets:</b> tickets-qa-m5.html (artifact)</span>
+      <span><b>Ambiente:</b> ./qa/levantar-demo.sh</span>
+    </div>
+  </div>
+
+  <div class="rule">
+    <b>Regla general antes de arrancar:</b> corré <code>./qa/levantar-demo.sh</code> unos minutos antes para asegurarte de que Postgres, backend y frontend estén arriba. Las peticiones que <b>leen</b> datos (GET) o que <b>demuestran un rechazo</b> (permisos, duplicados) son seguras de repetir las veces que quieras — dan siempre el mismo resultado. Las que <b>crean algo nuevo</b> con un valor fijo (un concepto, una liquidación de un período ya usado) sólo funcionan la primera vez: si ya las corriste antes, o cambiás un dato (ej. el período) antes de mandarla, o simplemente la mostrás sin clickear "Send" y mostrás el resultado con un GET aparte.
+    <div class="legend">
+      <span class="tag"><span class="dot safe"></span>Click en vivo, siempre funciona</span>
+      <span class="tag"><span class="dot check"></span>Revisar antes / puede necesitar un ajuste</span>
+      <span class="tag"><span class="dot show"></span>Solo mostrar, no clickear</span>
+    </div>
+  </div>
+
+  <div class="section-label">Parte 1 · Insomnia (~4 min)</div>
+  <p class="section-intro">Abrí Insomnia con la colección ya importada. Mostrá el panel izquierdo primero — 10 carpetas, una por módulo del sistema, en el mismo orden que el checklist de validación. Después entrá a 4 o 5 puntualmente.</p>
+
+  <div class="step">
+    <div class="step-head"><span class="step-title">Arranque — mostrar la organización</span><span class="pill show">Mostrar</span></div>
+    <p>Abrí la colección completa y recorré las 10 carpetas sin entrar a ninguna todavía.</p>
+    <div class="say">Esto es todo lo que usé para probar el sistema real — no capturas de pantalla, pedidos reales contra el backend, organizados igual que el checklist de validación: tributos, vencimientos, pagos, reversiones, planes, exenciones, conciliación, roles y pruebas técnicas.</div>
+  </div>
+
+  <div class="step">
+    <div class="step-head"><span class="step-title">00. Autenticación → Login demo.rentas</span><span class="pill safe">Vivo</span></div>
+    <p>Clickeá "Send". Siempre funciona, sin importar el estado.</p>
+    <div class="say">Esto no es un mock — es el login real contra el backend, con los 5 roles que existen en el sistema.</div>
+  </div>
+
+  <div class="step">
+    <div class="step-head"><span class="step-title">01. Tributos → 3. Generar liquidación individual</span><span class="pill check">Revisar</span></div>
+    <p>Si ya corriste este pedido antes contra este ambiente, va a fallar (DUPLICATE_LIQUIDATION). Cambiá el campo <code>period</code> del body a uno que no hayas usado (ej. un mes futuro) antes de mandarlo.</p>
+    <div class="say">Acá se calcula la alícuota sobre la base imponible, respetando el mínimo y el máximo configurados.</div>
+  </div>
+
+  <div class="step">
+    <div class="step-head"><span class="step-title">01. Tributos → 4. Repetir la misma liquidación</span><span class="pill safe">Vivo</span></div>
+    <p>Clickeá tal cual, sin tocar nada. Está pensado para fallar — y siempre falla igual.</p>
+    <div class="say">Si intento crear la misma liquidación dos veces, el sistema la rechaza: no permite duplicados para el mismo contribuyente, concepto y período.</div>
+  </div>
+
+  <div class="step">
+    <div class="step-head"><span class="step-title">01. Tributos → 5. Eliminar liquidación emitida</span><span class="pill safe">Vivo</span></div>
+    <p>Clickeá tal cual. Siempre da el mismo resultado — es uno de los 7 tickets.</p>
+    <div class="say">Este es uno de los bugs que reporté: en vez de un error claro, el sistema devuelve un 500 genérico. Lo vamos a ver de nuevo en la parte de tickets.</div>
+  </div>
+
+  <div class="step">
+    <div class="step-head"><span class="step-title">04. Reversiones → 2. Reintentar ejecutar la misma reversión</span><span class="pill safe">Vivo</span></div>
+    <p>Clickeá tal cual. Siempre rechaza igual, con un mensaje claro (a diferencia del anterior).</p>
+    <div class="say">Este es el contraejemplo bueno: acá el rechazo sí es prolijo — 422 con un código y mensaje específicos, nada de error genérico.</div>
+  </div>
+
+  <div class="step">
+    <div class="step-head"><span class="step-title">08. Roles y seguridad → cualquiera de las 7</span><span class="pill safe">Vivo</span></div>
+    <p>Todas son intentos de acceso sin permiso. Clickeá 2 o 3, las que quieras — siempre rechazan igual.</p>
+    <div class="say">Estas prueban que el backend rechaza operaciones sin el rol correcto, directo, sin pasar por el frontend — no es el frontend el que "esconde" botones, el backend también lo bloquea.</div>
+  </div>
+
+  <div class="step">
+    <div class="step-head"><span class="step-title">09. Pruebas técnicas → 1. Paginación / 2. Filtros</span><span class="pill safe">Vivo</span></div>
+    <p>Ambas son GET, de solo lectura. Siempre funcionan.</p>
+    <div class="say">Y esto valida cosas más técnicas: que la paginación no pierda ni repita datos, y que filtros inválidos se rechacen en vez de ignorarse en silencio.</div>
+  </div>
+
+  <div class="step">
+    <div class="step-head"><span class="step-title">09. Pruebas técnicas → 6. Solicitudes repetidas</span><span class="pill safe">Vivo</span></div>
+    <p>Clickeá "Send" dos veces seguidas, rápido. Siempre reproduce el bug — es otro de los 7 tickets.</p>
+    <div class="say">Este es otro hallazgo real: el mismo pago mandado dos veces se registra dos veces. No hay ninguna protección contra un reintento de red.</div>
+  </div>
+
+  <div class="section-label">Parte 2 · Tickets — los 7 hallazgos (~3 min)</div>
+  <p class="section-intro">Abrí el artifact de "Hallazgos M5 Rentas" y recorré de más grave a menos grave. No leas cada uno entero — con el título y una frase alcanza.</p>
+
+  <div class="tickets-block">
+    <div class="ticket-row">
+      <span class="num">1</span>
+      <div class="body">
+        <div class="title">La exención se aplica aunque ya venció<span class="sev-badge alta">ALTA</span></div>
+        <div class="say">Una exención que ya venció se sigue descontando en liquidaciones nuevas — compara contra la fecha de hoy en vez del período de la liquidación.</div>
+      </div>
+    </div>
+    <div class="ticket-row">
+      <span class="num">2</span>
+      <div class="body">
+        <div class="title">Pagos duplicados sin protección<span class="sev-badge alta">ALTA</span></div>
+        <div class="say">Ya lo mostramos en vivo recién — mandar el mismo pago dos veces crea dos pagos reales.</div>
+      </div>
+    </div>
+    <div class="ticket-row">
+      <span class="num">3</span>
+      <div class="body">
+        <div class="title">Auditoría de exenciones incompleta<span class="sev-badge media">MEDIA</span></div>
+        <div class="say">Solo queda registrado quién aprobó o rechazó, no toda la revisión previa.</div>
+      </div>
+    </div>
+    <div class="ticket-row">
+      <span class="num">4</span>
+      <div class="body">
+        <div class="title">Borrar liquidación devuelve error 500<span class="sev-badge media">MEDIA</span></div>
+        <div class="say">También lo mostramos recién en Insomnia — el dato queda a salvo, pero el error que devuelve es el genérico, no uno claro.</div>
+      </div>
+    </div>
+    <div class="ticket-row">
+      <span class="num">5</span>
+      <div class="body">
+        <div class="title">No se puede refinanciar un plan ya caduco<span class="sev-badge media">MEDIA</span></div>
+        <div class="say">Esta es una decisión de producto pendiente, no solo un bug — hay que confirmar con el PO si son caminos alternativos.</div>
+      </div>
+    </div>
+    <div class="ticket-row">
+      <span class="num">6</span>
+      <div class="body">
+        <div class="title">Cobertura de tests del frontend por debajo del mínimo<span class="sev-badge media">MEDIA</span></div>
+        <div class="say">83,4% contra el 85% pactado.</div>
+      </div>
+    </div>
+    <div class="ticket-row">
+      <span class="num">7</span>
+      <div class="body">
+        <div class="title">Falta un botón para crear conceptos tributarios<span class="sev-badge baja">BAJA</span></div>
+        <div class="say">El backend ya lo soporta, es solo un tema de UI.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="closing">
+    <b>Para cerrar, decí el resumen en una frase:</b> "Validé 52 casos con frontend, backend y base de datos reales, sin mocks — 45 pasaron bien, y estos 7 hallazgos ya están reportados a cada desarrollador con el archivo y la línea exacta para arreglarlos." Ya arreglamos 2 en el frontend en el momento (las métricas del panel de inicio), así que también podés mencionar que el proceso ya está funcionando de punta a punta.
+  </div>
+
+  <footer>Guía de presentación — Módulo 5 Rentas · QA · qa/</footer>
+
+</div>
