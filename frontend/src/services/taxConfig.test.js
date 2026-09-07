@@ -1,260 +1,112 @@
-import { describe, expect, it } from "vitest";
-import { settlementService, taxConfigService } from "./rentasService.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { taxConfigService } from "./rentasService.js";
+import { instalarBackendFalso, pagina } from "../__tests__/fixtures/backendFalso.js";
 
 /**
- * Configuración de tributos. En archivo propio: varias ramas amplían
- * `rentasService.test.js` y anexar al final del mismo archivo choca al mergear.
+ * Configuración de tributos.
+ *
+ * El backend guarda conceptos y configuraciones por separado; la pantalla necesita
+ * verlos como un concepto con su versión vigente, la que espera aprobación y el
+ * borrador. Esa composición es del cliente, y es lo que se prueba acá. El flujo de
+ * aprobación (quién puede, en qué orden) lo gobierna y lo prueba el backend.
  */
-describe("versiones de configuración", () => {
-  it("cada concepto expone su versión vigente", async () => {
+
+const CONCEPTOS = pagina([
+  { id: 1, code: "TASA_SERVICIOS", name: "Tasa de servicios generales", type: "FEE", active: true },
+  { id: 2, code: "ABL", name: "Alumbrado, barrido y limpieza", type: "FEE", active: false },
+]);
+
+const CONFIGURACIONES = pagina([
+  { id: 10, taxConceptId: 1, version: 1, status: "ACTIVE", calculationType: "PERCENTAGE", rate: 2, validFrom: "2026-01-01" },
+  { id: 11, taxConceptId: 1, version: 2, status: "DRAFT", calculationType: "PERCENTAGE", rate: 2.5, validFrom: "2027-01-01" },
+  { id: 12, taxConceptId: 2, version: 1, status: "PENDING_APPROVAL", calculationType: "FIXED", rate: 0, validFrom: "2026-06-01" },
+]);
+
+const backendConCatalogo = (extra = {}) =>
+  instalarBackendFalso({
+    "GET /api/v1/tax-concepts": CONCEPTOS,
+    "GET /api/v1/tax-configurations": CONFIGURACIONES,
+    ...extra,
+  });
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe("composición del catálogo", () => {
+  it("cada concepto expone su versión vigente, la pendiente y el borrador", async () => {
+    backendConCatalogo();
+
     const conceptos = await taxConfigService.list();
     const tasa = conceptos.find((c) => c.code === "TASA_SERVICIOS");
+    const abl = conceptos.find((c) => c.code === "ABL");
 
-    expect(tasa.activeVersion.version).toBe(3);
-    expect(tasa.activeVersion.rate).toBe(2);
+    expect(tasa.activeVersion.version).toBe(1);
+    expect(tasa.draftVersion.version).toBe(2);
     expect(tasa.pendingVersion).toBeNull();
+    expect(abl.pendingVersion.version).toBe(1);
+    expect(abl.activeVersion).toBeNull();
   });
 
-  it("la ficha informa cuántas liquidaciones y deudas dependen del concepto", async () => {
-    const detalle = await taxConfigService.detail("TASA_SERVICIOS");
+  it("la ficha trae el historial completo del concepto", async () => {
+    backendConCatalogo();
 
-    expect(detalle.settlementCount).toBeGreaterThan(0);
-    expect(detalle.versions.length).toBe(3);
+    const ficha = await taxConfigService.detail("TASA_SERVICIOS");
+
+    expect(ficha.versions).toHaveLength(2);
+    expect(ficha.versions.map((v) => v.version)).toEqual([1, 2]);
   });
 
-  it("valida las reglas de cálculo antes de aceptar la propuesta", async () => {
-    await expect(
-      taxConfigService.proposeVersion({
-        code: "ABL",
-        calculationType: "PORCENTAJE",
-        rate: 0,
-        validFrom: "2027-01-01",
-        validUntil: "2027-12-31",
-        note: "Sin alícuota",
-        requestedBy: "mrivas",
-      }),
-    ).rejects.toThrow(/alícuota mayor a cero/i);
+  it("un concepto inexistente falla en vez de devolver una ficha vacía", async () => {
+    backendConCatalogo();
 
-    await expect(
-      taxConfigService.proposeVersion({
-        code: "ABL",
-        calculationType: "FIJO",
-        minimumAmount: 900,
-        maximumAmount: 100,
-        validFrom: "2027-01-01",
-        validUntil: "2027-12-31",
-        note: "Topes al revés",
-        requestedBy: "mrivas",
-      }),
-    ).rejects.toThrow(/máximo no puede ser menor/i);
-
-    await expect(
-      taxConfigService.proposeVersion({
-        code: "ABL",
-        calculationType: "FIJO",
-        validFrom: "2027-12-31",
-        validUntil: "2027-01-01",
-        note: "Vigencia invertida",
-        requestedBy: "mrivas",
-      }),
-    ).rejects.toThrow(/vigencia/i);
+    await expect(taxConfigService.detail("NO_EXISTE")).rejects.toMatchObject({ status: 404 });
   });
 
-  it("rechaza una vigencia que se solapa con la versión que rige", async () => {
-    // COMMERCIAL_FINE rige hasta el 2026-12-31.
-    await expect(
-      taxConfigService.proposeVersion({
-        code: "COMMERCIAL_FINE",
-        calculationType: "IMPORTE_EXTERNO",
-        validFrom: "2026-08-01",
-        validUntil: "2027-07-31",
-        note: "Se pisa con la vigente",
-        requestedBy: "mrivas",
-      }),
-    ).rejects.toThrow(/tiene que empezar después/i);
+  it("el combo de conceptos ofrece sólo los activos por defecto", async () => {
+    backendConCatalogo();
 
-    // Arrancando después sí entra.
-    const version = await taxConfigService.proposeVersion({
-      code: "COMMERCIAL_FINE",
-      calculationType: "IMPORTE_EXTERNO",
-      validFrom: "2027-01-01",
-      validUntil: "2027-12-31",
-      note: "Renovación de vigencia",
-      requestedBy: "mrivas",
-    });
-    expect(version.status).toBe("DRAFT");
-  });
+    const activos = await taxConfigService.concepts();
+    const todos = await taxConfigService.concepts({ onlyActive: false });
 
-  it("la versión nueva nace en borrador y no rige todavía", async () => {
-    const version = await taxConfigService.proposeVersion({
-      code: "TASA_SERVICIOS",
-      calculationType: "PORCENTAJE",
-      rate: 12,
-      minimumAmount: 20000,
-      maximumAmount: 200000,
-      validFrom: "2027-01-01",
-      validUntil: "2027-12-31",
-      note: "Actualización de alícuota al 12%",
-      requestedBy: "mrivas",
-    });
-
-    expect(version.status).toBe("DRAFT");
-    // La vigente sigue siendo la anterior.
-    const conceptos = await taxConfigService.list();
-    expect(conceptos.find((c) => c.code === "TASA_SERVICIOS").activeVersion.rate).toBe(2);
-  });
-
-  it("no admite dos versiones en curso sobre el mismo concepto", async () => {
-    await expect(
-      taxConfigService.proposeVersion({
-        code: "TASA_SERVICIOS",
-        calculationType: "PORCENTAJE",
-        rate: 15,
-        validFrom: "2027-01-01",
-        validUntil: "2027-12-31",
-        note: "Otra más",
-        requestedBy: "mrivas",
-      }),
-    ).rejects.toThrow(/ya tiene una versión en curso/i);
-  });
-
-  it("el borrador pasa a la bandeja del Supervisor", async () => {
-    await taxConfigService.submitForApproval({
-      code: "TASA_SERVICIOS",
-      version: 4,
-      requestedBy: "mrivas",
-    });
-
-    const bandeja = await taxConfigService.pendingApprovals();
-    const propuesta = bandeja.find((v) => v.code === "TASA_SERVICIOS");
-
-    expect(propuesta.version).toBe(4);
-    expect(propuesta.currentVersion.version).toBe(3);
-  });
-
-  it("sólo el Supervisor aprueba", async () => {
-    await expect(
-      taxConfigService.resolveVersion({
-        code: "TASA_SERVICIOS",
-        version: 4,
-        status: "APPROVED",
-        resolvedBy: "mrivas",
-        resolverRole: "PERSONAL",
-      }),
-    ).rejects.toThrow(/sólo el supervisor/i);
-  });
-
-  it("exige motivo al rechazar", async () => {
-    await expect(
-      taxConfigService.resolveVersion({
-        code: "TASA_SERVICIOS",
-        version: 4,
-        status: "REJECTED",
-        resolvedBy: "jlopez",
-        resolverRole: "SUPERVISOR",
-        reason: "",
-      }),
-    ).rejects.toThrow(/motivo/i);
-  });
-
-  it("al aprobar, la nueva rige y la anterior queda inactiva sin borrarse", async () => {
-    const resultado = await taxConfigService.resolveVersion({
-      code: "TASA_SERVICIOS",
-      version: 4,
-      status: "APPROVED",
-      resolvedBy: "jlopez",
-      resolverRole: "SUPERVISOR",
-    });
-
-    expect(resultado.status).toBe("ACTIVE");
-    expect(resultado.previousVersion.version).toBe(3);
-    expect(resultado.previousVersion.status).toBe("INACTIVE");
-    // Los parámetros de la versión pasan a ser los del concepto.
-    expect(resultado.concept.rate).toBe(12);
-
-    // El historial completo se conserva.
-    const detalle = await taxConfigService.detail("TASA_SERVICIOS");
-    expect(detalle.versions.length).toBe(4);
+    expect(activos.map((c) => c.code)).toEqual(["TASA_SERVICIOS"]);
+    expect(todos.length).toBeGreaterThan(activos.length);
   });
 });
 
-describe("efecto sobre las liquidaciones", () => {
-  it("la liquidación queda sellada con la versión con la que se calculó", async () => {
-    const antes = await settlementService.generate({
-      taxpayerId: 78,
-      conceptCode: "ABL",
-      period: "2028-01",
-      baseAmount: 50000,
-      dueDate: "2028-01-15",
-    });
-    const versionUsada = antes.conceptVersion;
+describe("propuesta de una versión nueva", () => {
+  it("resuelve el concepto por código y manda su id", async () => {
+    const backend = backendConCatalogo({ "POST /api/v1/tax-configurations": { id: 20, status: "DRAFT" } });
 
-    // Cambia la configuración y se aprueba.
-    const nueva = await taxConfigService.proposeVersion({
-      code: "ABL",
-      calculationType: "FIJO",
-      minimumAmount: 130000,
-      maximumAmount: 260000,
-      validFrom: "2028-01-01",
-      validUntil: "2028-12-31",
-      note: "Actualización del valor fijo",
+    await taxConfigService.proposeVersion({
+      code: "TASA_SERVICIOS",
+      calculationType: "PORCENTAJE",
+      rate: 3,
+      minimumAmount: 1000,
+      maximumAmount: 90000,
+      validFrom: "2027-01-01",
       requestedBy: "mrivas",
     });
-    await taxConfigService.submitForApproval({
-      code: "ABL",
-      version: nueva.version,
-      requestedBy: "mrivas",
-    });
-    await taxConfigService.resolveVersion({
-      code: "ABL",
-      version: nueva.version,
-      status: "APPROVED",
-      resolvedBy: "jlopez",
-      resolverRole: "SUPERVISOR",
-    });
 
-    // La liquidación anterior conserva su versión: el cambio no reescribe el pasado.
-    const emitidas = await settlementService.list({ period: "2028-01" });
-    expect(emitidas.find((s) => s.id === antes.id).conceptVersion).toBe(versionUsada);
-
-    // La siguiente ya usa la nueva.
-    const despues = await settlementService.generate({
-      taxpayerId: 78,
-      conceptCode: "ABL",
-      period: "2028-02",
-      baseAmount: 50000,
-      dueDate: "2028-02-15",
-    });
-    expect(despues.conceptVersion).toBe(nueva.version);
+    const alta = backend.llamadas.find((l) => l.metodo === "POST");
+    expect(alta.cuerpo.taxConceptId).toBe(1);
+    expect(alta.cuerpo.calculationType).toBe("PERCENTAGE");
   });
 
-  it("un concepto se puede desactivar y sus deudas siguen vigentes", async () => {
-    const version = await taxConfigService.proposeVersion({
-      code: "PATENTE",
-      calculationType: "PORCENTAJE",
-      rate: 1.5,
-      validFrom: "2028-01-01",
-      validUntil: "2028-12-31",
-      conceptStatus: "INACTIVE",
-      note: "Baja del concepto",
+  it("en cálculo fijo el importe sale del mínimo, no queda en cero", async () => {
+    // El formulario no pide alícuota cuando el cálculo es fijo.
+    const backend = backendConCatalogo({ "POST /api/v1/tax-configurations": { id: 21, status: "DRAFT" } });
+
+    await taxConfigService.proposeVersion({
+      code: "TASA_SERVICIOS",
+      calculationType: "FIJO",
+      rate: undefined,
+      minimumAmount: 45000,
+      validFrom: "2027-01-01",
       requestedBy: "mrivas",
-    });
-    await taxConfigService.submitForApproval({
-      code: "PATENTE",
-      version: version.version,
-      requestedBy: "mrivas",
-    });
-    await taxConfigService.resolveVersion({
-      code: "PATENTE",
-      version: version.version,
-      status: "APPROVED",
-      resolvedBy: "jlopez",
-      resolverRole: "SUPERVISOR",
     });
 
-    const detalle = await taxConfigService.detail("PATENTE");
-    expect(detalle.status).toBe("INACTIVE");
-    // No se borró: las liquidaciones y deudas que lo referencian siguen ahí.
-    expect(detalle.settlementCount).toBeGreaterThan(0);
+    const alta = backend.llamadas.find((l) => l.metodo === "POST");
+    expect(alta.cuerpo.fixedAmount).toBe(45000);
   });
 });

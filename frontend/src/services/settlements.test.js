@@ -1,112 +1,90 @@
-import { describe, expect, it } from "vitest";
-import { debtService, settlementService } from "./rentasService.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { settlementService } from "./rentasService.js";
+import { instalarBackendFalso, pagina } from "../__tests__/fixtures/backendFalso.js";
 
 /**
- * Generación masiva. La previsualización distingue tres grupos: lo que se genera,
- * lo que queda afuera y lo que se genera pero exige atención.
+ * Liquidación masiva. Quién queda alcanzado y con qué importe lo decide el backend;
+ * el cliente orquesta las tres llamadas que hacen falta y separa lo liquidable de lo
+ * que quedó en error para que la pantalla pueda mostrarlo por separado.
  */
-describe("liquidaciones masivas", () => {
-  it("previsualiza el lote con el descuento calculado por contribuyente", async () => {
-    const preview = await settlementService.previewBatch({
+
+const CONCEPTO = pagina([{ id: 1, code: "TASA_SERVICIOS", name: "Tasa de servicios generales", type: "FEE", active: true }]);
+const PADRON = pagina([
+  { id: 101, taxpayerType: "CITIZEN", dni: "40111222", displayName: "Juan Pérez", status: "ACTIVE" },
+  { id: 102, taxpayerType: "ORGANIZATION", cuit: "30-71234567-8", displayName: "Comercial ABC", status: "ACTIVE" },
+]);
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe("previsualización del lote", () => {
+  it("resuelve el concepto y el padrón antes de crear la corrida", async () => {
+    const backend = instalarBackendFalso({
+      "GET /api/v1/tax-concepts": CONCEPTO,
+      "GET /api/v1/taxpayers": PADRON,
+      "POST /api/v1/liquidation-runs": { id: 55 },
+      "POST /api/v1/liquidation-runs/{id}/preview": { run: { estimatedTotalAmount: 40000 }, items: [] },
+    });
+
+    await settlementService.previewBatch({ conceptCode: "TASA_SERVICIOS", period: "2026-09", baseAmount: 20000, dueDate: "2026-09-30" });
+
+    const alta = backend.llamadas.find((l) => l.ruta === "/api/v1/liquidation-runs" && l.metodo === "POST");
+    expect(alta.cuerpo.taxConceptId).toBe(1);
+    expect(alta.cuerpo.period).toBe("2026-09");
+    // Un ítem por contribuyente del padrón, con la base imponible pedida.
+    expect(alta.cuerpo.items).toEqual([
+      { taxpayerId: 101, taxableBase: 20000 },
+      { taxpayerId: 102, taxableBase: 20000 },
+    ]);
+  });
+
+  it("separa lo liquidable de lo que el backend marcó en error", async () => {
+    instalarBackendFalso({
+      "GET /api/v1/tax-concepts": CONCEPTO,
+      "GET /api/v1/taxpayers": PADRON,
+      "POST /api/v1/liquidation-runs": { id: 55 },
+      "POST /api/v1/liquidation-runs/{id}/preview": {
+        run: { estimatedTotalAmount: 20000 },
+        items: [
+          { taxpayerId: 101, status: "PENDING", amount: 20000 },
+          { taxpayerId: 102, status: "ERROR", message: "Ya tiene liquidación del período" },
+        ],
+      },
+    });
+
+    const preview = await settlementService.previewBatch({ conceptCode: "TASA_SERVICIOS", period: "2026-09", baseAmount: 20000, dueDate: "2026-09-30" });
+
+    expect(preview.items).toHaveLength(1);
+    expect(preview.errors).toHaveLength(1);
+    expect(preview.totals).toMatchObject({ toGenerate: 1, skipped: 1, amount: 20000 });
+  });
+
+  it("acota el padrón por tipo de contribuyente cuando se pide", async () => {
+    const backend = instalarBackendFalso({
+      "GET /api/v1/tax-concepts": CONCEPTO,
+      "GET /api/v1/taxpayers": PADRON,
+      "POST /api/v1/liquidation-runs": { id: 55 },
+      "POST /api/v1/liquidation-runs/{id}/preview": { run: {}, items: [] },
+    });
+
+    await settlementService.previewBatch({
       conceptCode: "TASA_SERVICIOS",
-      period: "2027-01",
-      baseAmount: 100000,
-      dueDate: "2027-01-15",
-    });
-
-    expect(preview.totals.toGenerate).toBe(preview.items.length);
-    // Juan Pérez tiene beneficio social del 50% sobre TASA_SERVICIOS.
-    const conBeneficio = preview.items.find((i) => i.taxpayerId === 123);
-    expect(conBeneficio.discountPercentage).toBe(50);
-    expect(conBeneficio.amount).toBe(50000);
-    // El resto se liquida por la base completa.
-    const sinBeneficio = preview.items.find((i) => i.taxpayerId === 78);
-    expect(sinBeneficio.amount).toBe(100000);
-  });
-
-  it("deja afuera a quien ya tiene liquidación de ese concepto y período", async () => {
-    // La liquidación 7001 es de Juan Pérez, TASA_SERVICIOS, 2026-08.
-    const preview = await settlementService.previewBatch({
-      conceptCode: "TASA_SERVICIOS",
-      period: "2026-08",
-      baseAmount: 100000,
-      dueDate: "2026-09-15",
-    });
-
-    const omitido = preview.errors.find((e) => e.taxpayerId === 123);
-    expect(omitido.reason).toMatch(/ya tiene la liquidación #7001/i);
-    expect(preview.items.some((i) => i.taxpayerId === 123)).toBe(false);
-  });
-
-  it("liquida igual al bloqueado y al fallecido, pero los marca", async () => {
-    const preview = await settlementService.previewBatch({
-      conceptCode: "ABL",
-      period: "2027-02",
-      baseAmount: 50000,
-      dueDate: "2027-02-15",
-    });
-
-    // La obligación existe aunque M1 haya informado bloqueo o fallecimiento.
-    expect(preview.items.some((i) => i.taxpayerId === 145)).toBe(true);
-    expect(preview.items.some((i) => i.taxpayerId === 190)).toBe(true);
-    expect(preview.warnings.map((w) => w.taxpayerId)).toEqual(
-      expect.arrayContaining([145, 190]),
-    );
-  });
-
-  it("acota el lote por tipo de contribuyente", async () => {
-    const preview = await settlementService.previewBatch({
-      conceptCode: "ABL",
-      period: "2027-03",
-      baseAmount: 50000,
-      dueDate: "2027-03-15",
+      period: "2026-09",
+      baseAmount: 20000,
+      dueDate: "2026-09-30",
       taxpayerType: "ORGANIZATION",
     });
 
-    expect(preview.items.every((i) => i.taxpayerType === "ORGANIZATION")).toBe(true);
+    const padron = backend.llamadas.find((l) => l.ruta === "/api/v1/taxpayers");
+    expect(padron).toBeDefined();
   });
 
-  it("genera el lote en borrador, sin deuda todavía", async () => {
-    const antes = (await debtService.list()).length;
+  it("falla si el concepto no existe en vez de liquidar con uno inventado", async () => {
+    instalarBackendFalso({ "GET /api/v1/tax-concepts": pagina([]) });
 
-    const result = await settlementService.generateBatch({
-      conceptCode: "PATENTE",
-      period: "2027-04",
-      baseAmount: 40000,
-      dueDate: "2027-04-15",
-    });
-
-    expect(result.generated.length).toBeGreaterThan(0);
-    expect(result.generated.every((s) => s.status === "DRAFT")).toBe(true);
-    // El borrador no genera deuda: eso pasa recién al emitir.
-    expect((await debtService.list()).length).toBe(antes);
-  });
-
-  it("no genera dos veces el mismo lote", async () => {
-    const params = {
-      conceptCode: "ABL",
-      period: "2027-05",
-      baseAmount: 30000,
-      dueDate: "2027-05-15",
-    };
-    const primero = await settlementService.generateBatch(params);
-    const segundo = await settlementService.previewBatch(params);
-
-    expect(segundo.totals.toGenerate).toBe(0);
-    expect(segundo.errors.length).toBe(primero.generated.length);
-  });
-
-  it("falla si no queda nadie alcanzado", async () => {
-    const params = {
-      conceptCode: "ABL",
-      period: "2027-06",
-      baseAmount: 30000,
-      dueDate: "2027-06-15",
-    };
-    await settlementService.generateBatch(params);
-
-    await expect(settlementService.generateBatch(params)).rejects.toThrow(
-      /no hay contribuyentes alcanzados/i,
-    );
+    await expect(
+      settlementService.previewBatch({ conceptCode: "NO_EXISTE", period: "2026-09", baseAmount: 20000, dueDate: "2026-09-30" }),
+    ).rejects.toMatchObject({ status: 404 });
   });
 });

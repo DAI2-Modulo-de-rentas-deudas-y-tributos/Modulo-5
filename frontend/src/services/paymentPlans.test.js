@@ -1,79 +1,67 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { paymentPlanService } from "./rentasService.js";
+import { instalarBackendFalso, pagina } from "../__tests__/fixtures/backendFalso.js";
 
 /**
- * Derivación de una solicitud de plan al Supervisor.
- *
- * En archivo propio a propósito: `rentasService.test.js` lo amplían varias ramas a
- * la vez y anexar al final del mismo archivo genera conflictos de merge.
+ * Solicitudes de plan de pago. Quién puede resolver y con qué condiciones lo decide
+ * el backend; el cliente traduce la resolución al endpoint correcto y arma el cuerpo
+ * que cada uno espera, que no es el mismo para otorgar y para rechazar.
  */
-describe("derivación al supervisor", () => {
-  it("las solicitudes sin derivar se leen como en revisión", async () => {
-    const plans = await paymentPlanService.list({ status: "REQUESTED" });
 
-    // No hace falta marcarlas en el dataset: el estado interno se deriva del contrato.
-    expect(plans.every((p) => p.internalStatus === "PENDING_REVIEW")).toBe(true);
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe("resolución de la solicitud", () => {
+  it("otorgar y rechazar son operaciones distintas con cuerpos distintos", async () => {
+    const otorgar = instalarBackendFalso({
+      "POST /api/v1/payment-plan-requests/{id}/grant": { id: 800, status: "GRANTED" },
+    });
+    await paymentPlanService.resolve({ requestId: 800, status: "GRANTED", installments: 6, resolvedBy: "jlopez" });
+    expect(otorgar.llamadas[0].ruta).toBe("/api/v1/payment-plan-requests/800/grant");
+    expect(otorgar.llamadas[0].cuerpo).toEqual({ downPaymentAmount: 0 });
+    vi.unstubAllGlobals();
+
+    const rechazar = instalarBackendFalso({
+      "POST /api/v1/payment-plan-requests/{id}/reject": { id: 800, status: "REJECTED" },
+    });
+    await paymentPlanService.resolve({ requestId: 800, status: "REJECTED", reason: "No cumple las condiciones", resolvedBy: "jlopez" });
+    expect(rechazar.llamadas[0].ruta).toBe("/api/v1/payment-plan-requests/800/reject");
+    expect(rechazar.llamadas[0].cuerpo).toEqual({ reason: "No cumple las condiciones" });
   });
+});
 
-  it("exige un motivo para derivar", async () => {
-    await expect(
-      paymentPlanService.escalate({ requestId: 800, escalatedBy: "mrivas", note: "" }),
-    ).rejects.toThrow(/por qué la derivás/i);
-  });
-
-  it("deriva la solicitud sin publicar ningún evento", async () => {
-    const plan = await paymentPlanService.escalate({
-      requestId: 800,
-      escalatedBy: "mrivas",
-      note: "Pide más cuotas de las habituales.",
+describe("derivación al Supervisor", () => {
+  it("viaja como excepción con su motivo", async () => {
+    const backend = instalarBackendFalso({
+      "POST /api/v1/payment-plan-requests/{id}/submit-exception": { id: 800, exceptional: true },
     });
 
-    expect(plan.internalStatus).toBe("PENDING_SUPERVISOR");
-    expect(plan.escalatedBy).toBe("mrivas");
-    // Para el exterior sigue pendiente: el contrato no conoce la derivación.
-    expect(plan.status).toBe("REQUESTED");
-  });
+    await paymentPlanService.escalate({ requestId: 800, escalatedBy: "mrivas", note: "Supera el máximo de cuotas" });
 
-  it("no deriva dos veces la misma solicitud", async () => {
-    await expect(
-      paymentPlanService.escalate({ requestId: 800, escalatedBy: "mrivas", note: "otra vez" }),
-    ).rejects.toThrow(/ya está derivada/i);
+    expect(backend.llamadas[0].ruta).toBe("/api/v1/payment-plan-requests/800/submit-exception");
+    expect(backend.llamadas[0].cuerpo).toEqual({ reason: "Supera el máximo de cuotas" });
   });
+});
 
-  it("impide que un analista resuelva una solicitud derivada", async () => {
-    await expect(
-      paymentPlanService.resolve({
-        requestId: 800,
-        status: "GRANTED",
-        resolvedBy: "mrivas",
-        resolverRole: "PERSONAL",
-      }),
-    ).rejects.toThrow(/sólo el supervisor puede resolverla/i);
-  });
-
-  it("el supervisor resuelve la derivada y ahí sí se publica el estado final", async () => {
-    const plan = await paymentPlanService.resolve({
-      requestId: 800,
-      status: "GRANTED",
-      installments: 6,
-      resolvedBy: "jlopez",
-      resolverRole: "SUPERVISOR",
+describe("listado", () => {
+  it("lee las solicitudes desde el recurso real", async () => {
+    const backend = instalarBackendFalso({
+      "GET /api/v1/payment-plan-requests": pagina([
+        { id: 800, taxpayerId: 123, status: "PENDING", totalDebtAtRequest: 200000, requestedInstallments: 6 },
+      ]),
     });
 
-    expect(plan.status).toBe("GRANTED");
-    expect(plan.internalStatus).toBe("APPROVED");
-    expect(plan.planId).toBeTruthy();
+    const solicitudes = await paymentPlanService.list({ status: "PENDING" });
+
+    expect(backend.llamadas[0].ruta).toBe("/api/v1/payment-plan-requests");
+    expect(solicitudes).toHaveLength(1);
+    expect(solicitudes[0]).toMatchObject({ requestId: 800, totalDebt: 200000, installments: 6 });
   });
 
-  it("no se puede derivar una solicitud ya resuelta", async () => {
-    await expect(
-      paymentPlanService.escalate({ requestId: 800, escalatedBy: "mrivas", note: "tarde" }),
-    ).rejects.toThrow(/ya fue resuelta/i);
-  });
+  it("no inventa solicitudes cuando el backend no devuelve ninguna", async () => {
+    instalarBackendFalso({ "GET /api/v1/payment-plan-requests": pagina([]) });
 
-  it("filtra el listado por estado interno", async () => {
-    const derivadas = await paymentPlanService.list({ internalStatus: "PENDING_SUPERVISOR" });
-
-    expect(derivadas.every((p) => p.internalStatus === "PENDING_SUPERVISOR")).toBe(true);
+    expect(await paymentPlanService.list()).toEqual([]);
   });
 });
