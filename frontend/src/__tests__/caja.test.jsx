@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "../App.jsx";
 import { ingresarComoAgente } from "./helpers/ingresar.js";
+import { instalarBackendFalso } from "./fixtures/backendFalso.js";
 
 /**
  * Ventanilla de caja: el cajero entra a su propia área y completa el circuito
@@ -19,12 +20,14 @@ describe("ventanilla de caja", () => {
 
   beforeEach(() => {
     user = userEvent.setup();
+    instalarBackendFalso();
   });
 
   afterEach(() => {
     cleanup();
     sessionStorage.clear();
     window.history.pushState({}, "", "/");
+    vi.unstubAllGlobals();
   });
 
   it("abre el panel de caja con los cuatro módulos de ventanilla", async () => {

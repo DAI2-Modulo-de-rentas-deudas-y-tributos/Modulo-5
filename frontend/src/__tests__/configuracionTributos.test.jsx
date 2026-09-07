@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "../App.jsx";
 import { ingresarComoAgente } from "./helpers/ingresar.js";
+import { instalarBackendFalso } from "./fixtures/backendFalso.js";
 
 /**
  * Configuración de tributos desde la pantalla: el analista propone, el Supervisor
@@ -21,12 +22,14 @@ describe("configuración de tributos", () => {
 
   beforeEach(() => {
     user = userEvent.setup();
+    instalarBackendFalso();
   });
 
   afterEach(() => {
     cleanup();
     sessionStorage.clear();
     window.history.pushState({}, "", "/");
+    vi.unstubAllGlobals();
   });
 
   it("aclara que los cambios rigen hacia adelante", async () => {

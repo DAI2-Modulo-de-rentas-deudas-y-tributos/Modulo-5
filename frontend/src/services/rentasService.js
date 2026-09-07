@@ -736,8 +736,38 @@ export const auditService = {
   },
 
   /** Ficha 360°: lo que el auditor necesita para reconstruir la situación fiscal. */
+  /**
+   * Ficha 360° del contribuyente.
+   *
+   * El backend expone cada frente por separado; la pantalla los cruza en una sola
+   * vista, así que la composición es del cliente. Sin esto la ficha llega sin
+   * colecciones y la pantalla se rompe al contar las deudas.
+   */
   async taxpayerFile(taxpayerId) {
-    return request(`/api/v1/audit/taxpayers/${taxpayerId}`);
+    const [taxpayer, settlements, debts, payments, plans, exemptions, credits] = await Promise.all([
+      request(`/api/v1/taxpayers/${taxpayerId}`),
+      request(`/api/v1/liquidations?taxpayerId=${taxpayerId}&size=100`),
+      request(`/api/v1/taxpayers/${taxpayerId}/debts?size=100`),
+      request(`/api/v1/taxpayers/${taxpayerId}/payments?size=100`),
+      request(`/api/v1/taxpayers/${taxpayerId}/payment-plans?size=100`),
+      request(`/api/v1/taxpayers/${taxpayerId}/exemptions?size=100`),
+      request(`/api/v1/taxpayers/${taxpayerId}/credit-balances?size=100`),
+    ]);
+    const suma = (filas, campo) => filas.reduce((total, fila) => total + Number(fila[campo] ?? 0), 0);
+    return {
+      taxpayer,
+      settlements,
+      debts,
+      payments,
+      plans,
+      exemptions,
+      credits,
+      totals: {
+        totalDebt: suma(debts, "outstandingAmount"),
+        overdueDebt: suma(debts.filter((d) => d.status === "OVERDUE"), "outstandingAmount"),
+        creditBalance: suma(credits, "availableAmount"),
+      },
+    };
   },
 
   // ------------------------------------------------------------------ Conceptos
@@ -747,8 +777,17 @@ export const auditService = {
     return request(`/api/v1/audit/concepts?${params}`);
   },
 
+  /**
+   * Ficha del concepto con su historial de versiones.
+   *
+   * El backend guarda concepto y configuraciones por separado; la comparación de
+   * versiones del auditor necesita las dos cosas juntas, igual que la pantalla de
+   * configuración. Sin esto `concept.versions` llega indefinido.
+   */
   async conceptDetail(code) {
-    return apiConceptByCode(code);
+    const concepto = (await apiTaxConfigModel()).find((item) => item.code === code);
+    if (!concepto) throw new ApiError("Concepto inexistente.", 404);
+    return concepto;
   },
 
   // -------------------------------------------------------------- Liquidaciones

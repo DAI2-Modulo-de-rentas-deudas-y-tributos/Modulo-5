@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "../App.jsx";
 import { ingresarComoAgente } from "./helpers/ingresar.js";
+import { instalarBackendFalso } from "./fixtures/backendFalso.js";
 
 /** Las dos mejoras de consulta del auditor, desde la pantalla. */
 async function entrarAAuditoria(user, modulo) {
@@ -15,11 +16,15 @@ async function entrarAAuditoria(user, modulo) {
 
 describe("liquidaciones en la ficha del contribuyente", () => {
   let user;
-  beforeEach(() => { user = userEvent.setup(); });
+  beforeEach(() => {
+    user = userEvent.setup();
+    instalarBackendFalso();
+  });
   afterEach(() => {
     cleanup();
     sessionStorage.clear();
     window.history.pushState({}, "", "/");
+    vi.unstubAllGlobals();
   });
 
   it("la ficha abre en Liquidaciones, que es donde empieza el circuito", async () => {
@@ -45,7 +50,10 @@ describe("liquidaciones en la ficha del contribuyente", () => {
 
 describe("comparación de versiones de un concepto", () => {
   let user;
-  beforeEach(() => { user = userEvent.setup(); });
+  beforeEach(() => {
+    user = userEvent.setup();
+    instalarBackendFalso();
+  });
   afterEach(() => {
     cleanup();
     sessionStorage.clear();

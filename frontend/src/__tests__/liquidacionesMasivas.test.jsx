@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "../App.jsx";
 import { ingresarComoAgente } from "./helpers/ingresar.js";
+import { instalarBackendFalso } from "./fixtures/backendFalso.js";
 
 /**
  * Generación masiva de liquidaciones: el operador configura, previsualiza y recién
@@ -30,12 +31,14 @@ describe("generación masiva de liquidaciones", () => {
 
   beforeEach(() => {
     user = userEvent.setup();
+    instalarBackendFalso();
   });
 
   afterEach(() => {
     cleanup();
     sessionStorage.clear();
     window.history.pushState({}, "", "/");
+    vi.unstubAllGlobals();
   });
 
   it("valida el formulario antes de previsualizar", async () => {

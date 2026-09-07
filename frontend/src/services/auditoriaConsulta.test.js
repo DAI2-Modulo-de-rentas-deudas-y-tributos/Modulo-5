@@ -14,15 +14,21 @@ afterEach(() => {
 });
 
 describe("legajo del contribuyente", () => {
-  it("se resuelve contra el padrón real", async () => {
+  it("cruza los cinco frentes del contribuyente en una sola ficha", async () => {
+    // El backend expone cada frente por separado; juntarlos es del cliente.
     const backend = instalarBackendFalso({
       "GET /api/v1/taxpayers/{id}": { id: 123, taxpayerType: "CITIZEN", dni: "40111222", displayName: "Juan Pérez", status: "ACTIVE" },
+      "GET /api/v1/taxpayers/{id}/debts": pagina([
+        { id: 3001, taxpayerId: 123, taxConceptId: 1, status: "PENDING", outstandingBalance: 85000, dueDate: "2026-09-30" },
+      ]),
     });
 
-    const legajo = await auditService.taxpayerFile(123);
+    const ficha = await auditService.taxpayerFile(123);
 
-    expect(backend.llamadas[0].ruta).toBe("/api/v1/taxpayers/123");
-    expect(legajo.name).toBe("Juan Pérez");
+    expect(ficha.taxpayer.name).toBe("Juan Pérez");
+    expect(ficha.debts).toHaveLength(1);
+    expect(ficha.totals.totalDebt).toBe(85000);
+    expect(backend.llamadas.map((l) => l.ruta)).toContain("/api/v1/taxpayers/123");
   });
 
   it("las liquidaciones se leen del recurso de liquidaciones", async () => {

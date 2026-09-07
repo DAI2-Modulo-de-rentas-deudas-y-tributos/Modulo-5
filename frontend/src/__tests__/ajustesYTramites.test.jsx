@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "../App.jsx";
 import { ingresarComoAgente } from "./helpers/ingresar.js";
+import { instalarBackendFalso } from "./fixtures/backendFalso.js";
 
 /** Ajustes manuales, saldos a favor y el trámite de documentación, desde la pantalla. */
 async function entrar(user, usuario, modulo) {
@@ -15,11 +16,15 @@ async function entrar(user, usuario, modulo) {
 
 describe("ajustes y saldos a favor", () => {
   let user;
-  beforeEach(() => { user = userEvent.setup(); });
+  beforeEach(() => {
+    user = userEvent.setup();
+    instalarBackendFalso();
+  });
   afterEach(() => {
     cleanup();
     sessionStorage.clear();
     window.history.pushState({}, "", "/");
+    vi.unstubAllGlobals();
   });
 
   it("aclara que autorizar y ejecutar son actos distintos", async () => {
@@ -103,7 +108,10 @@ describe("ajustes y saldos a favor", () => {
 
 describe("trámite de documentación en exenciones", () => {
   let user;
-  beforeEach(() => { user = userEvent.setup(); });
+  beforeEach(() => {
+    user = userEvent.setup();
+    instalarBackendFalso();
+  });
   afterEach(() => {
     cleanup();
     sessionStorage.clear();
@@ -146,7 +154,10 @@ describe("trámite de documentación en exenciones", () => {
 
 describe("información recibida en tickets", () => {
   let user;
-  beforeEach(() => { user = userEvent.setup(); });
+  beforeEach(() => {
+    user = userEvent.setup();
+    instalarBackendFalso();
+  });
   afterEach(() => {
     cleanup();
     sessionStorage.clear();

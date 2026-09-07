@@ -1,9 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "../App.jsx";
 import { ingresarComoAgente } from "./helpers/ingresar.js";
 import { MODULES } from "../config/modules.js";
+import { instalarBackendFalso } from "./fixtures/backendFalso.js";
 
 /**
  * Recorre la navegación como lo haría un supervisor: cada módulo funcional debe
@@ -20,12 +21,14 @@ describe("navegación por los módulos funcionales", () => {
 
   beforeEach(() => {
     user = userEvent.setup();
+    instalarBackendFalso();
   });
 
   afterEach(() => {
     cleanup();
     sessionStorage.clear();
     window.history.pushState({}, "", "/");
+    vi.unstubAllGlobals();
   });
 
   it.each(MODULES.map((module) => [module.label, module]))(

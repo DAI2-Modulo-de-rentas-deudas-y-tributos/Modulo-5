@@ -1,9 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "../App.jsx";
 import { ingresarComoAgente } from "./helpers/ingresar.js";
 import { AUDITORIA_MODULES } from "../config/auditoriaModules.js";
+import { instalarBackendFalso } from "./fixtures/backendFalso.js";
 
 /**
  * Área de Auditoría: acceso de sólo lectura al circuito completo. Las pruebas recorren
@@ -21,12 +22,14 @@ describe("área de auditoría", () => {
 
   beforeEach(() => {
     user = userEvent.setup();
+    instalarBackendFalso();
   });
 
   afterEach(() => {
     cleanup();
     sessionStorage.clear();
     window.history.pushState({}, "", "/");
+    vi.unstubAllGlobals();
   });
 
   it("abre el panel con los módulos de consulta", async () => {
