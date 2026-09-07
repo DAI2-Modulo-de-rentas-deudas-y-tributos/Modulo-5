@@ -1148,9 +1148,35 @@ export const portalService = {
 
 // -------------------------------------------------------------------- Dashboard
 
+/**
+ * El resumen de indicadores trae deuda y cobranza; los contadores restantes se
+ * completan con los listados reales, tolerando restricciones de permisos por rol.
+ */
+async function fetchCount(path) {
+  try {
+    const result = await request(path);
+    return result?.page?.totalElements ?? (Array.isArray(result) ? result.length : 0);
+  } catch {
+    return 0;
+  }
+}
+
 export const dashboardService = {
   /** Métricas del panel de inicio, una por módulo funcional. */
   async metrics() {
-    return request("/api/v1/dashboard/metrics");
+    const period = new Date().toISOString().slice(0, 7);
+    const [base, contribuyentes, liquidaciones, boletas, planes, exenciones, ticketsAbiertos] =
+      await Promise.all([
+        request("/api/v1/dashboard/metrics"),
+        fetchCount("/api/v1/taxpayers"),
+        fetchCount(`/api/v1/liquidations?period=${period}`),
+        fetchCount("/api/v1/bills?status=ISSUED"),
+        fetchCount("/api/v1/payment-plan-requests?status=PENDING"),
+        fetchCount("/api/v1/exemption-requests?status=PENDING"),
+        request("/api/v1/tickets")
+          .then((rows) => rows.filter((ticket) => !["COMPLETED", "REJECTED"].includes(ticket.status)).length)
+          .catch(() => 0),
+      ]);
+    return { ...base, contribuyentes, liquidaciones, boletas, planes, exenciones, tickets: ticketsAbiertos };
   },
 };
