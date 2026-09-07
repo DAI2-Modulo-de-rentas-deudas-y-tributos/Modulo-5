@@ -3393,10 +3393,42 @@ export const portalService = {
 
 // -------------------------------------------------------------------- Dashboard
 
+/**
+ * `GET /api/v1/indicators/summary` sólo trae deuda y cobranza; el resto de los
+ * contadores del panel (contribuyentes, liquidaciones del período, boletas
+ * emitidas, solicitudes pendientes, tickets abiertos) no tiene un agregado propio
+ * en el backend todavía. Los resolvemos acá con los listados que ya existen,
+ * pidiendo sólo `page.totalElements` — y tolerando que alguno falle (permisos
+ * distintos según el rol) sin tirar abajo el resto del panel.
+ */
+async function fetchCount(path) {
+  try {
+    const result = await request(path);
+    return result?.page?.totalElements ?? (Array.isArray(result) ? result.length : 0);
+  } catch {
+    return 0;
+  }
+}
+
 export const dashboardService = {
   /** Métricas del panel de inicio, una por módulo funcional. */
   async metrics() {
-    if (!USE_MOCKS) return request("/api/v1/dashboard/metrics");
+    if (!USE_MOCKS) {
+      const period = new Date().toISOString().slice(0, 7);
+      const [base, contribuyentes, liquidaciones, boletas, planes, exenciones, ticketsAbiertos] =
+        await Promise.all([
+          request("/api/v1/dashboard/metrics"),
+          fetchCount("/api/v1/taxpayers"),
+          fetchCount(`/api/v1/liquidations?period=${period}`),
+          fetchCount("/api/v1/bills?status=ISSUED"),
+          fetchCount("/api/v1/payment-plan-requests?status=PENDING"),
+          fetchCount("/api/v1/exemption-requests?status=PENDING"),
+          request("/api/v1/tickets")
+            .then((rows) => rows.filter((t) => t.status !== "COMPLETED" && t.status !== "REJECTED").length)
+            .catch(() => 0),
+        ]);
+      return { ...base, contribuyentes, liquidaciones, boletas, planes, exenciones, tickets: ticketsAbiertos };
+    }
     await delay();
     const today = "2026-08-25";
     return {

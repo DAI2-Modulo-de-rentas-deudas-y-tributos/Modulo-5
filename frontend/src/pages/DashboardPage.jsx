@@ -51,7 +51,7 @@ export default function DashboardPage() {
                 />
                 <StatTile
                   label="Pagos sin imputar"
-                  value={metrics.unallocatedPayments}
+                  value={formatCurrency(metrics.unallocatedPayments)}
                   hint="Requieren imputación manual"
                   iconName="Banknote"
                   tone={metrics.unallocatedPayments > 0 ? "danger" : "success"}
