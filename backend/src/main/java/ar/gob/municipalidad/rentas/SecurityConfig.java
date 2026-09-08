@@ -120,6 +120,10 @@ class CurrentIdentity {
         return SecurityContextHolder.getContext().getAuthentication().getAuthorities().stream()
             .findFirst().map(Object::toString).orElse("ROLE_UNKNOWN");
     }
+    boolean hasRole(String role) {
+        return SecurityContextHolder.getContext().getAuthentication().getAuthorities().stream()
+            .anyMatch(a -> a.getAuthority().equals("ROLE_" + role));
+    }
     void requireOwnership(Long taxpayerId) {
         boolean taxpayer = SecurityContextHolder.getContext().getAuthentication().getAuthorities().stream()
             .anyMatch(a -> a.getAuthority().equals("ROLE_TAXPAYER"));

@@ -78,13 +78,26 @@ class PlanWorkflowService {
 
     PaymentPlanRequest getRequest(Long id){PaymentPlanRequest r=requests.findById(id).orElseThrow(()->CatalogService.notFound("Solicitud de plan"));identity.requireOwnership(r.taxpayerId);return r;}
 
-    @Transactional PaymentPlanRequest submitException(Long id,ApiDtos.SubmitPlanExceptionRequest body){PaymentPlanRequest r=getRequest(id);requireStatus(r,PaymentPlanRequestStatus.PENDING);CatalogService.require(r.exceptional,"PLAN_EXCEPTION_NOT_REQUIRED","La solicitud cumple la configuración vigente");r.exceptionReason=body.reason();r.status=PaymentPlanRequestStatus.PENDING_EXCEPTION_APPROVAL;audit.record("PaymentPlanRequest",r.id,"PLAN_EXCEPTION_SUBMITTED",r);return r;}
+    @Transactional PaymentPlanRequest submitException(Long id,ApiDtos.SubmitPlanExceptionRequest body){
+        PaymentPlanRequest r=requests.findByIdForUpdate(id).orElseThrow(()->CatalogService.notFound("Solicitud de plan"));
+        identity.requireOwnership(r.taxpayerId);requireStatus(r,PaymentPlanRequestStatus.PENDING);
+        r.exceptionReason=body.reason();r.status=PaymentPlanRequestStatus.PENDING_EXCEPTION_APPROVAL;
+        audit.record("PaymentPlanRequest",r.id,r.exceptional?"PLAN_EXCEPTION_SUBMITTED":"PAYMENT_PLAN_DERIVED_TO_SUPERVISOR",r);return r;
+    }
     @Transactional PaymentPlanRequest approveException(Long id,ApiDtos.ApprovePlanExceptionRequest body){PaymentPlanRequest r=getRequest(id);requireStatus(r,PaymentPlanRequestStatus.PENDING_EXCEPTION_APPROVAL);r.exceptionApproved=true;r.status=PaymentPlanRequestStatus.PENDING;r.resolvedBy=identity.get().userId();r.resolvedAt=OffsetDateTime.now();r.resolutionReason=body==null?null:body.observation();audit.record("PaymentPlanRequest",r.id,"PLAN_EXCEPTION_APPROVED",r);return r;}
     @Transactional PaymentPlanRequest rejectException(Long id,String reason){PaymentPlanRequest r=getRequest(id);requireStatus(r,PaymentPlanRequestStatus.PENDING_EXCEPTION_APPROVAL);return reject(r,reason,"PLAN_EXCEPTION_REJECTED");}
-    @Transactional PaymentPlanRequest rejectRequest(Long id,String reason){PaymentPlanRequest r=getRequest(id);requireStatus(r,PaymentPlanRequestStatus.PENDING);return reject(r,reason,"PAYMENT_PLAN_REQUEST_REJECTED");}
+    @Transactional PaymentPlanRequest rejectRequest(Long id,String reason){
+        PaymentPlanRequest r=requests.findByIdForUpdate(id).orElseThrow(()->CatalogService.notFound("Solicitud de plan"));
+        identity.requireOwnership(r.taxpayerId);
+        CatalogService.require(r.status==PaymentPlanRequestStatus.PENDING||r.status==PaymentPlanRequestStatus.PENDING_EXCEPTION_APPROVAL,"INVALID_PLAN_REQUEST_TRANSITION","Estado de solicitud inválido");
+        if(r.status==PaymentPlanRequestStatus.PENDING_EXCEPTION_APPROVAL) CatalogService.require(identity.hasRole("SUPERVISOR"),"PLAN_SUPERVISOR_REQUIRED","La solicitud debe ser resuelta por el Supervisor");
+        return reject(r,reason,"PAYMENT_PLAN_REQUEST_REJECTED");
+    }
 
     @Transactional PaymentPlanRequest grant(Long id,ApiDtos.GrantPaymentPlanRequest body) {
-        PaymentPlanRequest r=requests.findByIdForUpdate(id).orElseThrow(()->CatalogService.notFound("Solicitud de plan")); identity.requireOwnership(r.taxpayerId); requireStatus(r,PaymentPlanRequestStatus.PENDING);
+        PaymentPlanRequest r=requests.findByIdForUpdate(id).orElseThrow(()->CatalogService.notFound("Solicitud de plan")); identity.requireOwnership(r.taxpayerId);
+        CatalogService.require(r.status==PaymentPlanRequestStatus.PENDING||r.status==PaymentPlanRequestStatus.PENDING_EXCEPTION_APPROVAL,"INVALID_PLAN_REQUEST_TRANSITION","Estado de solicitud inválido");
+        if(r.status==PaymentPlanRequestStatus.PENDING_EXCEPTION_APPROVAL) CatalogService.require(identity.hasRole("SUPERVISOR"),"PLAN_SUPERVISOR_REQUIRED","La solicitud debe ser resuelta por el Supervisor");
         CatalogService.require(!r.exceptional||r.exceptionApproved,"PLAN_EXCEPTION_APPROVAL_REQUIRED","La excepción requiere aprobación de Supervisor");
         PaymentPlanConfiguration c=currentConfiguration(); List<PaymentPlanRequestDebt> links=requestDebts.findByRequestId(r.id);
         List<Debt> selected=links.stream().map(x->debts.findByIdForUpdate(x.debtId).orElseThrow(()->CatalogService.notFound("Deuda"))).toList();
