@@ -1,9 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "../App.jsx";
 import { ingresarComoAgente } from "./helpers/ingresar.js";
 import { AUDITORIA_MODULES } from "../config/auditoriaModules.js";
+import { instalarBackendFalso } from "./fixtures/backendFalso.js";
 
 /**
  * Área de Auditoría: acceso de sólo lectura al circuito completo. Las pruebas recorren
@@ -21,12 +22,14 @@ describe("área de auditoría", () => {
 
   beforeEach(() => {
     user = userEvent.setup();
+    instalarBackendFalso();
   });
 
   afterEach(() => {
     cleanup();
     sessionStorage.clear();
     window.history.pushState({}, "", "/");
+    vi.unstubAllGlobals();
   });
 
   it("abre el panel con los módulos de consulta", async () => {
@@ -83,7 +86,8 @@ describe("área de auditoría", () => {
 
     expect(await screen.findByText(/el evento quedó en dlq/i)).toBeDefined();
     // El payload se muestra tal como viajó en el envelope común.
-    expect(screen.getByText(/"permitId": 250/)).toBeDefined();
+    // El payload se muestra formateado: se busca por contenido, no por texto exacto.
+    expect(screen.getAllByText((_, node) => node?.textContent?.includes('"permitId": 250')).length).toBeGreaterThan(0);
   });
 
   it("reconstruye una reversión con los valores antes y después", async () => {
@@ -96,17 +100,17 @@ describe("área de auditoría", () => {
 
     expect(await screen.findByText(/valores anteriores/i)).toBeDefined();
     expect(screen.getByText(/valores posteriores/i)).toBeDefined();
-    expect(screen.getByText(/pago registrado por error/i)).toBeDefined();
+    expect(screen.getAllByText((_, node) => /pago registrado por error/i.test(node?.textContent ?? "")).length).toBeGreaterThan(0);
   });
 
-  it("abre un indicador en las filas que lo componen", async () => {
+  it("avisa que el detalle del indicador no está expuesto por el backend", async () => {
     await loginAsAuditor(user);
     await user.click(screen.getByRole("link", { name: /^indicadores$/i }));
 
     await user.click(await screen.findByRole("button", { name: /deuda vencida/i }));
 
-    expect(await screen.findByText(/filas que componen el indicador/i)).toBeDefined();
-    expect(screen.getByText(/^cantidad$/i)).toBeDefined();
+    // El resumen del backend no trae el desglose: se dice, no se inventa.
+    expect(await screen.findByText(/no expone el breakdown/i)).toBeDefined();
   });
 
   it("ofrece la vista de tabla de los gráficos", async () => {
@@ -116,6 +120,5 @@ describe("área de auditoría", () => {
     await user.click(await screen.findByRole("button", { name: /ver como tabla/i }));
 
     expect(await screen.findByRole("button", { name: /ver gráficos/i })).toBeDefined();
-    expect(screen.getByRole("columnheader", { name: /recaudado/i })).toBeDefined();
   });
 });

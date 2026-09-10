@@ -1,8 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "../App.jsx";
 import { ingresarComoAgente } from "./helpers/ingresar.js";
+import { instalarBackendFalso, pagina } from "./fixtures/backendFalso.js";
+import { CONFIGURACIONES } from "./fixtures/datos.js";
 
 /**
  * Configuración de tributos desde la pantalla: el analista propone, el Supervisor
@@ -21,12 +23,14 @@ describe("configuración de tributos", () => {
 
   beforeEach(() => {
     user = userEvent.setup();
+    instalarBackendFalso();
   });
 
   afterEach(() => {
     cleanup();
     sessionStorage.clear();
     window.history.pushState({}, "", "/");
+    vi.unstubAllGlobals();
   });
 
   it("aclara que los cambios rigen hacia adelante", async () => {
@@ -62,6 +66,15 @@ describe("configuración de tributos", () => {
   });
 
   it("el analista propone y queda esperando al Supervisor", async () => {
+    // El borrador recién creado tiene que aparecer en el listado para poder enviarlo.
+    instalarBackendFalso({
+      "POST /api/v1/tax-configurations": { id: 20, taxConceptId: 1, version: 4, status: "DRAFT" },
+      "GET /api/v1/tax-configurations": pagina([
+        ...CONFIGURACIONES,
+        { id: 20, taxConceptId: 1, version: 4, status: "DRAFT", calculationType: "PERCENTAGE", rate: 2, validFrom: "2029-01-01", validUntil: "2029-12-31" },
+      ]),
+      "POST /api/v1/tax-configurations/{id}/submit": { id: 20, version: 4, status: "PENDING_APPROVAL" },
+    });
     await entrar(user, "mrivas");
     await user.click((await screen.findAllByRole("button", { name: /nueva versión/i }))[0]);
 

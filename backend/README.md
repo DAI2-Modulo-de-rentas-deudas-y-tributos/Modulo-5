@@ -99,6 +99,26 @@ El reporte de cobertura queda en `target/site/jacoco/index.html`. Un test omitid
 
 ## Inicio local
 
+En macOS/Linux, con PostgreSQL ya disponible:
+
+```shell
+export SPRING_PROFILES_ACTIVE=dev
+export RENTAS_DEMO_BOOTSTRAP_PASSWORD='una-clave-local'
+export CORS_ALLOWED_ORIGINS='http://localhost:5173,http://localhost:4173'
+./mvnw spring-boot:run
+```
+
+Maven no carga `.env` automáticamente. Si termina con `exit code: 1`, revisar las
+líneas anteriores al resumen. El caso `Port 8080 was already in use` significa que
+ya existe otro backend escuchando; se confirma sin iniciar una segunda instancia:
+
+```shell
+lsof -nP -iTCP:8080 -sTCP:LISTEN
+curl --fail http://localhost:8080/actuator/health
+```
+
+En PowerShell con Docker Compose:
+
 ```powershell
 Copy-Item .env.example .env
 docker compose up -d postgres
@@ -122,7 +142,7 @@ PostgreSQL y backend tienen healthchecks; el backend espera a que PostgreSQL est
 
 `.env.example` contiene únicamente valores de ejemplo y defaults locales seguros. Copiarlo a `.env` no alcanza para un entorno compartido: hay que reemplazar cada `CHANGE_ME` con un secreto provisto por el equipo y mantener `.env` fuera de Git.
 
-Docker Compose lee `.env` automáticamente. Una ejecución directa mediante Maven o el IDE no lo hace: en ese caso `DB_URL`, `DB_USER` y `DB_PASSWORD` deben exportarse en el proceso o configurarse en el IDE. El perfil inseguro de identidad simulada se habilita sólo de forma explícita con `-Dspring-boot.run.profiles=dev`; no debe utilizarse en producción.
+Docker Compose lee `.env` automáticamente. Una ejecución directa mediante Maven o el IDE no lo hace: en ese caso `DB_URL`, `DB_USER` y `DB_PASSWORD` deben exportarse en el proceso o configurarse en el IDE. El perfil inseguro de identidad simulada se habilita sólo de forma explícita con `SPRING_PROFILES_ACTIVE=dev` o `-Dspring-boot.run.profiles=dev`; no debe utilizarse en producción.
 
 | Variable | Uso | Requerida |
 | --- | --- | --- |
@@ -134,6 +154,7 @@ Docker Compose lee `.env` automáticamente. Una ejecución directa mediante Mave
 | `DB_USER` | Usuario JDBC cuando Spring Boot se ejecuta directamente. | No si aplica el default local; configurar fuera de local. |
 | `DB_PASSWORD` | Contraseña JDBC cuando Spring Boot se ejecuta directamente. | Sí para una base que exija autenticación; guardar como secreto. |
 | `SERVER_PORT` | Puerto HTTP directo o puerto publicado por Compose. | No; default `8080`. |
+| `CORS_ALLOWED_ORIGINS` | Orígenes web exactos separados por coma; sin comodines. | No para same-origin; necesario si frontend y API usan orígenes distintos. |
 | `OUTBOX_DELAY_MS` | Intervalo entre ciclos de publicación del Outbox. | No; default `5000`. |
 | `BROKER_ADAPTER` | Selector reservado del adaptador; hoy sólo existe `local-log`. | No; default `local-log`. |
 | `RENTAS_SECURITY_DEV_MODE` | Habilita identidad y endpoints DEMO/DEV. | No; default `false`. Prohibido en producción. |

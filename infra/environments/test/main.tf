@@ -76,6 +76,7 @@ module "ecs" {
   database_port             = module.database.port
   database_name             = module.database.database_name
   database_secret_arn       = module.database.master_secret_arn
+  cors_allowed_origins      = [module.hosting.frontend_url]
 
   depends_on = [module.edge]
 }
@@ -87,5 +88,4 @@ module "hosting" {
   branch_name  = "test"
   api_base_url = module.edge.api_base_url
 }
-
 

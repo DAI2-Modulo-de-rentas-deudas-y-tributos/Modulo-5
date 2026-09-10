@@ -73,7 +73,7 @@ class SecurityTests {
         mvc.perform(get("/api/v1/health")).andExpect(status().isOk()).andExpect(jsonPath("$.status").value("UP"));
         String openApi=mvc.perform(get("/v3/api-docs")).andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
         var paths=json.readTree(openApi).path("paths");int operations=0;for(var path=paths.fields();path.hasNext();)operations+=path.next().getValue().size();
-        org.assertj.core.api.Assertions.assertThat(operations).isEqualTo(147);
+        org.assertj.core.api.Assertions.assertThat(operations).isEqualTo(148);
         org.assertj.core.api.Assertions.assertThat(paths.size()).isEqualTo(132);
         org.assertj.core.api.Assertions.assertThat(paths.fieldNames()).toIterable().noneMatch(x->x.startsWith("/events/"));
     }

@@ -2,15 +2,12 @@
  * Cliente HTTP del frontend de Rentas.
  *
  * La URL del backend llega siempre por variable de entorno (`VITE_API_BASE_URL`),
- * nunca hardcodeada. `VITE_USE_MOCKS=true` activa el dataset local de `mockDb.js`
- * para datos de negocio. Ausente o `false` usa la API real. La autenticación no
- * depende de esta bandera: va por `VITE_AUTH_MODE`.
+ * nunca hardcodeada. Toda la información proviene del backend: no hay dataset local.
  */
 import { adaptApiRequest, adaptApiResponse } from "./apiAdapters.js";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").trim().replace(/\/+$/, "");
 
-export const USE_MOCKS = import.meta.env.VITE_USE_MOCKS === "true";
 export const AUTH_MODE = import.meta.env.VITE_AUTH_MODE ?? "mock";
 export const DEV_IDENTITY_HEADERS = import.meta.env.VITE_DEV_IDENTITY_HEADERS === "true";
 
@@ -68,9 +65,24 @@ export async function request(path, { method = "GET", body, signal, responseType
     const filename = disposition.match(/filename="([^"\r\n]+)"/i)?.[1] ?? "boleta.pdf";
     return { blob, filename: filename.replace(/[\\/]/g, "_") };
   }
-  const payload = response.status === 204 ? null : contentType.includes("application/json")
-    ? await response.json().catch(() => null)
-    : await response.text().catch(() => null);
+  const isJson = /\bapplication\/(?:[\w.-]+\+)?json\b/i.test(contentType);
+  let payload = null;
+  if (response.status !== 204) {
+    if (response.ok && !isJson) {
+      throw new ApiError(
+        "La API devolvió una respuesta inesperada. Revisá la URL del backend y el proxy de conexión.",
+        response.status, null, "INVALID_API_RESPONSE", response.headers.get("x-correlation-id"),
+      );
+    }
+    try {
+      payload = isJson ? await response.json() : await response.text();
+    } catch {
+      if (response.ok) {
+        throw new ApiError("La API devolvió un JSON inválido.", response.status, null, "INVALID_API_RESPONSE",
+          response.headers.get("x-correlation-id"));
+      }
+    }
+  }
 
   if (!response.ok) {
     throw new ApiError(
@@ -83,11 +95,4 @@ export async function request(path, { method = "GET", body, signal, responseType
   }
 
   return adaptApiResponse(path, adapted.path, payload);
-}
-
-/** Simula la latencia de red para que los estados de carga se vean en modo mock. */
-export function delay(ms = 350) {
-  // En los tests la latencia simulada sólo agrega segundos al CI.
-  if (import.meta.env.MODE === "test") return Promise.resolve();
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

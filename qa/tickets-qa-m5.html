@@ -1,0 +1,376 @@
+<title>Hallazgos M5 Rentas</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+:root{
+  --navy:#0F2C59; --navy-light:#163d75;
+  --coral:#D63031; --coral-soft:#FBEAEA;
+  --amber:#B45A00; --amber-soft:#FCEEDD;
+  --slate:#3E5872; --slate-soft:#E9EEF3;
+  --ok:#15803D; --ok-soft:#E7F5EC;
+  --bg:#FAFAFA; --card:#FFFFFF;
+  --border:#E4E4E7; --border-strong:#D4D4D8;
+  --text:#1A1A1A; --text-soft:#55606E; --text-faint:#8A93A0;
+  --font-sans:'Inter',system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --font-mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#14181F; --card:#1B212B;
+    --border:#2B323D; --border-strong:#3A4250;
+    --text:#EDEFF3; --text-soft:#AEB6C2; --text-faint:#78818F;
+    --coral-soft:#3A1F20; --amber-soft:#382713; --slate-soft:#1E2A36; --ok-soft:#132A1D;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#14181F; --card:#1B212B;
+  --border:#2B323D; --border-strong:#3A4250;
+  --text:#EDEFF3; --text-soft:#AEB6C2; --text-faint:#78818F;
+  --coral-soft:#3A1F20; --amber-soft:#382713; --slate-soft:#1E2A36; --ok-soft:#132A1D;
+}
+
+*{box-sizing:border-box;}
+body{
+  margin:0; background:var(--bg); color:var(--text);
+  font-family:var(--font-sans); -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:980px; margin:0 auto; padding:40px 24px 80px;}
+
+/* header */
+.head{
+  border-bottom:1px solid var(--border); padding-bottom:28px; margin-bottom:28px;
+  display:flex; flex-wrap:wrap; gap:20px; justify-content:space-between; align-items:flex-end;
+}
+.head-left .eyebrow{
+  display:flex; align-items:center; gap:10px; margin-bottom:10px;
+}
+.eyebrow .bar{width:26px; height:2px; background:var(--coral);}
+.eyebrow span{
+  color:var(--coral); font-size:11px; font-weight:700; letter-spacing:.16em; text-transform:uppercase;
+}
+.head h1{
+  margin:0; font-size:2rem; font-weight:800; letter-spacing:-.02em; color:var(--navy); text-wrap:balance;
+}
+:root[data-theme="dark"] .head h1, @media (prefers-color-scheme: dark){ }
+.head h1{color:var(--navy);}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]) .head h1{ color:#DCE4F5; } }
+:root[data-theme="dark"] .head h1{ color:#DCE4F5; }
+.head p{margin:8px 0 0; color:var(--text-soft); font-size:14.5px; max-width:52ch;}
+.meta{
+  font-family:var(--font-mono); font-size:12px; color:var(--text-faint);
+  display:flex; flex-direction:column; gap:4px; text-align:right; white-space:nowrap;
+}
+.meta b{color:var(--text-soft); font-weight:500;}
+
+/* stat strip */
+.stats{
+  display:grid; grid-template-columns:repeat(5,1fr); gap:1px;
+  background:var(--border); border:1px solid var(--border); border-radius:14px; overflow:hidden;
+  margin-bottom:40px;
+}
+.stat{background:var(--card); padding:16px 14px; display:flex; flex-direction:column; gap:4px;}
+.stat .n{font-family:var(--font-mono); font-variant-numeric:tabular-nums; font-size:26px; font-weight:600; letter-spacing:-.01em;}
+.stat .l{font-size:11.5px; color:var(--text-faint); letter-spacing:.03em;}
+.stat.ok .n{color:var(--ok);}
+.stat.alta .n{color:var(--coral);}
+.stat.media .n{color:var(--amber);}
+.stat.baja .n{color:var(--slate);}
+
+/* section label */
+.section-label{
+  display:flex; align-items:center; gap:12px; margin:0 0 18px;
+  font-size:12px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:var(--text-faint);
+}
+.section-label::after{content:""; flex:1; height:1px; background:var(--border);}
+
+/* tickets */
+.tickets{display:flex; flex-direction:column; gap:16px; margin-bottom:44px;}
+.ticket{
+  background:var(--card); border:1px solid var(--border); border-radius:14px;
+  border-left:4px solid var(--sev-color); overflow:hidden;
+}
+.ticket.sev-alta{--sev-color:var(--coral);}
+.ticket.sev-media{--sev-color:var(--amber);}
+.ticket.sev-baja{--sev-color:var(--slate);}
+
+.t-head{
+  display:flex; align-items:flex-start; justify-content:space-between; gap:16px;
+  padding:18px 22px 14px;
+}
+.t-head-left{display:flex; align-items:baseline; gap:12px;}
+.t-num{font-family:var(--font-mono); font-size:13px; color:var(--text-faint); font-weight:500;}
+.t-title{margin:0; font-size:16.5px; font-weight:700; letter-spacing:-.005em;}
+.t-tags{display:flex; gap:8px; align-items:center; flex-shrink:0;}
+.pill{
+  font-size:10.5px; font-weight:700; letter-spacing:.05em; text-transform:uppercase;
+  padding:4px 9px; border-radius:100px; white-space:nowrap;
+}
+.pill.sev-alta{background:var(--coral-soft); color:var(--coral);}
+.pill.sev-media{background:var(--amber-soft); color:var(--amber);}
+.pill.sev-baja{background:var(--slate-soft); color:var(--slate);}
+.pill.module{background:var(--slate-soft); color:var(--text-soft); font-weight:600;}
+
+.t-body{padding:0 22px 20px;}
+.t-grid{
+  display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:14px;
+}
+@media (max-width:640px){ .t-grid{grid-template-columns:1fr;} .stats{grid-template-columns:repeat(2,1fr);} .head{align-items:flex-start;} .meta{text-align:left;} }
+
+.t-col-label{
+  font-size:10.5px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; margin-bottom:6px;
+}
+.t-col.esperado .t-col-label{color:var(--text-faint);}
+.t-col.obtenido .t-col-label{color:var(--sev-color);}
+.t-col p{margin:0; font-size:13.5px; line-height:1.55; color:var(--text-soft);}
+.t-col.obtenido p{color:var(--text);}
+
+.t-repro{
+  background:var(--slate-soft); border-radius:8px; padding:11px 14px; margin-top:4px;
+}
+.t-repro .lbl{font-size:10px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--text-faint); margin-bottom:5px; display:block;}
+.t-repro code{
+  font-family:var(--font-mono); font-size:12.2px; line-height:1.6; color:var(--text); white-space:pre-wrap; word-break:break-word;
+}
+
+.t-foot{
+  display:flex; flex-wrap:wrap; gap:8px 16px; padding-top:12px; margin-top:14px; border-top:1px solid var(--border);
+  font-size:12px; color:var(--text-faint);
+}
+.t-foot b{color:var(--text-soft); font-weight:600;}
+.t-foot .role{font-family:var(--font-mono); font-size:11.5px; background:var(--bg); border:1px solid var(--border); padding:2px 7px; border-radius:5px; color:var(--text-soft);}
+
+/* ok summary */
+.ok-note{
+  background:var(--ok-soft); border:1px solid var(--border); border-left:4px solid var(--ok);
+  border-radius:14px; padding:20px 22px; font-size:13.5px; line-height:1.6; color:var(--text-soft);
+}
+.ok-note b{color:var(--text); font-weight:700;}
+
+footer{margin-top:48px; padding-top:20px; border-top:1px solid var(--border); font-size:11.5px; color:var(--text-faint); display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px;}
+</style>
+
+<div class="wrap">
+
+  <div class="head">
+    <div class="head-left">
+      <div class="eyebrow"><span class="bar"></span><span>Módulo 5 — Rentas · QA</span></div>
+      <h1>Hallazgos de la validación E2E</h1>
+      <p>7 defectos encontrados sobre 52 casos de prueba ejecutados con frontend, backend y PostgreSQL reales, sin mocks.</p>
+    </div>
+    <div class="meta">
+      <div><b>Rama</b> develop</div>
+      <div><b>Commit</b> d8aea0b</div>
+      <div><b>Fecha</b> 2026-09-05</div>
+      <div><b>QA</b> Lautaro Carenzio</div>
+    </div>
+  </div>
+
+  <div class="ok-note" style="margin-bottom:28px;">
+    <b>Login re-verificado sobre el diseño final.</b> Después de esta validación, el equipo de frontend siguió ajustando la pantalla de ingreso (nuevo texto "Tus tributos, en un solo lugar", efecto de brillo en el botón) antes de subirla a <code>develop</code> como <code>d8aea0b</code>. Ninguno de los 7 hallazgos depende de ese diseño — son todos de lógica de negocio en el backend o de UI en pantallas internas. Igual se re-probó el ingreso completo sobre el commit final: login real de los 5 roles demo y la detección de "puerta equivocada" funcionan igual que en la versión evaluada.
+  </div>
+
+  <div class="stats">
+    <div class="stat"><span class="n">52</span><span class="l">CASOS EJECUTADOS</span></div>
+    <div class="stat ok"><span class="n">45</span><span class="l">OK</span></div>
+    <div class="stat alta"><span class="n">2</span><span class="l">FALLADO · ALTA</span></div>
+    <div class="stat media"><span class="n">4</span><span class="l">FALLADO · MEDIA</span></div>
+    <div class="stat baja"><span class="n">1</span><span class="l">FALLADO · BAJA</span></div>
+  </div>
+
+  <div class="section-label">Severidad alta</div>
+  <div class="tickets">
+
+    <div class="ticket sev-alta">
+      <div class="t-head">
+        <div class="t-head-left"><span class="t-num">#1</span><h3 class="t-title">La exención se aplica aunque ya venció</h3></div>
+        <div class="t-tags"><span class="pill module">Exenciones</span><span class="pill sev-alta">Alta</span></div>
+      </div>
+      <div class="t-body">
+        <div class="t-grid">
+          <div class="t-col esperado">
+            <div class="t-col-label">Esperado</div>
+            <p>Una liquidación con período posterior a <code>validUntil</code> de la exención no debería recibir ningún descuento.</p>
+          </div>
+          <div class="t-col obtenido">
+            <div class="t-col-label">Obtenido</div>
+            <p>Con una exención 100% vigente hasta 2027-08-31, una liquidación de período <b>2028-01</b> igual aplica el 100% (<code>finalAmount: 0</code>). Todo indica que el chequeo de vigencia compara contra la fecha de emisión (hoy) y no contra el período fiscal de la liquidación.</p>
+          </div>
+        </div>
+        <div class="t-repro">
+          <span class="lbl">Pasos para reproducir</span>
+          <code>1. Aprobar una exención 100% con validUntil cercano.
+2. Emitir hoy una liquidación con period varios meses después de validUntil.
+3. finalAmount da 0 igual — debería dar el importe completo.</code>
+        </div>
+        <div class="t-foot"><span class="role">POST /liquidations</span><span><b>Evidencia:</b> Insomnia · 06. Exenciones · 3b</span></div>
+      </div>
+    </div>
+
+    <div class="ticket sev-alta">
+      <div class="t-head">
+        <div class="t-head-left"><span class="t-num">#2</span><h3 class="t-title">Sin protección contra solicitudes duplicadas</h3></div>
+        <div class="t-tags"><span class="pill module">Pruebas técnicas</span><span class="pill sev-alta">Alta</span></div>
+      </div>
+      <div class="t-body">
+        <div class="t-grid">
+          <div class="t-col esperado">
+            <div class="t-col-label">Esperado</div>
+            <p>Reenviar la misma solicitud (mismo request) no debería procesar la operación dos veces.</p>
+          </div>
+          <div class="t-col obtenido">
+            <div class="t-col-label">Obtenido</div>
+            <p>Dos <code>POST /payments</code> idénticos disparados en paralelo (mismo contribuyente, monto e imputación) crean <b>dos pagos reales independientes</b>. No hay ningún <code>Idempotency-Key</code> ni clave de unicidad — a diferencia de las liquidaciones, que sí están protegidas por contribuyente+concepto+período.</p>
+          </div>
+        </div>
+        <div class="t-repro">
+          <span class="lbl">Pasos para reproducir</span>
+          <code>Enviar el mismo POST /api/v1/payments dos veces en paralelo
+(mismo taxpayerId, amount, allocations) → se crean 2 pagos, no 1.</code>
+        </div>
+        <div class="t-foot"><span class="role">POST /payments</span><span><b>Evidencia:</b> Insomnia · 09. Pruebas técnicas · 6</span></div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="section-label">Severidad media</div>
+  <div class="tickets">
+
+    <div class="ticket sev-media">
+      <div class="t-head">
+        <div class="t-head-left"><span class="t-num">#3</span><h3 class="t-title">La auditoría de exenciones solo registra el desenlace</h3></div>
+        <div class="t-tags"><span class="pill module">Exenciones</span><span class="pill sev-media">Media</span></div>
+      </div>
+      <div class="t-body">
+        <div class="t-grid">
+          <div class="t-col esperado">
+            <div class="t-col-label">Esperado</div>
+            <p>Debe quedar registro de auditoría de todo el ciclo de vida: creación, revisión, pedido y presentación de documentación, y resolución.</p>
+          </div>
+          <div class="t-col obtenido">
+            <div class="t-col-label">Obtenido</div>
+            <p>Solo se audita la aprobación/rechazo final (<code>EXEMPTION_APPROVED</code> / <code>EXEMPTION_REJECTED</code>). Los 4 pasos previos —creación, inicio de revisión, pedido y entrega de documentación— no dejan ningún rastro.</p>
+          </div>
+        </div>
+        <div class="t-repro">
+          <span class="lbl">Pasos para reproducir</span>
+          <code>Ejecutar el ciclo completo de una exención y consultar GET /audit
+filtrado por esa entidad: solo aparece el último paso.</code>
+        </div>
+        <div class="t-foot"><span class="role">GET /audit</span><span><b>Evidencia:</b> Insomnia · 06. Exenciones · 4</span></div>
+      </div>
+    </div>
+
+    <div class="ticket sev-media">
+      <div class="t-head">
+        <div class="t-head-left"><span class="t-num">#4</span><h3 class="t-title">Borrar una liquidación emitida devuelve un error de servidor</h3></div>
+        <div class="t-tags"><span class="pill module">Tributos y liquidaciones</span><span class="pill sev-media">Media</span></div>
+      </div>
+      <div class="t-body">
+        <div class="t-grid">
+          <div class="t-col esperado">
+            <div class="t-col-label">Esperado</div>
+            <p>El sistema debe rechazar la eliminación con un error claro (404/405), sin comprometer el dato.</p>
+          </div>
+          <div class="t-col obtenido">
+            <div class="t-col-label">Obtenido</div>
+            <p>La liquidación no se borra (el dato queda a salvo), pero el rechazo llega como <code>500 INTERNAL_ERROR</code>. La causa real es que el método DELETE no existe; el manejador global de errores no distingue esto de una falla interna genuina.</p>
+          </div>
+        </div>
+        <div class="t-repro">
+          <span class="lbl">Pasos para reproducir</span>
+          <code>DELETE /api/v1/liquidations/1  (rol RENTAS)  →  HTTP 500</code>
+        </div>
+        <div class="t-foot"><span class="role">DELETE /liquidations/{id}</span><span><b>Evidencia:</b> Insomnia · 01. Tributos y liquidaciones · 5</span></div>
+      </div>
+    </div>
+
+    <div class="ticket sev-media">
+      <div class="t-head">
+        <div class="t-head-left"><span class="t-num">#5</span><h3 class="t-title">No se puede refinanciar un plan ya caduco</h3></div>
+        <div class="t-tags"><span class="pill module">Planes de pago</span><span class="pill sev-media">Media</span></div>
+      </div>
+      <div class="t-body">
+        <div class="t-grid">
+          <div class="t-col esperado">
+            <div class="t-col-label">Esperado</div>
+            <p>Según el flujo esperado, un plan incumplido primero caduca y después se refinancia sobre su saldo pendiente.</p>
+          </div>
+          <div class="t-col obtenido">
+            <div class="t-col-label">Obtenido</div>
+            <p>Refinanciar exige que el plan esté <code>ACTIVE</code>. Un plan que ya caducó (<code>EXPIRED</code>) responde <code>422 PLAN_NOT_ACTIVE</code>. Probado sobre un plan todavía activo, la refinanciación funciona perfecto — el problema es específicamente encadenarla después de la caducidad.</p>
+          </div>
+        </div>
+        <div class="t-repro">
+          <span class="lbl">A confirmar con el equipo</span>
+          <code>¿Caducidad y refinanciación son caminos alternativos (uno excluye
+al otro) o debería poder refinanciarse un plan ya EXPIRED?</code>
+        </div>
+        <div class="t-foot"><span class="role">POST /payment-plans/{id}/refinancing-requests</span><span><b>Evidencia:</b> Insomnia · 05. Planes de pago · 5a</span></div>
+      </div>
+    </div>
+
+    <div class="ticket sev-media">
+      <div class="t-head">
+        <div class="t-head-left"><span class="t-num">#6</span><h3 class="t-title">Cobertura de tests del frontend por debajo del mínimo</h3></div>
+        <div class="t-tags"><span class="pill module">Pruebas técnicas</span><span class="pill sev-media">Media</span></div>
+      </div>
+      <div class="t-body">
+        <div class="t-grid">
+          <div class="t-col esperado">
+            <div class="t-col-label">Esperado</div>
+            <p>Cobertura de líneas ≥ 85%, según el requisito acordado.</p>
+          </div>
+          <div class="t-col obtenido">
+            <div class="t-col-label">Obtenido</div>
+            <p><code>Lines: 83.37% · Branch: 72.67% · Functions: 72.5%</code>. No llega al mínimo. (El backend sí cumple, con 87.93%.)</p>
+          </div>
+        </div>
+        <div class="t-repro">
+          <span class="lbl">Nota aparte</span>
+          <code>Con VITE_USE_MOCKS=false en frontend/.env (la config que exige
+esta validación), npm test rompe 228/307 tests — Vitest carga
+ese mismo .env. Medir cobertura requiere sacarlo temporalmente.</code>
+        </div>
+        <div class="t-foot"><span class="role">npm test -- --coverage</span><span><b>Evidencia:</b> hoja Preparación del validacion-e2e-m5.xlsx</span></div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="section-label">Severidad baja</div>
+  <div class="tickets">
+
+    <div class="ticket sev-baja">
+      <div class="t-head">
+        <div class="t-head-left"><span class="t-num">#7</span><h3 class="t-title">No hay forma de crear un concepto tributario desde la UI</h3></div>
+        <div class="t-tags"><span class="pill module">Tributos y liquidaciones</span><span class="pill sev-baja">Baja</span></div>
+      </div>
+      <div class="t-body">
+        <div class="t-grid">
+          <div class="t-col esperado">
+            <div class="t-col-label">Esperado</div>
+            <p>Personal de Rentas debería poder dar de alta un concepto tributario nuevo sin salir del frontend.</p>
+          </div>
+          <div class="t-col obtenido">
+            <div class="t-col-label">Obtenido</div>
+            <p>El backend sí soporta <code>POST /tax-concepts</code> (rol RENTAS). La pantalla "Configuración de tributos" solo ofrece <b>Nueva versión</b> sobre conceptos ya existentes — ningún botón crea uno desde cero.</p>
+          </div>
+        </div>
+        <div class="t-foot"><span class="role">ConfiguracionTributosPage.jsx</span><span><b>Evidencia:</b> Insomnia · 01. Tributos y liquidaciones · 1a</span></div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="section-label">Cobertura funcional sin hallazgos</div>
+  <div class="ok-note">
+    <b>45 de 52 casos pasaron sin observaciones</b>, incluido todo lo más sensible del módulo: cálculo de alícuota/mínimo/máximo, recargos e interés por mora, pago total/parcial/sin imputar y saldo a favor, el circuito de reversión de 3 roles con rechazo de duplicados, otorgamiento y refinanciación de planes, los 3 estados de conciliación, el aislamiento de datos por rol (7/7), y toda la sección de concurrencia: pagos y reversiones simultáneas no corrompen saldos, el backend conserva los datos íntegros tras un reinicio, y Flyway migra limpio desde una base vacía.
+  </div>
+
+  <footer>
+    <span>Validación E2E — Módulo 5 Rentas · Ciudad UADE</span>
+    <span>Detalle completo de los 52 casos en validacion-e2e-m5.xlsx · Peticiones reproducibles en insomnia-m5-rentas-qa.json</span>
+  </footer>
+
+</div>

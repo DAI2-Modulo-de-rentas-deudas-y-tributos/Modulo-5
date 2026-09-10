@@ -9,10 +9,9 @@ import Alert from "../../components/ui/Alert.jsx";
 import Spinner from "../../components/ui/Spinner.jsx";
 import useResource from "../../hooks/useResource.js";
 import { auditService } from "../../services/rentasService.js";
-import { conceptDefinitions } from "../../services/mockDb.js";
+import useTaxConcepts from "../../hooks/useTaxConcepts.js";
 import { formatCurrency, formatDate, formatDateTime } from "../../lib/format.js";
 
-const CONCEPT_OPTIONS = conceptDefinitions.map((c) => ({ value: c.code, label: c.name }));
 
 const TITLES = {
   totalSettled: "Total liquidado",
@@ -24,6 +23,7 @@ const TITLES = {
 
 /** Qué hay detrás de un indicador: las filas concretas que lo componen. */
 export default function IndicadorDetallePage() {
+  const { options: CONCEPT_OPTIONS } = useTaxConcepts();
   const { key } = useParams();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();

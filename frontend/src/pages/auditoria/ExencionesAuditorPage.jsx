@@ -8,10 +8,9 @@ import StatusBadge from "../../components/common/StatusBadge.jsx";
 import Alert from "../../components/ui/Alert.jsx";
 import useResource from "../../hooks/useResource.js";
 import { auditService } from "../../services/rentasService.js";
-import { conceptDefinitions } from "../../services/mockDb.js";
+import useTaxConcepts from "../../hooks/useTaxConcepts.js";
 import { formatDate, formatPercentage } from "../../lib/format.js";
 
-const CONCEPT_OPTIONS = conceptDefinitions.map((c) => ({ value: c.code, label: c.name }));
 
 const TABS = [
   { id: "", label: "Todas" },
@@ -22,6 +21,7 @@ const TABS = [
 
 /** Exenciones: qué se pidió, qué se otorgó y quién lo resolvió. */
 export default function ExencionesAuditorPage() {
+  const { options: CONCEPT_OPTIONS } = useTaxConcepts();
   const navigate = useNavigate();
   const [tab, setTab] = useState("");
   const [filters, setFilters] = useState({ taxpayer: "", conceptCode: "", from: "", to: "" });

@@ -36,6 +36,8 @@ jobs:
       ECS_SERVICE: "modulo-5-rentas-test-backend"
       ECS_TASK_FAMILY: "modulo-5-rentas-test-backend"
       ECS_CONTAINER_NAME: "backend"
+      AMPLIFY_APP_NAME: "modulo-5-rentas-test-frontend"
+      AMPLIFY_BRANCH: "test"
       REQUESTED_IMAGE_TAG: ${{ inputs.image_tag }}
       APPLY_CONFIRMATION: ${{ inputs.confirmation }}
 
@@ -72,6 +74,28 @@ jobs:
         run: |
           set -euo pipefail
           : "${AWS_REGION:?Missing AWS_REGION in the test environment}"
+
+      - name: Resolve frontend origin
+        id: frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_id=$(aws amplify list-apps \
+            --query "apps[?name=='${AMPLIFY_APP_NAME}'].appId | [0]" \
+            --output text)
+          if [[ -z "${app_id}" || "${app_id}" == "None" ]]; then
+            echo "Amplify app ${AMPLIFY_APP_NAME} was not found."
+            exit 1
+          fi
+          default_domain=$(aws amplify get-app \
+            --app-id "${app_id}" \
+            --query 'app.defaultDomain' \
+            --output text)
+          if [[ -z "${default_domain}" || "${default_domain}" == "None" ]]; then
+            echo "Amplify app does not expose a default domain."
+            exit 1
+          fi
+          echo "origin=https://${AMPLIFY_BRANCH}.${default_domain}" >> "${GITHUB_OUTPUT}"
 
       - name: Login to Amazon ECR
         shell: bash
@@ -123,6 +147,7 @@ jobs:
         shell: bash
         env:
           IMAGE_URI: ${{ steps.image.outputs.uri }}
+          FRONTEND_ORIGIN: ${{ steps.frontend.outputs.origin }}
         run: |
           set -euo pipefail
 
@@ -134,6 +159,7 @@ jobs:
           jq \
             --arg image "${IMAGE_URI}" \
             --arg container "${ECS_CONTAINER_NAME}" \
+            --arg frontend_origin "${FRONTEND_ORIGIN}" \
             'del(
               .taskDefinitionArn,
               .revision,
@@ -143,7 +169,13 @@ jobs:
               .registeredAt,
               .registeredBy
             )
-            | (.containerDefinitions[] | select(.name == $container).image) = $image' \
+            | (.containerDefinitions[] | select(.name == $container)) |= (
+                .image = $image
+                | .environment = (
+                    ((.environment // []) | map(select(.name != "CORS_ALLOWED_ORIGINS")))
+                    + [{name: "CORS_ALLOWED_ORIGINS", value: $frontend_origin}]
+                  )
+              )' \
             "${RUNNER_TEMP}/task-definition.json" \
             > "${RUNNER_TEMP}/task-definition-rendered.json"
 
@@ -196,4 +228,3 @@ jobs:
             --services "${ECS_SERVICE}" \
             --query 'services[0].events[:10]' \
             --output table || true
-

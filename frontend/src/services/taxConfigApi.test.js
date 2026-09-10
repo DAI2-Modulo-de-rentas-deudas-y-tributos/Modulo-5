@@ -84,7 +84,6 @@ describe("propuesta de versión en modo API", () => {
 
   /** Devuelve el cuerpo JSON de la llamada que crea la configuración. */
   async function proponer(calculationType, extra = {}) {
-    vi.stubEnv("VITE_USE_MOCKS", "false");
     const concepto = new Response(
       JSON.stringify({ content: [{ id: 7, code: "TASA_SERVICIOS", name: "Tasa", active: true }] }),
       { status: 200, headers: { "content-type": "application/json" } },

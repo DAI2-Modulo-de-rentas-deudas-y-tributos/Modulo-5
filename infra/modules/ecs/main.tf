@@ -174,6 +174,10 @@ resource "aws_ecs_task_definition" "backend" {
         {
           name  = "SPRING_DATASOURCE_URL"
           value = "jdbc:postgresql://${var.database_address}:${var.database_port}/${var.database_name}"
+        },
+        {
+          name  = "CORS_ALLOWED_ORIGINS"
+          value = join(",", var.cors_allowed_origins)
         }
       ]
 

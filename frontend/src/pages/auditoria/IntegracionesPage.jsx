@@ -8,7 +8,7 @@ import StatusBadge from "../../components/common/StatusBadge.jsx";
 import Alert from "../../components/ui/Alert.jsx";
 import useResource from "../../hooks/useResource.js";
 import { auditService } from "../../services/rentasService.js";
-import { MODULE_LABELS } from "../../services/mockDb.js";
+import { MODULE_LABELS } from "../../config/etiquetasModulos.js";
 import { formatDateTime } from "../../lib/format.js";
 
 const MODULE_OPTIONS = Object.entries(MODULE_LABELS).map(([value, label]) => ({ value, label }));

@@ -10,10 +10,10 @@ import org.springframework.http.*;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
-import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
@@ -53,10 +53,7 @@ class GlobalExceptionHandler {
     }
     @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
     ResponseEntity<ApiDtos.ErrorResponse> methodNotAllowed(HttpRequestMethodNotSupportedException ex,HttpServletRequest request) {
-        ResponseEntity<ApiDtos.ErrorResponse> error=response(405,"METHOD_NOT_ALLOWED","El método solicitado no está permitido para este recurso",request);
-        HttpHeaders headers=new HttpHeaders();
-        if(ex.getSupportedHttpMethods()!=null) headers.setAllow(ex.getSupportedHttpMethods());
-        return new ResponseEntity<>(error.getBody(),headers,HttpStatus.METHOD_NOT_ALLOWED);
+        return response(405,"METHOD_NOT_ALLOWED","El método HTTP no está permitido para este recurso",request);
     }
     @ExceptionHandler(Exception.class)
     ResponseEntity<ApiDtos.ErrorResponse> unexpected(Exception ex,HttpServletRequest request) {

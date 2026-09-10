@@ -182,6 +182,7 @@ class Payment {
     @Enumerated(EnumType.STRING) @Column(nullable=false) public PaymentStatus status;
     @Enumerated(EnumType.STRING) @Column(name="allocation_status",nullable=false) public PaymentAllocationStatus allocationStatus;
     @Enumerated(EnumType.STRING) @Column(nullable=false) public PaymentOrigin origin;
+    @Column(name="idempotency_key",unique=true,length=255) public String idempotencyKey;
     @Column(name="receipt_number",nullable=false,unique=true) public String receiptNumber;
     @Column(name="registered_by",nullable=false) public String registeredBy;
     @Column(name="paid_at",nullable=false) public OffsetDateTime paidAt;

@@ -1,11 +1,12 @@
 import { useCallback, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Download, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
 import Card from "../../components/common/Card.jsx";
 import DataTable from "../../components/common/DataTable.jsx";
 import StatusBadge from "../../components/common/StatusBadge.jsx";
 import Button from "../../components/common/Button.jsx";
+import BillPdfDownload from "../../components/documentos/BillPdfDownload.jsx";
 import Alert from "../../components/ui/Alert.jsx";
 import useResource from "../../hooks/useResource.js";
 import useTaxpayerIndex from "../../hooks/useTaxpayerIndex.js";
@@ -60,15 +61,8 @@ export default function BoletasCajaPage() {
       align: "right",
       render: (row) => (
         <div className="flex items-center justify-end gap-3">
-          <a
-            href={row.documentUrl}
-            title={row.documentUrl}
-            className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#0F2C59] transition-colors hover:text-[#D63031]"
-          >
-            <Download className="h-3.5 w-3.5" strokeWidth={2} />
-            Imprimir
-          </a>
-          {row.status !== "SETTLED" && (
+          <BillPdfDownload billId={row.id} />
+          {row.status === "ISSUED" && (
             <Button
               size="sm"
               variant="primary"

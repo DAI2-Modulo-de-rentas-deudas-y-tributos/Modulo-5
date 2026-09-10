@@ -25,8 +25,6 @@ interface DelinquencyIndicatorAggregate {
 interface FilteredRepository<T,ID> extends JpaRepository<T,ID>,JpaSpecificationExecutor<T> {}
 
 interface TaxpayerRepository extends FilteredRepository<TaxpayerReference,Long> {
-    @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select t from TaxpayerReference t where t.id=:id")
-    Optional<TaxpayerReference> findByIdForUpdate(Long id);
     Optional<TaxpayerReference> findByTaxpayerTypeAndExternalId(TaxpayerType type, String externalId);
     Optional<TaxpayerReference> findByTaxpayerTypeAndDni(TaxpayerType type,String dni);
     Optional<TaxpayerReference> findByTaxpayerTypeAndCuit(TaxpayerType type,String cuit);
@@ -61,8 +59,7 @@ interface ExternalObligationRepository extends FilteredRepository<ExternalObliga
     Page<ExternalObligation> findByStatus(ExternalObligationStatus status,Pageable pageable);
 }
 interface PaymentRepository extends FilteredRepository<Payment,Long> {
-    Optional<Payment> findByTaxpayerIdAndIdempotencyKey(Long taxpayerId,String idempotencyKey);
-    List<Payment> findByTaxpayerId(Long taxpayerId); Page<Payment> findByTaxpayerId(Long taxpayerId,Pageable pageable); Page<Payment> findByUnallocatedAmountGreaterThan(BigDecimal amount,Pageable pageable);
+    List<Payment> findByTaxpayerId(Long taxpayerId); Page<Payment> findByTaxpayerId(Long taxpayerId,Pageable pageable); Page<Payment> findByUnallocatedAmountGreaterThan(BigDecimal amount,Pageable pageable); Optional<Payment> findByIdempotencyKey(String idempotencyKey);
     @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select p from Payment p where p.id=:id") Optional<Payment> findByIdForUpdate(Long id);
     @Query("""
         select count(p.id) as paymentCount, coalesce(sum(p.amount),0) as confirmedAmount,
