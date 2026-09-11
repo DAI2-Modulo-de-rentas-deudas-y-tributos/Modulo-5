@@ -284,11 +284,10 @@ def run_pdf(
 
     authorization: dict[str, Any] = {"status": "skipped", "reason": "Bearer: requiere identidades QA adicionales; cubierto en CI"}
     if not client.bearer_token:
+        require(len(taxpayers) >= 2, "La validación de autorización requiere dos contribuyentes proyectados")
         owner = demo_identity(client, "TAXPAYER", taxpayer["id"])
         validate_pdf(owner.request("GET", path), bill, expected_debts)
-        stranger = client.json("POST", "/taxpayers", {"taxpayerType": "CITIZEN",
-            "externalId": "QA-" + uuid.uuid4().hex, "displayName": "QA Ajeno",
-            "dni": str(10000000 + secrets.randbelow(89999999)), "cuit": None}, expected=(201,))
+        stranger = taxpayers[1]
         for identity, status in ((demo_identity(client, "AUDITOR"), 403),
                                  (ApiClient(client.api_base_url, None), 401),
                                  (demo_identity(client, "TAXPAYER", stranger["id"]), 403)):
