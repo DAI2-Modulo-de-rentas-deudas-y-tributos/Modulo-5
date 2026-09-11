@@ -78,13 +78,24 @@ class PdfAcceptanceTests(unittest.TestCase):
             self.assertIn("FALLÓ", (Path(directory) / "summary.md").read_text(encoding="utf-8"))
 
     def test_bearer_authentication_does_not_send_dev_identity(self):
-        headers = ApiClient("https://example.invalid/api/v1", "token", "TAXPAYER", 42)._headers(False)
+        headers = ApiClient("https://example.invalid/api/v1", "token", "demo-token")._headers(False)
         self.assertEqual(headers["Authorization"], "Bearer token")
         self.assertFalse(any(name.startswith("X-Dev-") for name in headers))
 
     def test_amplify_origin_and_explicit_api_prefix_resolve_to_same_api(self):
         for url in ("https://example.invalid", "https://example.invalid/", "https://example.invalid/api/v1/"):
             self.assertEqual(ApiClient(url, None).api_base_url, "https://example.invalid/api/v1")
+
+    def test_sesion_demo_no_envia_roles_elegidos_por_el_cliente(self):
+        headers = ApiClient("https://example.invalid", None, "token-solo-fixture")._headers(False)
+        self.assertEqual(headers["X-Demo-Session"], "token-solo-fixture")
+        self.assertFalse(any(name.startswith("X-Dev-") for name in headers))
+
+    def test_cliente_sin_sesion_no_tiene_identidad_por_defecto(self):
+        headers = ApiClient("https://example.invalid", None)._headers(False)
+        self.assertNotIn("X-Demo-Session", headers)
+        self.assertNotIn("Authorization", headers)
+        self.assertFalse(any(name.startswith("X-Dev-") for name in headers))
 
 
 if __name__ == "__main__":

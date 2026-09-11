@@ -5,7 +5,7 @@ describe("contrato HTTP de descarga PDF", () => {
     vi.resetModules();
     vi.stubEnv("VITE_API_BASE_URL", "https://api.example.test");
     vi.stubEnv("VITE_AUTH_MODE", "mock");
-    vi.stubEnv("VITE_DEV_IDENTITY_HEADERS", "true");
+    sessionStorage.setItem("rentas.token", "opaque-demo-token");
     sessionStorage.setItem("rentas.user", JSON.stringify({ username: "qa", role: "CONTRIBUYENTE", taxpayerId: 42 }));
     vi.stubGlobal("fetch", vi.fn());
   });
@@ -23,8 +23,7 @@ describe("contrato HTTP de descarga PDF", () => {
     const { request } = await import("./apiClient.js");
     const result = await request("/api/v1/bills/42/document", { responseType: "blob" });
     expect(fetch).toHaveBeenCalledWith("https://api.example.test/api/v1/bills/42/document", expect.objectContaining({
-      method: "GET", headers: expect.objectContaining({ Accept: "application/pdf", "X-Dev-User": "qa",
-        "X-Dev-Roles": "TAXPAYER", "X-Dev-Taxpayer-Id": "42" }),
+      method: "GET", headers: expect.objectContaining({ Accept: "application/pdf", "X-Demo-Session": "opaque-demo-token" }),
     }));
     expect(result.filename).toBe("BILL-42.pdf");
     expect(await result.blob.text()).toContain("%PDF-1.4");

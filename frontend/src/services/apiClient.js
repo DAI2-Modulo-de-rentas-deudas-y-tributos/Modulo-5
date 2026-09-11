@@ -9,7 +9,6 @@ import { adaptApiRequest, adaptApiResponse } from "./apiAdapters.js";
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").trim().replace(/\/+$/, "");
 
 export const AUTH_MODE = import.meta.env.VITE_AUTH_MODE ?? "mock";
-export const DEV_IDENTITY_HEADERS = import.meta.env.VITE_DEV_IDENTITY_HEADERS === "true";
 
 export class ApiError extends Error {
   constructor(message, status, details, code, traceId) {
@@ -22,23 +21,14 @@ export class ApiError extends Error {
   }
 }
 
-const ROLE_MAP = { PERSONAL: ["RENTAS"], SUPERVISOR: ["RENTAS", "SUPERVISOR"], CAJERO: ["CASHIER"], AUDITOR: ["AUDITOR"], CONTRIBUYENTE: ["TAXPAYER"] };
-
 export function authHeaders() {
-  if (AUTH_MODE === "mock" && DEV_IDENTITY_HEADERS) {
-    const user = JSON.parse(sessionStorage.getItem("rentas.user") ?? "null");
-    if (!user) return {};
-    return {
-      "X-Dev-User": user.username ?? String(user.id ?? "mock-user"),
-      "X-Dev-Roles": user.devAuthorities?.join(",") ?? (ROLE_MAP[user.role] ?? []).join(","),
-      ...(user.taxpayerId ? { "X-Dev-Taxpayer-Id": String(user.taxpayerId) } : {}),
-    };
-  }
-  // Core/JWT todavía no tiene contrato: no reutilizar tokens de la sesión mock.
-  return {};
+  if (AUTH_MODE !== "mock") return {};
+  const token = sessionStorage.getItem("rentas.token");
+  if (!token) return {};
+  return { "X-Demo-Session": token };
 }
 
-export async function request(path, { method = "GET", body, signal, responseType } = {}) {
+export async function request(path, { method = "GET", body, signal, responseType, headers } = {}) {
   const adapted = adaptApiRequest(path, { method, body, signal });
   const response = await fetch(`${API_BASE_URL}${adapted.path}`, {
     method: adapted.options.method,
@@ -47,6 +37,7 @@ export async function request(path, { method = "GET", body, signal, responseType
       ...(responseType === "blob" ? { Accept: "application/pdf" } : {}),
       ...(adapted.options.body === undefined ? {} : { "Content-Type": "application/json" }),
       ...authHeaders(),
+      ...headers,
     },
     body: adapted.options.body === undefined ? undefined : JSON.stringify(adapted.options.body),
   });

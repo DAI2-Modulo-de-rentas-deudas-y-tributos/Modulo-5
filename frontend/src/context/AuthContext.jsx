@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { authService } from "../services/rentasService.js";
 import { AUTH_MODE } from "../services/apiClient.js";
 
@@ -7,23 +7,48 @@ const AuthContext = createContext(null);
 const SESSION_KEY = "rentas.user";
 const TOKEN_KEY = "rentas.token";
 
-function readStoredUser() {
-  // Una sesión demo previa nunca autentica una futura ejecución en modo Core.
-  if (AUTH_MODE === "core") return null;
-  try {
-    const raw = sessionStorage.getItem(SESSION_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
+function hasStoredToken() {
+  if (AUTH_MODE === "core") return false;
+  return Boolean(sessionStorage.getItem(TOKEN_KEY));
 }
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(readStoredUser);
-  const [initializing, setInitializing] = useState(true);
+  const sessionGeneration = useRef(0);
+  const [user, setUser] = useState(null);
+  const [initializing, setInitializing] = useState(hasStoredToken);
 
   useEffect(() => {
-    setInitializing(false);
+    let cancelled = false;
+    const generation = sessionGeneration.current;
+    async function restore() {
+      if (AUTH_MODE === "core") {
+        setInitializing(false);
+        return;
+      }
+      const token = sessionStorage.getItem(TOKEN_KEY);
+      if (!token) {
+        setUser(null);
+        setInitializing(false);
+        return;
+      }
+      try {
+        const profile = await authService.me();
+        if (cancelled || generation !== sessionGeneration.current) return;
+        sessionStorage.setItem(SESSION_KEY, JSON.stringify(profile));
+        setUser(profile);
+      } catch {
+        if (cancelled || generation !== sessionGeneration.current) return;
+        sessionStorage.removeItem(TOKEN_KEY);
+        sessionStorage.removeItem(SESSION_KEY);
+        setUser(null);
+      } finally {
+        if (!cancelled && generation === sessionGeneration.current) setInitializing(false);
+      }
+    }
+    restore();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   /**
@@ -36,20 +61,29 @@ export function AuthProvider({ children }) {
    * adentro de un área que no es la suya.
    */
   const login = useCallback(async (credentials, { accept } = {}) => {
+    const generation = ++sessionGeneration.current;
     const { token, user: profile } = await authService.login(credentials);
-    if (accept && !accept(profile)) return { profile, accepted: false };
+    if (generation !== sessionGeneration.current || (accept && !accept(profile))) {
+      await authService.logout(token);
+      return { profile, accepted: false };
+    }
 
     sessionStorage.setItem(TOKEN_KEY, token);
     sessionStorage.setItem(SESSION_KEY, JSON.stringify(profile));
     setUser(profile);
+    setInitializing(false);
     return { profile, accepted: true };
   }, []);
 
   const logout = useCallback(async () => {
-    await authService.logout();
+    ++sessionGeneration.current;
+    const token = sessionStorage.getItem(TOKEN_KEY);
+    // Cerrar localmente antes de esperar la red evita restauraciones tardías.
     sessionStorage.removeItem(TOKEN_KEY);
     sessionStorage.removeItem(SESSION_KEY);
     setUser(null);
+    setInitializing(false);
+    if (token) await authService.logout(token);
   }, []);
 
   const value = useMemo(

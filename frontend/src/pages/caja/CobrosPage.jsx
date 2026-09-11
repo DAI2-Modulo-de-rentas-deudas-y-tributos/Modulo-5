@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { ArrowLeft, CircleCheckBig, Printer, Search } from "lucide-react";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
@@ -245,8 +245,10 @@ export default function CobrosPage() {
  * Paso de cobro: muestra a quién se le cobra y qué se cobra, y registra el pago.
  * Si la búsqueda entró por boleta o por deuda, la obligación ya viene elegida.
  */
-function ChargeStep({ context, cashier, onCharged, onCancel }) {
+export function ChargeStep({ context, cashier, onCharged, onCancel }) {
   const { taxpayer, bill, debts, totals, kind } = context;
+  const intentKey = useRef(null);
+  const requestInFlight = useRef(false);
 
   const [debtId, setDebtId] = useState(String(context.selectedDebtId ?? ""));
   const [amount, setAmount] = useState("");
@@ -276,22 +278,27 @@ function ChargeStep({ context, cashier, onCharged, onCancel }) {
 
   const onSubmit = async (event) => {
     event.preventDefault();
+    if (requestInFlight.current) return;
     setSubmitError(null);
     if (!validate()) return;
+    requestInFlight.current = true;
+    intentKey.current ??= crypto.randomUUID();
     setSubmitting(true);
     try {
-      onCharged(
-        await cashierService.registerCounterPayment({
+      const payment = await cashierService.registerCounterPayment({
           debtId,
           billId: bill?.id ?? null,
           amountPaid: Number(amount),
           method,
           registeredBy: cashier,
-        }),
-      );
+          idempotencyKey: intentKey.current,
+        });
+      intentKey.current = null;
+      onCharged(payment);
     } catch (caught) {
       setSubmitError(caught.message);
     } finally {
+      requestInFlight.current = false;
       setSubmitting(false);
     }
   };
@@ -332,7 +339,7 @@ function ChargeStep({ context, cashier, onCharged, onCancel }) {
       ) : (
         <Card
           title="Registrar el cobro"
-          description="El pago se imputa a la deuda y publica paymentRegistered hacia el módulo de origen."
+          description="El pago se registra e imputa a la deuda en el backend."
         >
           <form onSubmit={onSubmit} noValidate className="flex flex-col gap-4 px-5 py-5">
             {submitError && (

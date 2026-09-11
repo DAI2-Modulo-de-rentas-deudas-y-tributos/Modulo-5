@@ -1,28 +1,33 @@
 package ar.gob.municipalidad.rentas;
 
-import jakarta.servlet.*;
-import jakarta.servlet.http.*;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.MDC;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.*;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.stereotype.Component;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import org.springframework.web.filter.OncePerRequestFilter;
-import org.springframework.core.Ordered;
-import org.springframework.core.annotation.Order;
-import org.slf4j.MDC;
 import java.io.IOException;
+import java.time.OffsetDateTime;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
@@ -31,32 +36,36 @@ import java.util.UUID;
 @EnableMethodSecurity
 class SecurityConfig {
     @Bean PasswordEncoder passwordEncoder() { return new BCryptPasswordEncoder(); }
-    @Bean CorsConfigurationSource corsConfigurationSource(
-            @Value("${rentas.cors.allowed-origins:}") String allowedOrigins) {
-        List<String> origins = Arrays.stream(allowedOrigins.split(","))
-            .map(String::trim).filter(origin -> !origin.isBlank()).distinct().toList();
-        if (origins.stream().anyMatch(origin -> origin.contains("*") || origin.equals("null"))) {
-            throw new IllegalArgumentException("CORS_ALLOWED_ORIGINS debe contener orígenes explícitos, sin comodines ni null");
-        }
-        CorsConfiguration cors = new CorsConfiguration();
-        cors.setAllowedOrigins(origins);
-        cors.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-        cors.setAllowedHeaders(List.of("Content-Type", "Accept", "Authorization", "X-Dev-User", "X-Dev-Roles",
-            "X-Dev-Taxpayer-Id", "X-Correlation-Id"));
-        cors.setExposedHeaders(List.of("Content-Disposition", "X-Correlation-Id"));
-        cors.setAllowCredentials(false);
-        cors.setMaxAge(3600L);
-        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-        source.registerCorsConfiguration("/api/**", cors);
+
+    @Bean CorsConfigurationSource corsConfigurationSource(@Value("${rentas.cors.allowed-origins:}") String origins) {
+        UrlBasedCorsConfigurationSource source=new UrlBasedCorsConfigurationSource();
+        List<String> allowed=Arrays.stream(origins.split(",")).map(String::trim).filter(s->!s.isBlank()).distinct().toList();
+        if(allowed.stream().anyMatch(origin->origin.contains("*")||origin.equals("null"))) throw new IllegalArgumentException("CORS_ALLOWED_ORIGINS debe contener orígenes explícitos, sin comodines ni null");
+        if(allowed.isEmpty()) return source;
+        CorsConfiguration config=new CorsConfiguration();
+        config.setAllowedOrigins(allowed);
+        config.setAllowedMethods(List.of("GET","POST","PUT","PATCH","DELETE","OPTIONS"));
+        config.setAllowedHeaders(List.of("Content-Type","Accept","Authorization","X-Demo-Session","Idempotency-Key","X-Correlation-Id"));
+        config.setExposedHeaders(List.of("X-Correlation-Id","Content-Disposition","Allow"));
+        config.setAllowCredentials(false);
+        config.setMaxAge(3600L);
+        source.registerCorsConfiguration("/api/**",config);
         return source;
     }
-    @Bean SecurityFilterChain securityFilterChain(HttpSecurity http, DevIdentityFilter filter,
-            CorsConfigurationSource corsConfigurationSource) throws Exception {
+
+    @Bean SecurityFilterChain securityFilterChain(HttpSecurity http, DevIdentityFilter filter) throws Exception {
         return http.csrf(csrf -> csrf.disable())
-            .cors(cors -> cors.configurationSource(corsConfigurationSource))
+            .sessionManagement(session -> session.sessionCreationPolicy(org.springframework.security.config.http.SessionCreationPolicy.STATELESS))
+            .exceptionHandling(errors -> errors.authenticationEntryPoint((request,response,error) -> {
+                response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                response.setContentType("application/json");
+                response.getWriter().write("{\"status\":401,\"code\":\"UNAUTHENTICATED\",\"message\":\"Se requiere autenticación\"}");
+            }))
+            .cors(Customizer.withDefaults())
             .authorizeHttpRequests(auth -> auth
+                .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                 .requestMatchers("/actuator/health", "/api/v1/health", "/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll()
-                .requestMatchers(HttpMethod.POST, "/api/v1/dev-auth/login").permitAll()
+                .requestMatchers(HttpMethod.POST, "/api/v1/dev-auth/login", "/api/v1/dev-auth/bootstrap").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/v1/**").authenticated()
                 .anyRequest().authenticated())
             .addFilterBefore(filter, UsernamePasswordAuthenticationFilter.class)
@@ -84,26 +93,48 @@ class CorrelationIdFilter extends OncePerRequestFilter {
 @Component
 class DevIdentityFilter extends OncePerRequestFilter {
     private final boolean enabled;
-    DevIdentityFilter(@Value("${rentas.security.dev-mode:false}") boolean enabled) { this.enabled = enabled; }
+    private final ObjectProvider<DemoAuthService> demoAuth;
+    DevIdentityFilter(@Value("${rentas.security.dev-mode:false}") boolean enabled,ObjectProvider<DemoAuthService> demoAuth) {
+        this.enabled=enabled;this.demoAuth=demoAuth;
+    }
 
     @Override protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
-        if (enabled && SecurityContextHolder.getContext().getAuthentication() == null) {
-            String user = value(request, "X-Dev-User", "dev-rentas");
-            String roles = value(request, "X-Dev-Roles", "RENTAS,SUPERVISOR,CASHIER");
-            String taxpayer = request.getHeader("X-Dev-Taxpayer-Id");
-            Long taxpayerId;
-            try { taxpayerId = taxpayer == null || taxpayer.isBlank() ? null : Long.valueOf(taxpayer); }
-            catch (NumberFormatException ex) { response.sendError(HttpServletResponse.SC_BAD_REQUEST,"X-Dev-Taxpayer-Id inválido"); return; }
-            var authorities = Arrays.stream(roles.split(","))
-                .map(String::trim).filter(s -> !s.isBlank()).map(s -> new SimpleGrantedAuthority("ROLE_" + s)).toList();
-            var auth = new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity(user, taxpayerId), null, authorities);
-            SecurityContextHolder.getContext().setAuthentication(auth);
+        if(enabled && !publicPath(request) && SecurityContextHolder.getContext().getAuthentication()==null) {
+            String token=request.getHeader(DemoAuthService.SESSION_HEADER);
+            if(token==null||token.isBlank()) {
+                chain.doFilter(request,response);
+                return;
+            }
+            DemoAuthService auth=demoAuth.getIfAvailable();
+            if(auth==null) { chain.doFilter(request,response); return; }
+            try {
+                DemoAuthService.ResolvedSession session=auth.resolve(token);
+                var authentication=new UsernamePasswordAuthenticationToken(session.identity(),null,session.authorities());
+                SecurityContextHolder.getContext().setAuthentication(authentication);
+            } catch(BusinessException ex) {
+                unauthorized(response,ex.getMessage());
+                return;
+            }
         }
-        chain.doFilter(request, response);
+        chain.doFilter(request,response);
     }
-    private String value(HttpServletRequest request, String name, String fallback) {
-        String value = request.getHeader(name); return value == null || value.isBlank() ? fallback : value;
+
+    private boolean publicPath(HttpServletRequest request) {
+        String path=request.getRequestURI();
+        String method=request.getMethod();
+        if("OPTIONS".equalsIgnoreCase(method)) return true;
+        if(path.startsWith("/actuator/")||path.equals("/api/v1/health")||path.startsWith("/swagger-ui")||path.startsWith("/v3/api-docs")) return true;
+        return "POST".equalsIgnoreCase(method)&&(path.equals("/api/v1/dev-auth/login")||path.equals("/api/v1/dev-auth/bootstrap"));
+    }
+
+    private void unauthorized(HttpServletResponse response,String message) throws IOException {
+        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+        response.setContentType("application/json");
+        String traceId=MDC.get("traceId");
+        if(traceId==null) traceId=UUID.randomUUID().toString();
+        String escaped=message.replace("\\","\\\\").replace("\"","\\\"");
+        response.getWriter().write("{\"timestamp\":\""+OffsetDateTime.now()+"\",\"status\":401,\"code\":\"UNAUTHENTICATED\",\"message\":\""+escaped+"\",\"traceId\":\""+traceId+"\"}");
     }
 }
 

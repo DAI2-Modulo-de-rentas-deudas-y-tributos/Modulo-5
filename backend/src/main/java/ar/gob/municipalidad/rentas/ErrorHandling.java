@@ -14,6 +14,7 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
@@ -53,7 +54,14 @@ class GlobalExceptionHandler {
     }
     @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
     ResponseEntity<ApiDtos.ErrorResponse> methodNotAllowed(HttpRequestMethodNotSupportedException ex,HttpServletRequest request) {
-        return response(405,"METHOD_NOT_ALLOWED","El método HTTP no está permitido para este recurso",request);
+        ResponseEntity<ApiDtos.ErrorResponse> error=response(405,"METHOD_NOT_ALLOWED","El método solicitado no está permitido para este recurso",request);
+        HttpHeaders headers=new HttpHeaders();
+        if(ex.getSupportedHttpMethods()!=null) headers.setAllow(ex.getSupportedHttpMethods());
+        return new ResponseEntity<>(error.getBody(),headers,HttpStatus.METHOD_NOT_ALLOWED);
+    }
+    @ExceptionHandler(NoResourceFoundException.class)
+    ResponseEntity<ApiDtos.ErrorResponse> resourceNotFound(NoResourceFoundException ex,HttpServletRequest request) {
+        return response(404,"NOT_FOUND","El recurso solicitado no existe",request);
     }
     @ExceptionHandler(Exception.class)
     ResponseEntity<ApiDtos.ErrorResponse> unexpected(Exception ex,HttpServletRequest request) {

@@ -19,12 +19,40 @@
       "name": "Local (docker-compose)",
       "data": {
         "baseUrl": "http://localhost:8080/api/v1",
-        "demoPassword": "DemoQA2026!"
+        "rentasUsername": "",
+        "rentasPassword": "",
+        "rentasSession": "",
+        "supervisorUsername": "",
+        "supervisorPassword": "",
+        "supervisorSession": "",
+        "cashierUsername": "",
+        "cashierPassword": "",
+        "cashierSession": "",
+        "auditorUsername": "",
+        "auditorPassword": "",
+        "auditorSession": "",
+        "taxpayerUsername": "",
+        "taxpayerPassword": "",
+        "taxpayerSession": ""
       },
       "dataPropertyOrder": {
         "&": [
           "baseUrl",
-          "demoPassword"
+          "rentasUsername",
+          "rentasPassword",
+          "rentasSession",
+          "supervisorUsername",
+          "supervisorPassword",
+          "supervisorSession",
+          "cashierUsername",
+          "cashierPassword",
+          "cashierSession",
+          "auditorUsername",
+          "auditorPassword",
+          "auditorSession",
+          "taxpayerUsername",
+          "taxpayerPassword",
+          "taxpayerSession"
         ]
       },
       "color": null,
@@ -36,7 +64,7 @@
       "_type": "request_group",
       "parentId": "wrk_1bac9345323e4389",
       "name": "00. Autenticacion (dev-auth)",
-      "description": "Login de los 5 usuarios demo sembrados por RENTAS_DEMO_BOOTSTRAP_PASSWORD. Requiere backend con RENTAS_SECURITY_DEV_MODE=true y RENTAS_DEMO_BOOTSTRAP_PASSWORD seteados.",
+      "description": "Las cuentas se crean mediante bootstrap único y POST /dev-auth/users. Copiá cada token de login en la variable *Session correspondiente; nunca guardes secretos reales en este archivo.",
       "environment": {},
       "environmentPropertyOrder": null,
       "metaSortKey": 1
@@ -45,13 +73,13 @@
       "_id": "req_b4cfba6a435442c0",
       "_type": "request",
       "parentId": "fld_f464e63c15f54fa5",
-      "name": "Login Personal de Rentas (demo.rentas)",
-      "description": "Login real contra /api/v1/dev-auth/login. Devuelve el usuario y confirma el rol Personal de Rentas.",
+      "name": "Login rentas",
+      "description": "Login real contra PostgreSQL; copiar el token devuelto en la variable de sesión del rol.",
       "method": "POST",
       "url": "{{ _.baseUrl }}/dev-auth/login",
       "body": {
         "mimeType": "application/json",
-        "text": "{\n  \"username\": \"demo.rentas\",\n  \"password\": \"{{ _.demoPassword }}\"\n}"
+        "text": "{\n  \"username\": \"{{ _.rentasUsername }}\",\n  \"password\": \"{{ _.rentasPassword }}\"\n}"
       },
       "parameters": [],
       "headers": [
@@ -74,13 +102,13 @@
       "_id": "req_6f8ea2c1a3114bd9",
       "_type": "request",
       "parentId": "fld_f464e63c15f54fa5",
-      "name": "Login Supervisor (demo.supervisor)",
-      "description": "Login real contra /api/v1/dev-auth/login. Devuelve el usuario y confirma el rol Supervisor.",
+      "name": "Login supervisor",
+      "description": "Login real contra PostgreSQL; copiar el token devuelto en la variable de sesión del rol.",
       "method": "POST",
       "url": "{{ _.baseUrl }}/dev-auth/login",
       "body": {
         "mimeType": "application/json",
-        "text": "{\n  \"username\": \"demo.supervisor\",\n  \"password\": \"{{ _.demoPassword }}\"\n}"
+        "text": "{\n  \"username\": \"{{ _.supervisorUsername }}\",\n  \"password\": \"{{ _.supervisorPassword }}\"\n}"
       },
       "parameters": [],
       "headers": [
@@ -103,13 +131,13 @@
       "_id": "req_9e19ca18f8094d4e",
       "_type": "request",
       "parentId": "fld_f464e63c15f54fa5",
-      "name": "Login Cajero (demo.caja)",
-      "description": "Login real contra /api/v1/dev-auth/login. Devuelve el usuario y confirma el rol Cajero.",
+      "name": "Login cashier",
+      "description": "Login real contra PostgreSQL; copiar el token devuelto en la variable de sesión del rol.",
       "method": "POST",
       "url": "{{ _.baseUrl }}/dev-auth/login",
       "body": {
         "mimeType": "application/json",
-        "text": "{\n  \"username\": \"demo.caja\",\n  \"password\": \"{{ _.demoPassword }}\"\n}"
+        "text": "{\n  \"username\": \"{{ _.cashierUsername }}\",\n  \"password\": \"{{ _.cashierPassword }}\"\n}"
       },
       "parameters": [],
       "headers": [
@@ -132,13 +160,13 @@
       "_id": "req_a5e7d455803542d7",
       "_type": "request",
       "parentId": "fld_f464e63c15f54fa5",
-      "name": "Login Auditor (demo.auditoria)",
-      "description": "Login real contra /api/v1/dev-auth/login. Devuelve el usuario y confirma el rol Auditor.",
+      "name": "Login auditor",
+      "description": "Login real contra PostgreSQL; copiar el token devuelto en la variable de sesión del rol.",
       "method": "POST",
       "url": "{{ _.baseUrl }}/dev-auth/login",
       "body": {
         "mimeType": "application/json",
-        "text": "{\n  \"username\": \"demo.auditoria\",\n  \"password\": \"{{ _.demoPassword }}\"\n}"
+        "text": "{\n  \"username\": \"{{ _.auditorUsername }}\",\n  \"password\": \"{{ _.auditorPassword }}\"\n}"
       },
       "parameters": [],
       "headers": [
@@ -161,13 +189,13 @@
       "_id": "req_1eb24fe29f374595",
       "_type": "request",
       "parentId": "fld_f464e63c15f54fa5",
-      "name": "Login Contribuyente (demo.contribuyente)",
-      "description": "Login real contra /api/v1/dev-auth/login. Devuelve el usuario y confirma el rol Contribuyente.",
+      "name": "Login taxpayer",
+      "description": "Login real contra PostgreSQL; copiar el token devuelto en la variable de sesión del rol.",
       "method": "POST",
       "url": "{{ _.baseUrl }}/dev-auth/login",
       "body": {
         "mimeType": "application/json",
-        "text": "{\n  \"username\": \"demo.contribuyente\",\n  \"password\": \"{{ _.demoPassword }}\"\n}"
+        "text": "{\n  \"username\": \"{{ _.taxpayerUsername }}\",\n  \"password\": \"{{ _.taxpayerPassword }}\"\n}"
       },
       "parameters": [],
       "headers": [
@@ -215,12 +243,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -252,12 +276,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -282,12 +302,8 @@
       "parameters": [],
       "headers": [
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -319,12 +335,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.supervisor"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "SUPERVISOR"
+          "name": "X-Demo-Session",
+          "value": "{{ _.supervisorSession }}"
         }
       ],
       "authentication": {},
@@ -356,12 +368,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -393,12 +401,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -430,12 +434,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -467,12 +467,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -497,12 +493,8 @@
       "parameters": [],
       "headers": [
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -544,12 +536,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -581,12 +569,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -618,12 +602,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -648,12 +628,8 @@
       "parameters": [],
       "headers": [
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -695,12 +671,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -725,12 +697,8 @@
       "parameters": [],
       "headers": [
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -762,12 +730,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.caja"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "CASHIER"
+          "name": "X-Demo-Session",
+          "value": "{{ _.cashierSession }}"
         }
       ],
       "authentication": {},
@@ -799,12 +763,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.caja"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "CASHIER"
+          "name": "X-Demo-Session",
+          "value": "{{ _.cashierSession }}"
         }
       ],
       "authentication": {},
@@ -836,12 +796,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.caja"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "CASHIER"
+          "name": "X-Demo-Session",
+          "value": "{{ _.cashierSession }}"
         }
       ],
       "authentication": {},
@@ -866,12 +822,8 @@
       "parameters": [],
       "headers": [
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -903,12 +855,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -940,12 +888,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.caja"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "CASHIER"
+          "name": "X-Demo-Session",
+          "value": "{{ _.cashierSession }}"
         }
       ],
       "authentication": {},
@@ -970,12 +914,8 @@
       "parameters": [],
       "headers": [
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -1007,12 +947,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -1037,12 +973,8 @@
       "parameters": [],
       "headers": [
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -1084,12 +1016,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.caja"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "CASHIER"
+          "name": "X-Demo-Session",
+          "value": "{{ _.cashierSession }}"
         }
       ],
       "authentication": {},
@@ -1121,12 +1049,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.supervisor"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "SUPERVISOR"
+          "name": "X-Demo-Session",
+          "value": "{{ _.supervisorSession }}"
         }
       ],
       "authentication": {},
@@ -1151,12 +1075,8 @@
       "parameters": [],
       "headers": [
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -1181,12 +1101,8 @@
       "parameters": [],
       "headers": [
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -1211,12 +1127,8 @@
       "parameters": [],
       "headers": [
         {
-          "name": "X-Dev-User",
-          "value": "demo.auditoria"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "AUDITOR"
+          "name": "X-Demo-Session",
+          "value": "{{ _.auditorSession }}"
         }
       ],
       "authentication": {},
@@ -1258,12 +1170,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -1295,12 +1203,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -1332,16 +1236,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.contribuyente"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "TAXPAYER"
-        },
-        {
-          "name": "X-Dev-Taxpayer-Id",
-          "value": "2"
+          "name": "X-Demo-Session",
+          "value": "{{ _.taxpayerSession }}"
         }
       ],
       "authentication": {},
@@ -1373,12 +1269,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -1403,12 +1295,8 @@
       "parameters": [],
       "headers": [
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -1440,12 +1328,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.caja"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "CASHIER"
+          "name": "X-Demo-Session",
+          "value": "{{ _.cashierSession }}"
         }
       ],
       "authentication": {},
@@ -1477,12 +1361,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.caja"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "CASHIER"
+          "name": "X-Demo-Session",
+          "value": "{{ _.cashierSession }}"
         }
       ],
       "authentication": {},
@@ -1514,12 +1394,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.caja"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "CASHIER"
+          "name": "X-Demo-Session",
+          "value": "{{ _.cashierSession }}"
         }
       ],
       "authentication": {},
@@ -1544,12 +1420,8 @@
       "parameters": [],
       "headers": [
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -1581,12 +1453,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -1618,12 +1486,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.supervisor"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "SUPERVISOR"
+          "name": "X-Demo-Session",
+          "value": "{{ _.supervisorSession }}"
         }
       ],
       "authentication": {},
@@ -1655,12 +1519,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -1692,12 +1552,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -1722,12 +1578,8 @@
       "parameters": [],
       "headers": [
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -1769,16 +1621,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.contribuyente1"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "TAXPAYER"
-        },
-        {
-          "name": "X-Dev-Taxpayer-Id",
-          "value": "1"
+          "name": "X-Demo-Session",
+          "value": "{{ _.taxpayerSession }}"
         }
       ],
       "authentication": {},
@@ -1803,12 +1647,8 @@
       "parameters": [],
       "headers": [
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -1840,12 +1680,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -1877,16 +1713,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.contribuyente1"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "TAXPAYER"
-        },
-        {
-          "name": "X-Dev-Taxpayer-Id",
-          "value": "1"
+          "name": "X-Demo-Session",
+          "value": "{{ _.taxpayerSession }}"
         }
       ],
       "authentication": {},
@@ -1918,12 +1746,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -1955,12 +1779,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.supervisor"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "SUPERVISOR"
+          "name": "X-Demo-Session",
+          "value": "{{ _.supervisorSession }}"
         }
       ],
       "authentication": {},
@@ -1992,12 +1812,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.supervisor"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "SUPERVISOR"
+          "name": "X-Demo-Session",
+          "value": "{{ _.supervisorSession }}"
         }
       ],
       "authentication": {},
@@ -2029,12 +1845,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -2066,12 +1878,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -2096,12 +1904,8 @@
       "parameters": [],
       "headers": [
         {
-          "name": "X-Dev-User",
-          "value": "demo.auditoria"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "AUDITOR"
+          "name": "X-Demo-Session",
+          "value": "{{ _.auditorSession }}"
         }
       ],
       "authentication": {},
@@ -2143,12 +1947,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -2180,12 +1980,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -2217,12 +2013,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -2247,12 +2039,8 @@
       "parameters": [],
       "headers": [
         {
-          "name": "X-Dev-User",
-          "value": "demo.auditoria"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "AUDITOR"
+          "name": "X-Demo-Session",
+          "value": "{{ _.auditorSession }}"
         }
       ],
       "authentication": {},
@@ -2287,16 +2075,8 @@
       "parameters": [],
       "headers": [
         {
-          "name": "X-Dev-User",
-          "value": "demo.contribuyente"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "TAXPAYER"
-        },
-        {
-          "name": "X-Dev-Taxpayer-Id",
-          "value": "2"
+          "name": "X-Demo-Session",
+          "value": "{{ _.taxpayerSession }}"
         }
       ],
       "authentication": {},
@@ -2321,16 +2101,8 @@
       "parameters": [],
       "headers": [
         {
-          "name": "X-Dev-User",
-          "value": "demo.contribuyente"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "TAXPAYER"
-        },
-        {
-          "name": "X-Dev-Taxpayer-Id",
-          "value": "2"
+          "name": "X-Demo-Session",
+          "value": "{{ _.taxpayerSession }}"
         }
       ],
       "authentication": {},
@@ -2362,12 +2134,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.caja"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "CASHIER"
+          "name": "X-Demo-Session",
+          "value": "{{ _.cashierSession }}"
         }
       ],
       "authentication": {},
@@ -2399,12 +2167,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -2436,12 +2200,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.auditoria"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "AUDITOR"
+          "name": "X-Demo-Session",
+          "value": "{{ _.auditorSession }}"
         }
       ],
       "authentication": {},
@@ -2466,12 +2226,8 @@
       "parameters": [],
       "headers": [
         {
-          "name": "X-Dev-User",
-          "value": "demo.supervisor"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "SUPERVISOR"
+          "name": "X-Demo-Session",
+          "value": "{{ _.supervisorSession }}"
         }
       ],
       "authentication": {},
@@ -2501,6 +2257,10 @@
         {
           "name": "Content-Type",
           "value": "application/json"
+        },
+        {
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -2546,12 +2306,8 @@
       ],
       "headers": [
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -2587,12 +2343,8 @@
       ],
       "headers": [
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -2623,12 +2375,8 @@
       ],
       "headers": [
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -2660,12 +2408,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.caja"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "CASHIER"
+          "name": "X-Demo-Session",
+          "value": "{{ _.cashierSession }}"
         }
       ],
       "authentication": {},
@@ -2697,12 +2441,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.caja"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "CASHIER"
+          "name": "X-Demo-Session",
+          "value": "{{ _.cashierSession }}"
         }
       ],
       "authentication": {},
@@ -2734,12 +2474,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.caja"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "CASHIER"
+          "name": "X-Demo-Session",
+          "value": "{{ _.cashierSession }}"
         }
       ],
       "authentication": {},
@@ -2771,12 +2507,8 @@
           "value": "application/json"
         },
         {
-          "name": "X-Dev-User",
-          "value": "demo.caja"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "CASHIER"
+          "name": "X-Demo-Session",
+          "value": "{{ _.cashierSession }}"
         }
       ],
       "authentication": {},
@@ -2801,12 +2533,8 @@
       "parameters": [],
       "headers": [
         {
-          "name": "X-Dev-User",
-          "value": "demo.rentas"
-        },
-        {
-          "name": "X-Dev-Roles",
-          "value": "RENTAS"
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
         }
       ],
       "authentication": {},
@@ -2829,7 +2557,12 @@
       "url": "http://localhost:8080/actuator/health",
       "body": {},
       "parameters": [],
-      "headers": [],
+      "headers": [
+        {
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
+        }
+      ],
       "authentication": {},
       "metaSortKey": 88,
       "isPrivate": false,
@@ -2850,7 +2583,12 @@
       "url": "http://localhost:8080/v3/api-docs",
       "body": {},
       "parameters": [],
-      "headers": [],
+      "headers": [
+        {
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
+        }
+      ],
       "authentication": {},
       "metaSortKey": 89,
       "isPrivate": false,
@@ -2871,7 +2609,12 @@
       "url": "http://localhost:8080/swagger-ui/index.html",
       "body": {},
       "parameters": [],
-      "headers": [],
+      "headers": [
+        {
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
+        }
+      ],
       "authentication": {},
       "metaSortKey": 90,
       "isPrivate": false,

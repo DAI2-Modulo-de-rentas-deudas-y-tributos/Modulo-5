@@ -38,16 +38,16 @@ npm test -- -t "cancela la deuda cuando el pago cubre el saldo"
 
 Copiar `.env.example` a `.env`:
 
-- `VITE_API_BASE_URL` — vacía en desarrollo local para usar el proxy de Vite;
-  en un build desplegado contiene el origen HTTPS del backend. Ninguna variable
-  `VITE_*` lleva secretos.
-- `VITE_AUTH_MODE` — `mock` usa la autenticación DEMO/DEV real del backend;
-  `core` queda reservado hasta integrar el contrato JWT.
-- `VITE_DEV_IDENTITY_HEADERS` — `true` sólo contra un backend con dev-mode habilitado.
+- `VITE_API_BASE_URL` — URL pública del backend. Ninguna variable `VITE_*` lleva secretos.
+- `VITE_AUTH_MODE=mock` — el login siempre va a `POST /api/v1/dev-auth/login`.
+  Las cuentas y las sesiones viven en PostgreSQL (`demo_user`, `demo_auth_session`).
+  El frontend envía `X-Demo-Session`; no elige roles en cabeceras. Core/JWT sigue
+  pendiente.
 
-El frontend no incluye usuarios ni datos de negocio alternativos. Los usuarios DEMO
-se crean en PostgreSQL cuando el backend arranca con
-`RENTAS_DEMO_BOOTSTRAP_PASSWORD`; la contraseña se define fuera del repositorio.
+Para el stack local: `VITE_AUTH_MODE=mock` y backend con
+`RENTAS_SECURITY_DEV_MODE=true`. El primer supervisor se crea con
+`POST /api/v1/dev-auth/bootstrap` y el resto con `POST /api/v1/dev-auth/users`.
+No hay cuentas de prueba embebidas en la pantalla de ingreso ni datos de negocio mock.
 
 ## Estructura
 

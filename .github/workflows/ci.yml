@@ -165,7 +165,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          SPRING_PROFILES_ACTIVE=dev java -jar backend/target/rentas-backend.jar > "${RUNNER_TEMP}/backend.log" 2>&1 &
+          export RENTAS_SECURITY_DEV_MODE=true
+          export RENTAS_DEMO_BOOTSTRAP_PASSWORD="$(openssl rand -hex 32)"
+          export TEST_DEMO_USERNAME="qa.ci.supervisor"
+          export TEST_DEMO_PASSWORD="$(openssl rand -hex 24)"
+          echo "::add-mask::${RENTAS_DEMO_BOOTSTRAP_PASSWORD}"
+          echo "::add-mask::${TEST_DEMO_PASSWORD}"
+          java -jar backend/target/rentas-backend.jar > "${RUNNER_TEMP}/backend.log" 2>&1 &
           backend_pid=$!
           trap 'kill "${backend_pid}" 2>/dev/null || true' EXIT
 

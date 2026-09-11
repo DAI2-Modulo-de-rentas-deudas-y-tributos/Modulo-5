@@ -57,12 +57,12 @@ El `.env` de frontend de ejemplo full-stack usa:
 ```text
 VITE_USE_MOCKS=false
 VITE_AUTH_MODE=mock
-VITE_DEV_IDENTITY_HEADERS=true
 VITE_API_BASE_URL=http://localhost:8080
 ```
 
-Los usuarios se crean en PostgreSQL (`POST /api/v1/dev-auth/users` con identidad
-SUPERVISOR DEV). El login del frontend llama a `POST /api/v1/dev-auth/login`.
+El primer SUPERVISOR se crea con `POST /api/v1/dev-auth/bootstrap` y el resto
+con `POST /api/v1/dev-auth/users`. El login emite un token opaco persistido en
+`demo_auth_session`; el frontend lo reenvía como `X-Demo-Session`.
 No hay usuarios hardcodeados en el runtime del frontend.
 
 Arquitectura de las imágenes base: `eclipse-temurin:17-*-jammy` tiene manifest
@@ -158,7 +158,8 @@ Docker Compose lee `.env` automáticamente. Una ejecución directa mediante Mave
 | `OUTBOX_DELAY_MS` | Intervalo entre ciclos de publicación del Outbox. | No; default `5000`. |
 | `BROKER_ADAPTER` | Selector reservado del adaptador; hoy sólo existe `local-log`. | No; default `local-log`. |
 | `RENTAS_SECURITY_DEV_MODE` | Habilita identidad y endpoints DEMO/DEV. | No; default `false`. Prohibido en producción. |
-| `RENTAS_DEMO_BOOTSTRAP_PASSWORD` | Contraseña común de bootstrap para cinco usuarios locales, almacenada sólo como hash BCrypt. | No; sin default. Secreto local/CI efímero. |
+| `RENTAS_DEMO_BOOTSTRAP_PASSWORD` | Secreto de `POST /api/v1/dev-auth/bootstrap` para el primer SUPERVISOR. | No; sin default. Secreto local/CI efímero. |
+| `RENTAS_DEMO_SESSION_TTL` | TTL de las sesiones DEMO persistidas. | No; default `PT8H`. |
 
 Las variables de descarga del Maven Wrapper (`MVNW_REPOURL`, `MVNW_USERNAME`, `MVNW_PASSWORD`, `MAVEN_USER_HOME` y `MVNW_VERBOSE`) son opcionales y pertenecen a la herramienta de build, no a la configuración de ejecución de M5. `MVNW_PASSWORD`, si se usa con un repositorio Maven privado, debe configurarse como secreto de CI o del entorno local.
 
@@ -166,19 +167,16 @@ Core/JWT todavía no tiene propiedades ni variables implementadas. El broker rea
 
 ## Seguridad
 
-En perfil explícito `dev`, `DevIdentityFilter` permite probar con:
-
-```text
-X-Dev-User: nombre
-X-Dev-Roles: RENTAS,SUPERVISOR
-X-Dev-Taxpayer-Id: 1
-```
-
-Sin headers se utiliza una identidad local de empleado. Para probar ownership se usa rol `TAXPAYER` y su propio `X-Dev-Taxpayer-Id`. `AUDITOR` sólo puede leer. El perfil `dev` ya no se activa por defecto: sin un proveedor Core/JWT configurado el backend queda cerrado, no confía en headers falsos.
+Con `RENTAS_SECURITY_DEV_MODE=true`, `DevIdentityFilter` resuelve la identidad
+desde `X-Demo-Session` contra `demo_auth_session` (hash SHA-256, TTL y revocación).
+No hay identidad por omisión ni privilegios vía `X-Dev-*`. `AUDITOR` sólo puede leer.
+Sin un proveedor Core/JWT configurado y con dev-mode desactivado el backend queda cerrado.
 
 Cada solicitud recibe `X-Correlation-Id`; un valor entrante sólo se conserva si tiene formato seguro. El mismo identificador se usa en errores, logs y auditoría.
 
-Con `RENTAS_DEMO_BOOTSTRAP_PASSWORD` definido se crean `demo.rentas`, `demo.supervisor`, `demo.caja`, `demo.auditoria` y `demo.contribuyente`; el valor real no se documenta. También pueden administrarse por `/api/v1/dev-auth/users`. Las contraseñas se guardan con BCrypt y `TAXPAYER` exige un `taxpayerId` existente.
+Con `RENTAS_DEMO_BOOTSTRAP_PASSWORD` definido, `POST /api/v1/dev-auth/bootstrap`
+crea un único SUPERVISOR inicial. El resto se administra por `/api/v1/dev-auth/users`.
+Las contraseñas se guardan con BCrypt y `TAXPAYER` exige un `taxpayerId` existente.
 
 En ambientes reales debe sustituirse este borde por el JWT emitido por Core, conservando `CurrentIdentity` como puerto de acceso a usuario, roles y contribuyente. Las tablas y rutas `demo_*` son únicamente una facilidad local explícita.
 
@@ -212,8 +210,7 @@ Con PostgreSQL y el backend local iniciados con `RENTAS_SECURITY_DEV_MODE=true`:
 
 ```powershell
 $headers = @{
-  "X-Dev-User" = "qa-supervisor"
-  "X-Dev-Roles" = "SUPERVISOR"
+  "X-Demo-Session" = "<token de POST /api/v1/dev-auth/login>"
 }
 
 $createdEventId = [guid]::NewGuid().ToString()

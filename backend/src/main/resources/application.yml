@@ -25,3 +25,4 @@ rentas:
   outbox-delay-ms: ${OUTBOX_DELAY_MS:5000}
   security.dev-mode: ${RENTAS_SECURITY_DEV_MODE:false}
   security.demo-bootstrap-password: ${RENTAS_DEMO_BOOTSTRAP_PASSWORD:}
+  security.demo-session-ttl: ${RENTAS_DEMO_SESSION_TTL:PT8H}

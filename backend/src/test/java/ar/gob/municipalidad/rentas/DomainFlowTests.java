@@ -18,7 +18,7 @@ class DomainFlowTests {
     @Autowired CatalogService catalog; @Autowired LiquidationService liquidationService; @Autowired PaymentService paymentService;
     @Autowired ReversalService reversalService; @Autowired PaymentPlanService planService; @Autowired ExemptionService exemptionService;
     @Autowired ExternalObligationService externalService; @Autowired DebtRepository debts; @Autowired PaymentAllocationRepository allocations;
-    @Autowired CreditBalanceRepository credits; @Autowired ProcessedEventRepository processed; @Autowired ExternalObligationRepository obligations; @Autowired LiquidationComponentRepository components;
+    @Autowired CreditBalanceRepository credits; @Autowired PaymentRepository payments; @Autowired ProcessedEventRepository processed; @Autowired ExternalObligationRepository obligations; @Autowired LiquidationComponentRepository components;
     @Autowired TaxConceptRepository concepts;
 
     @BeforeEach void authenticate() {
@@ -67,6 +67,11 @@ class DomainFlowTests {
         });
         PaymentReversalRequest request=reversalService.request(payment.id,"Carga duplicada"); reversalService.approve(request.id); reversalService.execute(request.id);
         assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("100.00");
+        assertThatThrownBy(()->reversalService.execute(request.id)).isInstanceOf(BusinessException.class).hasMessageContaining("aprobada");
+        assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("100.00");
+        assertThat(credits.findBySourcePaymentId(payment.id).orElseThrow().availableAmount).isZero();
+        assertThat(credits.findBySourcePaymentId(payment.id).orElseThrow().status).isEqualTo(CreditBalanceStatus.CANCELLED);
+        assertThat(payments.findById(payment.id).orElseThrow().status).isEqualTo(PaymentStatus.REVERSED);
     }
 
     @Test void duplicateEventAndBusinessDuplicateCreateSingleDebt() {

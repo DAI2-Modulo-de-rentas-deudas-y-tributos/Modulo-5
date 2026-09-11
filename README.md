@@ -48,24 +48,23 @@ docker compose --profile application up --build
 ### Variables de entorno de integración
 
 - `VITE_API_BASE_URL`: URL pública del backend; no contiene secretos.
-- `VITE_AUTH_MODE`: `mock` usa el login DEMO persistido por el backend; `core` queda reservado para el
-  contrato Core/JWT futuro.
-- `VITE_DEV_IDENTITY_HEADERS`: envía `X-Dev-*` sólo con auth mock y habilitación
-  explícita. Default `false`.
-- `RENTAS_SECURITY_DEV_MODE`: habilita el puente de identidad sólo para integración
-  local. Default `false`; no debe habilitarse en producción.
-- `RENTAS_DEMO_BOOTSTRAP_PASSWORD`: secreto exclusivamente local que, si se define
-  junto con dev-mode, crea usuarios DEMO para los cinco roles. No tiene default y
+- `VITE_AUTH_MODE`: `mock` valida usuario/contraseña contra
+  `POST /api/v1/dev-auth/login` (PostgreSQL + BCrypt + sesión opaca); `core` queda
+  reservado para el contrato Core/JWT futuro.
+- `RENTAS_SECURITY_DEV_MODE`: habilita endpoints y sesiones DEMO sólo para
+  integración local. Default `false`; no debe habilitarse en producción.
+- `RENTAS_DEMO_BOOTSTRAP_PASSWORD`: secreto de `POST /api/v1/dev-auth/bootstrap`
+  para crear el primer SUPERVISOR cuando la tabla está vacía. No tiene default y
   nunca debe guardarse en Git.
 
-Para datos reales con autenticación demo use `VITE_AUTH_MODE=mock`,
-`VITE_DEV_IDENTITY_HEADERS=true` y
-`RENTAS_SECURITY_DEV_MODE=true`. Con `VITE_API_BASE_URL` vacío, el proxy Vite
-enruta `/api` al backend local. En DEV/TEST, Terraform inyecta en ECS el origen
-exacto de Amplify mediante `CORS_ALLOWED_ORIGINS`.
+Para datos reales con autenticación demo use `VITE_AUTH_MODE=mock` y
+`RENTAS_SECURITY_DEV_MODE=true`. El frontend envía
+`X-Demo-Session`. Con `VITE_API_BASE_URL` vacío, el proxy Vite enruta `/api` al
+backend local. En DEV/TEST, la configuración inyecta el origen exacto del frontend
+mediante `CORS_ALLOWED_ORIGINS`.
 
-La autenticación de ese modo se valida contra `demo_user` en PostgreSQL con BCrypt.
-No reemplaza Core/JWT: con dev-mode desactivado, `/api/v1/dev-auth/*` no está disponible.
+La autenticación de ese modo persiste usuarios y sesiones en PostgreSQL. No
+reemplaza Core/JWT: con dev-mode desactivado, `/api/v1/dev-auth/*` no está disponible.
 
 ## Automatización
 

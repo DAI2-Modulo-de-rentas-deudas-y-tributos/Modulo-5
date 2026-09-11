@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
 import Card from "../../components/common/Card.jsx";
 import DataTable from "../../components/common/DataTable.jsx";
@@ -23,9 +23,9 @@ const CHANNELS = [
 /**
  * Pagos: el corazón operativo del área.
  *
- * Registrar imputa el pago a la deuda y publica paymentRegistered (y debtSettled si
- * el saldo llega a cero). Reversar publica paymentReversed y devuelve el saldo a la
- * deuda. Ambos eventos viajan a M4 o M7 según el origen lógico de la obligación.
+ * Registrar imputa el pago y reversar restituye el principal aplicado. El backend
+ * controla la evidencia y el outbox; los contratos outbound externos pendientes
+ * no se consideran integrados por mostrar estas operaciones en la interfaz.
  */
 export default function PagosPage() {
   const [status, setStatus] = useState("");
@@ -237,7 +237,9 @@ function ResolveReconciliationModal({item,onClose,onDone}){
 }
 
 /** RegisterPaymentRequest → PaymentResponse */
-function RegisterPaymentModal({ taxpayerOptions, onClose, onDone }) {
+export function RegisterPaymentModal({ taxpayerOptions, onClose, onDone }) {
+  const intentKey = useRef(null);
+  const requestInFlight = useRef(false);
   const [form, setForm] = useState({
     taxpayerId: "",
     debtId: "",
@@ -285,14 +287,20 @@ function RegisterPaymentModal({ taxpayerOptions, onClose, onDone }) {
 
   const onSubmit = async (event) => {
     event.preventDefault();
+    if (requestInFlight.current) return;
     setSubmitError(null);
     if (!validate()) return;
+    requestInFlight.current = true;
+    intentKey.current ??= crypto.randomUUID();
     setSubmitting(true);
     try {
-      onDone(await paymentService.register(form));
+      const payment = await paymentService.register({ ...form, idempotencyKey: intentKey.current });
+      intentKey.current = null;
+      onDone(payment);
     } catch (caught) {
       setSubmitError(caught.message);
     } finally {
+      requestInFlight.current = false;
       setSubmitting(false);
     }
   };

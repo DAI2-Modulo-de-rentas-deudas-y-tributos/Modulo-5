@@ -7,4 +7,6 @@ spring:
   flyway.enabled: false
 rentas:
   security.dev-mode: true
+  security.demo-bootstrap-password: test-bootstrap-secret
+  cors.allowed-origins: http://localhost:5173
   outbox-delay-ms: 60000
