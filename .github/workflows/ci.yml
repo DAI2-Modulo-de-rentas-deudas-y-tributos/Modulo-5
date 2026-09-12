@@ -165,7 +165,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          SPRING_PROFILES_ACTIVE=dev java -jar backend/target/rentas-backend.jar > "${RUNNER_TEMP}/backend.log" 2>&1 &
+          export RENTAS_SECURITY_DEV_MODE=true
+          export RENTAS_DEMO_BOOTSTRAP_PASSWORD="$(openssl rand -hex 32)"
+          export TEST_DEMO_USERNAME="qa.ci.supervisor"
+          export TEST_DEMO_PASSWORD="$(openssl rand -hex 24)"
+          echo "::add-mask::${RENTAS_DEMO_BOOTSTRAP_PASSWORD}"
+          echo "::add-mask::${TEST_DEMO_PASSWORD}"
+          java -jar backend/target/rentas-backend.jar > "${RUNNER_TEMP}/backend.log" 2>&1 &
           backend_pid=$!
           trap 'kill "${backend_pid}" 2>/dev/null || true' EXIT
 
@@ -182,13 +188,13 @@ jobs:
             cat "${RUNNER_TEMP}/backend.log"
             exit 1
           fi
+          PGPASSWORD="${SPRING_DATASOURCE_PASSWORD}" psql \
+            --host=127.0.0.1 --username="${SPRING_DATASOURCE_USERNAME}" --dbname=rentas \
+            --set=ON_ERROR_STOP=1 --file=scripts/test/seed_bulk_ci.sql
           python scripts/test/aws_test_acceptance.py \
             --api-base-url http://localhost:8080 \
             --scenario pdf \
             --output-dir backend/target/pdf-evidence/http
-          PGPASSWORD="${SPRING_DATASOURCE_PASSWORD}" psql \
-            --host=127.0.0.1 --username="${SPRING_DATASOURCE_USERNAME}" --dbname=rentas \
-            --set=ON_ERROR_STOP=1 --file=scripts/test/seed_bulk_ci.sql
           for size in 10 50 200; do
             python scripts/test/aws_test_acceptance.py \
               --api-base-url http://localhost:8080 \

@@ -76,13 +76,15 @@ El runner acepta el origen (`https://api.example`) o el prefijo completo
 
 ## Autenticación
 
-Mientras TEST conserve el perfil de desarrollo, el runner usa X-Dev-User y X-Dev-Roles.
+Mientras TEST conserve el modo DEMO, el runner obtiene sesiones opacas mediante
+`/api/v1/dev-auth/bootstrap` y `/api/v1/dev-auth/login`, y envía únicamente
+`X-Demo-Session`. Las contraseñas se inyectan como secretos del workflow.
 
 Cuando Core/Auth entregue OIDC, definir el secret TEST_API_BEARER_TOKEN en el environment test. Si ese secret existe, el runner usa Authorization Bearer y deja de enviar los headers de desarrollo. El token debe representar un usuario de QA con roles RENTAS, SUPERVISOR y CASHIER.
 Con Bearer, las pruebas que requieren cambiar de identidad se registran como
 `skipped` explícitamente: harán falta tokens de titular, otro titular y auditor
 para ejecutarlas en AWS. Los casos de autorización sí se ejecutan en CI con
-Spring Security, sin asumir que los headers de desarrollo funcionan en producción.
+Spring Security, sin confiar en roles o identidades enviados por el navegador.
 
 Nunca guardar tokens en el repositorio ni imprimirlos en los logs.
 

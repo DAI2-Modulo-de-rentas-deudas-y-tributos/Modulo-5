@@ -5,6 +5,8 @@
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
+: "${POSTGRES_PASSWORD:?Definí POSTGRES_PASSWORD sólo en tu terminal antes de ejecutar este script}"
+: "${RENTAS_DEMO_BOOTSTRAP_PASSWORD:?Definí RENTAS_DEMO_BOOTSTRAP_PASSWORD sólo en tu terminal}"
 
 echo "== 1/4 · PostgreSQL =="
 docker compose up -d postgres
@@ -32,10 +34,10 @@ else
   cd "$REPO_ROOT/backend"
   export DB_URL="jdbc:postgresql://localhost:5433/rentas"
   export DB_USER="rentas"
-  export DB_PASSWORD="rentas_local"
+  export DB_PASSWORD="$POSTGRES_PASSWORD"
   export CORS_ALLOWED_ORIGINS="http://localhost:5173,http://localhost:4173"
   export RENTAS_SECURITY_DEV_MODE=true
-  export RENTAS_DEMO_BOOTSTRAP_PASSWORD='DemoQA2026!'
+  export RENTAS_DEMO_BOOTSTRAP_PASSWORD
   nohup ./mvnw spring-boot:run -Dspring-boot.run.profiles=dev > /tmp/m5-backend.log 2>&1 &
   disown
   echo "Arrancando backend (log: /tmp/m5-backend.log)..."
@@ -72,12 +74,10 @@ Portal:  http://localhost:5173
 API:     http://localhost:8080/api/v1
 Swagger: http://localhost:8080/swagger-ui/index.html
 
-Usuarios demo (contraseña para todos: DemoQA2026!):
-  demo.rentas         -> Personal de Rentas
-  demo.supervisor     -> Supervisor
-  demo.caja           -> Cajero
-  demo.auditoria      -> Auditor
-  demo.contribuyente  -> Contribuyente (Portal del Contribuyente)
+La base limpia no trae usuarios conocidos. Creá una única cuenta inicial con
+POST /api/v1/dev-auth/bootstrap y el secreto RENTAS_DEMO_BOOTSTRAP_PASSWORD.
+Después, ese SUPERVISOR crea las demás cuentas mediante POST /api/v1/dev-auth/users.
+Los logins devuelven un token opaco que se envía en X-Demo-Session.
 
 Insomnia: importar qa/insomnia-m5-rentas-qa.json (baseUrl ya apunta a localhost:8080)
 EOF

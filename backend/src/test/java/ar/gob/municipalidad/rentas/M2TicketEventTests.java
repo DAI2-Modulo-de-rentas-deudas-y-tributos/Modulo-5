@@ -6,6 +6,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationContext;
 import org.springframework.http.MediaType;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,6 +32,8 @@ class M2TicketEventTests {
     @Autowired IntegrationEventLogRepository eventLog;
     @Autowired IntegrationReprocessService reprocess;
     @Autowired OutboxRepository outbox;
+    @Autowired DemoUserRepository demoUsers; @Autowired TaxpayerRepository taxpayers;
+    @Autowired PasswordEncoder encoder; @Autowired DemoAuthService demoAuth;
 
     @Test void simulaCreacionActualizacionEIdempotenciaYPermiteTomarElTicket() throws Exception {
         UUID createdId=UUID.randomUUID();
@@ -57,7 +60,7 @@ class M2TicketEventTests {
             .andExpect(status().isAccepted());
         assertThat(updates.findByTicketCaseIdOrderByCreatedAt(ticket.id)).singleElement().extracting(x->x.message).isEqualTo("El ciudadano adjuntó información");
 
-        mvc.perform(post("/api/v1/tickets/{id}/assign",ticket.id).header("X-Dev-User","qa-rentas").header("X-Dev-Roles","RENTAS"))
+        mvc.perform(post("/api/v1/tickets/{id}/assign",ticket.id).header("X-Demo-Session",new DemoAuthSessions(demoUsers,taxpayers,encoder,demoAuth).token(DemoRole.RENTAS)))
             .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("IN_PROGRESS"));
         assertThat(outbox.findAll()).anyMatch(x->x.eventType.equals("updateTicketStatus")&&x.targetModule.equals("M2"));
     }
@@ -77,7 +80,9 @@ class M2TicketEventTests {
     }
 
     private org.springframework.http.HttpHeaders supervisor(){
-        var headers=new org.springframework.http.HttpHeaders();headers.set("X-Dev-User","qa-supervisor");headers.set("X-Dev-Roles","SUPERVISOR");return headers;
+        var headers=new org.springframework.http.HttpHeaders();
+        headers.set("X-Demo-Session",new DemoAuthSessions(demoUsers,taxpayers,encoder,demoAuth).token(DemoRole.SUPERVISOR));
+        return headers;
     }
 }
 

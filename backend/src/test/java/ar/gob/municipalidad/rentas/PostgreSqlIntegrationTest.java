@@ -47,6 +47,72 @@ import static org.assertj.core.api.Assertions.*;
 @Testcontainers(disabledWithoutDocker=true)
 @DirtiesContext(classMode=DirtiesContext.ClassMode.AFTER_CLASS)
 class PostgreSqlIntegrationTest {
+    @Autowired ExemptionService exenciones;
+    @Autowired AuditRepository auditoria;
+
+    @Test void pagosIdempotentesConcurrentesNoDuplicanEfectos() throws Exception {
+        authenticate();
+        Debt deuda=debt("IDEMPOTENCIA",null);
+        var solicitud=new ApiDtos.RegisterPaymentRequest(deuda.taxpayerId,PaymentMethod.CASH,new BigDecimal("120"),List.of(new ApiDtos.AllocationRequest(deuda.id,new BigDecimal("100"))));
+        String clave=UUID.randomUUID().toString();
+        var resultados=new java.util.concurrent.CopyOnWriteArrayList<Long>();
+        assertThat(runTogether(()->{resultados.add(payments.register(solicitud,clave).id);return null;},
+            ()->{resultados.add(payments.register(solicitud,clave).id);return null;})).containsOnlyNulls();
+        assertThat(resultados).hasSize(2);
+        assertThat(resultados.get(0)).isEqualTo(resultados.get(1));
+        assertThat(paymentRepository.findByTaxpayerId(deuda.taxpayerId)).hasSize(1);
+        Payment pago=paymentRepository.findById(resultados.get(0)).orElseThrow();
+        assertThat(pago.allocatedAmount).isEqualByComparingTo("100");
+        assertThat(pago.unallocatedAmount).isEqualByComparingTo("20");
+        assertThat(allocations.findByPaymentId(pago.id)).hasSize(1);
+        assertThat(creditRepository.findBySourcePaymentId(pago.id).orElseThrow().availableAmount).isEqualByComparingTo("20");
+        assertThat(debts.findById(deuda.id).orElseThrow().outstandingBalance).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from outbox_event where event_type='paymentRegistered' and aggregate_id=?",Long.class,pago.id.toString())).isEqualTo(1);
+        assertThat(auditoria.findByEntityTypeAndEntityIdOrderByOccurredAt("Payment",pago.id.toString())).hasSize(1);
+        var cambiado=new ApiDtos.RegisterPaymentRequest(deuda.taxpayerId,PaymentMethod.CASH,new BigDecimal("121"),solicitud.allocations());
+        assertThatThrownBy(()->payments.register(cambiado,clave)).isInstanceOfSatisfying(BusinessException.class,
+            ex->{assertThat(ex.status).isEqualTo(409);assertThat(ex.code).isEqualTo("IDEMPOTENCY_KEY_REUSED");});
+        assertThat(paymentRepository.findByTaxpayerId(deuda.taxpayerId)).hasSize(1);
+    }
+
+    @Test void claveDePagoSeRevierteConLaTransaccionYEsOpcional() {
+        authenticate();
+        Debt deuda=debt("IDEMPOTENCIA-ROLLBACK",null);
+        String clave=UUID.randomUUID().toString();
+        var invalida=new ApiDtos.RegisterPaymentRequest(deuda.taxpayerId,PaymentMethod.CASH,BigDecimal.TEN,List.of(new ApiDtos.AllocationRequest(-1L,BigDecimal.TEN)));
+        assertThatThrownBy(()->payments.register(invalida,clave)).isInstanceOf(BusinessException.class);
+        assertThat(paymentRepository.findByTaxpayerId(deuda.taxpayerId)).isEmpty();
+        var valida=new ApiDtos.RegisterPaymentRequest(deuda.taxpayerId,PaymentMethod.CASH,BigDecimal.TEN,List.of());
+        Payment pago=payments.register(valida,clave);
+        var equivalente=new ApiDtos.RegisterPaymentRequest(deuda.taxpayerId,PaymentMethod.CASH,new BigDecimal("10.00"),null);
+        assertThat(payments.register(equivalente,clave).id).isEqualTo(pago.id);
+        assertThat(payments.register(valida,(String)null).id).isNotEqualTo(payments.register(valida,(String)null).id);
+        assertThatThrownBy(()->payments.register(valida," ")).isInstanceOfSatisfying(BusinessException.class,ex->assertThat(ex.status).isEqualTo(400));
+        assertThatThrownBy(()->payments.register(valida,"x".repeat(129))).isInstanceOf(BusinessException.class);
+        Debt otra=debt("IDEMPOTENCIA-OTRO",null);
+        assertThat(payments.register(new ApiDtos.RegisterPaymentRequest(otra.taxpayerId,PaymentMethod.CASH,BigDecimal.TEN,List.of()),clave).id).isNotEqualTo(pago.id);
+    }
+
+    @Test void exencionUsaPeriodoFiscalYRegistraTodosLosPasos() {
+        authenticate();
+        Debt deuda=debt("EXENCION-FISCAL",null);
+        LocalDate inicio=YearMonth.now().atDay(1),fin=YearMonth.now().atEndOfMonth();
+        var solicitud=exenciones.create(new ApiDtos.CreateExemptionRequest(deuda.taxpayerId,deuda.taxConceptId,"Validación fiscal",new BigDecimal("100"),inicio,fin));
+        exenciones.start(solicitud.id);
+        exenciones.requestDocumentation(solicitud.id,"Presentar constancia");
+        exenciones.submitDocumentation(solicitud.id,new ApiDtos.SubmitDocumentationRequest("DOC-QA","CONSTANCIA","constancia.pdf"));
+        exenciones.submit(solicitud.id);
+        assertThat(auditoria.findByEntityTypeAndEntityIdOrderByOccurredAt("ExemptionRequest",solicitud.id.toString()))
+            .extracting(x->x.action).containsExactly("EXEMPTION_REQUESTED","EXEMPTION_REVIEW_STARTED",
+                "EXEMPTION_DOCUMENTATION_REQUESTED","EXEMPTION_DOCUMENTATION_SUBMITTED","EXEMPTION_SUBMITTED_FOR_RESOLUTION");
+        exenciones.approve(solicitud.id);
+        assertThat(liquidations.preview(new ApiDtos.LiquidationRequest(deuda.taxpayerId,deuda.taxConceptId,YearMonth.now().toString(),BigDecimal.ZERO,fin.plusMonths(3))).finalAmount()).isZero();
+        var futura=new ApiDtos.LiquidationRequest(deuda.taxpayerId,deuda.taxConceptId,YearMonth.now().plusYears(2).toString(),BigDecimal.ZERO,fin.plusYears(2));
+        assertThat(liquidations.create(futura).finalAmount).isEqualByComparingTo("100");
+        assertThat(liquidations.preview(new ApiDtos.LiquidationRequest(deuda.taxpayerId,deuda.taxConceptId,YearMonth.now().minusMonths(1).toString(),BigDecimal.ZERO,fin)).finalAmount()).isEqualByComparingTo("100");
+        assertThatThrownBy(()->liquidations.preview(new ApiDtos.LiquidationRequest(deuda.taxpayerId,deuda.taxConceptId,"2026-13",BigDecimal.ZERO,fin)))
+            .isInstanceOfSatisfying(BusinessException.class,ex->assertThat(ex.status).isEqualTo(400));
+    }
     @Container static final PostgreSQLContainer<?> POSTGRES=new PostgreSQLContainer<>("postgres:17-alpine");
     @DynamicPropertySource static void database(DynamicPropertyRegistry registry){
         registry.add("spring.datasource.url",POSTGRES::getJdbcUrl);
@@ -85,6 +151,7 @@ class PostgreSqlIntegrationTest {
     @Autowired IndicatorService indicators;
     @Autowired PlatformTransactionManager transactionManager;
     @Autowired DemoAuthController demoAuth;
+    @Autowired DemoAuthService demoAuthService;
     @Autowired DemoUserRepository demoUsers;
     @Autowired LateChargeRuleRepository lateChargeRules;
     @Autowired LateChargeService lateCharges;
@@ -95,8 +162,10 @@ class PostgreSqlIntegrationTest {
     @AfterEach void clearSecurity(){SecurityContextHolder.clearContext();}
 
     @Test void contextStartsAndFlywayAppliesEveryMigration(){
-        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(15);
-        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(15);
+        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(17);
+        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(17);
+        assertThat(jdbc.queryForList("select id from demo_bootstrap_lock",Integer.class)).containsExactly(1);
+        assertThat(jdbc.queryForObject("select current_setting('server_version_num')::integer",Integer.class)).isBetween(170000,179999);
         assertThat(jdbc.queryForList("select code from tax_concept where code in ('TASA_SERVICIOS','ABL','PATENTE') order by code",String.class)).containsExactly("ABL","PATENTE","TASA_SERVICIOS");
     }
 
@@ -226,6 +295,93 @@ class PostgreSqlIntegrationTest {
         List<Throwable> creditFailures=runTogether(()->credits.apply(credit.id,new ApiDtos.ApplyCreditBalanceRequest(first.id,new BigDecimal("15"))),()->credits.apply(credit.id,new ApiDtos.ApplyCreditBalanceRequest(second.id,new BigDecimal("15"))));assertThat(creditFailures.stream().filter(Objects::nonNull)).hasSize(1);assertThat(creditRepository.findById(credit.id).orElseThrow().availableAmount).isEqualByComparingTo("5.00");assertThat(creditApplications.findAll().stream().filter(x->credit.id.equals(x.creditBalanceId))).hasSize(1);
     }
 
+    @Test void distintasCuotasDelMismoPlanNoPierdenCapitalAlPagarYRevertirConcurrentemente() throws Exception {
+        authenticate();
+        Debt debt=debt("PG-PLAN-SHARED",null);
+        workflow.createConfiguration(new ApiDtos.CreatePaymentPlanConfigurationRequest(2,2,BigDecimal.ZERO,
+            new BigDecimal("20"),0,1,true,true,1,LocalDate.now().minusDays(1),null,true));
+        PaymentPlanRequest request=workflow.request(new ApiDtos.CreatePaymentPlanRequest(debt.taxpayerId,List.of(debt.id),2));
+        Long planId=workflow.grant(request.id,null).paymentPlanId;
+        List<Installment> cuotas=installments.findByPaymentPlanIdOrderByNumber(planId);
+        assertThat(cuotas).hasSize(2);
+        var pagos=new java.util.concurrent.CopyOnWriteArrayList<Payment>();
+        assertThat(runWithDebtLocked(debt.id,
+            ()->{pagos.add(payments.register(pagoCuota(debt.taxpayerId,cuotas.get(0))));return null;},
+            ()->{pagos.add(payments.register(pagoCuota(debt.taxpayerId,cuotas.get(1))));return null;})).containsOnlyNulls();
+        PaymentPlan paid=planRepository.findById(planId).orElseThrow();
+        assertThat(paid.paidAmount).isEqualByComparingTo(paid.totalPlanAmount);
+        assertThat(paid.outstandingPlanAmount).isZero();
+        assertThat(paid.status).isEqualTo(PaymentPlanStatus.COMPLETED);
+        assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isZero();
+        assertThat(jdbc.queryForObject("select principal_paid_amount from payment_plan_debt where payment_plan_id=?",BigDecimal.class,planId)).isEqualByComparingTo("100");
+        assertThat(pagos).hasSize(2);
+        List<Long> reversalsIds=pagos.stream().map(p->{
+            PaymentReversalRequest reversal=reversals.request(p.id,"Cuotas distintas simultáneas");
+            reversals.approve(reversal.id);return reversal.id;
+        }).toList();
+        long outboxBefore=outbox.count();
+        assertThat(runWithDebtLocked(debt.id,()->reversals.execute(reversalsIds.get(0)),
+            ()->reversals.execute(reversalsIds.get(1)))).containsOnlyNulls();
+        PaymentPlan restored=planRepository.findById(planId).orElseThrow();
+        assertThat(restored.paidAmount).isZero();
+        assertThat(restored.outstandingPlanAmount).isEqualByComparingTo(restored.totalPlanAmount);
+        assertThat(restored.status).isEqualTo(PaymentPlanStatus.ACTIVE);
+        assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("100");
+        assertThat(jdbc.queryForObject("select principal_paid_amount from payment_plan_debt where payment_plan_id=?",BigDecimal.class,planId)).isZero();
+        assertThat(jdbc.queryForObject("select remaining_principal_amount from payment_plan_debt where payment_plan_id=?",BigDecimal.class,planId)).isEqualByComparingTo("100");
+        assertThat(installments.findByPaymentPlanIdOrderByNumber(planId)).allSatisfy(i->{
+            assertThat(i.paidAmount).isZero();assertThat(i.outstandingAmount).isEqualByComparingTo(i.totalAmount);
+        });
+        for(Payment payment:pagos){
+            assertThat(paymentRepository.findById(payment.id).orElseThrow().status).isEqualTo(PaymentStatus.REVERSED);
+            assertThat(allocations.findByPaymentId(payment.id)).singleElement().satisfies(a->assertThat(a.status).isEqualTo("REVERSED"));
+            assertThat(jdbc.queryForObject("select count(*) from audit_entry where entity_type='Payment' and entity_id=? and action='PAYMENT_REVERSED'",Long.class,payment.id.toString())).isEqualTo(1);
+        }
+        // Reintentar una ejecución ya confirmada no restaura capital ni duplica efectos.
+        assertThatThrownBy(()->reversals.execute(reversalsIds.get(0))).isInstanceOf(BusinessException.class);
+        assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("100");
+        assertThat(outbox.count()).isEqualTo(outboxBefore);
+    }
+
+    private ApiDtos.RegisterPaymentRequest pagoCuota(Long taxpayerId,Installment cuota){
+        return new ApiDtos.RegisterPaymentRequest(taxpayerId,null,PaymentMethod.CASH,cuota.totalAmount,
+            List.of(new ApiDtos.AllocationRequest(null,cuota.id,cuota.totalAmount)));
+    }
+
+    /** Retiene la deuda hasta que ambas operaciones esperan un lock real de PostgreSQL. */
+    private List<Throwable> runWithDebtLocked(Long debtId,Callable<?> first,Callable<?> second) throws Exception {
+        ExecutorService pool=Executors.newFixedThreadPool(2);
+        String marker="plan-race-"+UUID.randomUUID();
+        List<Future<Throwable>> futures=new ArrayList<>();
+        try {
+            new TransactionTemplate(transactionManager).executeWithoutResult(status->{
+                jdbc.queryForObject("select id from debt where id=? for update",Long.class,debtId);
+                for(Callable<?> action:List.of(first,second)) futures.add(pool.submit(()->{
+                    authenticate();
+                    try {
+                        new TransactionTemplate(transactionManager).executeWithoutResult(worker->{
+                            jdbc.queryForObject("select set_config('application_name', ?, true)",String.class,marker);
+                            try {action.call();} catch(RuntimeException ex){throw ex;} catch(Exception ex){throw new IllegalStateException(ex);}
+                        });
+                        return null;
+                    } catch(Throwable ex){return ex;} finally {SecurityContextHolder.clearContext();}
+                }));
+                long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(10);
+                int waiting=0;
+                while(System.nanoTime()<deadline){
+                    jdbc.execute("select pg_stat_clear_snapshot()");
+                    waiting=jdbc.queryForObject("select count(*) from pg_stat_activity where application_name=? and wait_event_type='Lock'",Integer.class,marker);
+                    if(waiting==2)break;
+                    try {Thread.sleep(25);}catch(InterruptedException ex){Thread.currentThread().interrupt();throw new IllegalStateException(ex);}
+                }
+                assertThat(waiting).as("Ambas operaciones deben solaparse antes de liberar la deuda").isEqualTo(2);
+            });
+            List<Throwable> failures=new ArrayList<>();
+            for(Future<Throwable> future:futures)failures.add(future.get(15,TimeUnit.SECONDS));
+            return failures;
+        } finally {pool.shutdownNow();}
+    }
+
     @Test void optimizedQueriesRemainBoundedOnPostgreSql(){
         authenticate();Debt first=debt("PG-PERF-A",null),second=debt("PG-PERF-B",first.taxpayerId);List<Liquidation> liquidationPage=new ArrayList<>();liquidationPage.add(liquidationFor(first));liquidationPage.add(liquidationFor(second));
         Statistics statistics=entityManagerFactory.unwrap(SessionFactory.class).getStatistics();statistics.clear();liquidations.responses(new PageImpl<>(liquidationPage));assertThat(statistics.getPrepareStatementCount()).isEqualTo(1);
@@ -249,6 +405,49 @@ class PostgreSqlIntegrationTest {
         var batch=reconciliations.importBatch(new FiscalProcessingController.ImportReconciliationRequest("PG-BATCH-"+suffix,List.of(new FiscalProcessingController.ReconciliationItemRequest("PG-TX-"+suffix,dni,new BigDecimal("25"),payment.paidAt))));
         assertThat(batch.reconciledItems()).isEqualTo(1);assertThat(batch.items()).singleElement().satisfies(x->assertThat(x.matchedPaymentId()).isEqualTo(payment.id));
         assertThat(jdbc.queryForObject("select count(*) from late_charge_application where debt_id=?",Integer.class,debt.id)).isEqualTo(2);
+    }
+
+    @Test void bootstrapAndArbitraryUsersPersistBcryptOnPostgreSql(){
+        authenticate();
+        // Sólo datos de este contenedor de pruebas: nunca omitir el bootstrap por orden de tests.
+        jdbc.update("delete from demo_auth_session");
+        jdbc.update("delete from demo_user");
+        demoAuthService.bootstrap("test-bootstrap-secret",new DemoAuthController.BootstrapRequest("qa.supervisor","clave-segura","QA Supervisor"));
+        assertThat(jdbc.queryForObject("select password_hash from demo_user where username='qa.supervisor'",String.class)).startsWith("$2");
+        TaxpayerReference taxpayer=taxpayer(TaxpayerType.CITIZEN,"QA-OWN-"+UUID.randomUUID(),uniqueDigits(8),null);
+        String suffix=UUID.randomUUID().toString().substring(0,8);
+        demoAuth.create(new DemoAuthController.CreateUserRequest("qa.rentas."+suffix,"clave-segura","QA Rentas",DemoRole.RENTAS,null));
+        demoAuth.create(new DemoAuthController.CreateUserRequest("qa.caja."+suffix,"clave-segura","QA Caja",DemoRole.CASHIER,null));
+        demoAuth.create(new DemoAuthController.CreateUserRequest("qa.auditor."+suffix,"clave-segura","QA Auditor",DemoRole.AUDITOR,null));
+        var contributor=demoAuth.create(new DemoAuthController.CreateUserRequest("qa.contribuyente."+suffix,"clave-segura","QA Contribuyente",DemoRole.TAXPAYER,taxpayer.id));
+        List<String> hashes=jdbc.queryForList("select password_hash from demo_user where username like ?",String.class,"qa.%."+suffix);
+        assertThat(hashes).hasSize(4).allMatch(hash->hash.startsWith("$2")&&!hash.contains("clave-segura"));
+        var login=demoAuth.login(new DemoAuthController.LoginRequest("qa.contribuyente."+suffix,"clave-segura"));
+        assertThat(login.token()).isNotEqualTo("dev-session");
+        assertThat(login.user().taxpayerId()).isEqualTo(taxpayer.id);
+        assertThat(contributor.role()).isEqualTo(DemoRole.TAXPAYER);
+    }
+
+    @Test void bootstrapConcurrenteSoloCreaUnSupervisorEnPostgreSql() throws Exception {
+        jdbc.update("delete from demo_auth_session");
+        jdbc.update("delete from demo_user");
+        long auditsBefore=jdbc.queryForObject("select count(*) from audit_entry where action='DEMO_BOOTSTRAP_COMPLETED'",Long.class);
+        List<Throwable> failures=runTogether(
+            ()->demoAuthService.bootstrap("test-bootstrap-secret",new DemoAuthController.BootstrapRequest("bootstrap.uno","clave-segura","Uno")),
+            ()->demoAuthService.bootstrap("test-bootstrap-secret",new DemoAuthController.BootstrapRequest("bootstrap.dos","clave-segura","Dos")));
+        assertThat(failures.stream().filter(Objects::isNull)).hasSize(1);
+        assertThat(failures.stream().filter(Objects::nonNull)).singleElement().satisfies(error->
+            assertThat(error).isInstanceOfSatisfying(BusinessException.class,ex->{
+                assertThat(ex.status).isEqualTo(409);assertThat(ex.code).isEqualTo("DEMO_BOOTSTRAP_ALREADY_COMPLETED");
+            }));
+        assertThat(demoUsers.findAll()).singleElement().satisfies(user->{
+            assertThat(user.role).isEqualTo(DemoRole.SUPERVISOR);
+            var login=demoAuthService.login(new DemoAuthController.LoginRequest(user.username,"clave-segura"));
+            assertThat(demoAuthService.me(login.token()).id()).isEqualTo(user.id);
+            assertThat(jdbc.queryForObject("select token_hash from demo_auth_session where demo_user_id=?",String.class,user.id))
+                .isEqualTo(DemoAuthService.hashToken(login.token())).isNotEqualTo(login.token());
+        });
+        assertThat(jdbc.queryForObject("select count(*) from audit_entry where action='DEMO_BOOTSTRAP_COMPLETED'",Long.class)).isEqualTo(auditsBefore+1);
     }
 
     @Test void concurrentBulkExecutionCommitsOnceOnPostgreSql() throws Exception {

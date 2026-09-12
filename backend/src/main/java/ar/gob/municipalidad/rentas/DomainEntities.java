@@ -170,6 +170,8 @@ class Debt {
 
 @Entity @Table(name="payment")
 class Payment {
+    @Column(name="idempotency_key",length=128) public String idempotencyKey;
+    @Column(name="idempotency_fingerprint",length=64) public String idempotencyFingerprint;
     @Id @GeneratedValue(strategy=GenerationType.IDENTITY) public Long id;
     @Column(name="taxpayer_id",nullable=false) public Long taxpayerId;
     @Column(name="bill_id") public Long billId;
@@ -180,7 +182,6 @@ class Payment {
     @Enumerated(EnumType.STRING) @Column(nullable=false) public PaymentStatus status;
     @Enumerated(EnumType.STRING) @Column(name="allocation_status",nullable=false) public PaymentAllocationStatus allocationStatus;
     @Enumerated(EnumType.STRING) @Column(nullable=false) public PaymentOrigin origin;
-    @Column(name="idempotency_key",unique=true,length=255) public String idempotencyKey;
     @Column(name="receipt_number",nullable=false,unique=true) public String receiptNumber;
     @Column(name="registered_by",nullable=false) public String registeredBy;
     @Column(name="paid_at",nullable=false) public OffsetDateTime paidAt;

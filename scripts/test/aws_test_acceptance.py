@@ -10,6 +10,7 @@ import sys
 import time
 import uuid
 import hashlib
+import secrets
 from decimal import Decimal
 from email.message import Message
 from io import BytesIO
@@ -37,14 +38,13 @@ class AcceptanceFailure(RuntimeError):
 
 class ApiClient:
     def __init__(self, api_base_url: str, bearer_token: str | None,
-                 dev_roles: str = "RENTAS,SUPERVISOR,CASHIER", taxpayer_id: int | None = None) -> None:
+                 demo_session: str | None = None) -> None:
         self.api_base_url = api_base_url.rstrip("/")
         # Amplify guarda el origen; también admitir el prefijo explícito del CLI.
         if not urlsplit(self.api_base_url).path:
             self.api_base_url += "/api/v1"
         self.bearer_token = bearer_token.strip() if bearer_token else None
-        self.dev_roles = dev_roles
-        self.taxpayer_id = taxpayer_id
+        self.demo_session = demo_session
 
     def _headers(self, has_body: bool) -> dict[str, str]:
         headers = {"Accept": "application/json, application/pdf"}
@@ -52,11 +52,8 @@ class ApiClient:
             headers["Content-Type"] = "application/json"
         if self.bearer_token:
             headers["Authorization"] = f"Bearer {self.bearer_token}"
-        else:
-            headers["X-Dev-User"] = "qa-automation"
-            headers["X-Dev-Roles"] = self.dev_roles
-            if self.taxpayer_id is not None:
-                headers["X-Dev-Taxpayer-Id"] = str(self.taxpayer_id)
+        elif self.demo_session:
+            headers["X-Demo-Session"] = self.demo_session
         return headers
 
     def request(
@@ -67,12 +64,14 @@ class ApiClient:
         query: dict[str, Any] | None = None,
         expected: tuple[int, ...] | None = (200,),
         timeout: float = 60,
+        extra_headers: dict[str, str] | None = None,
     ) -> HttpResponse:
         url = f"{self.api_base_url}/{path.lstrip('/')}"
         if query:
             url = f"{url}?{urlencode(query, doseq=True)}"
         encoded = None if payload is None else json.dumps(payload).encode("utf-8")
-        request = Request(url, data=encoded, method=method, headers=self._headers(encoded is not None))
+        request = Request(url, data=encoded, method=method,
+                          headers={**self._headers(encoded is not None), **(extra_headers or {})})
         try:
             with urlopen(request, timeout=timeout) as response:
                 result = HttpResponse(response.status, response.headers, response.read())
@@ -108,6 +107,32 @@ class ApiClient:
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise AcceptanceFailure(message)
+
+
+def authenticate_demo(client: ApiClient) -> None:
+    """Sólo para CI/local explícito; nunca inventa un contrato Core."""
+    if client.bearer_token:
+        return
+    username = os.getenv("TEST_DEMO_USERNAME")
+    password = os.getenv("TEST_DEMO_PASSWORD")
+    require(bool(username and password), "Definir TEST_DEMO_USERNAME y TEST_DEMO_PASSWORD o TEST_API_BEARER_TOKEN")
+    bootstrap = os.getenv("RENTAS_DEMO_BOOTSTRAP_PASSWORD")
+    if bootstrap:
+        client.request("POST", "/dev-auth/bootstrap",
+                       {"username": username, "password": password, "displayName": "QA Supervisor"},
+                       expected=(201, 409), extra_headers={"X-Demo-Bootstrap-Secret": bootstrap})
+    client.demo_session = client.json("POST", "/dev-auth/login",
+                                      {"username": username, "password": password})["token"]
+
+
+def demo_identity(client: ApiClient, role: str, taxpayer_id: int | None = None) -> ApiClient:
+    """Crea un usuario de prueba real mediante el supervisor y abre su sesión."""
+    username = "qa." + uuid.uuid4().hex
+    password = secrets.token_urlsafe(24)
+    client.json("POST", "/dev-auth/users", {"username": username, "password": password,
+                "displayName": "QA " + role, "role": role, "taxpayerId": taxpayer_id}, expected=(201,))
+    session = client.json("POST", "/dev-auth/login", {"username": username, "password": password})["token"]
+    return ApiClient(client.api_base_url, None, session)
 
 
 def page_total(page: dict[str, Any]) -> int:
@@ -259,12 +284,16 @@ def run_pdf(
 
     authorization: dict[str, Any] = {"status": "skipped", "reason": "Bearer: requiere identidades QA adicionales; cubierto en CI"}
     if not client.bearer_token:
-        owner = ApiClient(client.api_base_url, None, "TAXPAYER", taxpayer["id"])
+        require(len(taxpayers) >= 2, "La validación de autorización requiere dos contribuyentes proyectados")
+        owner = demo_identity(client, "TAXPAYER", taxpayer["id"])
         validate_pdf(owner.request("GET", path), bill, expected_debts)
-        for roles, owner_id in (("AUDITOR", None), ("TAXPAYER", None), ("TAXPAYER", 9223372036854775807)):
-            denied = ApiClient(client.api_base_url, None, roles, owner_id).request("GET", path, expected=(403,))
+        stranger = taxpayers[1]
+        for identity, status in ((demo_identity(client, "AUDITOR"), 403),
+                                 (ApiClient(client.api_base_url, None), 401),
+                                 (demo_identity(client, "TAXPAYER", stranger["id"]), 403)):
+            denied = identity.request("GET", path, expected=(status,))
             require(not denied.body.startswith(b"%PDF-"), "Una identidad sin permisos recibió el PDF")
-        authorization = {"status": "passed", "mode": "dev-headers", "owner": "passed", "deniedCases": 3}
+        authorization = {"status": "passed", "mode": "opaque-demo-session", "owner": "passed", "deniedCases": 3}
     return {"status": "passed", "documents": evidence, "debtUnchanged": "passed",
             "missingBill": "passed", "authorization": authorization, "visualReview": "pending"}
 
@@ -493,6 +522,7 @@ def main() -> int:
 
     try:
         results["health"] = check_health(client)
+        authenticate_demo(client)
         taxpayers = load_taxpayers(client)
         results["dataset"] = {"availableTaxpayers": len(taxpayers)}
         if args.scenario in ("pdf", "all"):

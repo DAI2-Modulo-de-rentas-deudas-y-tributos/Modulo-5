@@ -42,11 +42,12 @@ class CorsConfigurationTest {
                 .header(HttpHeaders.ORIGIN, ORIGIN)
                 .header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, method)
                 .header(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS,
-                    "content-type,accept,authorization,x-dev-user,x-dev-roles,x-dev-taxpayer-id,x-correlation-id"))
+                    "content-type,accept,authorization,x-demo-session,idempotency-key,x-correlation-id"))
             .andExpect(status().isOk())
             .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, ORIGIN))
             .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_METHODS, containsString(method)))
-            .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_HEADERS, containsString("x-dev-taxpayer-id")))
+            .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_HEADERS, containsString("x-demo-session")))
+            .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_HEADERS, containsString("idempotency-key")))
             .andExpect(header().doesNotExist(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS));
     }
 
@@ -77,7 +78,7 @@ class CorsConfigurationTest {
 
     @Test void allowedOriginDoesNotBypassAuthenticationAndCanReadTheError() throws Exception {
         mvc.perform(get("/api/v1/taxpayers").header(HttpHeaders.ORIGIN, ORIGIN))
-            .andExpect(status().isForbidden())
+            .andExpect(status().isUnauthorized())
             .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, ORIGIN))
             .andExpect(header().exists("X-Correlation-Id"));
     }

@@ -18,7 +18,7 @@ class DomainFlowTests {
     @Autowired CatalogService catalog; @Autowired LiquidationService liquidationService; @Autowired PaymentService paymentService;
     @Autowired ReversalService reversalService; @Autowired PaymentPlanService planService; @Autowired ExemptionService exemptionService;
     @Autowired ExternalObligationService externalService; @Autowired DebtRepository debts; @Autowired PaymentAllocationRepository allocations;
-    @Autowired CreditBalanceRepository credits; @Autowired ProcessedEventRepository processed; @Autowired ExternalObligationRepository obligations; @Autowired LiquidationComponentRepository components;
+    @Autowired CreditBalanceRepository credits; @Autowired PaymentRepository payments; @Autowired ProcessedEventRepository processed; @Autowired ExternalObligationRepository obligations; @Autowired LiquidationComponentRepository components;
     @Autowired TaxConceptRepository concepts;
 
     @BeforeEach void authenticate() {
@@ -67,6 +67,11 @@ class DomainFlowTests {
         });
         PaymentReversalRequest request=reversalService.request(payment.id,"Carga duplicada"); reversalService.approve(request.id); reversalService.execute(request.id);
         assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("100.00");
+        assertThatThrownBy(()->reversalService.execute(request.id)).isInstanceOf(BusinessException.class).hasMessageContaining("aprobada");
+        assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("100.00");
+        assertThat(credits.findBySourcePaymentId(payment.id).orElseThrow().availableAmount).isZero();
+        assertThat(credits.findBySourcePaymentId(payment.id).orElseThrow().status).isEqualTo(CreditBalanceStatus.CANCELLED);
+        assertThat(payments.findById(payment.id).orElseThrow().status).isEqualTo(PaymentStatus.REVERSED);
     }
 
     @Test void duplicateEventAndBusinessDuplicateCreateSingleDebt() {
@@ -87,7 +92,7 @@ class DomainFlowTests {
 
     @Test void approvedCurrentExemptionReducesLiquidation() {
         TaxpayerReference taxpayer=taxpayer("CIT-7"); TaxConcept concept=concept("EXEMPT",TaxConceptType.FEE,"M5"); activateFixed(concept.id,"100",true);
-        ExemptionRequest request=exemptionService.create(new ApiDtos.CreateExemptionRequest(taxpayer.id,concept.id,"Vulnerabilidad",new BigDecimal("50"),LocalDate.now(),LocalDate.now().plusYears(1)));
+        ExemptionRequest request=exemptionService.create(new ApiDtos.CreateExemptionRequest(taxpayer.id,concept.id,"Vulnerabilidad",new BigDecimal("50"),YearMonth.now().atDay(1),LocalDate.now().plusYears(1)));
         exemptionService.start(request.id); exemptionService.submit(request.id); exemptionService.approve(request.id);
         assertThat(liquidationService.preview(liquidation(taxpayer.id,concept.id)).finalAmount()).isEqualByComparingTo("50.00");
     }

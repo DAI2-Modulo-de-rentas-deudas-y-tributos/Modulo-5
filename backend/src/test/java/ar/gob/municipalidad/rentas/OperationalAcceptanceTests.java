@@ -11,6 +11,7 @@ import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -44,10 +45,14 @@ class OperationalAcceptanceTests {
     @Autowired LiquidationRunService runs;
     @Autowired DebtRepository debts;
     @Autowired LiquidationRepository liquidationRepository;
+    @Autowired DemoUserRepository demoUsers; @Autowired TaxpayerRepository taxpayers;
+    @Autowired PasswordEncoder encoder; @Autowired DemoAuthService demoAuth;
+    private DemoAuthSessions demo;
 
     @BeforeEach
     void authenticateEmployee() {
         authenticate("RENTAS", "SUPERVISOR", "CASHIER");
+        demo=new DemoAuthSessions(demoUsers,taxpayers,encoder,demoAuth);
     }
 
     @AfterEach
@@ -66,7 +71,7 @@ class OperationalAcceptanceTests {
 
         SecurityContextHolder.clearContext();
         MvcResult result = mvc.perform(get("/api/v1/bills/{id}/document", bill.id)
-                .header("X-Dev-Roles", "RENTAS"))
+                .header("X-Demo-Session", demo.token(DemoRole.RENTAS)))
             .andExpect(status().isOk())
             .andExpect(content().contentType(MediaType.APPLICATION_PDF))
             .andExpect(header().string(
@@ -85,7 +90,7 @@ class OperationalAcceptanceTests {
 
         SecurityContextHolder.clearContext();
         mvc.perform(get("/api/v1/bills/{id}/document", bill.id)
-                .header("X-Dev-Roles", "AUDITOR"))
+                .header("X-Demo-Session", demo.token(DemoRole.AUDITOR)))
             .andExpect(status().isForbidden());
     }
 

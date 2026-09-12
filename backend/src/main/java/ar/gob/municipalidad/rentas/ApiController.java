@@ -45,7 +45,6 @@ class ApiController {
 
     @GetMapping("/liquidations") @PreAuthorize("hasAnyRole('RENTAS','SUPERVISOR','AUDITOR')") Page<ApiDtos.LiquidationResponse> liquidations(@RequestParam Map<String,String> f,Pageable p){return liquidationService.responses(queries.list(liquidations,Liquidation.class,f,p));}
     @GetMapping("/liquidations/{id}") @PreAuthorize("hasAnyRole('RENTAS','SUPERVISOR','AUDITOR')") ApiDtos.LiquidationResponse liquidation(@PathVariable Long id){Liquidation l=liquidations.findById(id).orElseThrow(()->CatalogService.notFound("Liquidación"));return liquidationService.response(l);}
-    @DeleteMapping("/liquidations/{id}") @PreAuthorize("hasRole('RENTAS')") void deleteLiquidation(@PathVariable Long id){liquidations.findById(id).orElseThrow(()->CatalogService.notFound("Liquidación"));throw new BusinessException("LIQUIDATION_IMMUTABLE","Las liquidaciones emitidas no se eliminan; use un ajuste o una reversión",405);}
     @PostMapping("/liquidations/preview") @PreAuthorize("hasRole('RENTAS')") ApiDtos.LiquidationPreview preview(@Valid @RequestBody ApiDtos.LiquidationRequest r){return liquidationService.preview(r);}
     @PostMapping("/liquidations") @ResponseStatus(HttpStatus.CREATED) @PreAuthorize("hasRole('RENTAS')") ApiDtos.LiquidationResponse createLiquidation(@Valid @RequestBody ApiDtos.LiquidationRequest r){return liquidationService.response(liquidationService.create(r));}
 

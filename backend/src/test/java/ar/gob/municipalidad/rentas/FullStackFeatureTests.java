@@ -26,7 +26,10 @@ class FullStackFeatureTests {
     @Test void demoUserPersistsWithBcryptAndValidatesCredentials(){
         var created=auth.create(new DemoAuthController.CreateUserRequest(" Integration.User ","clave-segura","Integración",DemoRole.RENTAS,null));
         DemoUser stored=users.findById(created.id()).orElseThrow();assertThat(stored.username).isEqualTo("integration.user");assertThat(stored.passwordHash).startsWith("$2").doesNotContain("clave-segura");
-        assertThat(auth.login(new DemoAuthController.LoginRequest("integration.user","clave-segura")).user().role()).isEqualTo(DemoRole.RENTAS);
+        var first=auth.login(new DemoAuthController.LoginRequest("integration.user","clave-segura"));
+        var second=auth.login(new DemoAuthController.LoginRequest("integration.user","clave-segura"));
+        assertThat(first.user().role()).isEqualTo(DemoRole.RENTAS);
+        assertThat(first.token()).isNotBlank().isNotEqualTo("dev-session").isNotEqualTo(second.token());
         assertThatThrownBy(()->auth.login(new DemoAuthController.LoginRequest("integration.user","incorrecta"))).isInstanceOf(BusinessException.class).hasMessageContaining("incorrectos");
         assertThatThrownBy(()->auth.create(new DemoAuthController.CreateUserRequest("integration.user","otra-clave","Duplicado",DemoRole.RENTAS,null))).isInstanceOf(BusinessException.class);
     }

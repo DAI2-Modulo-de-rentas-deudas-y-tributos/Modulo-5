@@ -25,6 +25,7 @@ interface DelinquencyIndicatorAggregate {
 interface FilteredRepository<T,ID> extends JpaRepository<T,ID>,JpaSpecificationExecutor<T> {}
 
 interface TaxpayerRepository extends FilteredRepository<TaxpayerReference,Long> {
+    @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select t from TaxpayerReference t where t.id=:id") Optional<TaxpayerReference> findByIdForUpdate(Long id);
     Optional<TaxpayerReference> findByTaxpayerTypeAndExternalId(TaxpayerType type, String externalId);
     Optional<TaxpayerReference> findByTaxpayerTypeAndDni(TaxpayerType type,String dni);
     Optional<TaxpayerReference> findByTaxpayerTypeAndCuit(TaxpayerType type,String cuit);
@@ -59,7 +60,7 @@ interface ExternalObligationRepository extends FilteredRepository<ExternalObliga
     Page<ExternalObligation> findByStatus(ExternalObligationStatus status,Pageable pageable);
 }
 interface PaymentRepository extends FilteredRepository<Payment,Long> {
-    List<Payment> findByTaxpayerId(Long taxpayerId); Page<Payment> findByTaxpayerId(Long taxpayerId,Pageable pageable); Page<Payment> findByUnallocatedAmountGreaterThan(BigDecimal amount,Pageable pageable); Optional<Payment> findByIdempotencyKey(String idempotencyKey);
+    List<Payment> findByTaxpayerId(Long taxpayerId); Page<Payment> findByTaxpayerId(Long taxpayerId,Pageable pageable); Page<Payment> findByUnallocatedAmountGreaterThan(BigDecimal amount,Pageable pageable); Optional<Payment> findByTaxpayerIdAndIdempotencyKey(Long taxpayerId,String idempotencyKey);
     @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select p from Payment p where p.id=:id") Optional<Payment> findByIdForUpdate(Long id);
     @Query("""
         select count(p.id) as paymentCount, coalesce(sum(p.amount),0) as confirmedAmount,
@@ -107,7 +108,11 @@ interface PaymentPlanDebtRepository extends JpaRepository<PaymentPlanDebt,Long> 
     @Query("select d.debtId from PaymentPlanDebt d where d.debtId in :debtIds and d.status=:status") Set<Long> findDebtIdsByStatus(@Param("debtIds") Collection<Long> debtIds,@Param("status") PaymentPlanDebtStatus status);
     List<PaymentPlanDebt> findByPaymentPlanId(Long paymentPlanId);
 }
-interface InstallmentRepository extends JpaRepository<Installment,Long> { List<Installment> findByPaymentPlanIdOrderByNumber(Long planId); @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select i from Installment i where i.id=:id") Optional<Installment> findByIdForUpdate(Long id); }
+interface InstallmentRepository extends JpaRepository<Installment,Long> {
+    List<Installment> findByPaymentPlanIdOrderByNumber(Long planId);
+    @Query("select i.paymentPlanId from Installment i where i.id=:id") Optional<Long> findPaymentPlanIdById(Long id);
+    @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select i from Installment i where i.id=:id") Optional<Installment> findByIdForUpdate(Long id);
+}
 interface PlanExpirationRepository extends FilteredRepository<PlanExpirationRequest,Long> { boolean existsByPaymentPlanIdAndStatus(Long planId,PlanExpirationStatus status); @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select e from PlanExpirationRequest e where e.id=:id") Optional<PlanExpirationRequest> findByIdForUpdate(Long id); }
 interface RefinancingRequestRepository extends FilteredRepository<RefinancingRequest,Long> { @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select r from RefinancingRequest r where r.id=:id") Optional<RefinancingRequest> findByIdForUpdate(Long id); }
 interface AdjustmentRepository extends FilteredRepository<AdjustmentRequest,Long> {}
@@ -125,6 +130,7 @@ interface ExemptionRepository extends FilteredRepository<Exemption,Long> {
     List<Exemption> findByTaxpayerId(Long taxpayerId);
 }
 interface DemoUserRepository extends JpaRepository<DemoUser,Long> { Optional<DemoUser> findByUsernameIgnoreCase(String username); boolean existsByUsernameIgnoreCase(String username); }
+interface DemoAuthSessionRepository extends JpaRepository<DemoAuthSession,Long> { Optional<DemoAuthSession> findByTokenHash(String tokenHash); }
 interface LateChargeRuleRepository extends JpaRepository<LateChargeRule,Long> {
     @Query("select r from LateChargeRule r where r.active=true and r.validFrom<=:date and (r.validUntil is null or r.validUntil>=:date) order by r.validFrom desc")
     List<LateChargeRule> findApplicable(@Param("date") LocalDate date,Pageable pageable);

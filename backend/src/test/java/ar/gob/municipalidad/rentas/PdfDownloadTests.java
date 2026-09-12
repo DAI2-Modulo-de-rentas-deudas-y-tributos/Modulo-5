@@ -80,9 +80,13 @@ class PdfDownloadTests {
     @Test
     void anonymousAndForgedDevHeadersCannotDownloadWhenDevModeIsDisabled() throws Exception {
         Bill bill = issue(1);
-        assertDenied(get("/api/v1/bills/{id}/document", bill.id));
-        assertDenied(get("/api/v1/bills/{id}/document", bill.id)
-            .header("X-Dev-User", "forged").header("X-Dev-Roles", "RENTAS"));
+        mvc.perform(get("/api/v1/bills/{id}/document", bill.id)).andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/v1/bills/{id}/document", bill.id)
+            .header("X-Dev-User", "forged").header("X-Dev-Roles", "RENTAS"))
+            .andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/v1/bills/{id}/document", bill.id)
+            .header("X-Demo-Session", "forged-session"))
+            .andExpect(status().isUnauthorized());
     }
 
     @Test

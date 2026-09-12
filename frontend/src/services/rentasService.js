@@ -7,8 +7,6 @@
  */
 import { AUTH_MODE, request, ApiError } from "./apiClient.js";
 
-let sequence = 90000;
-
 /** Los importes se redondean a centavos: el dinero nunca se muestra con ruido binario. */
 const round2 = (value) => Math.round(value * 100) / 100;
 
@@ -52,30 +50,44 @@ const paymentReceipt = (payment, taxpayer) => ({
 
 // ---------------------------------------------------------------- Autenticación
 
+const UI_ROLES = { RENTAS: "PERSONAL", SUPERVISOR: "SUPERVISOR", CASHIER: "CAJERO", AUDITOR: "AUDITOR", TAXPAYER: "CONTRIBUYENTE" };
+const ROLE_LABELS = { RENTAS: "Personal de Rentas", SUPERVISOR: "Supervisor de Rentas", CASHIER: "Cajero de Rentas", AUDITOR: "Auditor de Rentas", TAXPAYER: "Contribuyente" };
+const mapDemoAuthSession = (result) => ({
+  token: result.token,
+  user: {
+    ...result.user,
+    fullName: result.user.displayName,
+    roleLabel: ROLE_LABELS[result.user.role],
+    email: result.user.username,
+    backendRole: result.user.role,
+    devAuthorities: result.user.authorities,
+    role: UI_ROLES[result.user.role],
+  },
+});
+
 export const authService = {
   async login({ username, password }) {
     if (AUTH_MODE === "core") {
       throw new ApiError("La autenticación Core/JWT todavía no tiene un contrato integrado.", 503, null, "CORE_AUTH_PENDING");
     }
     const result = await request("/api/v1/dev-auth/login", { method: "POST", body: { username, password } });
-    const UI_ROLES = { RENTAS: "PERSONAL", SUPERVISOR: "SUPERVISOR", CASHIER: "CAJERO", AUDITOR: "AUDITOR", TAXPAYER: "CONTRIBUYENTE" };
-    const ROLE_LABELS = { RENTAS: "Personal de Rentas", SUPERVISOR: "Supervisor de Rentas", CASHIER: "Cajero de Rentas", AUDITOR: "Auditor de Rentas", TAXPAYER: "Contribuyente" };
-    return {
-      token: result.token,
-      user: {
-        ...result.user,
-        fullName: result.user.displayName,
-        roleLabel: ROLE_LABELS[result.user.role],
-        email: result.user.username,
-        backendRole: result.user.role,
-        devAuthorities: result.user.authorities,
-        role: UI_ROLES[result.user.role],
-      },
-    };
+    return mapDemoAuthSession(result);
   },
 
-  async logout() {
-    // En modo mock la sesión es local. Core/JWT sigue pendiente de contrato.
+  async me() {
+    if (AUTH_MODE === "core") {
+      throw new ApiError("La autenticación Core/JWT todavía no tiene un contrato integrado.", 503, null, "CORE_AUTH_PENDING");
+    }
+    const user = await request("/api/v1/dev-auth/me");
+    return mapDemoAuthSession({ token: sessionStorage.getItem("rentas.token"), user }).user;
+  },
+
+  async logout(token) {
+    if (AUTH_MODE === "core") return;
+    await request("/api/v1/dev-auth/logout", {
+      method: "POST",
+      ...(token ? { headers: { "X-Demo-Session": token } } : {}),
+    });
   },
 };
 
@@ -427,10 +439,11 @@ export const paymentService = {
    * `channel` es por dónde entró el dinero (ventanilla, homebanking…); `method` es el
    * instrumento con el que pagó el contribuyente y `registeredBy` el agente responsable.
    */
-  async register({ taxpayerId, debtId, amountPaid, channel, paidAt, method, registeredBy }) {
+  async register({ taxpayerId, debtId, amountPaid, channel, paidAt, method, registeredBy, idempotencyKey }) {
     return request("/api/v1/payments", {
       method: "POST",
       body: { taxpayerId, debtId, amountPaid, channel, paidAt, method, registeredBy },
+      headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {},
     });
   },
 
@@ -780,12 +793,13 @@ export const cashierService = {
   },
 
   /** RegisterCounterPaymentRequest → CounterPaymentReceiptResponse */
-  async registerCounterPayment({ debtId, billId, amountPaid, method, registeredBy }) {
+  async registerCounterPayment({ debtId, billId, amountPaid, method, registeredBy, idempotencyKey }) {
     const debt = await request(`/api/v1/debts/${debtId}`);
     const taxpayer = await taxpayerService.getById(debt.taxpayerId);
     const payment = await request("/api/v1/cashier/payments", {
       method: "POST",
       body: { taxpayerId: debt.taxpayerId, debtId, billId, amountPaid, method, registeredBy },
+      headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {},
     });
     const receipt = { ...paymentReceipt(payment, taxpayer), debtId: Number(debtId), conceptCode: debt.conceptCode, wasOverdue: debt.overdue || debt.status === "OVERDUE" };
     try {

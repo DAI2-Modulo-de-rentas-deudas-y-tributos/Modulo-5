@@ -21,6 +21,18 @@ class DemoUser {
     protected DemoUser() {}
 }
 
+@Entity @Table(name="demo_auth_session")
+class DemoAuthSession {
+    @Id @GeneratedValue(strategy=GenerationType.IDENTITY) public Long id;
+    @Column(name="demo_user_id",nullable=false) public Long demoUserId;
+    @Column(name="token_hash",nullable=false,unique=true,length=64) public String tokenHash;
+    @Column(name="created_at",nullable=false) public OffsetDateTime createdAt;
+    @Column(name="expires_at",nullable=false) public OffsetDateTime expiresAt;
+    @Column(name="revoked_at") public OffsetDateTime revokedAt;
+    protected DemoAuthSession() {}
+    boolean usable(OffsetDateTime now){return revokedAt==null&&expiresAt.isAfter(now);}
+}
+
 @Entity @Table(name="late_charge_rule")
 class LateChargeRule {
     @Id @GeneratedValue(strategy=GenerationType.IDENTITY) public Long id;

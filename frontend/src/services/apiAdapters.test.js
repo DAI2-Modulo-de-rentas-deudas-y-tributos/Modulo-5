@@ -234,41 +234,19 @@ describe("API adapters", () => {
 describe("API client modes", () => {
   beforeEach(() => { vi.resetModules(); vi.unstubAllEnvs(); sessionStorage.clear(); vi.restoreAllMocks(); });
 
-  it("adds dev role headers only for explicit mock-auth integration", async () => {
+  it("sends the opaque demo session instead of client-chosen roles", async () => {
     vi.stubEnv("VITE_AUTH_MODE", "mock");
-    vi.stubEnv("VITE_DEV_IDENTITY_HEADERS", "true");
-    sessionStorage.setItem("rentas.user", JSON.stringify({ username: "jlopez", role: "SUPERVISOR" }));
+    sessionStorage.setItem("rentas.token", "opaque-demo-token");
+    sessionStorage.setItem("rentas.user", JSON.stringify({ username: "jlopez", role: "SUPERVISOR", devAuthorities: ["SUPERVISOR"] }));
     const { authHeaders } = await import("./apiClient.js");
-    expect(authHeaders()).toMatchObject({ "X-Dev-User": "jlopez", "X-Dev-Roles": "RENTAS,SUPERVISOR" });
+    expect(authHeaders()).toEqual({ "X-Demo-Session": "opaque-demo-token" });
+    expect(authHeaders()["X-Dev-Roles"]).toBeUndefined();
   });
 
-  it.each([
-    ["PERSONAL", "RENTAS"],
-    ["SUPERVISOR", "RENTAS,SUPERVISOR"],
-    ["CAJERO", "CASHIER"],
-    ["AUDITOR", "AUDITOR"],
-    ["CONTRIBUYENTE", "TAXPAYER"],
-  ])("maps local role %s to backend authorities", async (role, authorities) => {
-    vi.stubEnv("VITE_AUTH_MODE", "mock");
-    vi.stubEnv("VITE_DEV_IDENTITY_HEADERS", "true");
-    sessionStorage.setItem("rentas.user", JSON.stringify({ username: "user", role }));
-    const { authHeaders } = await import("./apiClient.js");
-    expect(authHeaders()["X-Dev-Roles"]).toBe(authorities);
-  });
-
-  it("adds taxpayer ownership header", async () => {
-    vi.stubEnv("VITE_AUTH_MODE", "mock");
-    vi.stubEnv("VITE_DEV_IDENTITY_HEADERS", "true");
-    sessionStorage.setItem("rentas.user", JSON.stringify({ username: "jperez", role: "CONTRIBUYENTE", taxpayerId: 7 }));
-    const { authHeaders } = await import("./apiClient.js");
-    expect(authHeaders()["X-Dev-Taxpayer-Id"]).toBe("7");
-  });
-
-  it("sends no headers in Core mode while the Core/JWT contract is pending", async () => {
+  it("does not send demo session headers in Core mode", async () => {
     vi.stubEnv("VITE_AUTH_MODE", "core");
-    vi.stubEnv("VITE_DEV_IDENTITY_HEADERS", "true");
     sessionStorage.setItem("rentas.user", JSON.stringify({ username: "x", role: "SUPERVISOR" }));
-    sessionStorage.setItem("rentas.token", "mock.eA==.token");
+    sessionStorage.setItem("rentas.token", "opaque-demo-token");
     const { authHeaders } = await import("./apiClient.js");
     expect(authHeaders()).toEqual({});
   });
@@ -288,9 +266,8 @@ describe("API client modes", () => {
     cleanup();
   });
 
-  it("does not add dev headers unless they are explicitly enabled", async () => {
+  it("does not send a session header when there is no token, even if the UI profile was tampered", async () => {
     vi.stubEnv("VITE_AUTH_MODE", "mock");
-    vi.stubEnv("VITE_DEV_IDENTITY_HEADERS", "false");
     sessionStorage.setItem("rentas.user", JSON.stringify({ username: "jlopez", role: "SUPERVISOR" }));
     const { authHeaders } = await import("./apiClient.js");
     expect(authHeaders()).toEqual({});
@@ -346,6 +323,71 @@ describe("API client modes", () => {
     expect(result.planes).toBe(0);
     expect(result.exenciones).toBe(0);
     expect(result.planes + result.exenciones).toBe(0);
+  });
+
+  it("restores the backend profile from GET /me and clears storage when the session is invalid", async () => {
+    vi.stubEnv("VITE_AUTH_MODE", "mock");
+    sessionStorage.setItem("rentas.token", "live-token");
+    sessionStorage.setItem("rentas.user", JSON.stringify({ username: "forged", role: "SUPERVISOR" }));
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      id: 9, username: "qa.rentas", displayName: "QA Rentas", role: "RENTAS", authorities: ["RENTAS"], taxpayerId: null, active: true,
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { AuthProvider, useAuth } = await import("../context/AuthContext.jsx");
+    function AuthState() {
+      const auth = useAuth();
+      return createElement("span", null, auth.initializing ? "loading" : `${auth.user?.username}:${auth.user?.role}`);
+    }
+    render(createElement(AuthProvider, null, createElement(AuthState)));
+    expect(await screen.findByText("qa.rentas:PERSONAL")).toBeDefined();
+    expect(fetchMock.mock.calls[0][0]).toContain("/api/v1/dev-auth/me");
+    cleanup();
+
+    vi.resetModules();
+    sessionStorage.setItem("rentas.token", "dead-token");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: "UNAUTHENTICATED" }), { status: 401, headers: { "content-type": "application/json" } })));
+    const restored = await import("../context/AuthContext.jsx");
+    function Cleared() {
+      const auth = restored.useAuth();
+      return createElement("span", null, auth.initializing ? "loading" : auth.isAuthenticated ? "in" : "out");
+    }
+    render(createElement(restored.AuthProvider, null, createElement(Cleared)));
+    expect(await screen.findByText("out")).toBeDefined();
+    expect(sessionStorage.getItem("rentas.token")).toBeNull();
+    cleanup();
+  });
+
+  it("sends Idempotency-Key on payment retries and keeps the same key", async () => {
+    vi.stubEnv("VITE_AUTH_MODE", "mock");
+    sessionStorage.setItem("rentas.token", "opaque-demo-token");
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ id: 1, taxpayerId: 9, amount: 10, unallocatedAmount: 10, status: "CONFIRMED", paymentMethod: "CASH", origin: "CASHIER" }), { status: 201, headers: { "content-type": "application/json" } })));
+    vi.stubGlobal("fetch", fetchMock);
+    const { paymentService } = await import("./rentasService.js");
+    const key = "11111111-1111-1111-1111-111111111111";
+    await paymentService.register({ taxpayerId: 9, amountPaid: 10, method: "CASH", idempotencyKey: key });
+    await paymentService.register({ taxpayerId: 9, amountPaid: 10, method: "CASH", idempotencyKey: key });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][1].headers["Idempotency-Key"]).toBe(key);
+    expect(fetchMock.mock.calls[1][1].headers["Idempotency-Key"]).toBe(key);
+    expect(fetchMock.mock.calls[0][1].headers["X-Demo-Session"]).toBe("opaque-demo-token");
+  });
+
+  it("clears storage on logout even if the backend is unavailable", async () => {
+    vi.stubEnv("VITE_AUTH_MODE", "mock");
+    sessionStorage.setItem("rentas.token", "opaque-demo-token");
+    sessionStorage.setItem("rentas.user", JSON.stringify({ username: "qa.rentas", role: "PERSONAL" }));
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+    const { AuthProvider, useAuth } = await import("../context/AuthContext.jsx");
+    let api;
+    function Probe() {
+      api = useAuth();
+      return createElement("span", null, api.isAuthenticated ? "in" : "out");
+    }
+    render(createElement(AuthProvider, null, createElement(Probe)));
+    await expect(api.logout()).rejects.toThrow("Failed to fetch");
+    expect(sessionStorage.getItem("rentas.token")).toBeNull();
+    expect(screen.getByText("out")).toBeDefined();
+    cleanup();
   });
 });
 

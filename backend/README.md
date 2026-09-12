@@ -4,6 +4,74 @@ Backend independiente en Spring Boot 3 y Java 17 para conceptos tributarios, liq
 
 Estado local: la API incluye operaciones de dominio, autenticación DEMO/DEV persistente, recargos, procesamiento de vencimientos y conciliación electrónica. Core/JWT productivo permanece **PENDIENTE**; la autenticación DEMO no lo reemplaza.
 
+## Docker en Windows, Linux y macOS (Intel o Apple Silicon)
+
+El Dockerfile usa `eclipse-temurin:17-jdk-jammy` y `17-jre-jammy`,
+con variantes nativas AMD64 y ARM64. Docker selecciona la arquitectura del equipo;
+no agregar `platform: linux/amd64` para un Mac con Apple Silicon.
+Se mantiene Java 17 y la ejecución con usuario sin privilegios.
+
+Con Docker Desktop iniciado, desde la raíz del repositorio (donde está
+`compose.yaml`), y con la configuración local de PostgreSQL ya preparada:
+
+```sh
+docker compose --profile application up -d --build postgres backend
+docker compose --profile application ps
+docker compose logs --tail=100 backend
+curl --fail http://localhost:8080/actuator/health
+```
+
+El healthcheck debe devolver `UP`. Si se configuró otro `BACKEND_PORT`,
+utilizar ese puerto. No hace falta instalar Java o Maven en el host para esta opción.
+La primera construcción descarga las imágenes y dependencias.
+No borrar volúmenes para resolver un problema de arquitectura o contraseña:
+una base ya inicializada conserva sus credenciales.
+
+Para ejecutar Maven directamente en macOS, con JDK 17 instalado, usar desde
+`backend/`: `sh ./mvnw spring-boot:run` (no `mvnw.cmd` ni `npm run dev`).
+Esta alternativa requiere configurar previamente la conexión a PostgreSQL.
+
+### Compañero con Mac (Apple Silicon o Intel)
+
+Requisitos: Docker Desktop, Git, y Node 20+ si el frontend corre fuera de Docker.
+
+Desde la raíz del repositorio, con Docker Desktop iniciado. Copiar `.env.example`
+a `.env` (no commitear el `.env` real) y poner `RENTAS_SECURITY_DEV_MODE=true`
+sólo en esa copia local:
+
+```sh
+docker compose --profile application up -d --build postgres backend
+```
+
+Frontend en otra terminal:
+
+```sh
+cd frontend
+cp .env.example .env
+npm install
+npm run dev
+```
+
+El `.env` de frontend de ejemplo full-stack usa:
+
+```text
+VITE_USE_MOCKS=false
+VITE_AUTH_MODE=mock
+VITE_API_BASE_URL=http://localhost:8080
+```
+
+El primer SUPERVISOR se crea con `POST /api/v1/dev-auth/bootstrap` y el resto
+con `POST /api/v1/dev-auth/users`. El login emite un token opaco persistido en
+`demo_auth_session`; el frontend lo reenvía como `X-Demo-Session`.
+No hay usuarios hardcodeados en el runtime del frontend.
+
+Arquitectura de las imágenes base: `eclipse-temurin:17-*-jammy` tiene manifest
+AMD64 y ARM64. En una PC AMD64 el build local no demuestra runtime ARM64:
+
+- `AMD64_LOCAL_BUILD` — se valida al construir en Windows/Linux AMD64.
+- `ARM64_BASE_IMAGES=SUPPORTED` — las bases oficiales incluyen linux/arm64.
+- `APPLE_SILICON_RUNTIME=REQUIRES_MAC_SMOKE` — falta una pasada en Mac.
+
 ## Requisitos y verificación
 
 - JDK 17.
@@ -60,7 +128,7 @@ docker compose up -d postgres
 O backend y base juntos:
 
 ```powershell
-docker compose --profile full up --build
+docker compose --profile application up -d --build postgres backend
 ```
 
 PostgreSQL y backend tienen healthchecks; el backend espera a que PostgreSQL esté saludable.
@@ -90,7 +158,8 @@ Docker Compose lee `.env` automáticamente. Una ejecución directa mediante Mave
 | `OUTBOX_DELAY_MS` | Intervalo entre ciclos de publicación del Outbox. | No; default `5000`. |
 | `BROKER_ADAPTER` | Selector reservado del adaptador; hoy sólo existe `local-log`. | No; default `local-log`. |
 | `RENTAS_SECURITY_DEV_MODE` | Habilita identidad y endpoints DEMO/DEV. | No; default `false`. Prohibido en producción. |
-| `RENTAS_DEMO_BOOTSTRAP_PASSWORD` | Contraseña común de bootstrap para cinco usuarios locales, almacenada sólo como hash BCrypt. | No; sin default. Secreto local/CI efímero. |
+| `RENTAS_DEMO_BOOTSTRAP_PASSWORD` | Secreto de `POST /api/v1/dev-auth/bootstrap` para el primer SUPERVISOR. | No; sin default. Secreto local/CI efímero. |
+| `RENTAS_DEMO_SESSION_TTL` | TTL de las sesiones DEMO persistidas. | No; default `PT8H`. |
 
 Las variables de descarga del Maven Wrapper (`MVNW_REPOURL`, `MVNW_USERNAME`, `MVNW_PASSWORD`, `MAVEN_USER_HOME` y `MVNW_VERBOSE`) son opcionales y pertenecen a la herramienta de build, no a la configuración de ejecución de M5. `MVNW_PASSWORD`, si se usa con un repositorio Maven privado, debe configurarse como secreto de CI o del entorno local.
 
@@ -98,19 +167,16 @@ Core/JWT todavía no tiene propiedades ni variables implementadas. El broker rea
 
 ## Seguridad
 
-En perfil explícito `dev`, `DevIdentityFilter` permite probar con:
-
-```text
-X-Dev-User: nombre
-X-Dev-Roles: RENTAS,SUPERVISOR
-X-Dev-Taxpayer-Id: 1
-```
-
-Sin headers se utiliza una identidad local de empleado. Para probar ownership se usa rol `TAXPAYER` y su propio `X-Dev-Taxpayer-Id`. `AUDITOR` sólo puede leer. El perfil `dev` ya no se activa por defecto: sin un proveedor Core/JWT configurado el backend queda cerrado, no confía en headers falsos.
+Con `RENTAS_SECURITY_DEV_MODE=true`, `DevIdentityFilter` resuelve la identidad
+desde `X-Demo-Session` contra `demo_auth_session` (hash SHA-256, TTL y revocación).
+No hay identidad por omisión ni privilegios vía `X-Dev-*`. `AUDITOR` sólo puede leer.
+Sin un proveedor Core/JWT configurado y con dev-mode desactivado el backend queda cerrado.
 
 Cada solicitud recibe `X-Correlation-Id`; un valor entrante sólo se conserva si tiene formato seguro. El mismo identificador se usa en errores, logs y auditoría.
 
-Con `RENTAS_DEMO_BOOTSTRAP_PASSWORD` definido se crean `demo.rentas`, `demo.supervisor`, `demo.caja`, `demo.auditoria` y `demo.contribuyente`; el valor real no se documenta. También pueden administrarse por `/api/v1/dev-auth/users`. Las contraseñas se guardan con BCrypt y `TAXPAYER` exige un `taxpayerId` existente.
+Con `RENTAS_DEMO_BOOTSTRAP_PASSWORD` definido, `POST /api/v1/dev-auth/bootstrap`
+crea un único SUPERVISOR inicial. El resto se administra por `/api/v1/dev-auth/users`.
+Las contraseñas se guardan con BCrypt y `TAXPAYER` exige un `taxpayerId` existente.
 
 En ambientes reales debe sustituirse este borde por el JWT emitido por Core, conservando `CurrentIdentity` como puerto de acceso a usuario, roles y contribuyente. Las tablas y rutas `demo_*` son únicamente una facilidad local explícita.
 
@@ -144,8 +210,7 @@ Con PostgreSQL y el backend local iniciados con `RENTAS_SECURITY_DEV_MODE=true`:
 
 ```powershell
 $headers = @{
-  "X-Dev-User" = "qa-supervisor"
-  "X-Dev-Roles" = "SUPERVISOR"
+  "X-Demo-Session" = "<token de POST /api/v1/dev-auth/login>"
 }
 
 $createdEventId = [guid]::NewGuid().ToString()
