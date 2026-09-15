@@ -10,6 +10,12 @@ SHA del commit y eleva la capacidad a una tarea. Terraform ignora solamente
 `task_definition` y `desired_count` del servicio porque esos dos atributos son
 propiedad del pipeline de entrega de la aplicacion.
 
+Por eso la task definition usa `skip_destroy`: cuando Terraform cambia la base
+registra una revision nueva y conserva las anteriores, que son las que el pipeline
+toma como punto de partida y las que permiten volver atras. Tambien evita pedir
+`ecs:DeregisterTaskDefinition`, que no admite permisos por recurso y obligaria a
+conceder la accion sobre `*`.
+
 `environment_variables` agrega configuracion no sensible a la tarea.
 `secret_variables` recibe un mapa de nombre a ARN de Secrets Manager, amplia la
 politica minima del execution role e inyecta cada valor sin exponerlo en Terraform.
