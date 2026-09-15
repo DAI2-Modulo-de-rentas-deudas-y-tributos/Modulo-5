@@ -1,0 +1,11 @@
+spring:
+  flyway:
+    locations:
+      - classpath:db/migration
+      - classpath:db/migration-production
+  jpa:
+    properties:
+      hibernate.hbm2ddl.schema_filter_provider: ar.gob.municipalidad.rentas.ProductionSchemaFilterProvider
+rentas:
+  security:
+    dev-mode: false

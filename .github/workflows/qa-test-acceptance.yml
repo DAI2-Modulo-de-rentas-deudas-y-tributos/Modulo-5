@@ -59,6 +59,9 @@ jobs:
       RDS_INSTANCE: modulo-5-rentas-test-postgres
       AMPLIFY_APP_NAME: modulo-5-rentas-test-frontend
       TEST_API_BEARER_TOKEN: ${{ secrets.TEST_API_BEARER_TOKEN }}
+      TEST_DEMO_USERNAME: ${{ secrets.TEST_DEMO_USERNAME }}
+      TEST_DEMO_PASSWORD: ${{ secrets.TEST_DEMO_PASSWORD }}
+      RENTAS_DEMO_BOOTSTRAP_PASSWORD: ${{ secrets.RENTAS_DEMO_BOOTSTRAP_PASSWORD }}
 
     steps:
       - name: Validate request
@@ -72,6 +75,10 @@ jobs:
             exit 1
           }
           : "${AWS_REGION:?Falta AWS_REGION en el environment test}"
+          if [[ -z "${TEST_API_BEARER_TOKEN}" ]]; then
+            : "${TEST_DEMO_USERNAME:?Falta TEST_DEMO_USERNAME o TEST_API_BEARER_TOKEN en el environment test}"
+            : "${TEST_DEMO_PASSWORD:?Falta TEST_DEMO_PASSWORD o TEST_API_BEARER_TOKEN en el environment test}"
+          fi
 
       - name: Checkout
         uses: actions/checkout@v6

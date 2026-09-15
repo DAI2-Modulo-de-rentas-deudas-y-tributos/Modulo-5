@@ -5,11 +5,11 @@ resource "aws_amplify_app" "frontend" {
   enable_branch_auto_build    = false
   enable_branch_auto_deletion = false
 
-  environment_variables = {
-    VITE_API_BASE_URL         = var.api_base_url
-    VITE_AUTH_MODE            = "mock"
-    VITE_DEV_IDENTITY_HEADERS = "true"
-  }
+  environment_variables = merge({
+    VITE_AUTH_MODE = "mock"
+    }, var.environment_variables, {
+    VITE_API_BASE_URL = var.api_base_url
+  })
 
   custom_rule {
     source = "</^[^.]+$|\\.(?!(css|gif|ico|jpg|jpeg|js|png|txt|svg|woff|woff2|ttf|map|json|webp)$)([^.]+$)/>"
@@ -32,9 +32,9 @@ resource "aws_amplify_branch" "develop" {
 
   enable_auto_build = false
 
-  environment_variables = {
-    VITE_API_BASE_URL         = var.api_base_url
-    VITE_AUTH_MODE            = "mock"
-    VITE_DEV_IDENTITY_HEADERS = "true"
-  }
+  environment_variables = merge({
+    VITE_AUTH_MODE = "mock"
+    }, var.environment_variables, {
+    VITE_API_BASE_URL = var.api_base_url
+  })
 }

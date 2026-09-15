@@ -33,7 +33,8 @@
         "auditorSession": "",
         "taxpayerUsername": "",
         "taxpayerPassword": "",
-        "taxpayerSession": ""
+        "taxpayerSession": "",
+        "paymentIdempotencyKey": "qa-payment-retry-001"
       },
       "dataPropertyOrder": {
         "&": [
@@ -52,7 +53,8 @@
           "auditorSession",
           "taxpayerUsername",
           "taxpayerPassword",
-          "taxpayerSession"
+          "taxpayerSession",
+          "paymentIdempotencyKey"
         ]
       },
       "color": null,
@@ -2459,8 +2461,8 @@
       "_id": "req_9b9da83bead54676",
       "_type": "request",
       "parentId": "fld_43da8f12ddff46a2",
-      "name": "6. Solicitudes repetidas (DEFECTO Alta)",
-      "description": "DEFECTO: enviar este mismo request 2 veces seguidas (o en 2 pestañas de Insomnia al mismo tiempo) crea 2 pagos duplicados. No hay Idempotency-Key.",
+      "name": "6a. Reintento idempotente de pago",
+      "description": "Enviar dos veces sin cambiar body ni paymentIdempotencyKey. Ambas respuestas deben referir al mismo pago y no duplicar imputaciones, auditoría ni outbox.",
       "method": "POST",
       "url": "{{ _.baseUrl }}/payments",
       "body": {
@@ -2476,10 +2478,88 @@
         {
           "name": "X-Demo-Session",
           "value": "{{ _.cashierSession }}"
+        },
+        {
+          "name": "Idempotency-Key",
+          "value": "{{ _.paymentIdempotencyKey }}"
         }
       ],
       "authentication": {},
       "metaSortKey": 85,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_48cc10c122f4474b",
+      "_type": "request",
+      "parentId": "fld_43da8f12ddff46a2",
+      "name": "6b. Reutilizacion conflictiva de Idempotency-Key",
+      "description": "Ejecutar después de 6a sin cambiar paymentIdempotencyKey. Como el importe cambia, debe devolver HTTP 409 IDEMPOTENCY_KEY_REUSED y no crear otro pago.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/payments",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"taxpayerId\": 1,\n  \"paymentMethod\": \"CASH\",\n  \"amount\": 16,\n  \"allocations\": []\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Demo-Session",
+          "value": "{{ _.cashierSession }}"
+        },
+        {
+          "name": "Idempotency-Key",
+          "value": "{{ _.paymentIdempotencyKey }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 85.1,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_5f2b7ac9d1e04c38",
+      "_type": "request",
+      "parentId": "fld_43da8f12ddff46a2",
+      "name": "6c. Aislamiento de Idempotency-Key por contribuyente",
+      "description": "Ejecutar despues de 6a sin cambiar paymentIdempotencyKey: solo cambia el contribuyente. La clave se indexa por (taxpayer_id, idempotency_key), asi que debe devolver HTTP 201 con un paymentId distinto al de 6a y no un 409.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/payments",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"taxpayerId\": 2,\n  \"paymentMethod\": \"CASH\",\n  \"amount\": 15,\n  \"allocations\": []\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Demo-Session",
+          "value": "{{ _.cashierSession }}"
+        },
+        {
+          "name": "Idempotency-Key",
+          "value": "{{ _.paymentIdempotencyKey }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 85.2,
       "isPrivate": false,
       "settingStoreCookies": true,
       "settingSendCookies": true,

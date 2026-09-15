@@ -1,3 +1,27 @@
+locals {
+  backend_environment_variables = merge(
+    {
+      APP_MODE               = "api"
+      CORS_ALLOWED_ORIGINS   = join(",", var.cors_allowed_origins)
+      SPRING_DATASOURCE_URL  = "jdbc:postgresql://${var.database_address}:${var.database_port}/${var.database_name}"
+      SPRING_PROFILES_ACTIVE = var.spring_profiles_active
+    },
+    var.environment_variables
+  )
+  backend_secret_variables = merge(
+    {
+      SPRING_DATASOURCE_USERNAME = "${var.database_secret_arn}:username::"
+      SPRING_DATASOURCE_PASSWORD = "${var.database_secret_arn}:password::"
+    },
+    var.secret_variables
+  )
+  backend_secret_arns = distinct(concat([var.database_secret_arn], values(var.secret_variables)))
+
+  active_profiles    = [for profile in split(",", lower(var.spring_profiles_active)) : trimspace(profile)]
+  production_profile = contains(local.active_profiles, "prod")
+  demo_mode_enabled  = lower(lookup(var.environment_variables, "RENTAS_SECURITY_DEV_MODE", "false")) == "true"
+}
+
 resource "aws_ecr_repository" "backend" {
   name                 = "${var.name_prefix}-backend"
   image_tag_mutability = "IMMUTABLE"
@@ -91,9 +115,9 @@ data "aws_partition" "current" {}
 
 data "aws_iam_policy_document" "backend_secret" {
   statement {
-    sid       = "ReadDatabaseCredentials"
+    sid       = "ReadBackendSecrets"
     actions   = ["secretsmanager:GetSecretValue"]
-    resources = [var.database_secret_arn]
+    resources = local.backend_secret_arns
   }
 }
 
@@ -163,32 +187,16 @@ resource "aws_ecs_task_definition" "backend" {
       ]
 
       environment = [
-        {
-          name  = "SPRING_PROFILES_ACTIVE"
-          value = "dev"
-        },
-        {
-          name  = "APP_MODE"
-          value = "api"
-        },
-        {
-          name  = "SPRING_DATASOURCE_URL"
-          value = "jdbc:postgresql://${var.database_address}:${var.database_port}/${var.database_name}"
-        },
-        {
-          name  = "CORS_ALLOWED_ORIGINS"
-          value = join(",", var.cors_allowed_origins)
+        for name, value in local.backend_environment_variables : {
+          name  = name
+          value = value
         }
       ]
 
       secrets = [
-        {
-          name      = "SPRING_DATASOURCE_USERNAME"
-          valueFrom = "${var.database_secret_arn}:username::"
-        },
-        {
-          name      = "SPRING_DATASOURCE_PASSWORD"
-          valueFrom = "${var.database_secret_arn}:password::"
+        for name, value_from in local.backend_secret_variables : {
+          name      = name
+          valueFrom = value_from
         }
       ]
 
@@ -202,6 +210,20 @@ resource "aws_ecs_task_definition" "backend" {
       }
     }
   ])
+
+  lifecycle {
+    precondition {
+      condition     = !local.production_profile || !local.demo_mode_enabled
+      error_message = "El perfil prod no admite RENTAS_SECURITY_DEV_MODE=true en environment_variables."
+    }
+
+    precondition {
+      condition = !local.production_profile || !anytrue([
+        for name in keys(var.secret_variables) : startswith(upper(name), "RENTAS_DEMO_")
+      ])
+      error_message = "El perfil prod no admite secretos DEMO en secret_variables."
+    }
+  }
 
   tags = {
     Name    = "${var.name_prefix}-backend"

@@ -32,14 +32,15 @@ personales ni secretos como clave.
 - Una repetición devuelve el estado actual del pago existente, no una copia
   histórica de la respuesta original.
 
-V15 agrega clave y huella SHA-256 al pago y una restricción única por contribuyente.
+V15 agrega la clave; V17 agrega la huella SHA-256 y la restricción única por contribuyente.
 El bloqueo transaccional del contribuyente serializa los registros con clave
 también entre instancias. Todo queda en la misma transacción: si falla el pago,
-la clave no queda consumida. V1–V14 no se modifican.
+la clave no queda consumida. V1–V16 no se modifican: V17 reemplaza el índice único
+global de V15 por uno propio, sin reescribir el archivo histórico ni su checksum.
 
-Frontend no fue modificado: para proteger sus reintentos debe enviar la cabecera
-y conservar la clave de esa intención de pago. Esta idempotencia HTTP es local a
-M5; no define ni reemplaza contratos outbound de otros módulos.
+El frontend genera una clave por intención de pago, la conserva durante los
+reintentos y envía `Idempotency-Key`. Esta idempotencia HTTP es local a M5; no
+define ni reemplaza contratos outbound de otros módulos.
 
 ## Auditoría de solicitudes de exención
 
@@ -71,18 +72,14 @@ Las regresiones HTTP están en `SecurityTests`; las de pagos concurrentes,
 rollback, exenciones y auditoría se ejecutan contra PostgreSQL 17 en
 `PostgreSqlIntegrationTest`. Ejecutar desde backend: `mvnw.cmd clean verify`.
 
-Resultado local del 7 de septiembre de 2026:
+El estado consolidado aplica Flyway V1–V17 en DEV/TEST. Producción usa una
+migración V18 separada para retirar las tablas DEMO sin modificar los checksums
+históricos de V14/V16. Backend, frontend, infraestructura y pruebas de aceptación
+forman parte de la corrección y deben validarse juntos en CI.
 
-- Maven `clean verify`: BUILD SUCCESS.
-- 137 pruebas aprobadas; 0 failures, 0 errors, 0 skipped.
-- PostgreSQL Testcontainers: 16/16, imagen `postgres:17-alpine`, versión 17.11.
-- Base temporal nueva: Flyway V1–V15 aplicadas; historial verificado.
-- Hibernate: `ddl-auto=validate` exitoso sobre PostgreSQL.
-- JaCoCo: líneas 88,78%; instrucciones 87,16%; ramas 57,73%.
-- Gate de líneas >=85%: aprobado.
-- No se modificaron frontend, infraestructura ni la base demo local.
-- No se realizaron commit, push, merge ni deploy.
+## Variables de entorno y secretos
 
-## VARIABLES DE ENTORNO / SECRETOS
-
-Sin cambios en variables de entorno ni secretos.
+`RENTAS_SECURITY_DEV_MODE`, `RENTAS_DEMO_BOOTSTRAP_PASSWORD`,
+`TEST_DEMO_USERNAME` y `TEST_DEMO_PASSWORD` forman parte del contrato de DEV/TEST.
+Los valores sensibles se obtienen desde Secrets Manager o GitHub Environments;
+nunca se versionan. El perfil `prod` prohíbe el modo DEMO.

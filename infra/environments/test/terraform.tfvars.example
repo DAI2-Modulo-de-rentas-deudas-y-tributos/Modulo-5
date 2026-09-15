@@ -18,6 +18,23 @@ backend_container_port    = 8080
 backend_health_check_path = "/actuator/health"
 backend_task_cpu          = 256
 backend_task_memory       = 512
+backend_spring_profiles_active = "dev"
+
+backend_environment_variables = {
+  BROKER_ADAPTER           = "local-log"
+  OUTBOX_DELAY_MS          = "5000"
+  RENTAS_SECURITY_DEV_MODE = "true"
+}
+
+# Los valores son ARNs de Secrets Manager, nunca secretos en texto plano.
+backend_secret_variables = {
+  RENTAS_DEMO_BOOTSTRAP_PASSWORD = "arn:aws:secretsmanager:sa-east-1:000000000000:secret:modulo-5-rentas-test-demo-bootstrap"
+}
+
+frontend_environment_variables = {
+  VITE_AUTH_MODE = "mock"
+  VITE_USE_MOCKS = "false"
+}
 
 database_name                  = "rentas"
 database_master_username       = "rentas_admin"
@@ -31,4 +48,3 @@ database_deletion_protection   = false
 database_skip_final_snapshot   = true
 
 alb_deletion_protection = false
-

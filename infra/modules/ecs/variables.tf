@@ -64,6 +64,53 @@ variable "task_memory" {
   default     = 512
 }
 
+variable "spring_profiles_active" {
+  description = "Perfiles de Spring Boot activos en el ambiente."
+  type        = string
+
+  validation {
+    condition     = length(trimspace(var.spring_profiles_active)) > 0
+    error_message = "spring_profiles_active no puede estar vacio."
+  }
+}
+
+variable "environment_variables" {
+  description = "Variables no sensibles inyectadas en el contenedor backend."
+  type        = map(string)
+  default     = {}
+
+  validation {
+    condition = alltrue([
+      for name in keys(var.environment_variables) : !contains([
+        "APP_MODE",
+        "CORS_ALLOWED_ORIGINS",
+        "SPRING_DATASOURCE_URL",
+        "SPRING_DATASOURCE_USERNAME",
+        "SPRING_DATASOURCE_PASSWORD",
+        "SPRING_PROFILES_ACTIVE"
+      ], upper(name))
+    ])
+    error_message = "environment_variables no puede sobrescribir variables administradas por el modulo ECS."
+  }
+}
+
+variable "secret_variables" {
+  description = "Variables sensibles inyectadas desde ARNs completos de Secrets Manager."
+  type        = map(string)
+  default     = {}
+
+  validation {
+    condition = alltrue([
+      for name, secret_arn in var.secret_variables :
+      startswith(secret_arn, "arn:") && !contains([
+        "SPRING_DATASOURCE_USERNAME",
+        "SPRING_DATASOURCE_PASSWORD"
+      ], upper(name))
+    ])
+    error_message = "Cada secret_variables debe usar un ARN completo y no puede sobrescribir las credenciales RDS administradas."
+  }
+}
+
 variable "health_check_grace_period_seconds" {
   description = "Tiempo permitido para que Spring Boot inicie antes de evaluar el health check."
   type        = number

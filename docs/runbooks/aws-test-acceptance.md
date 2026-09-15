@@ -78,7 +78,9 @@ El runner acepta el origen (`https://api.example`) o el prefijo completo
 
 Mientras TEST conserve el modo DEMO, el runner obtiene sesiones opacas mediante
 `/api/v1/dev-auth/bootstrap` y `/api/v1/dev-auth/login`, y envía únicamente
-`X-Demo-Session`. Las contraseñas se inyectan como secretos del workflow.
+`X-Demo-Session`. El GitHub Environment `test` debe contener
+`TEST_DEMO_USERNAME`, `TEST_DEMO_PASSWORD` y `RENTAS_DEMO_BOOTSTRAP_PASSWORD`;
+este último debe coincidir con el secreto inyectado al backend desde Secrets Manager.
 
 Cuando Core/Auth entregue OIDC, definir el secret TEST_API_BEARER_TOKEN en el environment test. Si ese secret existe, el runner usa Authorization Bearer y deja de enviar los headers de desarrollo. El token debe representar un usuario de QA con roles RENTAS, SUPERVISOR y CASHIER.
 Con Bearer, las pruebas que requieren cambiar de identidad se registran como

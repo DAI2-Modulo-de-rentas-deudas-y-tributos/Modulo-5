@@ -3,6 +3,7 @@ package ar.gob.municipalidad.rentas;
 import io.swagger.v3.oas.annotations.Hidden;
 import jakarta.validation.Valid;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -15,6 +16,7 @@ import org.springframework.web.bind.annotation.RestController;
 @Hidden
 @RestController
 @RequestMapping("/api/v1/dev/integrations/m2")
+@Profile("!prod")
 @ConditionalOnProperty(name="rentas.security.dev-mode",havingValue="true")
 class DevM2EventController {
     private final TicketIntegrationService consumer;

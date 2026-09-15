@@ -9,3 +9,13 @@ El pipeline de backend registra revisiones con imagenes identificadas por el
 SHA del commit y eleva la capacidad a una tarea. Terraform ignora solamente
 `task_definition` y `desired_count` del servicio porque esos dos atributos son
 propiedad del pipeline de entrega de la aplicacion.
+
+`environment_variables` agrega configuracion no sensible a la tarea.
+`secret_variables` recibe un mapa de nombre a ARN de Secrets Manager, amplia la
+politica minima del execution role e inyecta cada valor sin exponerlo en Terraform.
+Las credenciales RDS administradas se incluyen siempre.
+
+Cuando `spring_profiles_active` incluye `prod`, dos precondiciones de la definicion
+de tarea cortan el plan si alguien intenta inyectar `RENTAS_SECURITY_DEV_MODE=true`
+o un secreto `RENTAS_DEMO_*`. Son precondiciones y no un bloque `check` porque este
+ultimo solo emite una advertencia y dejaria aplicar el despliegue igual.
