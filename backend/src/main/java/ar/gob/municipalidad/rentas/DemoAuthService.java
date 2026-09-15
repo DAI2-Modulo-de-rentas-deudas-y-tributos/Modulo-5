@@ -2,6 +2,7 @@ package ar.gob.municipalidad.rentas;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.annotation.Profile;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -16,6 +17,7 @@ import java.util.HexFormat;
 import java.util.List;
 
 @Service
+@Profile("!prod")
 @ConditionalOnProperty(name="rentas.security.dev-mode",havingValue="true")
 class DemoAuthService {
     static final String SESSION_HEADER="X-Demo-Session";

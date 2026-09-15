@@ -85,14 +85,20 @@ jobs:
             exit 1
           fi
 
-          api_base_url=$(aws amplify get-app \
+          environment_variables=$(aws amplify get-app \
             --app-id "${app_id}" \
-            --query 'app.environmentVariables.VITE_API_BASE_URL' \
-            --output text)
+            --query 'app.environmentVariables' \
+            --output json)
+
+          api_base_url=$(jq -r '.VITE_API_BASE_URL // empty' <<< "${environment_variables}")
+          auth_mode=$(jq -r '.VITE_AUTH_MODE // "mock"' <<< "${environment_variables}")
+          use_mocks=$(jq -r '.VITE_USE_MOCKS // "false"' <<< "${environment_variables}")
 
           : "${api_base_url:?Amplify app does not expose VITE_API_BASE_URL}"
           echo "app-id=${app_id}" >> "${GITHUB_OUTPUT}"
           echo "api-base-url=${api_base_url}" >> "${GITHUB_OUTPUT}"
+          echo "auth-mode=${auth_mode}" >> "${GITHUB_OUTPUT}"
+          echo "use-mocks=${use_mocks}" >> "${GITHUB_OUTPUT}"
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
@@ -105,8 +111,8 @@ jobs:
         working-directory: frontend
         env:
           VITE_API_BASE_URL: ${{ steps.amplify.outputs.api-base-url }}
-          VITE_AUTH_MODE: mock
-          VITE_DEV_IDENTITY_HEADERS: "true"
+          VITE_AUTH_MODE: ${{ steps.amplify.outputs.auth-mode }}
+          VITE_USE_MOCKS: ${{ steps.amplify.outputs.use-mocks }}
         run: |
           npm ci
           npm run build

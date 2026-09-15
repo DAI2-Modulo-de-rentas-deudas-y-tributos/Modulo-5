@@ -41,6 +41,11 @@ seguridad solo permite entrada desde el ALB. RDS nunca es publico.
 
 Los workflows DEV asumen el rol DEV y las promociones manuales asumen el rol TEST mediante OIDC. No existen access keys de AWS, tokens personales de GitHub ni claves de base de datos en GitHub.
 
+Las variables no sensibles de frontend y backend se definen por ambiente en
+`environments/{dev,test}`. Los secretos del backend se referencian por ARN y ECS
+los obtiene desde Secrets Manager al iniciar la tarea. La matriz y el procedimiento
+de alta o rotacion estan en `docs/runbooks/environment-secrets.md`.
+
 ## Promocion a TEST
 
 TEST no se despliega por pushes ni merges. El workflow `cd-test.yml` ejecuta `plan` por defecto y solo aplica con la seleccion explicita `apply` mas la confirmacion `DEPLOY_TEST`. El backend reutiliza una imagen inmutable publicada previamente en ECR DEV. El frontend se reconstruye desde el mismo commit porque necesita la URL de API propia de TEST.
@@ -58,5 +63,4 @@ Aunque no haya tareas Fargate ejecutandose, RDS y el Application Load Balancer
 generan costo continuo. CloudFront y Amplify se cobran principalmente por uso.
 La configuracion DEV usa una instancia RDS pequena, una sola zona y no crea NAT
 Gateway. Revisar AWS Cost Explorer y definir un presupuesto antes del apply.
-
 

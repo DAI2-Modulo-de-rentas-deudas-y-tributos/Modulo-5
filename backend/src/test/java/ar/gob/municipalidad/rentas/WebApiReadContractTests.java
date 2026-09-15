@@ -132,9 +132,9 @@ class WebApiReadContractTests {
         for (String url : withReason) {
             try {
                 assertMissing(post(url).contentType(MediaType.APPLICATION_JSON)
-                    .content(url.endsWith("/complete") ? "{\"resolution\":\"motivo vÃ¡lido\"}" :
+                    .content(url.endsWith("/complete") ? "{\"resolution\":\"motivo válido\"}" :
                         url.contains("request-documentation") || url.endsWith("/updates") || url.endsWith("request-information")
-                            ? "{\"message\":\"motivo vÃ¡lido\"}" : "{\"reason\":\"motivo vÃ¡lido\"}"));
+                            ? "{\"message\":\"motivo válido\"}" : "{\"reason\":\"motivo válido\"}"));
             } catch (AssertionError failure) {
                 throw new AssertionError("Contrato 404 incumplido para " + url, failure);
             }
@@ -150,11 +150,11 @@ class WebApiReadContractTests {
         assertMissing(post("/api/v1/credit-balances/999999/apply").contentType(MediaType.APPLICATION_JSON)
             .content("{\"debtId\":1,\"amount\":10}"));
         assertMissing(post("/api/v1/payment-plans/999999/expiration-requests").contentType(MediaType.APPLICATION_JSON)
-            .content("{\"reason\":\"motivo vÃ¡lido\"}"));
+            .content("{\"reason\":\"motivo válido\"}"));
         assertMissing(post("/api/v1/payment-plans/999999/refinancing-requests").contentType(MediaType.APPLICATION_JSON)
             .content("{\"installments\":3}"));
         assertMissing(post("/api/v1/adjustments").contentType(MediaType.APPLICATION_JSON)
-            .content("{\"debtId\":999999,\"type\":\"DISCOUNT\",\"amount\":0.01,\"reason\":\"Ajuste mÃ­nimo\"}"));
+            .content("{\"debtId\":999999,\"type\":\"DISCOUNT\",\"amount\":0.01,\"reason\":\"Ajuste mínimo\"}"));
     }
 
     private void assertMissing(org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder request) throws Exception {

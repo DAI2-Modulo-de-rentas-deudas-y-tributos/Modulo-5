@@ -167,6 +167,21 @@ jobs:
             "${RUNNER_TEMP}/task-definition.json" \
             > "${RUNNER_TEMP}/task-definition-rendered.json"
 
+          demo_mode=$(jq -r \
+            --arg container "${ECS_CONTAINER_NAME}" \
+            '.containerDefinitions[] | select(.name == $container)
+             | (.environment // []) | map(select(.name == "RENTAS_SECURITY_DEV_MODE"))
+             | first | .value // empty' \
+            "${RUNNER_TEMP}/task-definition-rendered.json")
+
+          if [[ -z "${demo_mode}" ]]; then
+            echo "La definicion de tarea no declara RENTAS_SECURITY_DEV_MODE."
+            echo "Terraform es la unica fuente de esa variable: aplicar infra/environments/dev antes de desplegar."
+            echo "Sin ella el backend arranca saludable pero no expone /api/v1/dev-auth/*."
+            exit 1
+          fi
+          echo "RENTAS_SECURITY_DEV_MODE=${demo_mode} heredado de la definicion administrada por Terraform."
+
           task_definition_arn=$(aws ecs register-task-definition \
             --cli-input-json "file://${RUNNER_TEMP}/task-definition-rendered.json" \
             --query taskDefinition.taskDefinitionArn \

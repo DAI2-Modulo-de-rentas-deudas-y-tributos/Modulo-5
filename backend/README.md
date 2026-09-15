@@ -103,6 +103,7 @@ En macOS/Linux, con PostgreSQL ya disponible:
 
 ```shell
 export SPRING_PROFILES_ACTIVE=dev
+export RENTAS_SECURITY_DEV_MODE=true
 export RENTAS_DEMO_BOOTSTRAP_PASSWORD='una-clave-local'
 export CORS_ALLOWED_ORIGINS='http://localhost:5173,http://localhost:4173'
 ./mvnw spring-boot:run
@@ -142,7 +143,7 @@ PostgreSQL y backend tienen healthchecks; el backend espera a que PostgreSQL est
 
 `.env.example` contiene únicamente valores de ejemplo y defaults locales seguros. Copiarlo a `.env` no alcanza para un entorno compartido: hay que reemplazar cada `CHANGE_ME` con un secreto provisto por el equipo y mantener `.env` fuera de Git.
 
-Docker Compose lee `.env` automáticamente. Una ejecución directa mediante Maven o el IDE no lo hace: en ese caso `DB_URL`, `DB_USER` y `DB_PASSWORD` deben exportarse en el proceso o configurarse en el IDE. El perfil inseguro de identidad simulada se habilita sólo de forma explícita con `SPRING_PROFILES_ACTIVE=dev` o `-Dspring-boot.run.profiles=dev`; no debe utilizarse en producción.
+Docker Compose lee `.env` automáticamente. Una ejecución directa mediante Maven o el IDE no lo hace: en ese caso `DB_URL`, `DB_USER` y `DB_PASSWORD` deben exportarse en el proceso o configurarse en el IDE. El perfil `dev` no habilita por sí solo la identidad simulada: además requiere `RENTAS_SECURITY_DEV_MODE=true`. El perfil `prod` rechaza esa combinación y no debe recibir secretos ni credenciales DEMO.
 
 | Variable | Uso | Requerida |
 | --- | --- | --- |
@@ -178,7 +179,7 @@ Con `RENTAS_DEMO_BOOTSTRAP_PASSWORD` definido, `POST /api/v1/dev-auth/bootstrap`
 crea un único SUPERVISOR inicial. El resto se administra por `/api/v1/dev-auth/users`.
 Las contraseñas se guardan con BCrypt y `TAXPAYER` exige un `taxpayerId` existente.
 
-En ambientes reales debe sustituirse este borde por el JWT emitido por Core, conservando `CurrentIdentity` como puerto de acceso a usuario, roles y contribuyente. Las tablas y rutas `demo_*` son únicamente una facilidad local explícita.
+En ambientes reales debe sustituirse este borde por el JWT emitido por Core, conservando `CurrentIdentity` como puerto de acceso a usuario, roles y contribuyente. Las tablas y rutas `demo_*` son únicamente una facilidad local explícita. El perfil `prod` excluye sus servicios, repositorios y validación Hibernate. La migración productiva V18 elimina esas tablas después de desplegar primero una versión compatible con su ausencia.
 
 ## Listados, filtros y respuestas
 
@@ -272,7 +273,8 @@ Antes de conectar Kafka/RabbitMQ siguen pendientes de acuerdo externo: broker, t
 - `DomainEntities` / `Repositories`: persistencia e invariantes.
 - `integration/event`, `consumer`, `mapper`, `producer` y `validation`: contratos confirmados M1/M2/M8, normalización y Outbox desacoplado.
 - `IntegrationServices`: adapters genéricos existentes y publicación abstracta.
-- `db/migration`: catorce migraciones Flyway (V1–V14).
+- `db/migration`: migraciones comunes Flyway V1–V17.
+- `db/migration-production`: V18 productiva para retirar el esquema DEMO.
 
 M5 no consulta bases de M1, M2, M4, M7 ni M8: conserva referencias locales y se integra por mensajes.
 

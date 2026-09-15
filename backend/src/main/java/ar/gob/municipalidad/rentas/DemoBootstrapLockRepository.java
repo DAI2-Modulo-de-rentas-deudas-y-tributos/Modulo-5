@@ -7,6 +7,7 @@ import jakarta.persistence.Table;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.context.annotation.Profile;
 
 /** Fila única creada por Flyway: serializa el bootstrap entre procesos y transacciones. */
 @Entity @Table(name="demo_bootstrap_lock")
@@ -15,6 +16,7 @@ class DemoBootstrapLock {
     protected DemoBootstrapLock() {}
 }
 
+@Profile("!prod")
 interface DemoBootstrapLockRepository extends JpaRepository<DemoBootstrapLock,Integer> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select b from DemoBootstrapLock b where b.id=1")

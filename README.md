@@ -33,7 +33,8 @@ La rama `main` representa la versión estable. El desarrollo se realiza en ramas
 ## Desarrollo local
 
 PostgreSQL puede iniciarse aun cuando el código de aplicación todavía no esté
-presente:
+presente. Primero copie `.env.example` a `.env` y asigne un valor no vacío a
+`POSTGRES_PASSWORD`:
 
 ```powershell
 docker compose up -d postgres
@@ -65,6 +66,8 @@ mediante `CORS_ALLOWED_ORIGINS`.
 
 La autenticación de ese modo persiste usuarios y sesiones en PostgreSQL. No
 reemplaza Core/JWT: con dev-mode desactivado, `/api/v1/dev-auth/*` no está disponible.
+El perfil productivo debe ser `prod`; rechaza el modo demo aunque una variable de
+entorno intente habilitarlo y no utiliza sus tablas ni repositorios.
 
 ## Automatización
 

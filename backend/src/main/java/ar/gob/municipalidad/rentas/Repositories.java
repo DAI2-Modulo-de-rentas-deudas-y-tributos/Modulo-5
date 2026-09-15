@@ -7,6 +7,7 @@ import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.*;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.context.annotation.Profile;
 import java.time.LocalDate;
 import java.math.BigDecimal;
 import java.util.*;
@@ -129,7 +130,9 @@ interface ExemptionRepository extends FilteredRepository<Exemption,Long> {
     List<Exemption> findByTaxpayerIdAndTaxConceptIdAndStatus(Long taxpayerId,Long conceptId,String status);
     List<Exemption> findByTaxpayerId(Long taxpayerId);
 }
+@Profile("!prod")
 interface DemoUserRepository extends JpaRepository<DemoUser,Long> { Optional<DemoUser> findByUsernameIgnoreCase(String username); boolean existsByUsernameIgnoreCase(String username); }
+@Profile("!prod")
 interface DemoAuthSessionRepository extends JpaRepository<DemoAuthSession,Long> { Optional<DemoAuthSession> findByTokenHash(String tokenHash); }
 interface LateChargeRuleRepository extends JpaRepository<LateChargeRule,Long> {
     @Query("select r from LateChargeRule r where r.active=true and r.validFrom<=:date and (r.validUntil is null or r.validUntil>=:date) order by r.validFrom desc")
