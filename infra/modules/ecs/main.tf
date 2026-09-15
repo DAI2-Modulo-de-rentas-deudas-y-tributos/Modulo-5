@@ -157,7 +157,14 @@ resource "aws_iam_role_policy" "backend_exec" {
 }
 
 resource "aws_ecs_task_definition" "backend" {
-  family                   = "${var.name_prefix}-backend"
+  family = "${var.name_prefix}-backend"
+
+  # Esta definicion es la base sobre la que el pipeline registra cada revision, y
+  # el servicio ignora task_definition. Retirar la revision anterior borraria el
+  # historial del que dependen el deploy y el rollback, ademas de exigir
+  # ecs:DeregisterTaskDefinition, que no admite permisos por recurso.
+  skip_destroy = true
+
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
   cpu                      = tostring(var.task_cpu)
