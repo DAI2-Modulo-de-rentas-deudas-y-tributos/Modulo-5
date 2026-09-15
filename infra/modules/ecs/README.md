@@ -16,6 +16,22 @@ toma como punto de partida y las que permiten volver atras. Tambien evita pedir
 `ecs:DeregisterTaskDefinition`, que no admite permisos por recurso y obligaria a
 conceder la accion sobre `*`.
 
+`skip_destroy` se lee del estado previo, no de la configuracion nueva: durante un
+reemplazo Terraform borra usando el objeto que ya estaba guardado. Un ambiente cuya
+task definition se creo antes de que existiera el atributo guarda `false` y sigue
+intentando desregistrar, con el apply fallando por permisos. Hay que sacarla del
+estado una sola vez, desde el directorio del ambiente:
+
+```shell
+terraform state rm module.ecs.aws_ecs_task_definition.backend
+```
+
+La revision anterior queda registrada en AWS, que es el mismo resultado que dara
+`skip_destroy` de ahi en adelante, y el apply siguiente crea una revision nueva ya
+con el atributo en el estado. Es seguro porque el servicio ignora `task_definition`:
+la tarea en ejecucion no se reemplaza y el pipeline sigue tomando la revision mas
+reciente. Cada ambiente necesita el paso por separado.
+
 `environment_variables` agrega configuracion no sensible a la tarea.
 `secret_variables` recibe un mapa de nombre a ARN de Secrets Manager, amplia la
 politica minima del execution role e inyecta cada valor sin exponerlo en Terraform.
