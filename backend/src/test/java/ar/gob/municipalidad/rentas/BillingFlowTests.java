@@ -29,6 +29,7 @@ class BillingFlowTests {
     @Autowired CreditBalanceService creditService;
     @Autowired DebtRepository debts;
     @Autowired CreditBalanceRepository credits;
+    @Autowired CreditBalanceApplicationRepository creditApplications;
 
     @BeforeEach void authenticateEmployee() {
         authenticate(new AuthenticatedIdentity("tester", null), "RENTAS", "CASHIER");
@@ -92,6 +93,47 @@ class BillingFlowTests {
         assertThat(credits.findBySourcePaymentId(payment.id).orElseThrow().status).isEqualTo(CreditBalanceStatus.USED);
     }
 
+    @Test void creditCannotBeAppliedToCancelledDebtAndLeavesBalancesUnchanged() {
+        Debt source = debt("BILL-CREDIT-CANCELLED-SOURCE", "CREDIT-CANCELLED-SOURCE");
+        Debt target = anotherDebt(source, "CREDIT-CANCELLED-TARGET");
+        Payment payment = payments.register(new ApiDtos.RegisterPaymentRequest(source.taxpayerId, PaymentMethod.CASH, new BigDecimal("120"), List.of(new ApiDtos.AllocationRequest(source.id, new BigDecimal("120")))));
+        CreditBalance credit = credits.findBySourcePaymentId(payment.id).orElseThrow();
+        target.status = DebtStatus.CANCELLED;
+        debts.save(target);
+
+        assertThatThrownBy(() -> creditService.apply(credit.id, new ApiDtos.ApplyCreditBalanceRequest(target.id, new BigDecimal("20"))))
+            .isInstanceOfSatisfying(BusinessException.class, exception -> assertThat(exception.code).isEqualTo("DEBT_NOT_PAYABLE"));
+
+        CreditBalance storedCredit = credits.findById(credit.id).orElseThrow();
+        Debt storedTarget = debts.findById(target.id).orElseThrow();
+        assertThat(storedCredit.availableAmount).isEqualByComparingTo("20.00");
+        assertThat(storedCredit.status).isEqualTo(CreditBalanceStatus.AVAILABLE);
+        assertThat(storedTarget.outstandingBalance).isEqualByComparingTo("100.00");
+        assertThat(storedTarget.status).isEqualTo(DebtStatus.CANCELLED);
+        assertThat(creditApplications.findAll()).noneMatch(application -> credit.id.equals(application.creditBalanceId));
+    }
+
+    @Test void creditCannotBeAppliedToPaidDebtAndLeavesBalancesUnchanged() {
+        Debt source = debt("BILL-CREDIT-PAID-SOURCE", "CREDIT-PAID-SOURCE");
+        Debt target = anotherDebt(source, "CREDIT-PAID-TARGET");
+        Payment payment = payments.register(new ApiDtos.RegisterPaymentRequest(source.taxpayerId, PaymentMethod.CASH, new BigDecimal("120"), List.of(new ApiDtos.AllocationRequest(source.id, new BigDecimal("120")))));
+        CreditBalance credit = credits.findBySourcePaymentId(payment.id).orElseThrow();
+        target.status = DebtStatus.PAID;
+        target.outstandingBalance = BigDecimal.ZERO.setScale(2);
+        debts.save(target);
+
+        assertThatThrownBy(() -> creditService.apply(credit.id, new ApiDtos.ApplyCreditBalanceRequest(target.id, new BigDecimal("20"))))
+            .isInstanceOfSatisfying(BusinessException.class, exception -> assertThat(exception.code).isEqualTo("DEBT_NOT_PAYABLE"));
+
+        CreditBalance storedCredit = credits.findById(credit.id).orElseThrow();
+        Debt storedTarget = debts.findById(target.id).orElseThrow();
+        assertThat(storedCredit.availableAmount).isEqualByComparingTo("20.00");
+        assertThat(storedCredit.status).isEqualTo(CreditBalanceStatus.AVAILABLE);
+        assertThat(storedTarget.outstandingBalance).isZero();
+        assertThat(storedTarget.status).isEqualTo(DebtStatus.PAID);
+        assertThat(creditApplications.findAll()).noneMatch(application -> credit.id.equals(application.creditBalanceId));
+    }
+
     @Test void electronicPaymentUsesTaxpayerIdentityAndElectronicOrigin() {
         Debt debt = debt("BILL-7", "ELECTRONIC");
         authenticate(new AuthenticatedIdentity("taxpayer-user", debt.taxpayerId), "TAXPAYER");
@@ -115,6 +157,13 @@ class BillingFlowTests {
         activate(concept.id);
         liquidations.create(liquidation(taxpayer.id, concept.id));
         return debts.findByTaxpayerId(taxpayer.id).get(0);
+    }
+
+    private Debt anotherDebt(Debt source, String conceptCode) {
+        TaxConcept concept = concept(conceptCode);
+        activate(concept.id);
+        liquidations.create(liquidation(source.taxpayerId, concept.id));
+        return debts.findByTaxpayerId(source.taxpayerId).stream().filter(debt -> !debt.id.equals(source.id)).findFirst().orElseThrow();
     }
 
     private TaxConcept concept(String code) {
