@@ -36,6 +36,11 @@ class ProductionSchemaIsolationTest {
         assertThat(jdbc.queryForObject("select count(*) from tax_concept", Integer.class)).isPositive();
         assertThat(jdbc.queryForObject(
             "select count(*) from flyway_schema_history where version='18' and success", Integer.class)).isOne();
+        assertThat(jdbc.queryForObject(
+            "select count(*) from flyway_schema_history where version='19' and success", Integer.class)).isOne();
+        assertThat(jdbc.queryForList(
+            "select column_name from information_schema.columns where table_name='payment_reversal_request'", String.class))
+            .contains("resolution_reason");
         assertThat(context.getBeansOfType(DemoAuthService.class)).isEmpty();
         assertThat(context.getBeansOfType(DemoAuthController.class)).isEmpty();
         assertThat(context.getBeansOfType(DemoUserRepository.class)).isEmpty();
@@ -47,7 +52,7 @@ class ProductionSchemaIsolationTest {
     void productionUpgradeFromV17PreservesHistoryAndRemovesExistingDemoData() {
         String url = "jdbc:h2:mem:production-upgrade;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE";
         Flyway common = Flyway.configure().dataSource(url, "sa", "")
-            .locations("classpath:db/migration").load();
+            .locations("classpath:db/migration").target("17").load();
         common.migrate();
         common.validate();
 
@@ -66,5 +71,9 @@ class ProductionSchemaIsolationTest {
             "select count(*) from information_schema.tables where lower(table_name) like 'demo\\_%' escape '\\'",
             Integer.class)).isZero();
         assertThat(upgrade.queryForObject("select count(*) from tax_concept", Integer.class)).isPositive();
+        assertThat(upgrade.queryForObject(
+            "select count(*) from flyway_schema_history where version='18' and success", Integer.class)).isOne();
+        assertThat(upgrade.queryForObject(
+            "select count(*) from flyway_schema_history where version='19' and success", Integer.class)).isOne();
     }
 }
