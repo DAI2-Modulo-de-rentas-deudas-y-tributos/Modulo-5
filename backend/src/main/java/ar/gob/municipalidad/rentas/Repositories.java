@@ -82,7 +82,7 @@ interface PaymentReversalRepository extends FilteredRepository<PaymentReversalRe
 interface ProcessedEventRepository extends JpaRepository<ProcessedEvent,UUID> { boolean existsByExternalEventId(String eventId); }
 interface IntegrationEventLogRepository extends FilteredRepository<IntegrationEventLog,Long> { Optional<IntegrationEventLog> findFirstByEventIdOrderByIdDesc(UUID eventId); Optional<IntegrationEventLog> findFirstByExternalEventIdOrderByIdDesc(String eventId); Page<IntegrationEventLog> findByStatusIn(Collection<IntegrationEventStatus> statuses,Pageable pageable); }
 interface OutboxRepository extends JpaRepository<OutboxEvent,UUID> { @Query(value="select * from outbox_event where status in ('PENDING','FAILED') order by created_at for update skip locked",nativeQuery=true) List<OutboxEvent> findPublishable(Pageable pageable); }
-interface AuditRepository extends FilteredRepository<AuditEntry,Long> { List<AuditEntry> findByEntityTypeAndEntityIdOrderByOccurredAt(String entityType,String entityId); }
+interface AuditRepository extends FilteredRepository<AuditEntry,Long> { List<AuditEntry> findByEntityTypeAndEntityIdOrderByOccurredAt(String entityType,String entityId); List<AuditEntry> findByEntityTypeAndEntityIdOrderByOccurredAtAscIdAsc(String entityType,String entityId); }
 interface PaymentPlanConfigurationRepository extends FilteredRepository<PaymentPlanConfiguration,Long> {
     Optional<PaymentPlanConfiguration> findFirstByOrderByVersionDesc();
     @Query("select c from PaymentPlanConfiguration c where c.active=true and c.validFrom<=:date and (c.validUntil is null or c.validUntil>=:date) order by c.version desc")
@@ -141,6 +141,7 @@ interface ExemptionRequestDocumentRepository extends JpaRepository<ExemptionRequ
 interface ExemptionRepository extends FilteredRepository<Exemption,Long> {
     List<Exemption> findByTaxpayerIdAndTaxConceptIdAndStatus(Long taxpayerId,Long conceptId,String status);
     List<Exemption> findByTaxpayerId(Long taxpayerId);
+    Optional<Exemption> findByRequestId(Long requestId);
 }
 @Profile("!prod")
 interface DemoUserRepository extends JpaRepository<DemoUser,Long> { Optional<DemoUser> findByUsernameIgnoreCase(String username); boolean existsByUsernameIgnoreCase(String username); }
