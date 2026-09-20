@@ -92,6 +92,7 @@ class ApiController {
 
     @GetMapping("/credit-balances") @PreAuthorize("hasAnyRole('RENTAS','AUDITOR')") Page<ApiDtos.CreditBalanceResponse> creditBalances(@RequestParam Map<String,String> f,Pageable p){return queries.list(creditBalances,CreditBalance.class,f,p).map(ApiResponses::of);}
     @GetMapping("/credit-balances/{id}") @PreAuthorize("hasAnyRole('RENTAS','AUDITOR','TAXPAYER')") ApiDtos.CreditBalanceResponse creditBalance(@PathVariable Long id){CreditBalance c=creditBalances.findById(id).orElseThrow(()->CatalogService.notFound("Saldo a favor"));identity.requireOwnership(c.taxpayerId);return ApiResponses.of(c);}
+    @GetMapping("/credit-balances/{id}/applications") @PreAuthorize("hasAnyRole('RENTAS','AUDITOR','TAXPAYER')") List<ApiDtos.CreditBalanceApplicationResponse> creditBalanceApplications(@PathVariable Long id){return creditBalanceService.applications(id).stream().map(ApiResponses::of).toList();}
     @GetMapping("/taxpayers/{id}/credit-balances") @PreAuthorize("hasAnyRole('RENTAS','AUDITOR','TAXPAYER')") List<ApiDtos.CreditBalanceResponse> taxpayerCredits(@PathVariable Long id){identity.requireOwnership(id);return creditBalances.findByTaxpayerId(id).stream().map(ApiResponses::of).toList();}
     @PostMapping("/credit-balances/{id}/apply") @PreAuthorize("hasRole('RENTAS')") ApiDtos.CreditBalanceApplicationResponse applyCredit(@PathVariable Long id,@Valid @RequestBody ApiDtos.ApplyCreditBalanceRequest r){return ApiResponses.of(creditBalanceService.apply(id,r));}
 
