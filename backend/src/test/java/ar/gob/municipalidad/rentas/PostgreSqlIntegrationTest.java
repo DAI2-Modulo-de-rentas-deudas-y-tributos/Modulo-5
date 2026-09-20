@@ -200,6 +200,18 @@ class PostgreSqlIntegrationTest {
         assertThat(planConfigurations.findById(source.id).orElseThrow().interestRate).isEqualByComparingTo("5");
     }
 
+    @Test void billPricingPreviewRunsReadOnlyOnPostgreSql() {
+        authenticate();Debt debt=debt("BILL-PRICING",null);debt.dueDate=LocalDate.now().minusDays(2);debts.saveAndFlush(debt);Bill bill=billing.create(new ApiDtos.CreateBillRequest(debt.taxpayerId,List.of(debt.id),LocalDate.now().plusDays(10)));LateChargeRule rule=new LateChargeRule();rule.code="PG-BILL-"+UUID.randomUUID();rule.surchargeRate=new BigDecimal("10");rule.dailyInterestRate=new BigDecimal("1");rule.active=true;rule.validFrom=LocalDate.now();lateChargeRules.save(rule);long applicationsBefore=jdbc.queryForObject("select count(*) from late_charge_application",Long.class),adjustmentsBefore=jdbc.queryForObject("select count(*) from adjustment_request",Long.class);
+        try {
+            ApiDtos.BillDetailResponse detail=billing.pricingDetail(bill.id);
+            assertThat(detail.updatedPayableAmount()).isEqualByComparingTo("112");
+            assertThat(detail.pricingDetails()).singleElement().satisfies(price->{assertThat(price.pendingSurchargeAmount()).isEqualByComparingTo("10");assertThat(price.pendingInterestAmount()).isEqualByComparingTo("2");});
+            assertThat(jdbc.queryForObject("select count(*) from late_charge_application",Long.class)).isEqualTo(applicationsBefore);
+            assertThat(jdbc.queryForObject("select count(*) from adjustment_request",Long.class)).isEqualTo(adjustmentsBefore);
+            assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("100");
+        } finally { rule.active=false;lateChargeRules.save(rule); }
+    }
+
     @Test void recommendedOperationalIndexesExist(){
         List<String> indexes=jdbc.queryForList("select indexdef from pg_indexes where schemaname='public'",String.class);
         assertThat(indexes).anyMatch(x->x.contains("debt")&&x.contains("taxpayer_id"));

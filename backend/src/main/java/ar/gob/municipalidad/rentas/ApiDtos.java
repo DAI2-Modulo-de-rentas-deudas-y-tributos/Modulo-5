@@ -19,6 +19,13 @@ public final class ApiDtos {
     public record PaymentAllocationResponse(Long id,Long paymentId,AllocationTargetType targetType,Long debtId,Long installmentId,BigDecimal amount,BigDecimal principalApplied,BigDecimal interestApplied,String status,String allocatedBy,OffsetDateTime allocatedAt,OffsetDateTime reversedAt) {}
     public record BillDebtResponse(Long debtId,BigDecimal amountAtIssue) {}
     public record BillResponse(Long id,String number,Long taxpayerId,BigDecimal totalAmount,LocalDate issueDate,LocalDate dueDate,BillStatus status,boolean expired,String createdBy,OffsetDateTime createdAt,List<BillDebtResponse> debts) {}
+    public record BillDebtPricingResponse(Long debtId,BigDecimal amountAtIssue,BigDecimal currentAmount,BigDecimal outstandingBalance,
+        BigDecimal issueDiscountAmount,BigDecimal issueExemptionAmount,BigDecimal issueSurchargeAmount,BigDecimal issueInterestAmount,
+        BigDecimal appliedDiscountAmount,BigDecimal appliedSurchargeAmount,BigDecimal appliedInterestAmount,BigDecimal appliedCorrectionAmount,
+        BigDecimal pendingSurchargeAmount,BigDecimal pendingInterestAmount,BigDecimal updatedPayableAmount) {}
+    public record BillDetailResponse(Long id,String number,Long taxpayerId,BigDecimal totalAmount,LocalDate issueDate,LocalDate dueDate,
+        BillStatus status,boolean expired,String createdBy,OffsetDateTime createdAt,List<BillDebtResponse> debts,
+        BigDecimal updatedPayableAmount,OffsetDateTime calculatedAt,List<BillDebtPricingResponse> pricingDetails) {}
     public record CreditBalanceResponse(Long id,Long taxpayerId,Long sourcePaymentId,BigDecimal originalAmount,BigDecimal availableAmount,CreditBalanceStatus status,OffsetDateTime createdAt,OffsetDateTime updatedAt) {}
     public record CreditBalanceApplicationResponse(Long id,Long creditBalanceId,Long debtId,BigDecimal amount,String status,String appliedBy,OffsetDateTime appliedAt,OffsetDateTime reversedAt) {}
     public record PaymentReversalResponse(Long id,Long paymentId,String reason,PaymentReversalStatus status,String requestedBy,OffsetDateTime requestedAt,String resolvedBy,OffsetDateTime resolvedAt,String resolutionReason,String executedBy,OffsetDateTime executedAt) {}

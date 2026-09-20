@@ -59,6 +59,7 @@ class LateChargeService {
         AdjustmentRepository adjustments,AuditService audit,CurrentIdentity identity){this.debts=debts;this.rules=rules;this.applications=applications;this.adjustments=adjustments;this.audit=audit;this.identity=identity;}
 
     FiscalProcessingController.LateChargeResponse preview(Long debtId,LocalDate date){return calculate(debt(debtId),rule(date),date,false,null);}
+    @Transactional(readOnly=true) Map<Long,FiscalProcessingController.LateChargeResponse> previewIfApplicable(Collection<Debt> candidates,LocalDate date){List<Debt> chargeable=candidates.stream().filter(debt->debt.status!=DebtStatus.PAID&&debt.status!=DebtStatus.CANCELLED&&debt.outstandingBalance.signum()>0&&date.isAfter(debt.dueDate)).toList();if(chargeable.isEmpty())return Map.of();List<LateChargeRule> applicable=rules.findApplicable(date,PageRequest.of(0,1));if(applicable.isEmpty())return Map.of();LateChargeRule rule=applicable.get(0);List<LateChargeApplication> previous=applications.findByDebtIdIn(chargeable.stream().map(x->x.id).toList());Map<Long,BigDecimal> totals=previous.stream().collect(java.util.stream.Collectors.groupingBy(x->x.debtId,java.util.stream.Collectors.reducing(BigDecimal.ZERO,x->x.totalAdjustment,BigDecimal::add)));Set<Long> alreadyApplied=previous.stream().filter(x->x.ruleId.equals(rule.id)&&x.calculationDate.equals(date)).map(x->x.debtId).collect(java.util.stream.Collectors.toSet());Map<Long,FiscalProcessingController.LateChargeResponse> result=new HashMap<>();for(Debt debt:chargeable)if(!alreadyApplied.contains(debt.id))result.put(debt.id,calculate(debt,rule,date,false,null,money(totals.getOrDefault(debt.id,BigDecimal.ZERO))));return result;}
     @Transactional FiscalProcessingController.LateChargeResponse apply(Long debtId,LocalDate date){
         Debt debt=debts.findByIdForUpdate(debtId).orElseThrow(()->CatalogService.notFound("Deuda"));LateChargeRule rule=rule(date);
         Optional<LateChargeApplication> existing=applications.findByDebtIdAndRuleIdAndCalculationDate(debt.id,rule.id,date);
@@ -74,13 +75,13 @@ class LateChargeService {
         debt.currentAmount=debt.currentAmount.add(value.totalAdjustment());debt.outstandingBalance=debt.outstandingBalance.add(value.totalAdjustment());debt.updatedAt=OffsetDateTime.now();
         audit.record("LateChargeApplication",application.id,"LATE_CHARGE_APPLIED",application);return response(application,rule.code,true);
     }
-    private FiscalProcessingController.LateChargeResponse calculate(Debt debt,LateChargeRule rule,LocalDate date,boolean applied,Long id){
+    private FiscalProcessingController.LateChargeResponse calculate(Debt debt,LateChargeRule rule,LocalDate date,boolean applied,Long id){return calculate(debt,rule,date,applied,id,money(applications.findByDebtId(debt.id).stream().map(x->x.totalAdjustment).reduce(BigDecimal.ZERO,BigDecimal::add)));}
+    private FiscalProcessingController.LateChargeResponse calculate(Debt debt,LateChargeRule rule,LocalDate date,boolean applied,Long id,BigDecimal previous){
         CatalogService.require(debt.status!=DebtStatus.PAID&&debt.status!=DebtStatus.CANCELLED&&debt.outstandingBalance.signum()>0,"DEBT_NOT_CHARGEABLE","La deuda no admite recargos");
         CatalogService.require(date.isAfter(debt.dueDate),"DEBT_NOT_OVERDUE","La deuda no está vencida a la fecha indicada");
         int days=Math.toIntExact(ChronoUnit.DAYS.between(debt.dueDate,date));BigDecimal principal=money(debt.outstandingBalance);
         BigDecimal surcharge=money(principal.multiply(rule.surchargeRate).divide(HUNDRED,8,RoundingMode.HALF_UP));
         BigDecimal interest=money(principal.multiply(rule.dailyInterestRate).multiply(BigDecimal.valueOf(days)).divide(HUNDRED,8,RoundingMode.HALF_UP));
-        BigDecimal previous=money(applications.findByDebtId(debt.id).stream().map(x->x.totalAdjustment).reduce(BigDecimal.ZERO,BigDecimal::add));
         BigDecimal total=surcharge.add(interest);return new FiscalProcessingController.LateChargeResponse(id,debt.id,date,days,principal,rule.surchargeRate,surcharge,rule.dailyInterestRate,interest,previous,total,principal.add(total),rule.code,applied);
     }
     private void createAdjustment(Debt debt,AdjustmentType type,BigDecimal amount,BigDecimal previous,String reason){if(amount.signum()==0)return;AdjustmentRequest a=new AdjustmentRequest();a.debtId=debt.id;a.type=type;a.amount=amount;a.reason=reason;a.status=AdjustmentStatus.APPROVED;a.requestedBy=a.resolvedBy=identity.get().userId();a.requestedAt=a.resolvedAt=OffsetDateTime.now();a.resolutionReason="Procesamiento automático de vencimiento";a.previousDebtAmount=previous;a.newDebtAmount=previous.add(amount);adjustments.save(a);}

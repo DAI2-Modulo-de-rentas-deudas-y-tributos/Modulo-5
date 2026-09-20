@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.context.annotation.Profile;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.math.BigDecimal;
 import java.util.*;
 
@@ -74,7 +75,7 @@ interface PaymentRepository extends FilteredRepository<Payment,Long> {
 }
 interface PaymentAllocationRepository extends FilteredRepository<PaymentAllocation,Long> { List<PaymentAllocation> findByPaymentId(Long paymentId); }
 interface BillRepository extends FilteredRepository<Bill,Long> { List<Bill> findByTaxpayerId(Long taxpayerId); Page<Bill> findByTaxpayerId(Long taxpayerId,Pageable pageable); }
-interface BillDebtRepository extends JpaRepository<BillDebt,Long> { List<BillDebt> findByBillId(Long billId); List<BillDebt> findByBillIdInOrderByBillIdAscIdAsc(Collection<Long> billIds); }
+interface BillDebtRepository extends JpaRepository<BillDebt,Long> { List<BillDebt> findByBillId(Long billId); List<BillDebt> findByBillIdOrderByIdAsc(Long billId); List<BillDebt> findByBillIdInOrderByBillIdAscIdAsc(Collection<Long> billIds); }
 interface ElectronicPaymentRepository extends JpaRepository<ElectronicPaymentAttempt,Long> { Optional<ElectronicPaymentAttempt> findByPaymentId(Long paymentId); }
 interface CreditBalanceRepository extends FilteredRepository<CreditBalance,Long> { Optional<CreditBalance> findBySourcePaymentId(Long paymentId); @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select c from CreditBalance c where c.sourcePaymentId=:paymentId") Optional<CreditBalance> findBySourcePaymentIdForUpdate(Long paymentId); List<CreditBalance> findByTaxpayerId(Long taxpayerId); @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select c from CreditBalance c where c.id=:id") Optional<CreditBalance> findByIdForUpdate(Long id); }
 interface CreditBalanceApplicationRepository extends JpaRepository<CreditBalanceApplication,Long> {}
@@ -118,7 +119,7 @@ interface InstallmentRepository extends JpaRepository<Installment,Long> {
 }
 interface PlanExpirationRepository extends FilteredRepository<PlanExpirationRequest,Long> { boolean existsByPaymentPlanIdAndStatus(Long planId,PlanExpirationStatus status); @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select e from PlanExpirationRequest e where e.id=:id") Optional<PlanExpirationRequest> findByIdForUpdate(Long id); }
 interface RefinancingRequestRepository extends FilteredRepository<RefinancingRequest,Long> { @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select r from RefinancingRequest r where r.id=:id") Optional<RefinancingRequest> findByIdForUpdate(Long id); }
-interface AdjustmentRepository extends FilteredRepository<AdjustmentRequest,Long> {}
+interface AdjustmentRepository extends FilteredRepository<AdjustmentRequest,Long> { List<AdjustmentRequest> findByDebtIdInAndStatusAndResolvedAtAfter(Collection<Long> debtIds,AdjustmentStatus status,OffsetDateTime resolvedAfter); }
 interface LiquidationRunRepository extends FilteredRepository<LiquidationRun,Long> { @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select r from LiquidationRun r where r.id=:id") Optional<LiquidationRun> findByIdForUpdate(Long id); }
 interface LiquidationRunItemRepository extends JpaRepository<LiquidationRunItem,Long> { List<LiquidationRunItem> findByLiquidationRunIdOrderById(Long runId); }
 interface TicketCaseRepository extends FilteredRepository<TicketCase,Long> { Optional<TicketCase> findByExternalTicketId(String externalTicketId); }
@@ -156,6 +157,7 @@ interface LateChargeRuleRepository extends JpaRepository<LateChargeRule,Long> {
 interface LateChargeApplicationRepository extends JpaRepository<LateChargeApplication,Long> {
     Optional<LateChargeApplication> findByDebtIdAndRuleIdAndCalculationDate(Long debtId,Long ruleId,LocalDate date);
     List<LateChargeApplication> findByDebtId(Long debtId);
+    List<LateChargeApplication> findByDebtIdIn(Collection<Long> debtIds);
 }
 interface DueDateProcessingRepository extends JpaRepository<DueDateProcessing,Long> { Optional<DueDateProcessing> findByProcessingDate(LocalDate date); }
 interface ElectronicReconciliationBatchRepository extends JpaRepository<ElectronicReconciliationBatch,Long> { Optional<ElectronicReconciliationBatch> findByExternalBatchReference(String reference); }
