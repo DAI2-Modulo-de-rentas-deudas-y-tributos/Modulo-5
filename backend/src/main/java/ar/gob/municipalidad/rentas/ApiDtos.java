@@ -39,6 +39,7 @@ public final class ApiDtos {
     public record LiquidationRunItemResponse(Long id,Long liquidationRunId,Long taxpayerId,BigDecimal taxableBase,BigDecimal previewAmount,LiquidationRunItemStatus status,String errorCode,String errorMessage,Long liquidationId) {}
     public record LiquidationRunDetailResponse(LiquidationRunResponse run,List<LiquidationRunItemResponse> items) {}
     public record ExemptionRequestResponse(Long id,Long taxpayerId,Long taxConceptId,String reason,BigDecimal requestedPercentage,LocalDate requestedFrom,LocalDate requestedUntil,ExemptionRequestStatus status,String requestedBy,OffsetDateTime requestedAt,String reviewedBy,OffsetDateTime reviewStartedAt,String resolutionSubmittedBy,OffsetDateTime resolutionSubmittedAt,String resolvedBy,OffsetDateTime resolvedAt,String resolutionReason) {}
+    public record ExemptionRequestDocumentResponse(Long id,Long exemptionRequestId,String externalDocumentId,String documentType,String fileName,String uploadedBy,OffsetDateTime uploadedAt) {}
     public record ExemptionResponse(Long id,Long requestId,Long taxpayerId,Long taxConceptId,BigDecimal percentage,LocalDate validFrom,LocalDate validUntil,String status,boolean expired,String approvedBy,OffsetDateTime approvedAt,OffsetDateTime cancelledAt) {}
     public record TicketResponse(Long id,String externalTicketId,Long taxpayerId,String externalCitizenId,String category,String description,TicketPriority priority,TicketCaseStatus status,String assignedTo,OffsetDateTime createdAt,OffsetDateTime updatedAt,OffsetDateTime completedAt) {}
     public record SocialBenefitResponse(Long id,String externalBenefitId,Long taxpayerId,String externalCitizenId,String benefitType,SocialBenefitStatus status,String externalStatus,BigDecimal discountPercentage,LocalDate validFrom,LocalDate validUntil,String sourceEventId,OffsetDateTime updatedAt) {}
@@ -121,7 +122,12 @@ public final class ApiDtos {
     public record LiquidationRunDetail(LiquidationRun run,List<LiquidationRunItem> items) {}
     public record CreateExemptionRequest(@NotNull Long taxpayerId, @NotNull Long taxConceptId, @NotBlank String reason,
         @NotNull @DecimalMin("0.01") @DecimalMax("100.00") BigDecimal percentage,
-        @NotNull LocalDate validFrom, LocalDate validUntil) {}
+        @NotNull LocalDate validFrom, LocalDate validUntil,
+        List<@NotNull @Valid SubmitDocumentationRequest> documents) {
+        public CreateExemptionRequest(Long taxpayerId,Long taxConceptId,String reason,BigDecimal percentage,LocalDate validFrom,LocalDate validUntil) {
+            this(taxpayerId,taxConceptId,reason,percentage,validFrom,validUntil,null);
+        }
+    }
     public record RequestDocumentationRequest(@NotBlank String message) {}
     public record SubmitDocumentationRequest(@NotBlank String externalDocumentId,@NotBlank String documentType,String fileName) {}
     public record SubmitExemptionResolutionRequest(String observation) {}

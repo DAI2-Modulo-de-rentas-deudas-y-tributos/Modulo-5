@@ -137,7 +137,7 @@ interface ExemptionRequestRepository extends FilteredRepository<ExemptionRequest
         @Param("statuses") Collection<ExemptionRequestStatus> statuses,@Param("requestedFrom") LocalDate requestedFrom,
         @Param("requestedUntil") LocalDate requestedUntil);
 }
-interface ExemptionRequestDocumentRepository extends JpaRepository<ExemptionRequestDocument,Long> { List<ExemptionRequestDocument> findByExemptionRequestId(Long requestId); }
+interface ExemptionRequestDocumentRepository extends JpaRepository<ExemptionRequestDocument,Long> { List<ExemptionRequestDocument> findByExemptionRequestId(Long requestId); List<ExemptionRequestDocument> findByExemptionRequestIdOrderByUploadedAtAscIdAsc(Long requestId); }
 interface ExemptionRepository extends FilteredRepository<Exemption,Long> {
     List<Exemption> findByTaxpayerIdAndTaxConceptIdAndStatus(Long taxpayerId,Long conceptId,String status);
     List<Exemption> findByTaxpayerId(Long taxpayerId);
