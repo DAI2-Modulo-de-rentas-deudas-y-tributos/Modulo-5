@@ -124,7 +124,19 @@ interface TicketCaseUpdateRepository extends JpaRepository<TicketCaseUpdate,Long
 interface SocialBenefitRepository extends FilteredRepository<SocialBenefitReference,Long> { Optional<SocialBenefitReference> findByExternalBenefitId(String externalBenefitId); List<SocialBenefitReference> findByTaxpayerId(Long taxpayerId); }
 interface SocialBenefitTaxConceptRepository extends JpaRepository<SocialBenefitTaxConcept,Long> { List<SocialBenefitTaxConcept> findBySocialBenefitId(Long benefitId); boolean existsBySocialBenefitIdAndTaxConceptId(Long benefitId,Long conceptId); void deleteBySocialBenefitId(Long benefitId); }
 interface TaxpayerRepresentationRepository extends JpaRepository<TaxpayerRepresentationReference,Long> { Optional<TaxpayerRepresentationReference> findByExternalRepresentationId(String externalRepresentationId); }
-interface ExemptionRequestRepository extends FilteredRepository<ExemptionRequest,Long> { Page<ExemptionRequest> findByTaxpayerId(Long taxpayerId,Pageable pageable); @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select e from ExemptionRequest e where e.id=:id") Optional<ExemptionRequest> findByIdForUpdate(Long id); }
+interface ExemptionRequestRepository extends FilteredRepository<ExemptionRequest,Long> {
+    Page<ExemptionRequest> findByTaxpayerId(Long taxpayerId,Pageable pageable);
+    @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select e from ExemptionRequest e where e.id=:id") Optional<ExemptionRequest> findByIdForUpdate(Long id);
+    @Query("""
+        select count(e) from ExemptionRequest e
+        where e.taxpayerId=:taxpayerId and e.taxConceptId=:taxConceptId and e.status in :statuses
+          and e.requestedFrom<=:requestedUntil
+          and (e.requestedUntil is null or e.requestedUntil>=:requestedFrom)
+        """)
+    long countOverlapping(@Param("taxpayerId") Long taxpayerId,@Param("taxConceptId") Long taxConceptId,
+        @Param("statuses") Collection<ExemptionRequestStatus> statuses,@Param("requestedFrom") LocalDate requestedFrom,
+        @Param("requestedUntil") LocalDate requestedUntil);
+}
 interface ExemptionRequestDocumentRepository extends JpaRepository<ExemptionRequestDocument,Long> { List<ExemptionRequestDocument> findByExemptionRequestId(Long requestId); }
 interface ExemptionRepository extends FilteredRepository<Exemption,Long> {
     List<Exemption> findByTaxpayerIdAndTaxConceptIdAndStatus(Long taxpayerId,Long conceptId,String status);
