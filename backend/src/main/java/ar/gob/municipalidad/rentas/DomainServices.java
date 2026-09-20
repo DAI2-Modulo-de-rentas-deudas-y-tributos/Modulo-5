@@ -199,6 +199,7 @@ class PaymentService {
         PaymentAllocation a=new PaymentAllocation(); a.paymentId=p.id; a.targetType=AllocationTargetType.DEBT; a.debtId=d.id; a.amount=applied; a.principalApplied=applied; a.interestApplied=BigDecimal.ZERO.setScale(2); a.status="ACTIVE"; a.allocatedBy=identity.get().userId(); a.allocatedAt=OffsetDateTime.now(); allocations.save(a);
         p.allocatedAmount=p.allocatedAmount.add(applied); p.unallocatedAmount=p.amount.subtract(p.allocatedAmount); d.outstandingBalance=d.outstandingBalance.subtract(applied); d.status=d.outstandingBalance.signum()==0?DebtStatus.PAID:DebtStatus.PARTIALLY_PAID; d.updatedAt=OffsetDateTime.now();
         audit.record("PaymentAllocation",a.id,"PAYMENT_ALLOCATED",a);
+        confirmedEvents.paymentRegistered(p,a,d);
         if(d.status==DebtStatus.PAID) addOutbox("debtSettled","Debt",d.id,"{\"debtId\":"+d.id+"}");
         return a;
     }
