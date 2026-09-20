@@ -156,6 +156,7 @@ class PostgreSqlIntegrationTest {
     @Autowired LateChargeRuleRepository lateChargeRules;
     @Autowired LateChargeService lateCharges;
     @Autowired DueDateService dueDates;
+    @Autowired PaymentPlanConfigurationRepository planConfigurations;
     @Autowired ReconciliationService reconciliations;
     @Autowired LiquidationRunService bulkRuns;
 
@@ -182,6 +183,21 @@ class PostgreSqlIntegrationTest {
         assertThat(uniques).anyMatch(x->x.contains("event_id"));
         assertThat(uniques).anyMatch(x->x.contains("taxpayer_id")&&x.contains("tax_concept_id")&&x.contains("period"));
         assertThat(uniques).anyMatch(x->x.contains("source_module")&&x.contains("external_type")&&x.contains("external_reference_id"));
+    }
+
+    @Test void concurrentPlanConfigurationVersioningUsesUniqueSequentialVersions() throws Exception {
+        authenticate();
+        PaymentPlanConfiguration source=workflow.createConfiguration(new ApiDtos.CreatePaymentPlanConfigurationRequest(2,6,BigDecimal.ZERO,new BigDecimal("5"),0,1,true,true,2,LocalDate.now().minusDays(1),null,true));
+        var versions=new java.util.concurrent.CopyOnWriteArrayList<Integer>();
+        var patchSeven=new ApiDtos.UpdatePaymentPlanConfigurationRequest(null,null,null,new BigDecimal("7"),null,null,null,null,null,null,null,null);
+        var patchNine=new ApiDtos.UpdatePaymentPlanConfigurationRequest(null,null,null,new BigDecimal("9"),null,null,null,null,null,null,null,null);
+
+        assertThat(runTogether(()->{versions.add(workflow.updateConfiguration(source.id,patchSeven).version);return null;},
+            ()->{versions.add(workflow.updateConfiguration(source.id,patchNine).version);return null;})).containsOnlyNulls();
+
+        assertThat(versions).hasSize(2).doesNotHaveDuplicates();
+        assertThat(versions).containsExactlyInAnyOrder(source.version+1,source.version+2);
+        assertThat(planConfigurations.findById(source.id).orElseThrow().interestRate).isEqualByComparingTo("5");
     }
 
     @Test void recommendedOperationalIndexesExist(){

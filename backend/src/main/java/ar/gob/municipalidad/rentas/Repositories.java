@@ -85,8 +85,10 @@ interface OutboxRepository extends JpaRepository<OutboxEvent,UUID> { @Query(valu
 interface AuditRepository extends FilteredRepository<AuditEntry,Long> { List<AuditEntry> findByEntityTypeAndEntityIdOrderByOccurredAt(String entityType,String entityId); List<AuditEntry> findByEntityTypeAndEntityIdOrderByOccurredAtAscIdAsc(String entityType,String entityId); }
 interface PaymentPlanConfigurationRepository extends FilteredRepository<PaymentPlanConfiguration,Long> {
     Optional<PaymentPlanConfiguration> findFirstByOrderByVersionDesc();
-    @Query("select c from PaymentPlanConfiguration c where c.active=true and c.validFrom<=:date and (c.validUntil is null or c.validUntil>=:date) order by c.version desc")
-    List<PaymentPlanConfiguration> findApplicable(@Param("date") LocalDate date,Pageable pageable);
+    @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select c from PaymentPlanConfiguration c order by c.version asc")
+    List<PaymentPlanConfiguration> lockVersionSequence(Pageable pageable);
+    @Query("select c from PaymentPlanConfiguration c where c.validFrom<=:date and (c.validUntil is null or c.validUntil>=:date) order by c.version desc")
+    List<PaymentPlanConfiguration> findApplicableVersions(@Param("date") LocalDate date,Pageable pageable);
 }
 interface PaymentPlanRequestRepository extends FilteredRepository<PaymentPlanRequest,Long> { Page<PaymentPlanRequest> findByTaxpayerId(Long taxpayerId,Pageable pageable); @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select r from PaymentPlanRequest r where r.id=:id") Optional<PaymentPlanRequest> findByIdForUpdate(Long id); }
 interface PaymentPlanRequestDebtRepository extends JpaRepository<PaymentPlanRequestDebt,Long> { List<PaymentPlanRequestDebt> findByRequestId(Long requestId); }
