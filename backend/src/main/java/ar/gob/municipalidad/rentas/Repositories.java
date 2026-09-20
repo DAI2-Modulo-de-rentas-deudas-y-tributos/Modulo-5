@@ -73,12 +73,16 @@ interface PaymentRepository extends FilteredRepository<Payment,Long> {
           and (cast(:to as LocalDate) is null or cast(p.paidAt as LocalDate)<=:to)
         """) CollectionIndicatorAggregate aggregateConfirmed(@Param("from") LocalDate from,@Param("to") LocalDate to);
 }
-interface PaymentAllocationRepository extends FilteredRepository<PaymentAllocation,Long> { List<PaymentAllocation> findByPaymentId(Long paymentId); }
+interface PaymentAllocationRepository extends FilteredRepository<PaymentAllocation,Long> {
+    List<PaymentAllocation> findByPaymentId(Long paymentId);
+    List<PaymentAllocation> findByDebtIdOrderByAllocatedAtAscIdAsc(Long debtId);
+    List<PaymentAllocation> findByInstallmentIdInOrderByAllocatedAtAscIdAsc(Collection<Long> installmentIds);
+}
 interface BillRepository extends FilteredRepository<Bill,Long> { List<Bill> findByTaxpayerId(Long taxpayerId); Page<Bill> findByTaxpayerId(Long taxpayerId,Pageable pageable); }
 interface BillDebtRepository extends JpaRepository<BillDebt,Long> { List<BillDebt> findByBillId(Long billId); List<BillDebt> findByBillIdOrderByIdAsc(Long billId); List<BillDebt> findByBillIdInOrderByBillIdAscIdAsc(Collection<Long> billIds); }
 interface ElectronicPaymentRepository extends JpaRepository<ElectronicPaymentAttempt,Long> { Optional<ElectronicPaymentAttempt> findByPaymentId(Long paymentId); }
 interface CreditBalanceRepository extends FilteredRepository<CreditBalance,Long> { Optional<CreditBalance> findBySourcePaymentId(Long paymentId); @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select c from CreditBalance c where c.sourcePaymentId=:paymentId") Optional<CreditBalance> findBySourcePaymentIdForUpdate(Long paymentId); List<CreditBalance> findByTaxpayerId(Long taxpayerId); @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select c from CreditBalance c where c.id=:id") Optional<CreditBalance> findByIdForUpdate(Long id); }
-interface CreditBalanceApplicationRepository extends JpaRepository<CreditBalanceApplication,Long> {}
+interface CreditBalanceApplicationRepository extends JpaRepository<CreditBalanceApplication,Long> { List<CreditBalanceApplication> findByDebtIdOrderByAppliedAtAscIdAsc(Long debtId); }
 interface PaymentReversalRepository extends FilteredRepository<PaymentReversalRequest,Long> { @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select r from PaymentReversalRequest r where r.id=:id") Optional<PaymentReversalRequest> findByIdForUpdate(Long id); boolean existsByPaymentIdAndStatusIn(Long paymentId,Collection<PaymentReversalStatus> statuses); }
 interface ProcessedEventRepository extends JpaRepository<ProcessedEvent,UUID> { boolean existsByExternalEventId(String eventId); }
 interface IntegrationEventLogRepository extends FilteredRepository<IntegrationEventLog,Long> { Optional<IntegrationEventLog> findFirstByEventIdOrderByIdDesc(UUID eventId); Optional<IntegrationEventLog> findFirstByExternalEventIdOrderByIdDesc(String eventId); Page<IntegrationEventLog> findByStatusIn(Collection<IntegrationEventStatus> statuses,Pageable pageable); }
@@ -95,6 +99,7 @@ interface PaymentPlanRequestRepository extends FilteredRepository<PaymentPlanReq
 interface PaymentPlanRequestDebtRepository extends JpaRepository<PaymentPlanRequestDebt,Long> { List<PaymentPlanRequestDebt> findByRequestId(Long requestId); }
 interface PaymentPlanRepository extends FilteredRepository<PaymentPlan,Long> {
     boolean existsByDebtIdAndStatus(Long debtId, PaymentPlanStatus status);
+    List<PaymentPlan> findByDebtIdOrderByGrantedAtAscIdAsc(Long debtId);
     long countByTaxpayerIdAndStatus(Long taxpayerId,PaymentPlanStatus status);
     Page<PaymentPlan> findByTaxpayerId(Long taxpayerId,Pageable pageable);
     @Query("select p.debtId from PaymentPlan p where p.debtId in :debtIds and p.status=:status") Set<Long> findDebtIdsByStatus(@Param("debtIds") Collection<Long> debtIds,@Param("status") PaymentPlanStatus status);
@@ -111,15 +116,20 @@ interface PaymentPlanDebtRepository extends JpaRepository<PaymentPlanDebt,Long> 
     boolean existsByDebtIdAndStatus(Long debtId,PaymentPlanDebtStatus status);
     @Query("select d.debtId from PaymentPlanDebt d where d.debtId in :debtIds and d.status=:status") Set<Long> findDebtIdsByStatus(@Param("debtIds") Collection<Long> debtIds,@Param("status") PaymentPlanDebtStatus status);
     List<PaymentPlanDebt> findByPaymentPlanId(Long paymentPlanId);
+    List<PaymentPlanDebt> findByDebtIdOrderByCreatedAtAscIdAsc(Long debtId);
 }
 interface InstallmentRepository extends JpaRepository<Installment,Long> {
     List<Installment> findByPaymentPlanIdOrderByNumber(Long planId);
+    List<Installment> findByPaymentPlanIdInOrderByPaymentPlanIdAscNumberAsc(Collection<Long> planIds);
     @Query("select i.paymentPlanId from Installment i where i.id=:id") Optional<Long> findPaymentPlanIdById(Long id);
     @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select i from Installment i where i.id=:id") Optional<Installment> findByIdForUpdate(Long id);
 }
 interface PlanExpirationRepository extends FilteredRepository<PlanExpirationRequest,Long> { boolean existsByPaymentPlanIdAndStatus(Long planId,PlanExpirationStatus status); @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select e from PlanExpirationRequest e where e.id=:id") Optional<PlanExpirationRequest> findByIdForUpdate(Long id); }
 interface RefinancingRequestRepository extends FilteredRepository<RefinancingRequest,Long> { @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select r from RefinancingRequest r where r.id=:id") Optional<RefinancingRequest> findByIdForUpdate(Long id); }
-interface AdjustmentRepository extends FilteredRepository<AdjustmentRequest,Long> { List<AdjustmentRequest> findByDebtIdInAndStatusAndResolvedAtAfter(Collection<Long> debtIds,AdjustmentStatus status,OffsetDateTime resolvedAfter); }
+interface AdjustmentRepository extends FilteredRepository<AdjustmentRequest,Long> {
+    List<AdjustmentRequest> findByDebtIdInAndStatusAndResolvedAtAfter(Collection<Long> debtIds,AdjustmentStatus status,OffsetDateTime resolvedAfter);
+    List<AdjustmentRequest> findByDebtIdOrderByRequestedAtAscIdAsc(Long debtId);
+}
 interface LiquidationRunRepository extends FilteredRepository<LiquidationRun,Long> { @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select r from LiquidationRun r where r.id=:id") Optional<LiquidationRun> findByIdForUpdate(Long id); }
 interface LiquidationRunItemRepository extends JpaRepository<LiquidationRunItem,Long> { List<LiquidationRunItem> findByLiquidationRunIdOrderById(Long runId); }
 interface TicketCaseRepository extends FilteredRepository<TicketCase,Long> { Optional<TicketCase> findByExternalTicketId(String externalTicketId); }
