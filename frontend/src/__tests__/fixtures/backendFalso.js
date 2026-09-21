@@ -131,6 +131,7 @@ export function instalarBackendFalso(rutas = {}) {
     const declarada = entradas.find((e) => e.metodo === metodo && e.expresion.test(ruta));
     if (declarada) {
       const valor = typeof declarada.valor === "function" ? declarada.valor({ ruta, cuerpo, metodo }) : declarada.valor;
+      if (valor instanceof Response) return valor;
       return json(valor ?? {});
     }
 

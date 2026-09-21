@@ -270,30 +270,37 @@ function ResolutionModal({ reversal, onClose, onDone }) {
 
           <section>
             <h3 className="mb-2 text-[13px] font-bold text-[#0F2C59]">Imputaciones y deuda</h3>
-            <div className="overflow-hidden rounded-lg border border-neutral-200">
-              <DataTable
-                columns={[
-                  {
-                    key: "target",
-                    header: "Destino",
-                    render: (row) => row.debtId ? `Deuda #${row.debtId}` : `Cuota #${row.installmentId}`,
-                  },
-                  { key: "amount", header: "Aplicado", align: "right", render: (row) => formatCurrency(row.amount) },
-                  { key: "allocationStatus", header: "Imputación", render: (row) => <StatusBadge status={row.status} /> },
-                  {
-                    key: "debtStatus",
-                    header: "Estado de deuda",
-                    render: (row) => row.debt ? <StatusBadge status={row.debt.status} /> : <span className="text-neutral-400">Plan de pago</span>,
-                  },
-                  { key: "balance", header: "Saldo", align: "right", render: (row) => row.debt ? formatCurrency(row.debt.outstandingAmount) : "—" },
-                ]}
-                rows={detail.allocations}
-                rowKey={(row) => row.id}
-                emptyIconName="FileWarning"
-                emptyTitle="Sin imputaciones"
-                emptyDescription="El pago no fue aplicado a una deuda o cuota."
-              />
-            </div>
+            {detail.allocationsUnavailable ? (
+              <Alert variant="info" title="Detalle de imputaciones no disponible para este rol">
+                Podés revisar el pago, el contribuyente y el motivo, y resolver la solicitud.
+                Las imputaciones conservan sus valores y no se modifican en esta etapa.
+              </Alert>
+            ) : (
+              <div className="overflow-hidden rounded-lg border border-neutral-200">
+                <DataTable
+                  columns={[
+                    {
+                      key: "target",
+                      header: "Destino",
+                      render: (row) => row.debtId ? `Deuda #${row.debtId}` : `Cuota #${row.installmentId}`,
+                    },
+                    { key: "amount", header: "Aplicado", align: "right", render: (row) => formatCurrency(row.amount) },
+                    { key: "allocationStatus", header: "Imputación", render: (row) => <StatusBadge status={row.status} /> },
+                    {
+                      key: "debtStatus",
+                      header: "Estado de deuda",
+                      render: (row) => row.debt ? <StatusBadge status={row.debt.status} /> : <span className="text-neutral-400">Plan de pago</span>,
+                    },
+                    { key: "balance", header: "Saldo", align: "right", render: (row) => row.debt ? formatCurrency(row.debt.outstandingAmount) : "—" },
+                  ]}
+                  rows={detail.allocations}
+                  rowKey={(row) => row.id}
+                  emptyIconName="FileWarning"
+                  emptyTitle="Sin imputaciones"
+                  emptyDescription="El pago no fue aplicado a una deuda o cuota."
+                />
+              </div>
+            )}
           </section>
 
           <section className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
@@ -328,6 +335,9 @@ function ResolutionModal({ reversal, onClose, onDone }) {
           ) : (
             <Alert variant="info" title={`Solicitud ${labelFor(detail.status).toLocaleLowerCase("es")}`}>
               La decisión fue registrada por {detail.resolvedBy ?? "el Supervisor"} el {formatDateTime(detail.resolvedAt)}.
+              {detail.status === "REJECTED" && detail.resolutionReason && (
+                <span className="mt-1 block">Motivo: {detail.resolutionReason}</span>
+              )}
             </Alert>
           )}
         </>

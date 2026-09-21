@@ -493,10 +493,20 @@ export const paymentReversalService = {
 
   async detail(id) {
     const reversal = await request(`/api/v1/payment-reversals/${id}`);
-    const [payment, allocations] = await Promise.all([
+    const [payment, allocationResult] = await Promise.all([
       request(`/api/v1/payments/${reversal.paymentId}`),
-      request(`/api/v1/payments/${reversal.paymentId}/allocations`),
+      request(`/api/v1/payments/${reversal.paymentId}/allocations`)
+        .then((allocations) => ({ allocations, unavailable: false }))
+        .catch((error) => {
+          // El detalle de imputaciones tiene permisos más restrictivos que la
+          // resolución de reversiones. No debe impedir que el Supervisor resuelva.
+          if (error.status === 401 || error.status === 403) {
+            return { allocations: [], unavailable: true };
+          }
+          throw error;
+        }),
     ]);
+    const { allocations, unavailable: allocationsUnavailable } = allocationResult;
     const [taxpayer, debts] = await Promise.all([
       taxpayerService.getById(payment.taxpayerId),
       Promise.all(
@@ -509,6 +519,7 @@ export const paymentReversalService = {
       ...reversal,
       payment,
       taxpayer,
+      allocationsUnavailable,
       allocations: allocations.map((allocation) => ({
         ...allocation,
         debt: allocation.debtId ? debtById.get(allocation.debtId) ?? null : null,
@@ -817,6 +828,42 @@ export const exemptionService = {
   async list({ status = "", internalStatus = "" } = {}) {
     const params = new URLSearchParams({ status, size: "100" });
     return request(`/api/v1/exemption-requests?${params}`);
+  },
+
+  /** Ficha completa: solicitud, documentación, evaluación previa y resolución. */
+  async detail(requestId) {
+    const exemption = await request(`/api/v1/exemption-requests/${requestId}`);
+    const [documents, timeline, taxpayer, concept] = await Promise.all([
+      request(`/api/v1/exemption-requests/${requestId}/documents`),
+      request(`/api/v1/exemption-requests/${requestId}/history`),
+      taxpayerService.getById(exemption.citizenId),
+      request(`/api/v1/tax-concepts/${exemption.conceptId}`),
+    ]);
+    const result = timeline.result ?? null;
+    const history = (timeline.entries ?? []).map((entry) => ({
+      ...entry,
+      at: entry.date,
+      note:
+        entry.message ??
+        (entry.document?.fileName ? `Documento: ${entry.document.fileName}` : null),
+    }));
+    return {
+      ...exemption,
+      taxpayer,
+      taxpayerName: taxpayer.name,
+      concept,
+      conceptCode: concept.code,
+      conceptName: concept.name,
+      documents: documents ?? [],
+      attachments: documents ?? [],
+      history,
+      result,
+      percentage: result?.percentage ?? null,
+      validFrom: result?.validFrom ?? null,
+      validUntil: result?.validUntil ?? null,
+      approvedAt: result?.approvedAt ?? null,
+      resolutionMessage: result?.message ?? exemption.resolutionReason ?? null,
+    };
   },
 
   /**
@@ -1252,24 +1299,7 @@ export const auditService = {
   },
 
   async exemptionDetail(requestId) {
-    const [exemption, history, effective] = await Promise.all([
-      request(`/api/v1/exemption-requests/${requestId}`),
-      request(`/api/v1/audit/entities/ExemptionRequest/${requestId}`).catch(() => []),
-      request(`/api/v1/exemptions?requestId=${requestId}&size=100`).catch(() => []),
-    ]);
-    const granted = effective[0] ?? null;
-    return {
-      ...exemption,
-      ...(granted ? {
-        exemptionId: granted.id,
-        percentage: granted.percentage,
-        validFrom: granted.validFrom,
-        validUntil: granted.validUntil,
-        approvedBy: granted.approvedBy,
-        approvedAt: granted.approvedAt,
-      } : {}),
-      history: history ?? [],
-    };
+    return exemptionService.detail(requestId);
   },
 
   // -------------------------------------------------------------------- Tickets

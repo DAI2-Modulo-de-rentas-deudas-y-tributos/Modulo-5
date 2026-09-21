@@ -148,6 +148,36 @@ describe("tareas frontend de reversiones y financiación", () => {
     expect(call.cuerpo).toEqual({ reason });
   });
 
+  it("permite resolver aunque el rol no pueda consultar las imputaciones", async () => {
+    instalarBackendFalso({
+      "GET /api/v1/payment-reversals": pagina([reversal]),
+      "GET /api/v1/payment-reversals/{id}": reversal,
+      "GET /api/v1/payments/{id}/allocations": new Response(
+        JSON.stringify({ status: 403, code: "FORBIDDEN", message: "Acceso denegado" }),
+        { status: 403, headers: { "content-type": "application/json" } },
+      ),
+      "POST /api/v1/payment-reversals/{id}/approve": {
+        ...reversal,
+        status: "APPROVED",
+        resolvedBy: "jlopez",
+        resolvedAt: "2026-09-20T09:00:00-03:00",
+      },
+    });
+    render(<App />);
+    await ingresarComoAgente(user, "jlopez", "rentas123");
+    await user.click(await screen.findByRole("link", { name: /reversiones de pago/i }));
+    await user.click(await screen.findByRole("button", { name: /revisar/i }));
+
+    const dialog = await screen.findByRole("dialog", { name: /solicitud de reversión/i });
+    expect(
+      await within(dialog).findByText(/detalle de imputaciones no disponible para este rol/i),
+    ).toBeDefined();
+    expect(within(dialog).getByText("Juan Pérez")).toBeDefined();
+    await user.click(within(dialog).getByRole("button", { name: /aprobar solicitud/i }));
+
+    expect(await screen.findByText(/fue aprobada.*sigue confirmado/i)).toBeDefined();
+  });
+
   it("consulta la configuración vigente y el historial y crea una versión nueva", async () => {
     const fetchFalso = instalarBackendFalso({
       "GET /api/v1/payment-plan-configurations": pagina(planConfigurations),

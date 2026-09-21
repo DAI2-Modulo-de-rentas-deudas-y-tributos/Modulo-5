@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import { useParams } from "react-router-dom";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
 import Card from "../../components/common/Card.jsx";
+import DataTable from "../../components/common/DataTable.jsx";
 import StatusBadge from "../../components/common/StatusBadge.jsx";
 import Alert from "../../components/ui/Alert.jsx";
 import Spinner from "../../components/ui/Spinner.jsx";
@@ -9,7 +10,7 @@ import FieldGrid from "../../components/auditoria/FieldGrid.jsx";
 import HistoryTimeline from "../../components/auditoria/HistoryTimeline.jsx";
 import useResource from "../../hooks/useResource.js";
 import { auditService } from "../../services/rentasService.js";
-import { formatDate, formatPercentage } from "../../lib/format.js";
+import { formatDate, formatDateTime, formatPercentage, labelFor } from "../../lib/format.js";
 
 /** Detalle de la exención, con foco en la brecha entre lo pedido y lo otorgado. */
 export default function ExencionDetallePage() {
@@ -75,11 +76,7 @@ export default function ExencionDetallePage() {
               { label: "Concepto", value: exemption.conceptName },
               { label: "Fecha de solicitud", value: formatDate(exemption.requestedAt) },
               { label: "Estado", value: <StatusBadge status={exemption.status} /> },
-              { label: "Expediente", value: exemption.fileNumber },
-              {
-                label: "Beneficio social relacionado",
-                value: exemption.benefitId ? `Beneficio #${exemption.benefitId} (M8)` : null,
-              },
+              { label: "Solicitó", value: exemption.requestedBy },
               { label: "Motivo", value: exemption.reason, span: 2 },
             ]}
           />
@@ -119,6 +116,37 @@ export default function ExencionDetallePage() {
         </div>
       </Card>
 
+      <Card title="Documentación presentada" description="Archivos asociados a la solicitud por el backend.">
+        <DataTable
+          columns={[
+            { key: "fileName", header: "Archivo" },
+            { key: "documentType", header: "Tipo", render: (row) => labelFor(row.documentType) },
+            { key: "uploadedBy", header: "Presentó" },
+            { key: "uploadedAt", header: "Fecha", render: (row) => formatDateTime(row.uploadedAt) },
+          ]}
+          rows={exemption.documents}
+          rowKey={(row) => row.id}
+          emptyIconName="FileWarning"
+          emptyTitle="Sin documentación"
+          emptyDescription="La solicitud no tiene archivos registrados."
+        />
+      </Card>
+
+      <Card title="Evaluación previa">
+        <div className="px-5 py-4">
+          <FieldGrid
+            columns={4}
+            items={[
+              { label: "Revisó", value: exemption.reviewedBy },
+              { label: "Inicio de revisión", value: exemption.reviewStartedAt ? formatDateTime(exemption.reviewStartedAt) : null },
+              { label: "Envió a resolución", value: exemption.resolutionSubmittedBy },
+              { label: "Fecha de envío", value: exemption.resolutionSubmittedAt ? formatDateTime(exemption.resolutionSubmittedAt) : null },
+              { label: "Observación previa", value: exemption.resolutionReason, span: 2 },
+            ]}
+          />
+        </div>
+      </Card>
+
       <Card title="Resolución">
         <div className="px-5 py-4">
           <FieldGrid
@@ -130,19 +158,18 @@ export default function ExencionDetallePage() {
               },
               {
                 label: "Fecha de resolución",
-                value: exemption.resolvedAt ? formatDate(exemption.resolvedAt) : null,
+                value: exemption.result?.resolvedAt ? formatDateTime(exemption.result.resolvedAt) : null,
               },
-              { label: "Exención generada", value: exemption.exemptionId ? `#${exemption.exemptionId}` : null },
               {
                 label: exemption.status === "REJECTED" ? "Motivo del rechazo" : "Observaciones",
-                value: exemption.reason_rejected ?? exemption.observations,
+                value: exemption.resolutionMessage,
                 span: 2,
               },
               {
                 label: "Documentación respaldatoria",
                 value:
-                  exemption.attachments?.length > 0
-                    ? `${exemption.attachments.length} archivo(s) en S3`
+                  exemption.documents?.length > 0
+                    ? `${exemption.documents.length} archivo(s)`
                     : null,
               },
             ]}
