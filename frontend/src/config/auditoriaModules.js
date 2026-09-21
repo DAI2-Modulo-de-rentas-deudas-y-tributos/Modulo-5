@@ -81,6 +81,13 @@ export const AUDITORIA_MODULES = [
       "Eventos intercambiados con los demás módulos, su payload y qué generaron en Rentas.",
   },
   {
+    id: "obligaciones-externas",
+    path: "/auditor/obligaciones-externas",
+    label: "Obligaciones externas",
+    iconName: "Network",
+    description: "Referencia de origen, procesamiento, deuda generada y reintentos.",
+  },
+  {
     id: "auditoria",
     path: "/auditor/auditoria",
     label: "Auditoría",

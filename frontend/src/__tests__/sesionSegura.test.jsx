@@ -48,7 +48,12 @@ describe("ciclo de sesión verificado por backend", () => {
     vi.spyOn(authService, "login").mockResolvedValue({ token: "token-rechazado", user: { role: "CONTRIBUYENTE" } });
     const logout = vi.spyOn(authService, "logout").mockResolvedValue();
     render(<AuthProvider><Estado /></AuthProvider>);
-    await act(async () => { expect(await auth.login({}, { accept: () => false })).toMatchObject({ accepted: false }); });
+    await act(async () => {
+      await expect(auth.login({}, { accept: () => false })).rejects.toMatchObject({
+        message: "Usuario o contraseña incorrectos.",
+        code: "INVALID_CREDENTIALS",
+      });
+    });
     expect(logout).toHaveBeenCalledWith("token-rechazado");
     expect(sessionStorage.getItem("rentas.token")).toBeNull();
     await waitFor(() => expect(auth.isAuthenticated).toBe(false));

@@ -7,8 +7,8 @@ import { instalarBackendFalso } from "./fixtures/backendFalso.js";
 
 /**
  * Ingreso: dos puertas, una por tipo de usuario. Abre la del contribuyente y el agente
- * municipal cruza a la suya. Entrar por la puerta equivocada no abre sesión aunque las
- * credenciales sean correctas: la pantalla avisa y ofrece la que corresponde.
+ * municipal cruza a la suya. Entrar por un acceso que no corresponde no abre sesión ni
+ * revela a qué área pertenece el usuario.
  */
 describe("ingreso al área de trabajo", () => {
   let user;
@@ -110,7 +110,7 @@ describe("ingreso al área de trabajo", () => {
     expect(screen.getByRole("link", { name: /bitácora/i })).toBeDefined();
   });
 
-  it("no deja al contribuyente entrar por la puerta de agentes y lo lleva a la suya", async () => {
+  it("no revela el rol del contribuyente cuando intenta entrar por el acceso municipal", async () => {
     render(<App />);
 
     await user.click(screen.getByRole("button", { name: /trabajo en el municipio/i }));
@@ -118,19 +118,13 @@ describe("ingreso al área de trabajo", () => {
     await user.type(screen.getByLabelText(/contraseña/i), "ciudadano123");
     await user.click(screen.getByRole("button", { name: /entrar a personal de rentas/i }));
 
-    expect(await screen.findByText(/estás en la pestaña equivocada/i)).toBeDefined();
-    // Las credenciales eran válidas, pero la sesión no se abrió.
+    expect(await screen.findByText(/usuario o contraseña incorrectos/i)).toBeDefined();
     expect(screen.queryByRole("heading", { name: /hola,/i })).toBeNull();
-
-    await user.click(screen.getByRole("button", { name: /llevame a la puerta correcta/i }));
-    expect(screen.getByRole("heading", { name: /entrar al portal/i })).toBeDefined();
-
-    // Los datos quedan cargados: termina de entrar con un click.
-    await user.click(screen.getByRole("button", { name: /ingresar al portal/i }));
-    await waitFor(() => expect(screen.getByRole("heading", { name: /hola, juan/i })).toBeDefined());
+    expect(screen.queryByText(/tu usuario pertenece/i)).toBeNull();
+    expect(screen.queryByRole("button", { name: /llevame a la puerta correcta/i })).toBeNull();
   });
 
-  it("no deja a personal de rentas entrar por el área de caja y lo lleva a la suya", async () => {
+  it("no revela el área del agente cuando intenta entrar por otra área municipal", async () => {
     render(<App />);
 
     await user.click(screen.getByRole("button", { name: /trabajo en el municipio/i }));
@@ -139,14 +133,9 @@ describe("ingreso al área de trabajo", () => {
     await user.type(screen.getByLabelText(/contraseña/i), "rentas123");
     await user.click(screen.getByRole("button", { name: /entrar a ventanilla de caja/i }));
 
-    expect(await screen.findByText(/estás en la pestaña equivocada/i)).toBeDefined();
+    expect(await screen.findByText(/usuario o contraseña incorrectos/i)).toBeDefined();
     expect(screen.queryByRole("heading", { name: /hola,/i })).toBeNull();
-
-    await user.click(screen.getByRole("button", { name: /llevame a la puerta correcta/i }));
-    await user.click(screen.getByRole("button", { name: /entrar a personal de rentas/i }));
-
-    await waitFor(() =>
-      expect(screen.getByRole("heading", { name: /hola, mariana/i })).toBeDefined(),
-    );
+    expect(screen.queryByText(/tu usuario pertenece/i)).toBeNull();
+    expect(screen.queryByRole("button", { name: /llevame a la puerta correcta/i })).toBeNull();
   });
 });

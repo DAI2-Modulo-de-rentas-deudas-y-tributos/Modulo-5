@@ -20,6 +20,9 @@ import PlanesPage from "./pages/rentas/PlanesPage.jsx";
 import ParametrosFinanciacionPage from "./pages/rentas/ParametrosFinanciacionPage.jsx";
 import RefinanciacionPage from "./pages/rentas/RefinanciacionPage.jsx";
 import ReversionesPage from "./pages/rentas/ReversionesPage.jsx";
+import CaducidadesPage from "./pages/rentas/CaducidadesPage.jsx";
+import CorridasMasivasPage from "./pages/rentas/CorridasMasivasPage.jsx";
+import ObligacionesExternasPage from "./pages/rentas/ObligacionesExternasPage.jsx";
 import ExencionesPage from "./pages/rentas/ExencionesPage.jsx";
 import TicketsPage from "./pages/rentas/TicketsPage.jsx";
 import EventosPage from "./pages/rentas/EventosPage.jsx";
@@ -59,6 +62,9 @@ import MisBoletasPage from "./pages/portal/MisBoletasPage.jsx";
 import MisPagosPage from "./pages/portal/MisPagosPage.jsx";
 import PlanesPortalPage from "./pages/portal/PlanesPortalPage.jsx";
 import ExencionesPortalPage from "./pages/portal/ExencionesPortalPage.jsx";
+import PagoElectronicoPage from "./pages/portal/PagoElectronicoPage.jsx";
+import BeneficiosPortalPage from "./pages/portal/BeneficiosPortalPage.jsx";
+import RefinanciacionPortalPage from "./pages/portal/RefinanciacionPortalPage.jsx";
 
 /**
  * Rutas de las dos áreas de trabajo del módulo.
@@ -89,12 +95,15 @@ export default function App() {
               <Route path="planes" element={<PlanesPage />} />
               <Route path="parametros-financiacion" element={<ParametrosFinanciacionPage />} />
               <Route path="refinanciacion" element={<RefinanciacionPage />} />
+              <Route path="reversiones" element={<ReversionesPage />} />
+              <Route path="caducidades" element={<CaducidadesPage />} />
+              <Route path="corridas-masivas" element={<CorridasMasivasPage />} />
+              <Route path="obligaciones-externas" element={<ObligacionesExternasPage />} />
               <Route path="exenciones" element={<ExencionesPage />} />
               <Route path="tickets" element={<TicketsPage />} />
 
               <Route element={<ProtectedRoute roles={["SUPERVISOR"]} />}>
                 <Route path="eventos" element={<EventosPage />} />
-                <Route path="reversiones" element={<ReversionesPage />} />
               </Route>
 
               <Route path="*" element={<NotFoundPage />} />
@@ -136,6 +145,7 @@ export default function App() {
               <Route path="tickets/:ticketId" element={<TicketDetallePage />} />
               <Route path="integraciones" element={<IntegracionesPage />} />
               <Route path="integraciones/:eventId" element={<IntegracionDetallePage />} />
+              <Route path="obligaciones-externas" element={<ObligacionesExternasPage />} />
               <Route path="auditoria" element={<AuditoriaPage />} />
               <Route path="auditoria/:entryId" element={<AuditoriaDetallePage />} />
               <Route path="indicadores" element={<IndicadoresPage />} />
@@ -153,6 +163,10 @@ export default function App() {
               <Route path="pagos" element={<MisPagosPage />} />
               <Route path="planes" element={<PlanesPortalPage />} />
               <Route path="exenciones" element={<ExencionesPortalPage />} />
+              <Route path="pago-electronico" element={<PagoElectronicoPage />} />
+              <Route path="beneficios" element={<BeneficiosPortalPage />} />
+              <Route path="refinanciacion" element={<RefinanciacionPortalPage />} />
+              <Route path="refinanciacion/:requestId" element={<RefinanciacionPortalPage />} />
 
               <Route path="*" element={<NotFoundPage />} />
             </Route>

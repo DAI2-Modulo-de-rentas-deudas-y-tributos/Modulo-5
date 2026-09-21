@@ -2,9 +2,8 @@
  * Módulos del portal del contribuyente.
  *
  * El ciudadano consulta su propio legajo: qué debe, qué le emitieron y qué pagó.
- * No registra pagos —eso pasa por ventanilla o por los canales de cobro— y no
- * resuelve nada: sólo puede *solicitar* un plan de pago o una exención, que es
- * lo que viaja en `paymentPlanRequested` y `exemptionRequested`.
+ * Puede registrar pagos electrónicos y consultar sus resultados; las demás
+ * operaciones sensibles siguen siendo solicitudes que Rentas debe resolver.
  */
 export const PORTAL_MODULES = [
   {
@@ -30,6 +29,13 @@ export const PORTAL_MODULES = [
     description: "Pagos registrados a tu nombre y a qué deuda se aplicó cada uno.",
   },
   {
+    id: "pago-electronico",
+    path: "/portal/pago-electronico",
+    label: "Pago electrónico",
+    iconName: "CreditCard",
+    description: "Pagá una deuda con tarjeta o billetera y obtené tu comprobante.",
+  },
+  {
     id: "planes",
     path: "/portal/planes",
     label: "Planes de pago",
@@ -44,5 +50,19 @@ export const PORTAL_MODULES = [
     iconName: "ShieldCheck",
     description:
       "Solicitá una exención total o parcial y seguí cómo se resuelve.",
+  },
+  {
+    id: "refinanciacion",
+    path: "/portal/refinanciacion",
+    label: "Refinanciación",
+    iconName: "RefreshCw",
+    description: "Solicitá nuevas condiciones para el saldo de un plan activo.",
+  },
+  {
+    id: "beneficios",
+    path: "/portal/beneficios",
+    label: "Beneficios tributarios",
+    iconName: "BadgePercent",
+    description: "Consultá tus beneficios vigentes, porcentaje y alcance.",
   },
 ];
