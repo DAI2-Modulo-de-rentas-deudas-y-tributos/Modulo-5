@@ -19,7 +19,7 @@ class FilteredQueryService {
         entry(AdjustmentRequest.class,fields("debtId","type","status","requestedAt","resolvedAt"),aliases(),"requestedAt",List.of()),
         entry(Debt.class,fields("taxpayerId","taxConceptId","originType","status","dueDate","createdAt","updatedAt"),aliases("conceptId","taxConceptId"),"createdAt",List.of()),
         entry(Bill.class,fields("number","taxpayerId","status","issueDate","dueDate","createdAt"),aliases(),"createdAt",List.of("number")),
-        entry(Payment.class,fields("taxpayerId","billId","paymentMethod","status","allocationStatus","origin","paidAt","createdAt"),aliases("method","paymentMethod"),"paidAt",List.of("receiptNumber")),
+        entry(Payment.class,fields("taxpayerId","billId","paymentMethod","amount","allocatedAmount","unallocatedAmount","status","allocationStatus","origin","receiptNumber","paidAt","createdAt"),aliases("method","paymentMethod","reference","receiptNumber"),"paidAt",List.of("receiptNumber")),
         entry(PaymentAllocation.class,fields("paymentId","targetType","debtId","installmentId","status","allocatedAt"),aliases(),"allocatedAt",List.of()),
         entry(CreditBalance.class,fields("taxpayerId","sourcePaymentId","status","createdAt","updatedAt"),aliases(),"createdAt",List.of()),
         entry(PaymentReversalRequest.class,fields("paymentId","status","requestedBy","requestedAt","resolvedAt","executedAt"),aliases(),"requestedAt",List.of()),
@@ -38,9 +38,14 @@ class FilteredQueryService {
     );
 
     <T> Page<T> list(FilteredRepository<T,?> repository,Class<T> type,Map<String,String> query,Pageable pageable){
+        return list(repository,type,query,pageable,null);
+    }
+
+    <T> Page<T> list(FilteredRepository<T,?> repository,Class<T> type,Map<String,String> query,Pageable pageable,Specification<T> required){
         Definition definition=Optional.ofNullable(DEFINITIONS.get(type)).orElseThrow();
         validate(query,definition);validateSort(pageable,definition);
-        Specification<T> specification=(root,cq,cb)->predicate(root,cb,query,definition,type);
+        Specification<T> requested=(root,cq,cb)->predicate(root,cb,query,definition,type);
+        Specification<T> specification=required==null?requested:required.and(requested);
         return repository.findAll(specification,pageable);
     }
 
@@ -68,7 +73,7 @@ class FilteredQueryService {
         }
     }
     private void validateSort(Pageable pageable,Definition definition){for(Sort.Order order:pageable.getSort())if(!definition.fields.contains(order.getProperty()))throw new BusinessException("INVALID_SORT","Orden no permitido: "+order.getProperty(),400);}
-    private Object convert(String value,Class<?> type){try{if(type==String.class)return value;if(type==Long.class||type==long.class)return Long.valueOf(value);if(type==Integer.class||type==int.class)return Integer.valueOf(value);if(type==Boolean.class||type==boolean.class)return Boolean.valueOf(value);if(type==LocalDate.class)return LocalDate.parse(value);if(type==OffsetDateTime.class)return value.length()==10?LocalDate.parse(value).atStartOfDay().atOffset(ZoneOffset.UTC):OffsetDateTime.parse(value);if(type==UUID.class)return UUID.fromString(value);if(type.isEnum())return Enum.valueOf((Class<Enum>)type,value.toUpperCase(Locale.ROOT));return value;}catch(RuntimeException ex){throw new BusinessException("INVALID_FILTER_VALUE","Valor de filtro inválido: "+value,400);}}
+    private Object convert(String value,Class<?> type){try{if(type==String.class)return value;if(type==Long.class||type==long.class)return Long.valueOf(value);if(type==Integer.class||type==int.class)return Integer.valueOf(value);if(type==java.math.BigDecimal.class)return new java.math.BigDecimal(value);if(type==Boolean.class||type==boolean.class)return Boolean.valueOf(value);if(type==LocalDate.class)return LocalDate.parse(value);if(type==OffsetDateTime.class)return value.length()==10?LocalDate.parse(value).atStartOfDay().atOffset(ZoneOffset.UTC):OffsetDateTime.parse(value);if(type==UUID.class)return UUID.fromString(value);if(type.isEnum())return Enum.valueOf((Class<Enum>)type,value.toUpperCase(Locale.ROOT));return value;}catch(RuntimeException ex){throw new BusinessException("INVALID_FILTER_VALUE","Valor de filtro inválido: "+value,400);}}
     private Object rangeValue(String value,Class<?> type,boolean endOfDay){if(type==OffsetDateTime.class&&value.length()==10){LocalDate date=LocalDate.parse(value);return (endOfDay?date.plusDays(1).atStartOfDay().minusNanos(1):date.atStartOfDay()).atOffset(ZoneOffset.UTC);}return convert(value,type);}
     private static Map.Entry<Class<?>,Definition> entry(Class<?> type,Set<String> fields,Map<String,String> aliases,String dateField,List<String> search){return Map.entry(type,new Definition(fields,aliases,dateField,search));}
     private static Set<String> fields(String... values){return Set.of(values);}
