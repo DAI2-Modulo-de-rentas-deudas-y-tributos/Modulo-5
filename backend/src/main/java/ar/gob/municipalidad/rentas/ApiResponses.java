@@ -38,7 +38,7 @@ final class ApiResponses {
     static ApiDtos.ExternalObligationResponse of(ExternalObligation x){return new ApiDtos.ExternalObligationResponse(x.id,x.sourceModule,x.externalType,x.externalReferenceId,x.sourceEventId,x.externalTaxpayerType,x.externalTaxpayerId,x.taxpayerId,x.taxConceptId,x.amount,x.dueDate,x.status,x.errorMessage,x.retryCount,x.receivedAt,x.processedAt);}
     static ApiDtos.AuditEntryResponse of(AuditEntry x){return new ApiDtos.AuditEntryResponse(x.id,x.entityType,x.entityId,x.action,x.userId,x.userRole,x.previousData,x.newData,x.correlationId,x.occurredAt);}
     static ApiDtos.IntegrationEventResponse of(IntegrationEventLog x){return new ApiDtos.IntegrationEventResponse(x.id,x.externalEventId==null&&x.eventId!=null?x.eventId.toString():x.externalEventId,x.eventType,x.sourceModule,x.targetModule,x.direction,x.status,x.payload,x.retryCount,x.errorMessage,x.occurredAt,x.receivedAt,x.processedAt,x.lastRetryAt);}
-    static ApiDtos.ElectronicPaymentResponse of(ElectronicPaymentAttempt x){return new ApiDtos.ElectronicPaymentResponse(x.id,x.paymentId,x.taxpayerId,x.debtId,x.amount,x.status,x.gatewayReference,x.createdAt);}
+    static ApiDtos.ElectronicPaymentResponse of(ElectronicPaymentAttempt x){return new ApiDtos.ElectronicPaymentResponse(x.id,x.paymentId,x.taxpayerId,x.debtId,x.amount,x.status,x.gatewayReference,x.rejectionReason,x.createdAt);}
     static ApiDtos.OutboxEventResponse of(OutboxEvent x){return new ApiDtos.OutboxEventResponse(x.id,x.eventType,x.targetModule,x.aggregateType,x.aggregateId,x.payload,x.status,x.retryCount,x.createdAt,x.publishedAt,x.lastAttemptAt,x.errorMessage);}
 }
 

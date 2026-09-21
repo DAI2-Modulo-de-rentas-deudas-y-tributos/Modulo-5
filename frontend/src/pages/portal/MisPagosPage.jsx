@@ -164,9 +164,27 @@ function PaymentDetailModal({ paymentId, onClose }) {
             { label: "Sin imputar", value: formatCurrency(payment.unallocatedAmount) },
             { label: "Registrado por", value: payment.registeredBy ?? "Canal digital" },
           ]} />
-          <Alert variant="info" title="Detalle de imputaciones">
-            El backend actual sólo expone al Contribuyente los totales aplicado y sin imputar; el destino por obligación todavía requiere el endpoint pendiente del backend.
-          </Alert>
+          <div className="mt-5">
+            <h3 className="mb-2 text-[14px] font-semibold text-[#0F2C59]">Imputaciones</h3>
+            <DataTable
+              columns={[
+                {
+                  key: "targetType",
+                  header: "Destino",
+                  render: (row) => row.targetType === "INSTALLMENT"
+                    ? `Cuota #${row.installmentId}`
+                    : `Deuda #${row.debtId}`,
+                },
+                { key: "amount", header: "Importe imputado", align: "right", render: (row) => formatCurrency(row.amount) },
+                { key: "status", header: "Estado", render: (row) => <StatusBadge status={row.status} /> },
+              ]}
+              rows={payment.allocations ?? []}
+              rowKey={(row) => row.id}
+              emptyIconName="ListChecks"
+              emptyTitle="Sin imputaciones"
+              emptyDescription="Este pago todavía no fue aplicado a una deuda o cuota."
+            />
+          </div>
         </>
       )}
     </Modal>

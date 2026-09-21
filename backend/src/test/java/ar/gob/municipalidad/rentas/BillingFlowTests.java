@@ -32,6 +32,9 @@ class BillingFlowTests {
     @Autowired CreditBalanceRepository credits;
     @Autowired CreditBalanceApplicationRepository creditApplications;
     @Autowired AuditRepository audits;
+    @Autowired PaymentRepository paymentRepository;
+    @Autowired PaymentAllocationRepository paymentAllocations;
+    @Autowired ElectronicPaymentRepository electronicPaymentAttempts;
 
     @BeforeEach void authenticateEmployee() {
         authenticate(new AuthenticatedIdentity("tester", null), "RENTAS", "CASHIER");
@@ -213,6 +216,29 @@ class BillingFlowTests {
         assertThat(attempt.status).isEqualTo(ElectronicPaymentStatus.APPROVED);
         assertThat(electronicPayments.getByPayment(attempt.paymentId).id).isEqualTo(attempt.id);
         assertThat(debts.findById(debt.id).orElseThrow().status).isEqualTo(DebtStatus.PAID);
+    }
+
+    @Test void rejectedElectronicAttemptIsPersistedWithoutEconomicEffectsAndRemainsIdempotent() {
+        Debt debt=debt("BILL-ELECTRONIC-REJECTED","ELECTRONIC-REJECTED");
+        debt.status=DebtStatus.CANCELLED;debts.saveAndFlush(debt);
+        authenticate(new AuthenticatedIdentity("taxpayer-user",debt.taxpayerId),"TAXPAYER");
+        long paymentCount=paymentRepository.count(),allocationCount=paymentAllocations.count();
+        ApiDtos.ElectronicPaymentRequest request=new ApiDtos.ElectronicPaymentRequest(debt.id,PaymentMethod.CARD,new BigDecimal("100"));
+
+        ElectronicPaymentAttempt first=electronicPayments.create(request,"rejected-attempt-1");
+        ElectronicPaymentAttempt repeated=electronicPayments.create(request,"rejected-attempt-1");
+
+        assertThat(first.status).isEqualTo(ElectronicPaymentStatus.REJECTED);
+        assertThat(first.paymentId).isNull();
+        assertThat(first.rejectionReason).isNotBlank();
+        assertThat(repeated.id).isEqualTo(first.id);
+        assertThat(paymentRepository.count()).isEqualTo(paymentCount);
+        assertThat(paymentAllocations.count()).isEqualTo(allocationCount);
+        assertThat(debts.findById(debt.id).orElseThrow()).satisfies(stored->{
+            assertThat(stored.status).isEqualTo(DebtStatus.CANCELLED);
+            assertThat(stored.outstandingBalance).isEqualByComparingTo("100.00");
+        });
+        assertThat(electronicPaymentAttempts.findAll()).filteredOn(attempt->debt.id.equals(attempt.debtId)).hasSize(1);
     }
 
     private void authenticate(AuthenticatedIdentity identity, String... roles) {
