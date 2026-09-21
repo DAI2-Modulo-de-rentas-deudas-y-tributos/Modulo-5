@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { authService } from "../services/rentasService.js";
-import { AUTH_MODE } from "../services/apiClient.js";
+import { ApiError, AUTH_MODE } from "../services/apiClient.js";
 
 const AuthContext = createContext(null);
 
@@ -51,21 +51,19 @@ export function AuthProvider({ children }) {
     };
   }, []);
 
-  /**
-   * Autentica y, si el llamador lo acepta, abre la sesión.
-   *
-   * `accept` existe por la pantalla de ingreso, que tiene una puerta por área: unas
-   * credenciales pueden ser válidas y aun así no corresponder a la puerta elegida.
-   * En ese caso el perfil vuelve con `accepted: false` y la sesión no se abre, para
-   * que el login pueda avisar y ofrecer la puerta correcta sin dejar al usuario
-   * adentro de un área que no es la suya.
-   */
+  /** Autentica y abre la sesión únicamente si el perfil corresponde al acceso elegido. */
   const login = useCallback(async (credentials, { accept } = {}) => {
     const generation = ++sessionGeneration.current;
     const { token, user: profile } = await authService.login(credentials);
     if (generation !== sessionGeneration.current || (accept && !accept(profile))) {
-      await authService.logout(token);
-      return { profile, accepted: false };
+      // El perfil nunca se expone al login si el usuario eligió otro acceso.
+      // La revocación es best-effort: aunque falle, el token no se guarda localmente.
+      try {
+        await authService.logout(token);
+      } catch {
+        // La respuesta visible debe ser indistinguible de unas credenciales inválidas.
+      }
+      throw new ApiError("Usuario o contraseña incorrectos.", 401, null, "INVALID_CREDENTIALS");
     }
 
     sessionStorage.setItem(TOKEN_KEY, token);
