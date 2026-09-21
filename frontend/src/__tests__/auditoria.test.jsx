@@ -121,4 +121,61 @@ describe("área de auditoría", () => {
 
     expect(await screen.findByRole("button", { name: /ver gráficos/i })).toBeDefined();
   });
+
+  it("muestra el detalle y el historial real de una solicitud de exención", async () => {
+    instalarBackendFalso({
+      "GET /api/v1/exemption-requests/{id}/documents": [
+        {
+          id: 72,
+          exemptionRequestId: 600,
+          externalDocumentId: "DOC-72",
+          documentType: "SOCIAL_REPORT",
+          fileName: "informe-social.pdf",
+          uploadedBy: "ciudadano1",
+          uploadedAt: "2026-08-19T10:00:00-03:00",
+        },
+      ],
+      "GET /api/v1/exemption-requests/{id}/history": {
+        requestId: 600,
+        currentStatus: "APPROVED",
+        order: "ASC",
+        entries: [
+          {
+            type: "REQUESTED",
+            date: "2026-08-18T10:00:00-03:00",
+            status: "PENDING",
+            action: "Solicitud creada",
+            message: null,
+            document: null,
+          },
+          {
+            type: "APPROVED",
+            date: "2026-08-21T12:00:00-03:00",
+            status: "APPROVED",
+            action: "Solicitud aprobada",
+            message: "Cumple los requisitos",
+            document: null,
+          },
+        ],
+        result: {
+          percentage: 80,
+          validFrom: "2026-09-01",
+          validUntil: "2027-08-31",
+          approvedAt: "2026-08-21T12:00:00-03:00",
+          resolvedAt: "2026-08-21T12:00:00-03:00",
+          status: "ACTIVE",
+          message: "Cumple los requisitos",
+        },
+      },
+    });
+    await loginAsAuditor(user);
+    await user.click(screen.getByRole("link", { name: /^exenciones$/i }));
+    await user.click(await screen.findByText("#600"));
+
+    expect(await screen.findByRole("heading", { name: /exención #600/i })).toBeDefined();
+    expect(await screen.findByText("informe-social.pdf")).toBeDefined();
+    expect(screen.getByText("Solicitud aprobada")).toBeDefined();
+    expect(screen.getAllByText("Cumple los requisitos").length).toBeGreaterThan(0);
+    expect(screen.getByText("80%")).toBeDefined();
+  });
 });

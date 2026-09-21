@@ -171,6 +171,75 @@ describe("trámite de documentación en exenciones", () => {
     expect(await screen.findByText(/trámite actualizado/i)).toBeDefined();
     expect(await screen.findByText(/falta documentación/i)).toBeDefined();
   });
+
+  it("el Supervisor revisa solicitud, documentos, evaluación e historial antes de resolver", async () => {
+    const solicitud = {
+      id: 600,
+      taxpayerId: 123,
+      taxConceptId: 1,
+      status: "PENDING_RESOLUTION",
+      requestedPercentage: 75,
+      reason: "Ingresos familiares insuficientes",
+      requestedFrom: "2026-09-01",
+      requestedUntil: "2027-08-31",
+      requestedBy: "ciudadano1",
+      requestedAt: "2026-08-18T10:00:00-03:00",
+      reviewedBy: "mrivas",
+      reviewStartedAt: "2026-08-19T09:00:00-03:00",
+      resolutionSubmittedBy: "mrivas",
+      resolutionSubmittedAt: "2026-08-20T11:00:00-03:00",
+      resolutionReason: "Documentación validada",
+    };
+    instalarBackendFalso({
+      "GET /api/v1/exemption-requests": () => pagina([solicitud]),
+      "GET /api/v1/exemption-requests/{id}": solicitud,
+      "GET /api/v1/exemption-requests/{id}/documents": [
+        {
+          id: 71,
+          exemptionRequestId: 600,
+          externalDocumentId: "DOC-71",
+          documentType: "INCOME_CERTIFICATE",
+          fileName: "certificado-ingresos.pdf",
+          uploadedBy: "ciudadano1",
+          uploadedAt: "2026-08-19T10:00:00-03:00",
+        },
+      ],
+      "GET /api/v1/exemption-requests/{id}/history": {
+        requestId: 600,
+        currentStatus: "PENDING_RESOLUTION",
+        order: "ASC",
+        entries: [
+          {
+            type: "REQUESTED",
+            date: "2026-08-18T10:00:00-03:00",
+            status: "PENDING",
+            action: "Solicitud creada",
+            message: null,
+            document: null,
+          },
+          {
+            type: "SUBMITTED_FOR_RESOLUTION",
+            date: "2026-08-20T11:00:00-03:00",
+            status: "PENDING_RESOLUTION",
+            action: "Enviada para resolución",
+            message: "Documentación validada",
+            document: null,
+          },
+        ],
+        result: null,
+      },
+    });
+
+    await entrar(user, "jlopez", /exenciones/i);
+    await user.click(await screen.findByRole("button", { name: /resolver/i }));
+
+    const dialog = await screen.findByRole("dialog", { name: /solicitud #600/i });
+    expect(await within(dialog).findByText("certificado-ingresos.pdf")).toBeDefined();
+    expect(within(dialog).getByText("Ingresos familiares insuficientes")).toBeDefined();
+    expect(within(dialog).getAllByText("Documentación validada").length).toBeGreaterThan(0);
+    expect(within(dialog).getByText("Enviada para resolución")).toBeDefined();
+    expect(within(dialog).getByRole("button", { name: /aprobar exención/i }).disabled).toBe(false);
+  });
 });
 
 describe("información recibida en tickets", () => {

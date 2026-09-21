@@ -9,7 +9,10 @@ import Modal from "../../components/common/Modal.jsx";
 import Button from "../../components/common/Button.jsx";
 import Alert from "../../components/ui/Alert.jsx";
 import FormField from "../../components/ui/FormField.jsx";
+import Spinner from "../../components/ui/Spinner.jsx";
 import FileUpload from "../../components/common/FileUpload.jsx";
+import FieldGrid from "../../components/auditoria/FieldGrid.jsx";
+import HistoryTimeline from "../../components/auditoria/HistoryTimeline.jsx";
 import useResource from "../../hooks/useResource.js";
 import useTaxpayerIndex from "../../hooks/useTaxpayerIndex.js";
 import useTaxConcepts from "../../hooks/useTaxConcepts.js";
@@ -102,13 +105,18 @@ export default function ExencionesPage() {
         }
         return (
           <div className="flex justify-end gap-2">
-            <Button size="sm" variant="secondary" onClick={() => setWorkflow(row)}>
-              Trámite
-            </Button>
-            {row.internalStatus === "PENDING_RESOLUTION" && (
+            {user.role === "PERSONAL" && (
+              <Button size="sm" variant="secondary" onClick={() => setWorkflow(row)}>
+                Trámite
+              </Button>
+            )}
+            {user.role === "SUPERVISOR" && row.internalStatus === "PENDING_RESOLUTION" && (
               <Button size="sm" variant="primary" onClick={() => setSelected(row)}>
                 Resolver
               </Button>
+            )}
+            {user.role === "SUPERVISOR" && row.internalStatus !== "PENDING_RESOLUTION" && (
+              <span className="text-[12px] text-neutral-400">En trámite</span>
             )}
           </div>
         );
@@ -135,9 +143,11 @@ export default function ExencionesPage() {
         title="Solicitudes de exención"
         description="Un beneficio social activo en M8 respalda la solicitud, pero no la aprueba automáticamente."
         actions={
-          <Button size="sm" variant="primary" onClick={() => setCreating(true)}>
-            Nueva solicitud
-          </Button>
+          user.role === "PERSONAL" ? (
+            <Button size="sm" variant="primary" onClick={() => setCreating(true)}>
+              Nueva solicitud
+            </Button>
+          ) : null
         }
       >
         <FilterBar
@@ -499,6 +509,11 @@ function WorkflowModal({ exemption, actor, onClose, onDone }) {
 
 function ResolveExemptionModal({ exemption, citizenName, onClose, onDone }) {
   const { user } = useAuth();
+  const loader = useCallback(
+    () => exemptionService.detail(exemption.requestId),
+    [exemption.requestId],
+  );
+  const { data: detail, loading, error: detailError } = useResource(loader);
   const [form, setForm] = useState({
     status: "APPROVED",
     percentage: String(exemption.requestedPercentage),
@@ -545,8 +560,9 @@ function ResolveExemptionModal({ exemption, citizenName, onClose, onDone }) {
   return (
     <Modal
       open
+      size="xl"
       title={`Solicitud #${exemption.requestId}`}
-      description={`${citizenName} · ${exemption.conceptCode} · pedida el ${formatDateTime(exemption.requestedAt)}`}
+      description={`${detail?.taxpayerName ?? citizenName} · ${detail?.conceptCode ?? exemption.conceptCode} · pedida el ${formatDateTime(exemption.requestedAt)}`}
       onClose={onClose}
       footer={
         <>
@@ -556,6 +572,7 @@ function ResolveExemptionModal({ exemption, citizenName, onClose, onDone }) {
           <Button
             variant={form.status === "APPROVED" ? "primary" : "accent"}
             loading={submitting}
+            disabled={loading || Boolean(detailError)}
             onClick={onSubmit}
           >
             {form.status === "APPROVED" ? "Aprobar exención" : "Rechazar solicitud"}
@@ -563,20 +580,77 @@ function ResolveExemptionModal({ exemption, citizenName, onClose, onDone }) {
         </>
       }
     >
+      {detailError && (
+        <Alert variant="error" title="No se pudo cargar la evaluación">{detailError}</Alert>
+      )}
       {error && <Alert variant="error" title="No se pudo resolver">{error}</Alert>}
 
-      <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-4 text-[13px] text-neutral-600">
-        <p>
-          Motivo declarado:{" "}
-          <span className="font-medium text-neutral-800">{exemption.reason}</span>
-        </p>
-        <p className="mt-1">
-          Solicitado: {formatPercentage(exemption.requestedPercentage)} entre{" "}
-          {formatDate(exemption.requestedFrom)} y {formatDate(exemption.requestedUntil)}
-        </p>
-      </div>
+      {loading && (
+        <div className="flex items-center justify-center gap-3 py-8">
+          <Spinner />
+          <span className="text-[13px] text-neutral-400">Cargando solicitud, documentación e historial…</span>
+        </div>
+      )}
 
-      {exemption.hasSocialBenefit && (
+      {detail && (
+        <>
+          <section className="rounded-lg border border-neutral-200 bg-neutral-50 p-4">
+            <h3 className="mb-3 text-[13px] font-bold text-[#0F2C59]">Solicitud</h3>
+            <FieldGrid
+              columns={3}
+              items={[
+                { label: "Contribuyente", value: detail.taxpayerName ?? citizenName },
+                { label: "Concepto", value: `${detail.conceptCode} · ${detail.conceptName}` },
+                { label: "Presentada", value: formatDateTime(detail.requestedAt) },
+                { label: "Porcentaje solicitado", value: formatPercentage(detail.requestedPercentage) },
+                { label: "Vigencia solicitada", value: `${formatDate(detail.requestedFrom)} — ${formatDate(detail.requestedUntil)}`, span: 2 },
+                { label: "Motivo declarado", value: detail.reason, span: 2 },
+                { label: "Solicitó", value: detail.requestedBy },
+              ]}
+            />
+          </section>
+
+          <section>
+            <h3 className="mb-2 text-[13px] font-bold text-[#0F2C59]">Documentación presentada</h3>
+            <div className="overflow-hidden rounded-lg border border-neutral-200">
+              <DataTable
+                columns={[
+                  { key: "fileName", header: "Archivo" },
+                  { key: "documentType", header: "Tipo", render: (row) => labelFor(row.documentType) },
+                  { key: "uploadedBy", header: "Presentó" },
+                  { key: "uploadedAt", header: "Fecha", render: (row) => formatDateTime(row.uploadedAt) },
+                ]}
+                rows={detail.documents}
+                rowKey={(row) => row.id}
+                emptyIconName="FileWarning"
+                emptyTitle="Sin documentación"
+                emptyDescription="La solicitud no tiene archivos presentados."
+              />
+            </div>
+          </section>
+
+          <section className="rounded-lg border border-neutral-200 px-4 py-3">
+            <h3 className="mb-3 text-[13px] font-bold text-[#0F2C59]">Evaluación previa</h3>
+            <FieldGrid
+              columns={3}
+              items={[
+                { label: "Revisó", value: detail.reviewedBy },
+                { label: "Inicio de revisión", value: detail.reviewStartedAt ? formatDateTime(detail.reviewStartedAt) : null },
+                { label: "Envió a resolución", value: detail.resolutionSubmittedBy },
+                { label: "Fecha de envío", value: detail.resolutionSubmittedAt ? formatDateTime(detail.resolutionSubmittedAt) : null },
+                { label: "Observación previa", value: detail.resolutionReason, span: 2 },
+              ]}
+            />
+          </section>
+
+          <section>
+            <h3 className="mb-3 text-[13px] font-bold text-[#0F2C59]">Historial de la solicitud</h3>
+            <HistoryTimeline entries={detail.history} />
+          </section>
+        </>
+      )}
+
+      {(detail?.hasSocialBenefit ?? exemption.hasSocialBenefit) && (
         <Alert variant="info" title="El ciudadano tiene un beneficio social activo">
           M8 informó un beneficio vigente mediante socialBenefitUpdated. Verificá que el
           porcentaje aprobado no se superponga con el descuento ya aplicado en la liquidación.
