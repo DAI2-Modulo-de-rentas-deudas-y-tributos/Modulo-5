@@ -9,7 +9,7 @@ import useResource from "../../hooks/useResource.js";
 import { cashierService } from "../../services/rentasService.js";
 
 /** Reimpresión del comprobante de un pago ya registrado. */
-export default function ReceiptModal({ paymentId, onClose }) {
+export default function ReceiptModal({ paymentId, onClose, onRequestReversal }) {
   const loader = useCallback(
     () => (paymentId ? cashierService.receipt(paymentId) : Promise.resolve(null)),
     [paymentId],
@@ -29,6 +29,11 @@ export default function ReceiptModal({ paymentId, onClose }) {
           <Button variant="secondary" onClick={onClose}>
             Cerrar
           </Button>
+          {onRequestReversal && receipt?.status !== "REVERSED" && (
+            <Button variant="danger" onClick={onRequestReversal} disabled={!receipt}>
+              Solicitar reversión
+            </Button>
+          )}
           <Button variant="primary" onClick={printReceipt} disabled={!receipt}>
             <Printer className="h-4 w-4" strokeWidth={2} />
             Imprimir

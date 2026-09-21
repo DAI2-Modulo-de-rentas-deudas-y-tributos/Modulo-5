@@ -1,7 +1,12 @@
 import { useEffect } from "react";
 import { X } from "lucide-react";
 
-export default function Modal({ open, title, description, onClose, children, footer }) {
+const WIDTHS = {
+  lg: "max-w-lg",
+  xl: "max-w-3xl",
+};
+
+export default function Modal({ open, title, description, onClose, children, footer, size = "lg" }) {
   useEffect(() => {
     if (!open) return undefined;
     const onKeyDown = (event) => event.key === "Escape" && onClose();
@@ -22,8 +27,8 @@ export default function Modal({ open, title, description, onClose, children, foo
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="relative w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl border border-neutral-200/70 bg-white
-                   shadow-[0_20px_60px_-20px_rgba(15,44,89,0.45)] animate-[modal-in_200ms_cubic-bezier(0.4,0,0.2,1)]"
+        className={`relative w-full ${WIDTHS[size] ?? WIDTHS.lg} max-h-[90vh] overflow-y-auto rounded-xl border border-neutral-200/70 bg-white
+                   shadow-[0_20px_60px_-20px_rgba(15,44,89,0.45)] animate-[modal-in_200ms_cubic-bezier(0.4,0,0.2,1)]`}
       >
         <div className="flex items-start justify-between gap-4 border-b border-neutral-100 px-5 py-4">
           <div className="min-w-0">

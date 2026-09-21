@@ -17,7 +17,9 @@ import BoletasPage from "./pages/rentas/BoletasPage.jsx";
 import AjustesYSaldosPage from "./pages/rentas/AjustesYSaldosPage.jsx";
 import PagosPage from "./pages/rentas/PagosPage.jsx";
 import PlanesPage from "./pages/rentas/PlanesPage.jsx";
+import ParametrosFinanciacionPage from "./pages/rentas/ParametrosFinanciacionPage.jsx";
 import RefinanciacionPage from "./pages/rentas/RefinanciacionPage.jsx";
+import ReversionesPage from "./pages/rentas/ReversionesPage.jsx";
 import ExencionesPage from "./pages/rentas/ExencionesPage.jsx";
 import TicketsPage from "./pages/rentas/TicketsPage.jsx";
 import EventosPage from "./pages/rentas/EventosPage.jsx";
@@ -85,12 +87,14 @@ export default function App() {
               <Route path="pagos" element={<PagosPage />} />
               <Route path="ajustes" element={<AjustesYSaldosPage />} />
               <Route path="planes" element={<PlanesPage />} />
+              <Route path="parametros-financiacion" element={<ParametrosFinanciacionPage />} />
               <Route path="refinanciacion" element={<RefinanciacionPage />} />
               <Route path="exenciones" element={<ExencionesPage />} />
               <Route path="tickets" element={<TicketsPage />} />
 
               <Route element={<ProtectedRoute roles={["SUPERVISOR"]} />}>
                 <Route path="eventos" element={<EventosPage />} />
+                <Route path="reversiones" element={<ReversionesPage />} />
               </Route>
 
               <Route path="*" element={<NotFoundPage />} />
