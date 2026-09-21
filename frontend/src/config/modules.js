@@ -88,6 +88,16 @@ export const MODULES = [
     countLabel: "pendientes",
   },
   {
+    id: "parametros-financiacion",
+    path: "/rentas/parametros-financiacion",
+    label: "Parámetros de financiación",
+    iconName: "SlidersHorizontal",
+    description:
+      "Cuotas, anticipo, tasa, vencimientos y tolerancias con historial de versiones.",
+    roles: ["PERSONAL", "SUPERVISOR"],
+    countLabel: "versiones",
+  },
+  {
     id: "refinanciacion",
     path: "/rentas/refinanciacion",
     label: "Refinanciación",
@@ -96,6 +106,16 @@ export const MODULES = [
       "Rearmar planes incumplidos sobre su saldo vivo, conservando el original como antecedente.",
     roles: ["PERSONAL", "SUPERVISOR"],
     countLabel: "refinanciables",
+  },
+  {
+    id: "reversiones",
+    path: "/rentas/reversiones",
+    label: "Reversiones de pago",
+    iconName: "Undo2",
+    description:
+      "Solicitudes de Caja pendientes de aprobación o rechazo por el Supervisor.",
+    roles: ["SUPERVISOR"],
+    countLabel: "pendientes",
   },
   {
     id: "exenciones",

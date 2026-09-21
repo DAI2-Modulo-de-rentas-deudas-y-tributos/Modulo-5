@@ -6,6 +6,7 @@ import FilterBar from "../../components/common/FilterBar.jsx";
 import StatusBadge from "../../components/common/StatusBadge.jsx";
 import Alert from "../../components/ui/Alert.jsx";
 import ReceiptModal from "../../components/caja/ReceiptModal.jsx";
+import ReversalRequestModal from "../../components/caja/ReversalRequestModal.jsx";
 import useResource from "../../hooks/useResource.js";
 import useTaxpayerIndex from "../../hooks/useTaxpayerIndex.js";
 import { cashierService, paymentService } from "../../services/rentasService.js";
@@ -17,13 +18,36 @@ import { formatCurrency, formatDateTime, labelFor } from "../../lib/format.js";
  */
 export default function PagosCajaPage() {
   const [filters, setFilters] = useState({ date: new Date().toISOString().slice(0, 10), status: "", registeredBy: "" });
-  const [receiptId, setReceiptId] = useState(null);
+  const [query, setQuery] = useState("");
+  const [selectedPayment, setSelectedPayment] = useState(null);
+  const [reversalTarget, setReversalTarget] = useState(null);
+  const [feedback, setFeedback] = useState(null);
   const [agents, setAgents] = useState([]);
   const [agentsError, setAgentsError] = useState(null);
 
-  const loader = useCallback(() => paymentService.list(filters), [filters]);
-  const { data: payments, loading, error } = useResource(loader, []);
-  const { nameOf } = useTaxpayerIndex();
+  const loader = useCallback(
+    () => query
+      ? paymentService.listAll({ ...filters, date: "" })
+      : paymentService.list(filters),
+    [filters, query],
+  );
+  const { data: payments, loading, error, reload } = useResource(loader, []);
+  const { index, nameOf } = useTaxpayerIndex();
+
+  const normalizedQuery = query.trim().toLocaleLowerCase("es");
+  const visiblePayments = normalizedQuery
+    ? (payments ?? []).filter((payment) => {
+        const taxpayer = index[payment.taxpayerId] ?? {};
+        return [
+          payment.receiptNumber,
+          payment.id,
+          taxpayer.name,
+          taxpayer.document,
+          taxpayer.cuit,
+          taxpayer.externalId,
+        ].some((value) => String(value ?? "").toLocaleLowerCase("es").includes(normalizedQuery));
+      })
+    : payments ?? [];
 
   useEffect(() => {
     let active = true;
@@ -98,6 +122,11 @@ export default function PagosCajaPage() {
       homePath="/caja"
       homeLabel="Panel de caja"
     >
+      {feedback && (
+        <Alert variant="success" title="Solicitud enviada" onDismiss={() => setFeedback(null)}>
+          {feedback}
+        </Alert>
+      )}
       {error && (
         <Alert variant="error" title="No pudimos cargar los pagos">
           {error}
@@ -110,6 +139,9 @@ export default function PagosCajaPage() {
         description="Hacé clic en un pago para ver el detalle y su comprobante."
       >
         <FilterBar
+          searchValue={query}
+          searchPlaceholder="Comprobante, DNI, CUIT u operación…"
+          onSearchChange={setQuery}
           filters={[
             { name: "date", label: "Fecha", type: "date" },
             {
@@ -129,17 +161,33 @@ export default function PagosCajaPage() {
 
         <DataTable
           columns={columns}
-          rows={payments ?? []}
+          rows={visiblePayments}
           rowKey={(row) => row.id}
           loading={loading}
           emptyIconName="Banknote"
           emptyTitle="Sin pagos para esos filtros"
           emptyDescription="Probá con otra fecha o quitá el filtro de responsable."
-          onRowClick={(row) => setReceiptId(row.id)}
+          onRowClick={setSelectedPayment}
         />
       </Card>
 
-      <ReceiptModal paymentId={receiptId} onClose={() => setReceiptId(null)} />
+      <ReceiptModal
+        paymentId={selectedPayment?.id}
+        onClose={() => setSelectedPayment(null)}
+        onRequestReversal={() => {
+          setReversalTarget(selectedPayment);
+          setSelectedPayment(null);
+        }}
+      />
+      <ReversalRequestModal
+        payment={reversalTarget}
+        onClose={() => setReversalTarget(null)}
+        onDone={(request) => {
+          setReversalTarget(null);
+          setFeedback(`La solicitud #${request.id} quedó pendiente de aprobación.`);
+          reload();
+        }}
+      />
     </ModuleShell>
   );
 }
