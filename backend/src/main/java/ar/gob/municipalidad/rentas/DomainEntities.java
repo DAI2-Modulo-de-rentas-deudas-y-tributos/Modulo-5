@@ -222,6 +222,9 @@ class ElectronicPaymentAttempt {
     @Column(nullable=false,precision=19,scale=2) public BigDecimal amount;
     @Enumerated(EnumType.STRING) @Column(nullable=false) public ElectronicPaymentStatus status;
     @Column(name="gateway_reference",nullable=false,unique=true) public String gatewayReference;
+    @Column(name="rejection_reason") public String rejectionReason;
+    @Column(name="idempotency_key",length=128) public String idempotencyKey;
+    @Column(name="idempotency_fingerprint",length=64) public String idempotencyFingerprint;
     @Column(name="created_at",nullable=false) public OffsetDateTime createdAt;
     protected ElectronicPaymentAttempt() {}
 }

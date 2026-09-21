@@ -104,6 +104,19 @@ class PaymentPlanFlowTests {
         assertThat(plans.findById(request.newPaymentPlanId).orElseThrow().refinancingCount).isEqualTo(1);
     }
 
+    @Test void refinancingRejectsOnlyAnotherActiveRequestForTheSamePlan() {
+        Debt debt=debt("PLAN-FLOW-REFINANCING-DUPLICATE","PLAN-FLOW-REFINANCING-DUPLICATE");PaymentPlan plan=grant(debt,2);
+        RefinancingRequest first=workflow.requestRefinancing(plan.id,new ApiDtos.CreateRefinancingRequest(3));
+
+        assertThatThrownBy(()->workflow.requestRefinancing(plan.id,new ApiDtos.CreateRefinancingRequest(3)))
+            .isInstanceOfSatisfying(BusinessException.class,exception->assertThat(exception.code).isEqualTo("REFINANCING_ALREADY_PENDING"));
+
+        workflow.rejectRefinancing(first.id,"No corresponde");
+        RefinancingRequest next=workflow.requestRefinancing(plan.id,new ApiDtos.CreateRefinancingRequest(3));
+        assertThat(next.id).isNotEqualTo(first.id);
+        assertThat(next.status).isEqualTo(RefinancingRequestStatus.PENDING);
+    }
+
     private PaymentPlan grant(Debt debt,int count){PaymentPlanRequest request=workflow.request(new ApiDtos.CreatePaymentPlanRequest(debt.taxpayerId,List.of(debt.id),count));workflow.grant(request.id,null);return plans.findById(request.paymentPlanId).orElseThrow();}
     @Autowired PaymentAllocationRepository paymentAllocations;
     private PaymentAllocation paymentsAllocation(Long paymentId){return paymentAllocations.findByPaymentId(paymentId).get(0);}

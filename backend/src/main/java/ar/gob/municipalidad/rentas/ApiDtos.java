@@ -58,7 +58,13 @@ public final class ApiDtos {
     public record ExternalObligationResponse(Long id,String sourceModule,ExternalObligationType externalType,String externalReferenceId,UUID sourceEventId,TaxpayerType externalTaxpayerType,String externalTaxpayerId,Long taxpayerId,Long taxConceptId,BigDecimal amount,LocalDate dueDate,ExternalObligationStatus status,String errorMessage,int retryCount,OffsetDateTime receivedAt,OffsetDateTime processedAt) {}
     public record AuditEntryResponse(Long id,String entityType,String entityId,String action,String userId,String userRole,String previousData,String newData,String correlationId,OffsetDateTime occurredAt) {}
     public record IntegrationEventResponse(Long id,String eventId,String eventType,String sourceModule,String targetModule,EventDirection direction,IntegrationEventStatus status,String payload,int retryCount,String errorMessage,OffsetDateTime occurredAt,OffsetDateTime receivedAt,OffsetDateTime processedAt,OffsetDateTime lastRetryAt) {}
-    public record ElectronicPaymentResponse(Long id,Long paymentId,Long taxpayerId,Long debtId,BigDecimal amount,ElectronicPaymentStatus status,String gatewayReference,OffsetDateTime createdAt) {}
+    public record ElectronicPaymentResponse(Long id,Long paymentId,Long taxpayerId,Long debtId,BigDecimal amount,ElectronicPaymentStatus status,String gatewayReference,String rejectionReason,OffsetDateTime createdAt) {}
+    public record DashboardQueueResponse(String key,String label,long count,String path,String statusFilter) {}
+    public record SupervisorDashboardResponse(long adjustments,long reversals,long exemptions,long exceptionalPlans,
+        long exceptionalRefinancings,long liquidationRuns,long planExpirations,long totalPending,List<DashboardQueueResponse> queues) {}
+    public record RecentOperationResponse(String entityType,String entityId,String action,OffsetDateTime occurredAt) {}
+    public record RentasDashboardResponse(long openTickets,long unallocatedPayments,BigDecimal unallocatedPaymentAmount,
+        long pendingExemptions,long pendingPlanRequests,List<RecentOperationResponse> recentOperations) {}
     public record OutboxEventResponse(UUID id,String eventType,String targetModule,String aggregateType,String aggregateId,String payload,OutboxStatus status,int retryCount,OffsetDateTime createdAt,OffsetDateTime publishedAt,OffsetDateTime lastAttemptAt,String errorMessage) {}
 
     public record CreateTaxpayerRequest(@NotNull TaxpayerType taxpayerType, @NotBlank String externalId,
