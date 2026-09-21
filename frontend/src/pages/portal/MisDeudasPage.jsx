@@ -153,9 +153,9 @@ export default function MisDeudasPage() {
       </Card>
 
       <Alert variant="info" title="¿Cómo pago?">
-        Las deudas se pagan con la boleta, en la ventanilla de Rentas o por los canales
-        habilitados. Este portal no registra pagos: cuando el tuyo se acredite, va a
-        aparecer en <strong>Mis pagos</strong> y el saldo va a bajar acá.
+        Podés pagar con tarjeta o billetera desde <strong>Pago electrónico</strong>, o
+        usar la boleta en la ventanilla y los canales habilitados. Cuando se acredite,
+        aparece en <strong>Mis pagos</strong> y el saldo baja acá.
       </Alert>
     </ModuleShell>
   );

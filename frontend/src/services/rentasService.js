@@ -529,6 +529,11 @@ export const paymentReversalService = {
       body: { reason },
     });
   },
+
+  /** La ejecución es un paso separado y exclusivo de Personal de Rentas. */
+  async execute(id) {
+    return request(`/api/v1/payment-reversals/${id}/execute`, { method: "POST" });
+  },
 };
 
 // ------------------------------------------------------------ Saldos a favor
@@ -635,9 +640,23 @@ export const paymentPlanService = {
   },
 
   /** ResolvePaymentPlanRequest → publica updatePaymentPlanStatus (GRANTED | REJECTED). */
-  async resolve({ requestId, status, installments, reason, resolvedBy, resolverRole }) {
-    const action = status === "REJECTED" ? "reject" : "grant";
-    return request(`/api/v1/payment-plan-requests/${requestId}/${action}`, { method: "POST", body: action === "reject" ? { reason } : { downPaymentAmount: 0 } });
+  async resolve({ requestId, status, installments, downPayment = 0, reason, resolvedBy, resolverRole }) {
+    const exceptional = resolverRole === "SUPERVISOR";
+    if (exceptional && status !== "REJECTED") {
+      await request(`/api/v1/payment-plan-requests/${requestId}/approve-exception`, {
+        method: "POST",
+        body: { observation: reason || null },
+      });
+      return request(`/api/v1/payment-plan-requests/${requestId}/grant`, {
+        method: "POST",
+        body: { downPaymentAmount: downPayment },
+      });
+    }
+    const action = status === "REJECTED" ? (exceptional ? "reject-exception" : "reject") : "grant";
+    return request(`/api/v1/payment-plan-requests/${requestId}/${action}`, {
+      method: "POST",
+      body: action.includes("reject") ? { reason } : { downPaymentAmount: downPayment },
+    });
   },
 };
 
@@ -651,6 +670,53 @@ export const paymentPlanConfigurationService = {
     return request("/api/v1/payment-plan-configurations", {
       method: "POST",
       body: configuration,
+    });
+  },
+};
+
+/** Incumplimientos y solicitudes de caducidad de planes. */
+export const planExpirationService = {
+  async defaulted() {
+    return allPages("/api/v1/payment-plans/defaulted?sort=expiredAt,desc");
+  },
+
+  async defaultedDetail(planId) {
+    const [plan, installments] = await Promise.all([
+      request(`/api/v1/payment-plans/${planId}`),
+      request(`/api/v1/payment-plans/${planId}/installments`),
+    ]);
+    const [taxpayer, configuration] = await Promise.all([
+      taxpayerService.getById(plan.taxpayerId),
+      plan.configurationId
+        ? request(`/api/v1/payment-plan-configurations/${plan.configurationId}`).catch(() => null)
+        : null,
+    ]);
+    return { ...plan, installments, taxpayer, configuration };
+  },
+
+  async requests({ status = "" } = {}) {
+    const params = new URLSearchParams({ status, size: "100", sort: "requestedAt,desc" });
+    return request(`/api/v1/payment-plan-expirations?${params}`);
+  },
+
+  async request({ planId, reason }) {
+    return request(`/api/v1/payment-plans/${planId}/expiration-requests`, {
+      method: "POST",
+      body: { reason },
+    });
+  },
+
+  async detail(id) {
+    const expiration = await request(`/api/v1/payment-plan-expirations/${id}`);
+    const plan = await planExpirationService.defaultedDetail(expiration.paymentPlanId);
+    return { ...expiration, plan };
+  },
+
+  async resolve({ id, status, reason = "" }) {
+    const action = status === "REJECTED" ? "reject" : "approve";
+    return request(`/api/v1/payment-plan-expirations/${id}/${action}`, {
+      method: "POST",
+      body: action === "reject" ? { reason } : { observation: reason || null },
     });
   },
 };
@@ -713,13 +779,35 @@ export const refinancingService = {
    */
   async resolve({ requestId, status, resolvedBy, resolverRole, reason }) {
     const exceptional = resolverRole === "SUPERVISOR";
-    const action = status === "REJECTED" ? (exceptional ? "reject-exception" : "reject") : (exceptional ? "approve-exception" : "grant");
-    return request(`/api/v1/refinancing-requests/${requestId}/${action}`, { method: "POST", body: action.includes("reject") ? { reason } : { observation: reason ?? null } });
+    if (status === "REJECTED") {
+      const action = exceptional ? "reject-exception" : "reject";
+      const rejected = await request(`/api/v1/refinancing-requests/${requestId}/${action}`, {
+        method: "POST",
+        body: { reason },
+      });
+      return { ...rejected, reason };
+    }
+    if (exceptional) {
+      await request(`/api/v1/refinancing-requests/${requestId}/approve-exception`, {
+        method: "POST",
+        body: { observation: reason ?? null },
+      });
+    }
+    const granted = await request(`/api/v1/refinancing-requests/${requestId}/grant`, { method: "POST" });
+    const [previousPlan, newPlan] = await Promise.all([
+      request(`/api/v1/payment-plans/${granted.planId}`),
+      request(`/api/v1/payment-plans/${granted.newPaymentPlanId}`),
+    ]);
+    return { ...granted, previousPlan, newPlan };
   },
 
   async list({ status = "" } = {}) {
     const params = new URLSearchParams({ status });
-    return request(`/api/v1/refinancing-requests?${params}`);
+    const rows = await request(`/api/v1/refinancing-requests?${params}`);
+    return Promise.all(rows.map(async (row) => ({
+      ...row,
+      originalPlan: await request(`/api/v1/payment-plans/${row.planId}`).catch(() => null),
+    })));
   },
 };
 
@@ -812,6 +900,54 @@ export const eventService = {
   /** Reproceso manual de un evento en DLQ (el consumidor es idempotente vía eventId). */
   async retry(eventId) {
     return request(`/api/v1/events/${eventId}/retry`, { method: "POST" });
+  },
+};
+
+/** Obligaciones recibidas desde otros módulos y sus errores de procesamiento. */
+export const externalObligationService = {
+  async list({ externalReferenceId = "", status = "", sourceModule = "" } = {}) {
+    const params = new URLSearchParams({ externalReferenceId, status, sourceModule, size: "100", sort: "receivedAt,desc" });
+    return request(`/api/v1/external-obligations?${params}`);
+  },
+
+  async errors() {
+    return request("/api/v1/external-obligations/errors?size=100&sort=receivedAt,desc");
+  },
+
+  async detail(id) {
+    return request(`/api/v1/external-obligations/${id}`);
+  },
+
+  async retry(id) {
+    return request(`/api/v1/external-obligations/${id}/retry`, { method: "POST" });
+  },
+};
+
+/** Corridas masivas: el Supervisor resuelve, Personal las ejecuta. */
+export const liquidationRunService = {
+  async list({ status = "" } = {}) {
+    const params = new URLSearchParams({ status, size: "100", sort: "createdAt,desc" });
+    return request(`/api/v1/liquidation-runs?${params}`);
+  },
+
+  async detail(id) {
+    return request(`/api/v1/liquidation-runs/${id}`);
+  },
+
+  async submit(id) {
+    return request(`/api/v1/liquidation-runs/${id}/submit`, { method: "POST" });
+  },
+
+  async resolve({ id, status, reason = "" }) {
+    const action = status === "REJECTED" ? "reject" : "approve";
+    return request(`/api/v1/liquidation-runs/${id}/${action}`, {
+      method: "POST",
+      body: action === "reject" ? { reason } : { observation: reason || null },
+    });
+  },
+
+  async execute(id) {
+    return request(`/api/v1/liquidation-runs/${id}/execute`, { method: "POST" });
   },
 };
 
@@ -1047,7 +1183,43 @@ export const auditService = {
   },
 
   async paymentDetail(id) {
-    return request(`/api/v1/audit/payments/${id}`);
+    const [payment, allocations, history, reversals] = await Promise.all([
+      request(`/api/v1/payments/${id}`),
+      request(`/api/v1/payments/${id}/allocations`),
+      request(`/api/v1/audit/entities/Payment/${id}`).catch(() => []),
+      request(`/api/v1/payment-reversals?paymentId=${id}&size=100`).catch(() => []),
+    ]);
+    const [debts, credits] = await Promise.all([
+      Promise.all(
+        [...new Set((allocations ?? []).map((item) => item.debtId).filter(Boolean))]
+          .map((debtId) => request(`/api/v1/debts/${debtId}`).catch(() => null)),
+      ),
+      request(`/api/v1/credit-balances?taxpayerId=${payment.taxpayerId}&size=100`).catch(() => []),
+    ]);
+    const debtById = new Map(debts.filter(Boolean).map((debt) => [debt.id, debt]));
+    const creditBalance = credits.find((credit) => credit.sourcePaymentId === Number(id)) ?? null;
+    const reversal = reversals[0] ?? null;
+    const timeline = [
+      ...(history ?? []),
+      ...(allocations ?? []).flatMap((item) => [
+        ...(item.allocatedAt ? [{ at: item.allocatedAt, action: `Imputación #${item.id} registrada`, actor: item.allocatedBy, note: item.debtId ? `Deuda #${item.debtId}` : `Cuota #${item.installmentId}` }] : []),
+        ...(item.reversedAt ? [{ at: item.reversedAt, action: `Imputación #${item.id} revertida`, actor: reversal?.executedBy }] : []),
+      ]),
+      ...(reversal?.requestedAt ? [{ at: reversal.requestedAt, action: "Reversión solicitada", actor: reversal.requestedBy, note: reversal.reason }] : []),
+      ...(reversal?.resolvedAt ? [{ at: reversal.resolvedAt, action: `Reversión ${reversal.status === "REJECTED" ? "rechazada" : "autorizada"}`, actor: reversal.resolvedBy }] : []),
+      ...(reversal?.executedAt ? [{ at: reversal.executedAt, action: "Reversión ejecutada", actor: reversal.executedBy }] : []),
+    ].sort((a, b) => String(a.at ?? "").localeCompare(String(b.at ?? "")));
+    return {
+      ...payment,
+      allocations: (allocations ?? []).map((item) => ({
+        ...item,
+        debt: item.debtId ? debtById.get(item.debtId) ?? null : null,
+        conceptName: item.debtId ? debtById.get(item.debtId)?.conceptName : "Cuota de plan",
+      })),
+      history: timeline,
+      reversal,
+      creditBalance,
+    };
   },
 
   // ---------------------------------------------------------------- Reversiones
@@ -1080,7 +1252,24 @@ export const auditService = {
   },
 
   async exemptionDetail(requestId) {
-    return request(`/api/v1/audit/exemptions/${requestId}`);
+    const [exemption, history, effective] = await Promise.all([
+      request(`/api/v1/exemption-requests/${requestId}`),
+      request(`/api/v1/audit/entities/ExemptionRequest/${requestId}`).catch(() => []),
+      request(`/api/v1/exemptions?requestId=${requestId}&size=100`).catch(() => []),
+    ]);
+    const granted = effective[0] ?? null;
+    return {
+      ...exemption,
+      ...(granted ? {
+        exemptionId: granted.id,
+        percentage: granted.percentage,
+        validFrom: granted.validFrom,
+        validUntil: granted.validUntil,
+        approvedBy: granted.approvedBy,
+        approvedAt: granted.approvedAt,
+      } : {}),
+      history: history ?? [],
+    };
   },
 
   // -------------------------------------------------------------------- Tickets
@@ -1103,6 +1292,19 @@ export const auditService = {
 
   async integrationDetail(eventId) {
     return request(`/api/v1/audit/integrations/${eventId}`);
+  },
+
+  async externalObligations({ externalReferenceId = "", status = "", sourceModule = "" } = {}) {
+    return externalObligationService.list({ externalReferenceId, status, sourceModule });
+  },
+
+  async externalObligationDetail(id) {
+    const obligation = await externalObligationService.detail(id);
+    const [history, debts] = await Promise.all([
+      request(`/api/v1/audit/entities/ExternalObligation/${id}`).catch(() => []),
+      request(`/api/v1/debts?externalObligationId=${id}&size=100`).catch(() => []),
+    ]);
+    return { ...obligation, history: history ?? [], debt: debts[0] ?? null };
   },
 
   // ------------------------------------------------------- Registro de auditoría
@@ -1198,12 +1400,33 @@ export const portalService = {
     return request(`/api/v1/portal/${taxpayerId}/payments`);
   },
 
+  /** Detalle visible para el titular. El contrato no expone imputaciones al rol TAXPAYER. */
+  async paymentDetail({ paymentId }) {
+    return request(`/api/v1/payments/${paymentId}`);
+  },
+
+  async creditBalances({ taxpayerId }) {
+    return request(`/api/v1/taxpayers/${taxpayerId}/credit-balances`);
+  },
+
   async paymentPlans({ taxpayerId }) {
     return request(`/api/v1/portal/${taxpayerId}/payment-plans`);
   },
 
   async exemptions({ taxpayerId }) {
     return request(`/api/v1/portal/${taxpayerId}/exemptions`);
+  },
+
+  async benefits({ taxpayerId }) {
+    return request(`/api/v1/taxpayers/${taxpayerId}/benefits`);
+  },
+
+  async activePaymentPlans({ taxpayerId }) {
+    return allPages(`/api/v1/taxpayers/${taxpayerId}/payment-plans`);
+  },
+
+  async planInstallments(planId) {
+    return request(`/api/v1/payment-plans/${planId}/installments`);
   },
 
   // ---------------------------------------------------------------- Trámites
@@ -1216,6 +1439,47 @@ export const portalService = {
   /** Pedir financiar deudas en cuotas → publica paymentPlanRequested. */
   async requestPaymentPlan({ taxpayerId, debtIds, installments, downPayment = 0 }) {
     return paymentPlanService.request({ taxpayerId, debtIds, installments, downPayment });
+  },
+
+  async previewElectronicPayment({ debtId, paymentMethod, amount }) {
+    return request("/api/v1/electronic-payments/preview", {
+      method: "POST",
+      body: { debtId, paymentMethod, amount },
+    });
+  },
+
+  async createElectronicPayment({ debtId, paymentMethod, amount, idempotencyKey }) {
+    return request("/api/v1/electronic-payments", {
+      method: "POST",
+      body: { debtId, paymentMethod, amount },
+      headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {},
+    });
+  },
+
+  async electronicPayment(paymentId) {
+    return request(`/api/v1/electronic-payments/${paymentId}`);
+  },
+
+  async paymentReceipt(paymentId) {
+    return request(`/api/v1/payments/${paymentId}/receipt`);
+  },
+
+  async simulateRefinancing({ planId, installments }) {
+    return request(`/api/v1/payment-plans/${planId}/refinancing/simulations`, {
+      method: "POST",
+      body: { installments },
+    });
+  },
+
+  async requestRefinancing({ planId, installments }) {
+    return request(`/api/v1/payment-plans/${planId}/refinancing-requests`, {
+      method: "POST",
+      body: { installments },
+    });
+  },
+
+  async refinancingRequest(requestId) {
+    return request(`/api/v1/refinancing-requests/${requestId}`);
   },
 
   /** Pedir una exención total o parcial → publica exemptionRequested hacia M8. */
@@ -1259,7 +1523,8 @@ export const dashboardService = {
   /** Métricas del panel de inicio, una por módulo funcional. */
   async metrics() {
     const period = new Date().toISOString().slice(0, 7);
-    const [base, contribuyentes, liquidaciones, boletas, planes, exenciones, ticketsAbiertos] =
+    const [base, contribuyentes, liquidaciones, boletas, planes, exenciones, ticketsAbiertos,
+      ajustes, refinanciacion, reversiones, corridas, caducidades, eventos] =
       await Promise.all([
         request("/api/v1/dashboard/metrics"),
         fetchCount("/api/v1/taxpayers"),
@@ -1270,7 +1535,28 @@ export const dashboardService = {
         request("/api/v1/tickets")
           .then((rows) => rows.filter((ticket) => !["COMPLETED", "REJECTED"].includes(ticket.status)).length)
           .catch(() => 0),
+        fetchCount("/api/v1/adjustments?status=PENDING"),
+        fetchCount("/api/v1/refinancing-requests?status=PENDING_EXCEPTION_APPROVAL"),
+        fetchCount("/api/v1/payment-reversals?status=PENDING_APPROVAL"),
+        fetchCount("/api/v1/liquidation-runs?status=PENDING_APPROVAL"),
+        fetchCount("/api/v1/payment-plan-expirations?status=PENDING"),
+        fetchCount("/api/v1/integrations/events/errors"),
       ]);
-    return { ...base, contribuyentes, liquidaciones, boletas, planes, exenciones, tickets: ticketsAbiertos };
+    return {
+      ...base,
+      contribuyentes,
+      liquidaciones,
+      boletas,
+      planes,
+      exenciones,
+      tickets: ticketsAbiertos,
+      ajustes,
+      refinanciacion,
+      reversiones,
+      corridas,
+      caducidades,
+      eventos,
+      pendingTotal: planes + exenciones + ajustes + refinanciacion + reversiones + corridas + caducidades,
+    };
   },
 };

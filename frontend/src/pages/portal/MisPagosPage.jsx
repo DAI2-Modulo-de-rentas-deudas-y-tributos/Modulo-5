@@ -1,8 +1,11 @@
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
 import Card from "../../components/common/Card.jsx";
 import DataTable from "../../components/common/DataTable.jsx";
 import StatusBadge from "../../components/common/StatusBadge.jsx";
+import Modal from "../../components/common/Modal.jsx";
+import Button from "../../components/common/Button.jsx";
+import FieldGrid from "../../components/auditoria/FieldGrid.jsx";
 import Alert from "../../components/ui/Alert.jsx";
 import useResource from "../../hooks/useResource.js";
 import { portalService } from "../../services/rentasService.js";
@@ -12,12 +15,18 @@ import { formatCurrency, formatDateTime, labelFor } from "../../lib/format.js";
 /** Pagos acreditados al contribuyente y a qué deuda se aplicó cada uno. */
 export default function MisPagosPage() {
   const { user } = useAuth();
+  const [selected, setSelected] = useState(null);
 
   const loader = useCallback(
     () => portalService.payments({ taxpayerId: user.taxpayerId }),
     [user.taxpayerId],
   );
   const { data: payments, loading, error } = useResource(loader, []);
+  const creditsLoader = useCallback(
+    () => portalService.creditBalances({ taxpayerId: user.taxpayerId }),
+    [user.taxpayerId],
+  );
+  const { data: credits, loading: creditsLoading, error: creditsError } = useResource(creditsLoader, []);
 
   const sinImputar = (payments ?? []).filter((p) => p.status === "UNALLOCATED");
   const reversados = (payments ?? []).filter((p) => p.status === "REVERSED");
@@ -100,8 +109,66 @@ export default function MisPagosPage() {
           emptyIconName="Banknote"
           emptyTitle="Sin pagos registrados"
           emptyDescription="Todavía no hay pagos acreditados a tu nombre."
+          onRowClick={setSelected}
         />
       </Card>
+
+      {creditsError && <Alert variant="error" title="No pudimos cargar tu saldo a favor">{creditsError}</Alert>}
+      <Card title="Saldo a favor" description="Importe original, total utilizado y saldo disponible. Sólo consulta.">
+        <DataTable
+          columns={[
+            { key: "id", header: "Saldo", render: (row) => `#${row.id}` },
+            { key: "sourcePaymentId", header: "Pago de origen", render: (row) => `#${row.sourcePaymentId}` },
+            { key: "originalAmount", header: "Original", align: "right", render: (row) => formatCurrency(row.originalAmount) },
+            { key: "usedAmount", header: "Utilizado", align: "right", render: (row) => formatCurrency(Number(row.originalAmount) - Number(row.availableAmount)) },
+            { key: "availableAmount", header: "Disponible", align: "right", render: (row) => <span className="font-semibold text-emerald-700">{formatCurrency(row.availableAmount)}</span> },
+            { key: "status", header: "Estado", render: (row) => <StatusBadge status={row.status} /> },
+          ]}
+          rows={credits ?? []}
+          rowKey={(row) => row.id}
+          loading={creditsLoading}
+          emptyIconName="Wallet"
+          emptyTitle="Sin saldo a favor"
+          emptyDescription="No tenés crédito disponible en tu cuenta."
+        />
+      </Card>
+
+      {selected && <PaymentDetailModal paymentId={selected.id} onClose={() => setSelected(null)} />}
     </ModuleShell>
+  );
+}
+
+function PaymentDetailModal({ paymentId, onClose }) {
+  const loader = useCallback(() => portalService.paymentDetail({ paymentId }), [paymentId]);
+  const { data: payment, loading, error } = useResource(loader);
+  return (
+    <Modal
+      open
+      title={`Pago #${paymentId}`}
+      description="Detalle de la operación registrada en Rentas."
+      onClose={onClose}
+      footer={<Button variant="secondary" onClick={onClose}>Cerrar</Button>}
+    >
+      {error && <Alert variant="error" title="No pudimos abrir el pago">{error}</Alert>}
+      {loading && <p className="text-[13px] text-neutral-400">Cargando detalle…</p>}
+      {payment && (
+        <>
+          <FieldGrid columns={3} items={[
+            { label: "Comprobante", value: payment.receiptNumber },
+            { label: "Fecha", value: formatDateTime(payment.paidAt) },
+            { label: "Estado", value: <StatusBadge status={payment.status} /> },
+            { label: "Importe", value: formatCurrency(payment.amountPaid) },
+            { label: "Medio", value: labelFor(payment.method) },
+            { label: "Canal", value: labelFor(payment.channel) },
+            { label: "Importe aplicado", value: formatCurrency(payment.allocatedAmount) },
+            { label: "Sin imputar", value: formatCurrency(payment.unallocatedAmount) },
+            { label: "Registrado por", value: payment.registeredBy ?? "Canal digital" },
+          ]} />
+          <Alert variant="info" title="Detalle de imputaciones">
+            El backend actual sólo expone al Contribuyente los totales aplicado y sin imputar; el destino por obligación todavía requiere el endpoint pendiente del backend.
+          </Alert>
+        </>
+      )}
+    </Modal>
   );
 }

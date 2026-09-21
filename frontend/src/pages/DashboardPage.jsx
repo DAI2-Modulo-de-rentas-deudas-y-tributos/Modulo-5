@@ -20,6 +20,15 @@ export default function DashboardPage() {
 
   const modules = modulesForRole(user.role);
   const firstName = user.fullName.split(" ")[0];
+  const supervisionQueues = metrics ? [
+    { id: "planes", label: "Planes excepcionales", path: "/rentas/planes", iconName: "CalendarClock", count: metrics.planes },
+    { id: "exenciones", label: "Exenciones", path: "/rentas/exenciones", iconName: "ShieldCheck", count: metrics.exenciones },
+    { id: "ajustes", label: "Ajustes", path: "/rentas/ajustes", iconName: "SlidersHorizontal", count: metrics.ajustes },
+    { id: "refinanciacion", label: "Refinanciaciones", path: "/rentas/refinanciacion", iconName: "RefreshCw", count: metrics.refinanciacion },
+    { id: "reversiones", label: "Reversiones", path: "/rentas/reversiones", iconName: "Undo2", count: metrics.reversiones },
+    { id: "corridas", label: "Corridas masivas", path: "/rentas/corridas-masivas", iconName: "Layers", count: metrics.corridas },
+    { id: "caducidades", label: "Caducidades", path: "/rentas/caducidades", iconName: "CalendarX", count: metrics.caducidades },
+  ] : [];
 
   return (
     <>
@@ -69,6 +78,29 @@ export default function DashboardPage() {
                   iconName="MessageSquare"
                 />
               </section>
+
+              {user.role === "SUPERVISOR" && (
+                <section className="flex flex-col gap-4">
+                  <div>
+                    <h2 className="text-[15px] font-semibold text-[#0F2C59]">Pendientes de supervisión</h2>
+                    <p className="text-[13px] text-neutral-400">Abrí cada indicador para ir directamente a su bandeja.</p>
+                  </div>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                    {supervisionQueues.map((queue) => (
+                      <FeatureCard
+                        key={queue.id}
+                        title={queue.label}
+                        description="Solicitudes que requieren una decisión."
+                        iconName={queue.iconName}
+                        itemCount={queue.count}
+                        itemCountLabel="pendientes"
+                        badge={queue.count > 0 ? { text: "Requiere atención", className: "bg-red-50 text-[#D63031]" } : undefined}
+                        onClick={() => navigate(queue.path)}
+                      />
+                    ))}
+                  </div>
+                </section>
+              )}
 
               <section className="flex flex-col gap-4">
                 <div>

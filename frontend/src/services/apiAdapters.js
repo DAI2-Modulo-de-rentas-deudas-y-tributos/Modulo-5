@@ -67,7 +67,7 @@ export function adaptApiRequest(originalPath, options = {}) {
   } else if (path.endsWith("/account-statement")) path = path.replace(/\/account-statement$/, "/summary");
   else if (path.startsWith("/api/v1/debts/report-overdue")) path = `/api/v1/debts?status=OVERDUE&size=${SIZE}`;
   else if (path.startsWith("/api/v1/debts?")) {
-    path = `/api/v1/debts?${qs(path, { taxpayerId: "taxpayerId", conceptId: "conceptId", taxConceptId: "taxConceptId", status: "status", originType: "originType", from: "from", to: "to" })}`;
+    path = `/api/v1/debts?${qs(path, { taxpayerId: "taxpayerId", conceptId: "conceptId", taxConceptId: "taxConceptId", externalObligationId: "externalObligationId", status: "status", originType: "originType", from: "from", to: "to" })}`;
   }
   else if (path.startsWith("/api/v1/debt-adjustments")) {
     if (path.endsWith("/execute")) requestMethod = "GET";
@@ -253,6 +253,7 @@ function adaptRow(path, row) {
   if (path.includes("/bills")) return { ...row, conceptName: row.conceptName ?? (row.debts?.[0]?.debtId ? `Deuda #${row.debts[0].debtId}` : "Boleta municipal"), amount: row.totalAmount, issuedAt: row.createdAt ?? row.issueDate, debtId: row.debts?.[0]?.debtId ?? null, daysLeft: row.daysLeft ?? daysUntil(row.dueDate), status: row.status === "PAID" ? "SETTLED" : row.status, barcode: row.number, documentUrl: `/api/v1/bills/${row.id}/document` };
   if (pathname.endsWith("/receipt")) return row;
   if (path.includes("/allocations")) return row;
+  if (path.includes("/electronic-payments")) return row;
   if (path.includes("/payments") && !path.includes("payment-plans")) return { ...row, taxpayerName: row.taxpayerName ?? `Contribuyente #${row.taxpayerId}`, amountPaid: row.amount, method: row.paymentMethod, remainingBalance: row.unallocatedAmount, status: row.status === "REVERSED" ? "REVERSED" : Number(row.unallocatedAmount) > 0 ? "UNALLOCATED" : "REGISTERED", channel: PAYMENT_ORIGIN_FROM_API[row.origin] ?? row.origin };
   if (path.includes("/credit-balances")) return { ...row, amount: row.availableAmount };
   if (path.includes("/payment-plan-requests")) return { ...requestWorkflow(row), requestId: row.id, debtIds: row.debtIds ?? [], debts: row.debts ?? [], installments: row.requestedInstallments, totalDebt: row.totalDebt ?? row.totalDebtAtRequest, downPayment: row.downPayment ?? row.estimatedDownPayment ?? 0, totalAmount: row.estimatedTotalAmount, planId: row.paymentPlanId };
@@ -269,6 +270,7 @@ function adaptRow(path, row) {
   // se representa como ausencia, no se inventa.
   if (path.includes("/tickets")) return { ...row, ticketId: row.id, citizenId: row.taxpayerId, subject: row.category, attachments: row.attachments ?? [], additionalInformation: row.additionalInformation ?? null };
   if (path.includes("/integrations/events")) return { ...row, destinationModule: row.targetModule, attempts: row.retryCount, error: row.errorMessage ?? null, result: row.status === "DLQ" ? "FAILED" : "SUCCESS" };
+  if (pathname.startsWith("/api/v1/audit/entities/")) return { ...row, at: row.occurredAt, actor: row.userId, note: row.correlationId ?? null };
   if (/^\/api\/v1\/audit(\/\d+)?$/.test(pathname)) return { ...row, username: row.userId, role: row.userRole, at: row.occurredAt, entity: { type: row.entityType, id: row.entityId }, result: "SUCCESS", before: comoObjeto(row.previousData), after: comoObjeto(row.newData), references: row.correlationId ? [row.correlationId] : [] };
   if (/^\/api\/v1\/taxpayers(?:\/\d+)?$/.test(pathname)) return { ...row, type: row.taxpayerType, documentType: row.dni ? "DNI" : "CUIT", document: row.dni ?? row.cuit, name: row.displayName };
   return row;
