@@ -433,6 +433,12 @@ export const paymentService = {
     return request(`/api/v1/payments?${params}`);
   },
 
+  /** Consulta completa para búsquedas de Caja por comprobante, persona u operación. */
+  async listAll({ taxpayerId = "", status = "", date = "", registeredBy = "" } = {}) {
+    const params = new URLSearchParams({ taxpayerId, status, date, registeredBy });
+    return allPages(`/api/v1/payments?${params}`);
+  },
+
   /**
    * RegisterPaymentRequest → PaymentResponse
    *
@@ -459,6 +465,66 @@ export const paymentService = {
   /** RequestPaymentReversalRequest → PaymentReversalResponse */
   async reverse({ paymentId, reason }) {
     return request(`/api/v1/payments/${paymentId}/reversal`, {
+      method: "POST",
+      body: { reason },
+    });
+  },
+
+  /** El Cajero solicita la reversión; el pago permanece confirmado hasta su ejecución. */
+  async requestReversal({ paymentId, reason }) {
+    return request(`/api/v1/payments/${paymentId}/reversal-requests`, {
+      method: "POST",
+      body: { reason },
+    });
+  },
+};
+
+/** Solicitudes de reversión y su resolución por el Supervisor. */
+export const paymentReversalService = {
+  async list({ status = "", from = "", to = "" } = {}) {
+    const params = new URLSearchParams({ status, from, to, size: "100", sort: "requestedAt,desc" });
+    const rows = await request(`/api/v1/payment-reversals?${params}`);
+    return Promise.all(rows.map(async (reversal) => {
+      const payment = await request(`/api/v1/payments/${reversal.paymentId}`);
+      const taxpayer = await taxpayerService.getById(payment.taxpayerId);
+      return { ...reversal, payment, taxpayer };
+    }));
+  },
+
+  async detail(id) {
+    const reversal = await request(`/api/v1/payment-reversals/${id}`);
+    const [payment, allocations] = await Promise.all([
+      request(`/api/v1/payments/${reversal.paymentId}`),
+      request(`/api/v1/payments/${reversal.paymentId}/allocations`),
+    ]);
+    const [taxpayer, debts] = await Promise.all([
+      taxpayerService.getById(payment.taxpayerId),
+      Promise.all(
+        [...new Set(allocations.map((allocation) => allocation.debtId).filter(Boolean))]
+          .map((debtId) => request(`/api/v1/debts/${debtId}`).catch(() => null)),
+      ),
+    ]);
+    const debtById = new Map(debts.filter(Boolean).map((debt) => [debt.id, debt]));
+    return {
+      ...reversal,
+      payment,
+      taxpayer,
+      allocations: allocations.map((allocation) => ({
+        ...allocation,
+        debt: allocation.debtId ? debtById.get(allocation.debtId) ?? null : null,
+      })),
+    };
+  },
+
+  async approve({ id, observation = "" }) {
+    return request(`/api/v1/payment-reversals/${id}/approve`, {
+      method: "POST",
+      body: { observation: observation || null },
+    });
+  },
+
+  async reject({ id, reason }) {
+    return request(`/api/v1/payment-reversals/${id}/reject`, {
       method: "POST",
       body: { reason },
     });
@@ -572,6 +638,20 @@ export const paymentPlanService = {
   async resolve({ requestId, status, installments, reason, resolvedBy, resolverRole }) {
     const action = status === "REJECTED" ? "reject" : "grant";
     return request(`/api/v1/payment-plan-requests/${requestId}/${action}`, { method: "POST", body: action === "reject" ? { reason } : { downPaymentAmount: 0 } });
+  },
+};
+
+/** Parámetros versionados que gobiernan la simulación y el otorgamiento de planes. */
+export const paymentPlanConfigurationService = {
+  async list() {
+    return allPages("/api/v1/payment-plan-configurations?sort=version,desc");
+  },
+
+  async create(configuration) {
+    return request("/api/v1/payment-plan-configurations", {
+      method: "POST",
+      body: configuration,
+    });
   },
 };
 

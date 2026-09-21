@@ -9,6 +9,7 @@ import Button from "../../components/common/Button.jsx";
 import Alert from "../../components/ui/Alert.jsx";
 import Spinner from "../../components/ui/Spinner.jsx";
 import ReceiptModal from "../../components/caja/ReceiptModal.jsx";
+import ReversalRequestModal from "../../components/caja/ReversalRequestModal.jsx";
 import BillPdfDownload from "../../components/documentos/BillPdfDownload.jsx";
 import useResource from "../../hooks/useResource.js";
 import { cashierService } from "../../services/rentasService.js";
@@ -23,8 +24,10 @@ export default function ContribuyenteDetallePage() {
   const navigate = useNavigate();
 
   const loader = useCallback(() => cashierService.taxpayerFile(taxpayerId), [taxpayerId]);
-  const { data: file, loading, error } = useResource(loader);
-  const [receiptId, setReceiptId] = useState(null);
+  const { data: file, loading, error, reload } = useResource(loader);
+  const [selectedPayment, setSelectedPayment] = useState(null);
+  const [reversalTarget, setReversalTarget] = useState(null);
+  const [feedback, setFeedback] = useState(null);
 
   const debtColumns = [
     { key: "id", header: "Deuda", render: (row) => <span className="tabular-nums">#{row.id}</span> },
@@ -151,6 +154,11 @@ export default function ContribuyenteDetallePage() {
       homePath="/caja"
       homeLabel="Panel de caja"
     >
+      {feedback && (
+        <Alert variant="success" title="Solicitud enviada" onDismiss={() => setFeedback(null)}>
+          {feedback}
+        </Alert>
+      )}
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <StatTile
           label="Deuda total"
@@ -196,7 +204,7 @@ export default function ContribuyenteDetallePage() {
           emptyIconName="Banknote"
           emptyTitle="Sin pagos"
           emptyDescription="Todavía no registró pagos."
-          onRowClick={(row) => setReceiptId(row.id)}
+          onRowClick={setSelectedPayment}
         />
       </Card>
 
@@ -211,7 +219,23 @@ export default function ContribuyenteDetallePage() {
         />
       </Card>
 
-      <ReceiptModal paymentId={receiptId} onClose={() => setReceiptId(null)} />
+      <ReceiptModal
+        paymentId={selectedPayment?.id}
+        onClose={() => setSelectedPayment(null)}
+        onRequestReversal={() => {
+          setReversalTarget(selectedPayment);
+          setSelectedPayment(null);
+        }}
+      />
+      <ReversalRequestModal
+        payment={reversalTarget}
+        onClose={() => setReversalTarget(null)}
+        onDone={(request) => {
+          setReversalTarget(null);
+          setFeedback(`La solicitud #${request.id} quedó pendiente de aprobación.`);
+          reload();
+        }}
+      />
     </ModuleShell>
   );
 }

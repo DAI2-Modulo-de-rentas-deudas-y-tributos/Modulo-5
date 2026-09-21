@@ -3,8 +3,8 @@
  * El orden sigue el trabajo del cajero: cobrar es lo primero; consultar el padrón,
  * los pagos del día y las boletas son apoyos de esa tarea.
  *
- * El cajero cobra e imprime comprobantes: no liquida, no resuelve planes ni
- * exenciones y no reversa pagos.
+ * El cajero cobra, imprime comprobantes y puede solicitar una reversión para que
+ * la evalúe el Supervisor; nunca ejecuta la reversión por sí mismo.
  */
 export const CAJA_MODULES = [
   {
@@ -31,7 +31,7 @@ export const CAJA_MODULES = [
     label: "Pagos",
     iconName: "Banknote",
     description:
-      "Pagos registrados con filtros por fecha, estado y responsable del cobro.",
+      "Pagos registrados, comprobantes y solicitudes de reversión para revisión.",
     countLabel: "registrados",
   },
   {
