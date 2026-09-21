@@ -68,9 +68,18 @@ class ExemptionRequestValidationTests {
         assertThat(requests.count()).isZero();
     }
 
-    @Test void invalidOrMissingValidityRangeIsRejectedWithoutPersistence() {
-        assertBusinessError(() -> exemptions.create(request(concept.id,"Motivo válido",new BigDecimal("50"),date(31),date(1))),"INVALID_VALIDITY_RANGE",422);
+    @Test void missingValidFromIsRejectedWithoutPersistence() {
         assertBusinessError(() -> exemptions.create(request(concept.id,"Motivo válido",new BigDecimal("50"),null,date(31))),"INVALID_VALIDITY_RANGE",422);
+        assertThat(requests.count()).isZero();
+    }
+
+    @Test void missingValidUntilIsRejectedWithoutPersistence() {
+        assertBusinessError(() -> exemptions.create(request(concept.id,"Motivo válido",new BigDecimal("50"),date(1),null)),"INVALID_VALIDITY_RANGE",422);
+        assertThat(requests.count()).isZero();
+    }
+
+    @Test void invalidValidityRangeIsRejectedWithoutPersistence() {
+        assertBusinessError(() -> exemptions.create(request(concept.id,"Motivo válido",new BigDecimal("50"),date(31),date(1))),"INVALID_VALIDITY_RANGE",422);
         assertThat(requests.count()).isZero();
     }
 
@@ -99,7 +108,7 @@ class ExemptionRequestValidationTests {
     @ParameterizedTest
     @EnumSource(value=ExemptionRequestStatus.class,names={"PENDING","UNDER_REVIEW","DOCUMENTATION_REQUIRED","PENDING_RESOLUTION"})
     void overlappingNonTerminalRequestIsRejected(ExemptionRequestStatus status) {
-        ExemptionRequest existing=exemptions.create(request(concept.id,"Solicitud inicial",new BigDecimal("25"),date(1),null));
+        ExemptionRequest existing=exemptions.create(request(concept.id,"Solicitud inicial",new BigDecimal("25"),date(1),LocalDate.of(2030,12,31)));
         existing.status=status;
         requests.saveAndFlush(existing);
 
@@ -108,7 +117,7 @@ class ExemptionRequestValidationTests {
     }
 
     @Test void rejectedRequestDoesNotBlockAValidRequest() {
-        ExemptionRequest rejected=exemptions.create(request(concept.id,"Solicitud rechazada",new BigDecimal("25"),date(1),null));
+        ExemptionRequest rejected=exemptions.create(request(concept.id,"Solicitud rechazada",new BigDecimal("25"),date(1),date(31)));
         rejected.status=ExemptionRequestStatus.REJECTED;
         requests.saveAndFlush(rejected);
 

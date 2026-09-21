@@ -134,7 +134,7 @@ public final class ApiDtos {
     public record LiquidationRunDetail(LiquidationRun run,List<LiquidationRunItem> items) {}
     public record CreateExemptionRequest(@NotNull Long taxpayerId, @NotNull Long taxConceptId, @NotBlank String reason,
         @NotNull @DecimalMin("0.01") @DecimalMax("100.00") BigDecimal percentage,
-        @NotNull LocalDate validFrom, LocalDate validUntil,
+        @NotNull LocalDate validFrom, @NotNull LocalDate validUntil,
         List<@NotNull @Valid SubmitDocumentationRequest> documents) {
         public CreateExemptionRequest(Long taxpayerId,Long taxConceptId,String reason,BigDecimal percentage,LocalDate validFrom,LocalDate validUntil) {
             this(taxpayerId,taxConceptId,reason,percentage,validFrom,validUntil,null);
