@@ -13,7 +13,11 @@ export default function BeneficiosPortalPage() {
   const { user } = useAuth();
   const loader = useCallback(() => portalService.benefits({ taxpayerId: user.taxpayerId }), [user.taxpayerId]);
   const { data: benefits, loading, error } = useResource(loader, []);
-  const active = (benefits ?? []).filter((benefit) => benefit.status === "ACTIVE");
+  const today = new Date().toISOString().slice(0, 10);
+  const active = (benefits ?? []).filter((benefit) =>
+    benefit.status === "ACTIVE"
+    && benefit.validFrom <= today
+    && (!benefit.validUntil || benefit.validUntil >= today));
 
   return (
     <ModuleShell
@@ -29,7 +33,7 @@ export default function BeneficiosPortalPage() {
       <Alert variant="info" title="Aplicación automática">
         Cuando un beneficio está vigente, Rentas lo considera al calcular las liquidaciones alcanzadas. No necesitás solicitarlo otra vez desde este portal.
       </Alert>
-      <Card title={`Beneficios vigentes (${active.length})`} description="Tipo, porcentaje, vigencia y referencia del sistema que lo otorgó.">
+      <Card title={`Beneficios vigentes (${active.length})`} description="Tipo, porcentaje, vigencia, conceptos alcanzados y referencia del sistema que lo otorgó.">
         <DataTable
           columns={[
             { key: "benefitType", header: "Tipo", render: (row) => labelFor(row.benefitType) },
@@ -37,6 +41,13 @@ export default function BeneficiosPortalPage() {
             { key: "discountPercentage", header: "Descuento", align: "right", render: (row) => formatPercentage(row.discountPercentage) },
             { key: "validFrom", header: "Desde", render: (row) => formatDate(row.validFrom) },
             { key: "validUntil", header: "Hasta", render: (row) => row.validUntil ? formatDate(row.validUntil) : "Sin vencimiento" },
+            {
+              key: "taxConceptCodes",
+              header: "Conceptos alcanzados",
+              render: (row) => row.taxConceptCodes?.length
+                ? row.taxConceptCodes.map((code) => labelFor(code)).join(", ")
+                : <span className="text-neutral-400">Sin conceptos alcanzados</span>,
+            },
             { key: "status", header: "Estado", render: (row) => <StatusBadge status={row.status} /> },
           ]}
           rows={active}

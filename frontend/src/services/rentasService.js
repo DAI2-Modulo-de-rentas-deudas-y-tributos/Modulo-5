@@ -1430,9 +1430,13 @@ export const portalService = {
     return request(`/api/v1/portal/${taxpayerId}/payments`);
   },
 
-  /** Detalle visible para el titular. El contrato no expone imputaciones al rol TAXPAYER. */
+  /** Detalle visible para el titular con las imputaciones de sus propias obligaciones. */
   async paymentDetail({ paymentId }) {
-    return request(`/api/v1/payments/${paymentId}`);
+    const [payment, allocations] = await Promise.all([
+      request(`/api/v1/payments/${paymentId}`),
+      request(`/api/v1/payments/${paymentId}/allocations`),
+    ]);
+    return { ...payment, allocations };
   },
 
   async creditBalances({ taxpayerId }) {
@@ -1536,57 +1540,45 @@ export const portalService = {
 
 // -------------------------------------------------------------------- Dashboard
 
-/**
- * El resumen de indicadores trae deuda y cobranza; los contadores restantes se
- * completan con los listados reales, tolerando restricciones de permisos por rol.
- */
-async function fetchCount(path) {
-  try {
-    const result = await request(path);
-    return result?.page?.totalElements ?? (Array.isArray(result) ? result.length : 0);
-  } catch {
-    return 0;
-  }
-}
-
 export const dashboardService = {
-  /** Métricas del panel de inicio, una por módulo funcional. */
-  async metrics() {
-    const period = new Date().toISOString().slice(0, 7);
-    const [base, contribuyentes, liquidaciones, boletas, planes, exenciones, ticketsAbiertos,
-      ajustes, refinanciacion, reversiones, corridas, caducidades, eventos] =
-      await Promise.all([
-        request("/api/v1/dashboard/metrics"),
-        fetchCount("/api/v1/taxpayers"),
-        fetchCount(`/api/v1/liquidations?period=${period}`),
-        fetchCount("/api/v1/bills?status=ISSUED"),
-        fetchCount("/api/v1/payment-plan-requests?status=PENDING"),
-        fetchCount("/api/v1/exemption-requests?status=PENDING"),
-        request("/api/v1/tickets")
-          .then((rows) => rows.filter((ticket) => !["COMPLETED", "REJECTED"].includes(ticket.status)).length)
-          .catch(() => 0),
-        fetchCount("/api/v1/adjustments?status=PENDING"),
-        fetchCount("/api/v1/refinancing-requests?status=PENDING_EXCEPTION_APPROVAL"),
-        fetchCount("/api/v1/payment-reversals?status=PENDING_APPROVAL"),
-        fetchCount("/api/v1/liquidation-runs?status=PENDING_APPROVAL"),
-        fetchCount("/api/v1/payment-plan-expirations?status=PENDING"),
-        fetchCount("/api/v1/integrations/events/errors"),
-      ]);
+  /** Métricas comunes más el resumen específico autorizado para cada rol operativo. */
+  async metrics(role) {
+    const rolePath = role === "SUPERVISOR"
+      ? "/api/v1/dashboards/supervisor"
+      : role === "RENTAS" ? "/api/v1/dashboards/rentas" : null;
+    const [base, specific] = await Promise.all([
+      request("/api/v1/dashboard/metrics"),
+      rolePath ? request(rolePath) : Promise.resolve({}),
+    ]);
+    const supervisor = role === "SUPERVISOR" ? {
+      planes: specific.exceptionalPlans ?? 0,
+      exenciones: specific.exemptions ?? 0,
+      ajustes: specific.adjustments ?? 0,
+      refinanciacion: specific.exceptionalRefinancings ?? 0,
+      reversiones: specific.reversals ?? 0,
+      corridas: specific.liquidationRuns ?? 0,
+      caducidades: specific.planExpirations ?? 0,
+      pendingTotal: specific.totalPending ?? 0,
+    } : {};
+    const operational = role === "RENTAS" ? {
+      planes: specific.pendingPlanRequests ?? 0,
+      exenciones: specific.pendingExemptions ?? 0,
+      tickets: specific.openTickets ?? 0,
+      unallocatedPayments: specific.unallocatedPaymentAmount ?? 0,
+      recentActivity: specific.recentOperations ?? [],
+    } : {};
     return {
       ...base,
-      contribuyentes,
-      liquidaciones,
-      boletas,
-      planes,
-      exenciones,
-      tickets: ticketsAbiertos,
-      ajustes,
-      refinanciacion,
-      reversiones,
-      corridas,
-      caducidades,
-      eventos,
-      pendingTotal: planes + exenciones + ajustes + refinanciacion + reversiones + corridas + caducidades,
+      planes: 0,
+      exenciones: 0,
+      tickets: 0,
+      ajustes: 0,
+      refinanciacion: 0,
+      reversiones: 0,
+      corridas: 0,
+      caducidades: 0,
+      ...supervisor,
+      ...operational,
     };
   },
 };

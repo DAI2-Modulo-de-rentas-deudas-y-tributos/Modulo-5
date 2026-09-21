@@ -15,7 +15,7 @@ import { formatCurrency } from "../lib/format.js";
 export default function DashboardPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const loader = useCallback(() => dashboardService.metrics(), []);
+  const loader = useCallback(() => dashboardService.metrics(user.role), [user.role]);
   const { data: metrics, loading, error } = useResource(loader);
 
   const modules = modulesForRole(user.role);
