@@ -51,7 +51,7 @@ class FullStackFeatureTests {
         var batch=reconciliations.importBatch(new FiscalProcessingController.ImportReconciliationRequest("LOTE-1",List.of(
             new FiscalProcessingController.ReconciliationItemRequest("TX-OK","30111224",new BigDecimal("250"),payment.paidAt),
             new FiscalProcessingController.ReconciliationItemRequest("TX-OBS","30111224",new BigDecimal("251"),payment.paidAt),
-            new FiscalProcessingController.ReconciliationItemRequest("TX-NO","00000000",new BigDecimal("10"),payment.paidAt))));
+            new FiscalProcessingController.ReconciliationItemRequest("TX-NO","99999999",new BigDecimal("10"),payment.paidAt))));
         assertThat(batch.reconciledItems()).isEqualTo(1);assertThat(batch.observedItems()).isEqualTo(1);assertThat(batch.notFoundItems()).isEqualTo(1);
         var observed=batch.items().stream().filter(x->x.status()==ReconciliationStatus.OBSERVED).findFirst().orElseThrow();var resolved=reconciliations.resolve(observed.id(),new FiscalProcessingController.ResolveReconciliationRequest(payment.id,"Validación manual"));assertThat(resolved.status()).isEqualTo(ReconciliationStatus.CONCILIATED);
         assertThat(reconciliations.importBatch(new FiscalProcessingController.ImportReconciliationRequest("LOTE-1",List.of(new FiscalProcessingController.ReconciliationItemRequest("IGNORED","x",BigDecimal.ONE,OffsetDateTime.now())))).id()).isEqualTo(batch.id());
