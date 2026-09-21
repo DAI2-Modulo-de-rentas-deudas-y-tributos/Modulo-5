@@ -485,22 +485,11 @@ function ResolveModal({ solicitud, taxpayerName, user, onClose, onDone }) {
         </Alert>
       )}
 
-      <div className="grid grid-cols-1 gap-3 rounded-lg border border-neutral-200 bg-neutral-50 p-4 sm:grid-cols-2">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-neutral-400">Plan actual</p>
-          <p className="mt-2 text-[13px] text-neutral-700">
-            {solicitud.originalPlan ? `${solicitud.originalPlan.installments} cuotas · saldo ${formatCurrency(solicitud.originalPlan.outstandingAmount)}` : `Plan #${solicitud.planId}`}
-          </p>
-        </div>
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-neutral-400">Propuesta</p>
-          <p className="mt-2 text-[13px] text-neutral-700">{solicitud.installments} cuotas · total {formatCurrency(solicitud.totalAmount)}</p>
-        </div>
-      </div>
-
       <dl className="grid grid-cols-2 gap-3 text-[13px]">
         <Dato label="Saldo refinanciado" value={formatCurrency(solicitud.outstandingAmount)} />
         <Dato label="Cuotas vencidas" value={solicitud.overdueInstallments} />
+        <Dato label="Nuevo total" value={formatCurrency(solicitud.totalAmount)} />
+        <Dato label="Cuotas" value={solicitud.installments} />
         <Dato label="Solicitó" value={solicitud.requestedBy} />
         <Dato label="Fecha" value={formatDate(solicitud.requestedAt)} />
       </dl>

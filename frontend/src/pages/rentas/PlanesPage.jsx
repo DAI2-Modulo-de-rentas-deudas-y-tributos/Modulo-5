@@ -11,7 +11,7 @@ import FormField from "../../components/ui/FormField.jsx";
 import StepIndicatorGeneric from "../../components/ui/StepIndicatorGeneric.jsx";
 import useResource from "../../hooks/useResource.js";
 import useTaxpayerIndex from "../../hooks/useTaxpayerIndex.js";
-import { paymentPlanConfigurationService, paymentPlanService } from "../../services/rentasService.js";
+import { paymentPlanService } from "../../services/rentasService.js";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { formatCurrency, formatDateTime } from "../../lib/format.js";
 
@@ -315,10 +315,6 @@ function ResolvePlanModal({ plan, taxpayerName, onClose, onDone }) {
   const [reason, setReason] = useState("");
   const [error, setError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
-  const configurationLoader = useCallback(() => paymentPlanConfigurationService.list(), []);
-  const { data: configurations } = useResource(configurationLoader, []);
-  const standard = (configurations ?? []).find((item) => item.active) ?? configurations?.[0];
-  const exceptional = user.role === "SUPERVISOR" && plan.internalStatus === "PENDING_SUPERVISOR";
 
   const simulation = useMemo(
     () =>
@@ -347,7 +343,6 @@ function ResolvePlanModal({ plan, taxpayerName, onClose, onDone }) {
           requestId: plan.requestId,
           status: decision,
           installments: Number(installments),
-          downPayment: plan.downPayment,
           reason,
           resolvedBy: user.username,
           // El servicio rechaza que un analista resuelva una solicitud ya derivada.
@@ -385,24 +380,6 @@ function ResolvePlanModal({ plan, taxpayerName, onClose, onDone }) {
       <StepIndicatorGeneric steps={STEPS} currentStep={currentStep} />
 
       {error && <Alert variant="error" title="No se pudo resolver">{error}</Alert>}
-
-      {exceptional && (
-        <div className="grid grid-cols-1 gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 sm:grid-cols-2">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-amber-700">Condiciones estándar</p>
-            <p className="mt-2 text-[13px] text-amber-900">
-              {standard ? `${standard.minimumInstallments} a ${standard.maximumInstallments} cuotas · anticipo mínimo ${standard.minimumDownPaymentPercentage}% · tasa ${standard.interestRate}%` : "Consultando configuración vigente…"}
-            </p>
-          </div>
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-amber-700">Excepción solicitada</p>
-            <p className="mt-2 text-[13px] text-amber-900">
-              {plan.installments} cuotas · anticipo {formatCurrency(plan.downPayment)}
-              {plan.exceptionReason ? ` · ${plan.exceptionReason}` : ""}
-            </p>
-          </div>
-        </div>
-      )}
 
       <FormField
         label="Resolución"

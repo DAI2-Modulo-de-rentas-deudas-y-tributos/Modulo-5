@@ -181,10 +181,10 @@ export default function InicioPage() {
                 />
               </Card>
 
-              <Alert variant="info" title="Gestiones disponibles">
-                Acá podés consultar tu situación, pagar electrónicamente y pedir un plan,
-                una refinanciación o una exención. Cada operación se registra en Rentas y
-                su estado se consulta desde tu cuenta.
+              <Alert variant="info" title="Este portal es de consulta">
+                Acá podés ver tu situación y pedir un plan de pago o una exención. Los pagos
+                se registran en la ventanilla de Rentas o por los canales habilitados; cuando
+                se acrediten, aparecen en <strong>Mis pagos</strong>.
               </Alert>
 
               <section className="flex flex-col gap-4">

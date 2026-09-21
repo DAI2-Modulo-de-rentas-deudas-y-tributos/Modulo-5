@@ -12,16 +12,12 @@ import Spinner from "../../components/ui/Spinner.jsx";
 import FieldGrid from "../../components/auditoria/FieldGrid.jsx";
 import useResource from "../../hooks/useResource.js";
 import { paymentReversalService } from "../../services/rentasService.js";
-import { useAuth } from "../../context/AuthContext.jsx";
 import { formatCurrency, formatDateTime, labelFor } from "../../lib/format.js";
 
 /** Bandeja del Supervisor: aprobar o rechazar una solicitud no ejecuta la reversión. */
 export default function ReversionesPage() {
-  const { user } = useAuth();
-  const isSupervisor = user.role === "SUPERVISOR";
-  const [filters, setFilters] = useState({ status: isSupervisor ? "PENDING_APPROVAL" : "APPROVED", from: "", to: "" });
+  const [filters, setFilters] = useState({ status: "PENDING_APPROVAL", from: "", to: "" });
   const [selected, setSelected] = useState(null);
-  const [executing, setExecuting] = useState(null);
   const [feedback, setFeedback] = useState(null);
   const loader = useCallback(() => paymentReversalService.list(filters), [filters]);
   const { data: reversals, loading, error, reload } = useResource(loader, []);
@@ -48,12 +44,8 @@ export default function ReversionesPage() {
       header: "",
       align: "right",
       render: (row) => row.status === "PENDING_APPROVAL"
-        ? isSupervisor
-          ? <Button size="sm" variant="primary" onClick={() => setSelected(row)}>Revisar</Button>
-          : <span className="text-[12px] text-neutral-400">Esperando aprobación</span>
-        : row.status === "APPROVED" && !isSupervisor
-          ? <Button size="sm" variant="accent" onClick={() => setExecuting(row)}>Ejecutar</Button>
-          : <Button size="sm" variant="secondary" onClick={() => setSelected(row)}>Ver detalle</Button>,
+        ? <Button size="sm" variant="primary" onClick={() => setSelected(row)}>Revisar</Button>
+        : <Button size="sm" variant="secondary" onClick={() => setSelected(row)}>Ver detalle</Button>,
     },
   ];
 
@@ -61,19 +53,16 @@ export default function ReversionesPage() {
     <ModuleShell
       label="Resoluciones"
       title="Reversiones de pago"
-      highlight={isSupervisor ? "pendientes" : "autorizadas"}
-      description={isSupervisor
-        ? "Revisá la evidencia del pago y autorizá o rechazá la solicitud del Cajero."
-        : "Ejecutá las reversiones autorizadas y consultá su resultado trazable."}
+      highlight="pendientes"
+      description="Revisá la evidencia del pago y autorizá o rechazá la solicitud del Cajero."
       breadcrumb={[{ id: "reversiones", label: "Reversiones de pago" }]}
     >
       {feedback && <Alert variant="success" title="Solicitud resuelta" onDismiss={() => setFeedback(null)}>{feedback}</Alert>}
       {error && <Alert variant="error" title="No pudimos cargar las solicitudes">{error}</Alert>}
 
-      <Alert variant="info" title={isSupervisor ? "La aprobación no modifica el pago" : "La ejecución sí modifica el pago"}>
-        {isSupervisor
-          ? "Aprobar habilita la ejecución posterior por Personal de Rentas. En esta etapa el pago, sus imputaciones y las deudas conservan sus valores."
-          : "Confirmá únicamente las solicitudes autorizadas. Al ejecutar, el backend revierte las imputaciones y deja el comprobante de la operación."}
+      <Alert variant="info" title="La aprobación no modifica el pago">
+        Aprobar habilita la ejecución posterior por Personal de Rentas. En esta etapa el pago,
+        sus imputaciones y las deudas conservan sus valores.
       </Alert>
 
       <Card title="Bandeja de solicitudes" description="Abrí una solicitud para consultar pago, imputaciones, deuda y motivo.">
@@ -121,71 +110,7 @@ export default function ReversionesPage() {
           }}
         />
       )}
-
-      {executing && (
-        <ExecutionModal
-          reversal={executing}
-          onClose={() => setExecuting(null)}
-          onDone={(resolved) => {
-            setExecuting(null);
-            setFeedback(`La reversión #${resolved.id} se ejecutó correctamente. El comprobante quedó disponible en el detalle.`);
-            reload();
-          }}
-        />
-      )}
     </ModuleShell>
-  );
-}
-
-function ExecutionModal({ reversal, onClose, onDone }) {
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState(null);
-  const loader = useCallback(() => paymentReversalService.detail(reversal.id), [reversal.id]);
-  const { data: detail, loading } = useResource(loader);
-
-  const execute = async () => {
-    setSubmitting(true);
-    setError(null);
-    try {
-      onDone(await paymentReversalService.execute(reversal.id));
-    } catch (caught) {
-      setError(caught.message);
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <Modal
-      open
-      title={`Ejecutar reversión #${reversal.id}`}
-      description="Esta confirmación revierte el pago y sus imputaciones."
-      onClose={onClose}
-      footer={
-        <>
-          <Button variant="secondary" onClick={onClose}>Cancelar</Button>
-          <Button variant="danger" loading={submitting} disabled={loading} onClick={execute}>Confirmar ejecución</Button>
-        </>
-      }
-    >
-      {error && <Alert variant="error" title="No se pudo ejecutar">{error}</Alert>}
-      {detail && (
-        <div className="flex flex-col gap-4">
-          <Alert variant="error" title="Operación sensible">
-            Se revertirá el comprobante {detail.payment.receiptNumber} por {formatCurrency(detail.payment.amountPaid)}.
-          </Alert>
-          <FieldGrid
-            columns={3}
-            items={[
-              { label: "Contribuyente", value: detail.taxpayer.name },
-              { label: "Autorizó", value: detail.resolvedBy },
-              { label: "Fecha de autorización", value: formatDateTime(detail.resolvedAt) },
-              { label: "Motivo", value: detail.reason, span: 3 },
-            ]}
-          />
-        </div>
-      )}
-    </Modal>
   );
 }
 

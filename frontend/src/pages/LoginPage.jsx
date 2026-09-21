@@ -25,6 +25,7 @@ export default function LoginPage() {
   const [errors, setErrors] = useState({});
   const [submitError, setSubmitError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  const [puertaEquivocada, setPuertaEquivocada] = useState(null);
 
   if (isAuthenticated) {
     return <Navigate to={location.state?.from ?? homePathForRole(user.role)} replace />;
@@ -39,18 +40,34 @@ export default function LoginPage() {
     const { name, value } = event.target;
     setForm((previous) => ({ ...previous, [name]: value }));
     setErrors((previous) => ({ ...previous, [name]: undefined }));
+    setPuertaEquivocada(null);
   };
 
   const cambiarPuerta = (siguiente) => {
     setDoor(siguiente);
     setErrors({});
     setSubmitError(null);
+    setPuertaEquivocada(null);
   };
 
   const elegirArea = (siguiente) => {
     setArea(siguiente);
     setDoor("agente");
     setSubmitError(null);
+    setPuertaEquivocada(null);
+  };
+
+  /** Lleva al usuario a su puerta y le deja los datos cargados: le queda un click. */
+  const irAMiArea = () => {
+    const destino = puertaEquivocada.role;
+    setPuertaEquivocada(null);
+    setSubmitError(null);
+    if (destino === "CONTRIBUYENTE") {
+      setDoor("ciudadano");
+      return;
+    }
+    setArea(destino);
+    setDoor("agente");
   };
 
   const validate = () => {
@@ -64,13 +81,19 @@ export default function LoginPage() {
   const onSubmit = async (event) => {
     event.preventDefault();
     setSubmitError(null);
+    setPuertaEquivocada(null);
     if (!validate()) return;
 
     setSubmitting(true);
     try {
-      const { profile } = await login(form, {
+      // Credenciales válidas de otra área: no se abre sesión, se avisa la puerta.
+      const { profile, accepted } = await login(form, {
         accept: (perfil) => perfil.role === areaActiva,
       });
+      if (!accepted) {
+        setPuertaEquivocada(profile);
+        return;
+      }
       navigate(location.state?.from ?? homePathForRole(profile.role), { replace: true });
     } catch (caught) {
       setSubmitError(caught.message);
@@ -158,6 +181,17 @@ export default function LoginPage() {
                 <div aria-live="polite" aria-atomic="true">
                   {submitError && (
                     <Alert variant="error" title="No pudimos validar tus datos">{submitError}</Alert>
+                  )}
+                  {puertaEquivocada && (
+                    <Alert variant="error" title="Estás en la pestaña equivocada">
+                      <p>
+                        Tu usuario pertenece a {WORKSPACES[puertaEquivocada.role].label}.
+                        Conservamos tus datos para que continúes por el acceso correspondiente.
+                      </p>
+                      <Button variant="danger" size="sm" onClick={irAMiArea} className="mt-2.5">
+                        Llevame a la puerta correcta
+                      </Button>
+                    </Alert>
                   )}
                 </div>
                 <FormField
