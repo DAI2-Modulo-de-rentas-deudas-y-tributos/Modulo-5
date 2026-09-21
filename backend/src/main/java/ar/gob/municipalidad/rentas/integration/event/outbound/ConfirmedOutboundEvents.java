@@ -31,6 +31,10 @@ public final class ConfirmedOutboundEvents {
         BigDecimal outstandingAmount,LocalDate dueDate) {}
     public record DebtSettledPayload(String debtId,String citizenId,String conceptCode,
         OffsetDateTime settledAt,BigDecimal outstandingBalance) {}
+    public record ExternalPaymentRegisteredPayload(String paymentId,String debtId,String externalReferenceId,
+        ExternalObligationType externalType,BigDecimal amount,BigDecimal remainingBalance,OffsetDateTime paidAt) {}
+    public record ExternalDebtSettledPayload(String debtId,String externalReferenceId,
+        ExternalObligationType externalType,OffsetDateTime settledAt,BigDecimal outstandingBalance) {}
 
     public record M2UpdateTicketStatusData(Long ticketId,String updateType,String publicMessage,
         String internalMessage,Integer progress,JsonNode details,List<JsonNode> attachments,UpdatedBy updatedBy,

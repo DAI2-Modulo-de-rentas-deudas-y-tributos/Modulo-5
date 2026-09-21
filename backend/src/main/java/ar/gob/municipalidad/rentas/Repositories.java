@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.context.annotation.Profile;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.math.BigDecimal;
 import java.util.*;
 
@@ -72,26 +73,36 @@ interface PaymentRepository extends FilteredRepository<Payment,Long> {
           and (cast(:to as LocalDate) is null or cast(p.paidAt as LocalDate)<=:to)
         """) CollectionIndicatorAggregate aggregateConfirmed(@Param("from") LocalDate from,@Param("to") LocalDate to);
 }
-interface PaymentAllocationRepository extends FilteredRepository<PaymentAllocation,Long> { List<PaymentAllocation> findByPaymentId(Long paymentId); }
+interface PaymentAllocationRepository extends FilteredRepository<PaymentAllocation,Long> {
+    List<PaymentAllocation> findByPaymentId(Long paymentId);
+    List<PaymentAllocation> findByDebtIdOrderByAllocatedAtAscIdAsc(Long debtId);
+    List<PaymentAllocation> findByInstallmentIdInOrderByAllocatedAtAscIdAsc(Collection<Long> installmentIds);
+}
 interface BillRepository extends FilteredRepository<Bill,Long> { List<Bill> findByTaxpayerId(Long taxpayerId); Page<Bill> findByTaxpayerId(Long taxpayerId,Pageable pageable); }
-interface BillDebtRepository extends JpaRepository<BillDebt,Long> { List<BillDebt> findByBillId(Long billId); List<BillDebt> findByBillIdInOrderByBillIdAscIdAsc(Collection<Long> billIds); }
+interface BillDebtRepository extends JpaRepository<BillDebt,Long> { List<BillDebt> findByBillId(Long billId); List<BillDebt> findByBillIdOrderByIdAsc(Long billId); List<BillDebt> findByBillIdInOrderByBillIdAscIdAsc(Collection<Long> billIds); }
 interface ElectronicPaymentRepository extends JpaRepository<ElectronicPaymentAttempt,Long> { Optional<ElectronicPaymentAttempt> findByPaymentId(Long paymentId); }
 interface CreditBalanceRepository extends FilteredRepository<CreditBalance,Long> { Optional<CreditBalance> findBySourcePaymentId(Long paymentId); @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select c from CreditBalance c where c.sourcePaymentId=:paymentId") Optional<CreditBalance> findBySourcePaymentIdForUpdate(Long paymentId); List<CreditBalance> findByTaxpayerId(Long taxpayerId); @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select c from CreditBalance c where c.id=:id") Optional<CreditBalance> findByIdForUpdate(Long id); }
-interface CreditBalanceApplicationRepository extends JpaRepository<CreditBalanceApplication,Long> {}
+interface CreditBalanceApplicationRepository extends JpaRepository<CreditBalanceApplication,Long> {
+    List<CreditBalanceApplication> findByDebtIdOrderByAppliedAtAscIdAsc(Long debtId);
+    List<CreditBalanceApplication> findByCreditBalanceIdOrderByAppliedAtAscIdAsc(Long creditBalanceId);
+}
 interface PaymentReversalRepository extends FilteredRepository<PaymentReversalRequest,Long> { @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select r from PaymentReversalRequest r where r.id=:id") Optional<PaymentReversalRequest> findByIdForUpdate(Long id); boolean existsByPaymentIdAndStatusIn(Long paymentId,Collection<PaymentReversalStatus> statuses); }
 interface ProcessedEventRepository extends JpaRepository<ProcessedEvent,UUID> { boolean existsByExternalEventId(String eventId); }
 interface IntegrationEventLogRepository extends FilteredRepository<IntegrationEventLog,Long> { Optional<IntegrationEventLog> findFirstByEventIdOrderByIdDesc(UUID eventId); Optional<IntegrationEventLog> findFirstByExternalEventIdOrderByIdDesc(String eventId); Page<IntegrationEventLog> findByStatusIn(Collection<IntegrationEventStatus> statuses,Pageable pageable); }
 interface OutboxRepository extends JpaRepository<OutboxEvent,UUID> { @Query(value="select * from outbox_event where status in ('PENDING','FAILED') order by created_at for update skip locked",nativeQuery=true) List<OutboxEvent> findPublishable(Pageable pageable); }
-interface AuditRepository extends FilteredRepository<AuditEntry,Long> { List<AuditEntry> findByEntityTypeAndEntityIdOrderByOccurredAt(String entityType,String entityId); }
+interface AuditRepository extends FilteredRepository<AuditEntry,Long> { List<AuditEntry> findByEntityTypeAndEntityIdOrderByOccurredAt(String entityType,String entityId); List<AuditEntry> findByEntityTypeAndEntityIdOrderByOccurredAtAscIdAsc(String entityType,String entityId); }
 interface PaymentPlanConfigurationRepository extends FilteredRepository<PaymentPlanConfiguration,Long> {
     Optional<PaymentPlanConfiguration> findFirstByOrderByVersionDesc();
-    @Query("select c from PaymentPlanConfiguration c where c.active=true and c.validFrom<=:date and (c.validUntil is null or c.validUntil>=:date) order by c.version desc")
-    List<PaymentPlanConfiguration> findApplicable(@Param("date") LocalDate date,Pageable pageable);
+    @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select c from PaymentPlanConfiguration c order by c.version asc")
+    List<PaymentPlanConfiguration> lockVersionSequence(Pageable pageable);
+    @Query("select c from PaymentPlanConfiguration c where c.validFrom<=:date and (c.validUntil is null or c.validUntil>=:date) order by c.version desc")
+    List<PaymentPlanConfiguration> findApplicableVersions(@Param("date") LocalDate date,Pageable pageable);
 }
 interface PaymentPlanRequestRepository extends FilteredRepository<PaymentPlanRequest,Long> { Page<PaymentPlanRequest> findByTaxpayerId(Long taxpayerId,Pageable pageable); @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select r from PaymentPlanRequest r where r.id=:id") Optional<PaymentPlanRequest> findByIdForUpdate(Long id); }
 interface PaymentPlanRequestDebtRepository extends JpaRepository<PaymentPlanRequestDebt,Long> { List<PaymentPlanRequestDebt> findByRequestId(Long requestId); }
 interface PaymentPlanRepository extends FilteredRepository<PaymentPlan,Long> {
     boolean existsByDebtIdAndStatus(Long debtId, PaymentPlanStatus status);
+    List<PaymentPlan> findByDebtIdOrderByGrantedAtAscIdAsc(Long debtId);
     long countByTaxpayerIdAndStatus(Long taxpayerId,PaymentPlanStatus status);
     Page<PaymentPlan> findByTaxpayerId(Long taxpayerId,Pageable pageable);
     @Query("select p.debtId from PaymentPlan p where p.debtId in :debtIds and p.status=:status") Set<Long> findDebtIdsByStatus(@Param("debtIds") Collection<Long> debtIds,@Param("status") PaymentPlanStatus status);
@@ -108,15 +119,20 @@ interface PaymentPlanDebtRepository extends JpaRepository<PaymentPlanDebt,Long> 
     boolean existsByDebtIdAndStatus(Long debtId,PaymentPlanDebtStatus status);
     @Query("select d.debtId from PaymentPlanDebt d where d.debtId in :debtIds and d.status=:status") Set<Long> findDebtIdsByStatus(@Param("debtIds") Collection<Long> debtIds,@Param("status") PaymentPlanDebtStatus status);
     List<PaymentPlanDebt> findByPaymentPlanId(Long paymentPlanId);
+    List<PaymentPlanDebt> findByDebtIdOrderByCreatedAtAscIdAsc(Long debtId);
 }
 interface InstallmentRepository extends JpaRepository<Installment,Long> {
     List<Installment> findByPaymentPlanIdOrderByNumber(Long planId);
+    List<Installment> findByPaymentPlanIdInOrderByPaymentPlanIdAscNumberAsc(Collection<Long> planIds);
     @Query("select i.paymentPlanId from Installment i where i.id=:id") Optional<Long> findPaymentPlanIdById(Long id);
     @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select i from Installment i where i.id=:id") Optional<Installment> findByIdForUpdate(Long id);
 }
 interface PlanExpirationRepository extends FilteredRepository<PlanExpirationRequest,Long> { boolean existsByPaymentPlanIdAndStatus(Long planId,PlanExpirationStatus status); @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select e from PlanExpirationRequest e where e.id=:id") Optional<PlanExpirationRequest> findByIdForUpdate(Long id); }
 interface RefinancingRequestRepository extends FilteredRepository<RefinancingRequest,Long> { @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select r from RefinancingRequest r where r.id=:id") Optional<RefinancingRequest> findByIdForUpdate(Long id); }
-interface AdjustmentRepository extends FilteredRepository<AdjustmentRequest,Long> {}
+interface AdjustmentRepository extends FilteredRepository<AdjustmentRequest,Long> {
+    List<AdjustmentRequest> findByDebtIdInAndStatusAndResolvedAtAfter(Collection<Long> debtIds,AdjustmentStatus status,OffsetDateTime resolvedAfter);
+    List<AdjustmentRequest> findByDebtIdOrderByRequestedAtAscIdAsc(Long debtId);
+}
 interface LiquidationRunRepository extends FilteredRepository<LiquidationRun,Long> { @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select r from LiquidationRun r where r.id=:id") Optional<LiquidationRun> findByIdForUpdate(Long id); }
 interface LiquidationRunItemRepository extends JpaRepository<LiquidationRunItem,Long> { List<LiquidationRunItem> findByLiquidationRunIdOrderById(Long runId); }
 interface TicketCaseRepository extends FilteredRepository<TicketCase,Long> { Optional<TicketCase> findByExternalTicketId(String externalTicketId); }
@@ -124,11 +140,24 @@ interface TicketCaseUpdateRepository extends JpaRepository<TicketCaseUpdate,Long
 interface SocialBenefitRepository extends FilteredRepository<SocialBenefitReference,Long> { Optional<SocialBenefitReference> findByExternalBenefitId(String externalBenefitId); List<SocialBenefitReference> findByTaxpayerId(Long taxpayerId); }
 interface SocialBenefitTaxConceptRepository extends JpaRepository<SocialBenefitTaxConcept,Long> { List<SocialBenefitTaxConcept> findBySocialBenefitId(Long benefitId); boolean existsBySocialBenefitIdAndTaxConceptId(Long benefitId,Long conceptId); void deleteBySocialBenefitId(Long benefitId); }
 interface TaxpayerRepresentationRepository extends JpaRepository<TaxpayerRepresentationReference,Long> { Optional<TaxpayerRepresentationReference> findByExternalRepresentationId(String externalRepresentationId); }
-interface ExemptionRequestRepository extends FilteredRepository<ExemptionRequest,Long> { Page<ExemptionRequest> findByTaxpayerId(Long taxpayerId,Pageable pageable); @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select e from ExemptionRequest e where e.id=:id") Optional<ExemptionRequest> findByIdForUpdate(Long id); }
-interface ExemptionRequestDocumentRepository extends JpaRepository<ExemptionRequestDocument,Long> { List<ExemptionRequestDocument> findByExemptionRequestId(Long requestId); }
+interface ExemptionRequestRepository extends FilteredRepository<ExemptionRequest,Long> {
+    Page<ExemptionRequest> findByTaxpayerId(Long taxpayerId,Pageable pageable);
+    @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select e from ExemptionRequest e where e.id=:id") Optional<ExemptionRequest> findByIdForUpdate(Long id);
+    @Query("""
+        select count(e) from ExemptionRequest e
+        where e.taxpayerId=:taxpayerId and e.taxConceptId=:taxConceptId and e.status in :statuses
+          and e.requestedFrom<=:requestedUntil
+          and (e.requestedUntil is null or e.requestedUntil>=:requestedFrom)
+        """)
+    long countOverlapping(@Param("taxpayerId") Long taxpayerId,@Param("taxConceptId") Long taxConceptId,
+        @Param("statuses") Collection<ExemptionRequestStatus> statuses,@Param("requestedFrom") LocalDate requestedFrom,
+        @Param("requestedUntil") LocalDate requestedUntil);
+}
+interface ExemptionRequestDocumentRepository extends JpaRepository<ExemptionRequestDocument,Long> { List<ExemptionRequestDocument> findByExemptionRequestId(Long requestId); List<ExemptionRequestDocument> findByExemptionRequestIdOrderByUploadedAtAscIdAsc(Long requestId); }
 interface ExemptionRepository extends FilteredRepository<Exemption,Long> {
     List<Exemption> findByTaxpayerIdAndTaxConceptIdAndStatus(Long taxpayerId,Long conceptId,String status);
     List<Exemption> findByTaxpayerId(Long taxpayerId);
+    Optional<Exemption> findByRequestId(Long requestId);
 }
 @Profile("!prod")
 interface DemoUserRepository extends JpaRepository<DemoUser,Long> { Optional<DemoUser> findByUsernameIgnoreCase(String username); boolean existsByUsernameIgnoreCase(String username); }
@@ -141,6 +170,7 @@ interface LateChargeRuleRepository extends JpaRepository<LateChargeRule,Long> {
 interface LateChargeApplicationRepository extends JpaRepository<LateChargeApplication,Long> {
     Optional<LateChargeApplication> findByDebtIdAndRuleIdAndCalculationDate(Long debtId,Long ruleId,LocalDate date);
     List<LateChargeApplication> findByDebtId(Long debtId);
+    List<LateChargeApplication> findByDebtIdIn(Collection<Long> debtIds);
 }
 interface DueDateProcessingRepository extends JpaRepository<DueDateProcessing,Long> { Optional<DueDateProcessing> findByProcessingDate(LocalDate date); }
 interface ElectronicReconciliationBatchRepository extends JpaRepository<ElectronicReconciliationBatch,Long> { Optional<ElectronicReconciliationBatch> findByExternalBatchReference(String reference); }

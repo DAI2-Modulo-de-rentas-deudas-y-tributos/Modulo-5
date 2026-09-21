@@ -27,8 +27,11 @@ class BillingFlowTests {
     @Autowired PaymentService payments;
     @Autowired ElectronicPaymentService electronicPayments;
     @Autowired CreditBalanceService creditService;
+    @Autowired ApiController api;
     @Autowired DebtRepository debts;
     @Autowired CreditBalanceRepository credits;
+    @Autowired CreditBalanceApplicationRepository creditApplications;
+    @Autowired AuditRepository audits;
 
     @BeforeEach void authenticateEmployee() {
         authenticate(new AuthenticatedIdentity("tester", null), "RENTAS", "CASHIER");
@@ -73,7 +76,13 @@ class BillingFlowTests {
         assertThat(payment.allocatedAmount).isEqualByComparingTo("100.00");
         assertThat(payment.unallocatedAmount).isEqualByComparingTo("20.00");
         assertThat(payment.allocationStatus).isEqualTo(PaymentAllocationStatus.PARTIALLY_ALLOCATED);
-        assertThat(credits.findBySourcePaymentId(payment.id).orElseThrow().availableAmount).isEqualByComparingTo("20.00");
+        CreditBalance credit = credits.findBySourcePaymentId(payment.id).orElseThrow();
+        assertThat(credit.availableAmount).isEqualByComparingTo("20.00");
+        AuditEntry creation = audits.findByEntityTypeAndEntityIdOrderByOccurredAt("CreditBalance", credit.id.toString()).stream()
+            .filter(entry -> entry.action.equals("CREDIT_BALANCE_CREATED")).findFirst().orElseThrow();
+        assertThat(creation.newData)
+            .contains("\"id\":" + credit.id, "\"taxpayerId\":" + credit.taxpayerId,
+                "\"sourcePaymentId\":" + payment.id, "\"originalAmount\":20.00");
         assertThatThrownBy(() -> payments.allocateExisting(payment.id, new ApiDtos.AllocationRequest(debt.id, new BigDecimal("20"))))
             .isInstanceOf(BusinessException.class).hasMessageContaining("saldo a favor");
     }
@@ -90,6 +99,109 @@ class BillingFlowTests {
 
         assertThat(debts.findById(second.id).orElseThrow().outstandingBalance).isEqualByComparingTo("80.00");
         assertThat(credits.findBySourcePaymentId(payment.id).orElseThrow().status).isEqualTo(CreditBalanceStatus.USED);
+    }
+
+    @Test void creditApplicationsRemainTraceableAfterPartialAndFullUse() {
+        Debt source = debt("BILL-CREDIT-TRACE-SOURCE", "CREDIT-TRACE-SOURCE");
+        Debt firstTarget = anotherDebt(source, "CREDIT-TRACE-TARGET-1");
+        TaxConcept secondTargetConcept = concept("CREDIT-TRACE-TARGET-2");
+        activate(secondTargetConcept.id);
+        liquidations.create(liquidation(source.taxpayerId, secondTargetConcept.id));
+        Debt secondTarget = debts.findByTaxpayerId(source.taxpayerId).stream()
+            .filter(debt -> !debt.id.equals(source.id) && !debt.id.equals(firstTarget.id)).findFirst().orElseThrow();
+        Payment payment = payments.register(new ApiDtos.RegisterPaymentRequest(source.taxpayerId, PaymentMethod.CASH,
+            new BigDecimal("140"), List.of(new ApiDtos.AllocationRequest(source.id, new BigDecimal("140")))));
+        CreditBalance credit = credits.findBySourcePaymentId(payment.id).orElseThrow();
+
+        CreditBalanceApplication first = creditService.apply(credit.id,
+            new ApiDtos.ApplyCreditBalanceRequest(firstTarget.id, new BigDecimal("10")));
+        assertThat(credits.findById(credit.id).orElseThrow().status).isEqualTo(CreditBalanceStatus.PARTIALLY_USED);
+        assertThat(api.creditBalanceApplications(credit.id)).singleElement().satisfies(application -> {
+            assertThat(application.id()).isEqualTo(first.id);
+            assertThat(application.debtId()).isEqualTo(firstTarget.id);
+            assertThat(application.amount()).isEqualByComparingTo("10.00");
+            assertThat(application.appliedBy()).isEqualTo("tester");
+            assertThat(application.appliedAt()).isNotNull();
+        });
+
+        CreditBalanceApplication second = creditService.apply(credit.id,
+            new ApiDtos.ApplyCreditBalanceRequest(secondTarget.id, new BigDecimal("30")));
+        List<CreditBalanceApplication> history = creditService.applications(credit.id);
+
+        assertThat(credits.findById(credit.id).orElseThrow().status).isEqualTo(CreditBalanceStatus.USED);
+        assertThat(history).extracting(application -> application.id).containsExactly(first.id, second.id);
+        assertThat(history).extracting(application -> application.debtId).containsExactly(firstTarget.id, secondTarget.id);
+        assertThat(history).extracting(application -> application.amount)
+            .usingComparatorForType(BigDecimal::compareTo, BigDecimal.class)
+            .containsExactly(new BigDecimal("10.00"), new BigDecimal("30.00"));
+        assertThat(history).allSatisfy(application -> {
+            assertThat(application.status).isEqualTo("ACTIVE");
+            assertThat(application.appliedBy).isEqualTo("tester");
+            assertThat(application.appliedAt).isNotNull();
+        });
+    }
+
+    @Test void creditApplicationHistoryEnforcesOwnershipAndAllowsAuditor() {
+        Debt source = debt("BILL-CREDIT-TRACE-OWNER", "CREDIT-TRACE-OWNER");
+        Debt target = anotherDebt(source, "CREDIT-TRACE-OWNER-TARGET");
+        Payment payment = payments.register(new ApiDtos.RegisterPaymentRequest(source.taxpayerId, PaymentMethod.CASH,
+            new BigDecimal("120"), List.of(new ApiDtos.AllocationRequest(source.id, new BigDecimal("120")))));
+        CreditBalance credit = credits.findBySourcePaymentId(payment.id).orElseThrow();
+        creditService.apply(credit.id, new ApiDtos.ApplyCreditBalanceRequest(target.id, new BigDecimal("10")));
+        Debt foreign = debt("BILL-CREDIT-TRACE-FOREIGN", "CREDIT-TRACE-FOREIGN");
+
+        authenticate(new AuthenticatedIdentity("owner", source.taxpayerId), "TAXPAYER");
+        assertThat(api.creditBalanceApplications(credit.id)).hasSize(1);
+
+        authenticate(new AuthenticatedIdentity("foreign", foreign.taxpayerId), "TAXPAYER");
+        assertThatThrownBy(() -> api.creditBalanceApplications(credit.id))
+            .isInstanceOfSatisfying(BusinessException.class, exception -> assertThat(exception.code).isEqualTo("FORBIDDEN_OWNERSHIP"));
+
+        authenticate(new AuthenticatedIdentity("auditor", null), "AUDITOR");
+        assertThat(api.creditBalanceApplications(credit.id)).hasSize(1);
+        assertThatThrownBy(() -> api.creditBalanceApplications(Long.MAX_VALUE))
+            .isInstanceOfSatisfying(BusinessException.class, exception -> assertThat(exception.code).isEqualTo("NOT_FOUND"));
+    }
+
+    @Test void creditCannotBeAppliedToCancelledDebtAndLeavesBalancesUnchanged() {
+        Debt source = debt("BILL-CREDIT-CANCELLED-SOURCE", "CREDIT-CANCELLED-SOURCE");
+        Debt target = anotherDebt(source, "CREDIT-CANCELLED-TARGET");
+        Payment payment = payments.register(new ApiDtos.RegisterPaymentRequest(source.taxpayerId, PaymentMethod.CASH, new BigDecimal("120"), List.of(new ApiDtos.AllocationRequest(source.id, new BigDecimal("120")))));
+        CreditBalance credit = credits.findBySourcePaymentId(payment.id).orElseThrow();
+        target.status = DebtStatus.CANCELLED;
+        debts.save(target);
+
+        assertThatThrownBy(() -> creditService.apply(credit.id, new ApiDtos.ApplyCreditBalanceRequest(target.id, new BigDecimal("20"))))
+            .isInstanceOfSatisfying(BusinessException.class, exception -> assertThat(exception.code).isEqualTo("DEBT_NOT_PAYABLE"));
+
+        CreditBalance storedCredit = credits.findById(credit.id).orElseThrow();
+        Debt storedTarget = debts.findById(target.id).orElseThrow();
+        assertThat(storedCredit.availableAmount).isEqualByComparingTo("20.00");
+        assertThat(storedCredit.status).isEqualTo(CreditBalanceStatus.AVAILABLE);
+        assertThat(storedTarget.outstandingBalance).isEqualByComparingTo("100.00");
+        assertThat(storedTarget.status).isEqualTo(DebtStatus.CANCELLED);
+        assertThat(creditApplications.findAll()).noneMatch(application -> credit.id.equals(application.creditBalanceId));
+    }
+
+    @Test void creditCannotBeAppliedToPaidDebtAndLeavesBalancesUnchanged() {
+        Debt source = debt("BILL-CREDIT-PAID-SOURCE", "CREDIT-PAID-SOURCE");
+        Debt target = anotherDebt(source, "CREDIT-PAID-TARGET");
+        Payment payment = payments.register(new ApiDtos.RegisterPaymentRequest(source.taxpayerId, PaymentMethod.CASH, new BigDecimal("120"), List.of(new ApiDtos.AllocationRequest(source.id, new BigDecimal("120")))));
+        CreditBalance credit = credits.findBySourcePaymentId(payment.id).orElseThrow();
+        target.status = DebtStatus.PAID;
+        target.outstandingBalance = BigDecimal.ZERO.setScale(2);
+        debts.save(target);
+
+        assertThatThrownBy(() -> creditService.apply(credit.id, new ApiDtos.ApplyCreditBalanceRequest(target.id, new BigDecimal("20"))))
+            .isInstanceOfSatisfying(BusinessException.class, exception -> assertThat(exception.code).isEqualTo("DEBT_NOT_PAYABLE"));
+
+        CreditBalance storedCredit = credits.findById(credit.id).orElseThrow();
+        Debt storedTarget = debts.findById(target.id).orElseThrow();
+        assertThat(storedCredit.availableAmount).isEqualByComparingTo("20.00");
+        assertThat(storedCredit.status).isEqualTo(CreditBalanceStatus.AVAILABLE);
+        assertThat(storedTarget.outstandingBalance).isZero();
+        assertThat(storedTarget.status).isEqualTo(DebtStatus.PAID);
+        assertThat(creditApplications.findAll()).noneMatch(application -> credit.id.equals(application.creditBalanceId));
     }
 
     @Test void electronicPaymentUsesTaxpayerIdentityAndElectronicOrigin() {
@@ -115,6 +227,13 @@ class BillingFlowTests {
         activate(concept.id);
         liquidations.create(liquidation(taxpayer.id, concept.id));
         return debts.findByTaxpayerId(taxpayer.id).get(0);
+    }
+
+    private Debt anotherDebt(Debt source, String conceptCode) {
+        TaxConcept concept = concept(conceptCode);
+        activate(concept.id);
+        liquidations.create(liquidation(source.taxpayerId, concept.id));
+        return debts.findByTaxpayerId(source.taxpayerId).stream().filter(debt -> !debt.id.equals(source.id)).findFirst().orElseThrow();
     }
 
     private TaxConcept concept(String code) {

@@ -164,9 +164,11 @@ class SecurityTests {
         mvc.perform(get("/api/v1/health")).andExpect(status().isOk()).andExpect(jsonPath("$.status").value("UP"));
         String openApi=mvc.perform(get("/v3/api-docs")).andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
         var paths=json.readTree(openApi).path("paths");int operations=0;for(var path=paths.fields();path.hasNext();)operations+=path.next().getValue().size();
-        org.assertj.core.api.Assertions.assertThat(operations).isEqualTo(149);
-        org.assertj.core.api.Assertions.assertThat(paths.size()).isEqualTo(134);
+        org.assertj.core.api.Assertions.assertThat(operations).isEqualTo(153);
+        org.assertj.core.api.Assertions.assertThat(paths.size()).isEqualTo(138);
+        org.assertj.core.api.Assertions.assertThat(paths.has("/api/v1/credit-balances/{id}/applications")).isTrue();
         org.assertj.core.api.Assertions.assertThat(paths.fieldNames()).toIterable().noneMatch(x->x.startsWith("/events/"));
+        org.assertj.core.api.Assertions.assertThat(paths.has("/api/v1/debts/{id}/history")).isTrue();
         org.assertj.core.api.Assertions.assertThat(paths.has("/api/v1/dev-auth/bootstrap")).isTrue();
         org.assertj.core.api.Assertions.assertThat(paths.has("/api/v1/dev-auth/logout")).isTrue();
     }

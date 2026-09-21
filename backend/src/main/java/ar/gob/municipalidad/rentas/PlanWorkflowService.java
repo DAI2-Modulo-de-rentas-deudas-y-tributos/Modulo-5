@@ -38,24 +38,26 @@ class PlanWorkflowService {
     @Transactional PaymentPlanConfiguration createConfiguration(ApiDtos.CreatePaymentPlanConfigurationRequest r) {
         validateConfiguration(r.minimumInstallments(),r.maximumInstallments(),r.minimumDownPaymentPercentage(),r.interestRate(),r.graceDays(),r.maxOverdueInstallments(),r.maxRefinancingCount(),r.validFrom(),r.validUntil());
         PaymentPlanConfiguration c=new PaymentPlanConfiguration();
-        c.version=configurations.findFirstByOrderByVersionDesc().map(x->x.version+1).orElse(1);
+        c.version=nextVersion();
         apply(c,r.minimumInstallments(),r.maximumInstallments(),r.minimumDownPaymentPercentage(),r.interestRate(),r.graceDays(),r.maxOverdueInstallments(),r.partialInstallmentPaymentAllowed(),r.refinancingAllowed(),r.maxRefinancingCount(),r.validFrom(),r.validUntil(),r.active());
         c.createdBy=identity.get().userId(); c.createdAt=OffsetDateTime.now();
         configurations.save(c); audit.record("PaymentPlanConfiguration",c.id,"PLAN_CONFIGURATION_CREATED",c); return c;
     }
 
     @Transactional PaymentPlanConfiguration updateConfiguration(Long id,ApiDtos.UpdatePaymentPlanConfigurationRequest r) {
-        PaymentPlanConfiguration c=configuration(id);
-        int min=r.minimumInstallments()==null?c.minimumInstallments:r.minimumInstallments();
-        int max=r.maximumInstallments()==null?c.maximumInstallments:r.maximumInstallments();
-        BigDecimal down=r.minimumDownPaymentPercentage()==null?c.minimumDownPaymentPercentage:r.minimumDownPaymentPercentage();
-        BigDecimal rate=r.interestRate()==null?c.interestRate:r.interestRate();
-        int grace=r.graceDays()==null?c.graceDays:r.graceDays(); int overdue=r.maxOverdueInstallments()==null?c.maxOverdueInstallments:r.maxOverdueInstallments();
-        int maxRefinancing=r.maxRefinancingCount()==null?c.maxRefinancingCount:r.maxRefinancingCount();
-        LocalDate from=r.validFrom()==null?c.validFrom:r.validFrom(); LocalDate until=r.validUntil()==null?c.validUntil:r.validUntil();
+        int version=nextVersion();PaymentPlanConfiguration source=configuration(id);
+        int min=r.minimumInstallments()==null?source.minimumInstallments:r.minimumInstallments();
+        int max=r.maximumInstallments()==null?source.maximumInstallments:r.maximumInstallments();
+        BigDecimal down=r.minimumDownPaymentPercentage()==null?source.minimumDownPaymentPercentage:r.minimumDownPaymentPercentage();
+        BigDecimal rate=r.interestRate()==null?source.interestRate:r.interestRate();
+        int grace=r.graceDays()==null?source.graceDays:r.graceDays(); int overdue=r.maxOverdueInstallments()==null?source.maxOverdueInstallments:r.maxOverdueInstallments();
+        int maxRefinancing=r.maxRefinancingCount()==null?source.maxRefinancingCount:r.maxRefinancingCount();
+        LocalDate from=r.validFrom()==null?source.validFrom:r.validFrom(); LocalDate until=r.validUntil()==null?source.validUntil:r.validUntil();
         validateConfiguration(min,max,down,rate,grace,overdue,maxRefinancing,from,until);
-        apply(c,min,max,down,rate,grace,overdue,r.partialInstallmentPaymentAllowed()==null?c.partialInstallmentPaymentAllowed:r.partialInstallmentPaymentAllowed(),r.refinancingAllowed()==null?c.refinancingAllowed:r.refinancingAllowed(),maxRefinancing,from,until,r.active()==null?c.active:r.active());
-        audit.record("PaymentPlanConfiguration",c.id,"PLAN_CONFIGURATION_UPDATED",c); return c;
+        PaymentPlanConfiguration created=new PaymentPlanConfiguration();created.version=version;
+        apply(created,min,max,down,rate,grace,overdue,r.partialInstallmentPaymentAllowed()==null?source.partialInstallmentPaymentAllowed:r.partialInstallmentPaymentAllowed(),r.refinancingAllowed()==null?source.refinancingAllowed:r.refinancingAllowed(),maxRefinancing,from,until,r.active()==null?source.active:r.active());
+        created.createdBy=identity.get().userId();created.createdAt=OffsetDateTime.now();configurations.save(created);
+        audit.record("PaymentPlanConfiguration",created.id,"PLAN_CONFIGURATION_VERSION_CREATED",Map.of("sourceConfigurationId",source.id,"sourceVersion",source.version,"newConfigurationId",created.id,"newVersion",created.version));return created;
     }
 
     ApiDtos.PaymentPlanSimulationResponse simulate(ApiDtos.PaymentPlanSimulationRequest r) {
@@ -137,8 +139,9 @@ class PlanWorkflowService {
     private boolean isDefaulted(PaymentPlan p){if(p.status!=PaymentPlanStatus.ACTIVE)return false;PaymentPlanConfiguration c=configuration(p.configurationId);long overdue=installments.findByPaymentPlanIdOrderByNumber(p.id).stream().filter(i->i.status!=InstallmentStatus.PAID&&i.status!=InstallmentStatus.CANCELLED&&i.outstandingAmount.signum()>0&&i.dueDate.isBefore(LocalDate.now())).count();return overdue>c.maxOverdueInstallments;}
     private void validateRefinancing(PaymentPlan p,PaymentPlanConfiguration c){CatalogService.require(p.status==PaymentPlanStatus.ACTIVE||p.status==PaymentPlanStatus.EXPIRED,"PLAN_NOT_REFINANCING_ELIGIBLE","Sólo se puede refinanciar un plan activo o caducado con saldo pendiente");CatalogService.require(remainingPrincipal(p.id).signum()>0,"PLAN_WITHOUT_BALANCE","El plan no tiene saldo pendiente");CatalogService.require(c.refinancingAllowed,"REFINANCING_NOT_ALLOWED","La configuración no permite refinanciar");CatalogService.require(p.refinancingCount<c.maxRefinancingCount,"MAX_REFINANCING_REACHED","El plan alcanzó el máximo de refinanciaciones");}
     private BigDecimal remainingPrincipal(Long planId){return money(planDebts.findByPaymentPlanId(planId).stream().filter(x->x.status==PaymentPlanDebtStatus.ACTIVE).map(x->x.remainingPrincipalAmount).reduce(BigDecimal.ZERO,BigDecimal::add));}
-    private PaymentPlanConfiguration currentConfiguration(){List<PaymentPlanConfiguration> result=configurations.findApplicable(LocalDate.now(),PageRequest.of(0,1));CatalogService.require(!result.isEmpty(),"NO_ACTIVE_PLAN_CONFIGURATION","No existe configuración de planes vigente");return result.get(0);}
+    private PaymentPlanConfiguration currentConfiguration(){List<PaymentPlanConfiguration> result=configurations.findApplicableVersions(LocalDate.now(),PageRequest.of(0,1));CatalogService.require(!result.isEmpty()&&result.get(0).active,"NO_ACTIVE_PLAN_CONFIGURATION","No existe configuración de planes vigente");return result.get(0);}
     private PaymentPlanConfiguration configuration(Long id){CatalogService.require(id!=null,"PLAN_CONFIGURATION_MISSING","El plan no tiene configuración asociada");return configurations.findById(id).orElseThrow(()->CatalogService.notFound("Configuración de planes"));}
+    private int nextVersion(){configurations.lockVersionSequence(PageRequest.of(0,1));return configurations.findFirstByOrderByVersionDesc().map(x->x.version+1).orElse(1);}
     private void validateConfiguration(int min,int max,BigDecimal down,BigDecimal rate,int grace,int overdue,int refinancings,LocalDate from,LocalDate until){CatalogService.require(min>0&&max>=min,"INVALID_INSTALLMENT_RANGE","El rango de cuotas es inválido");CatalogService.require(down!=null&&down.signum()>=0&&down.compareTo(new BigDecimal("100"))<=0,"INVALID_DOWN_PAYMENT_PERCENTAGE","El porcentaje de anticipo es inválido");CatalogService.require(rate!=null&&rate.signum()>=0,"INVALID_PLAN_INTEREST","La tasa no puede ser negativa");CatalogService.require(grace>=0&&overdue>=0&&refinancings>=0,"INVALID_PLAN_POLICY","Los límites no pueden ser negativos");CatalogService.require(until==null||!until.isBefore(from),"INVALID_VALIDITY_RANGE","La vigencia es inválida");}
     private void apply(PaymentPlanConfiguration c,int min,int max,BigDecimal down,BigDecimal rate,int grace,int overdue,boolean partial,boolean refinancing,int maxRefinancing,LocalDate from,LocalDate until,boolean active){c.minimumInstallments=min;c.maximumInstallments=max;c.minimumDownPaymentPercentage=down;c.interestRate=rate;c.graceDays=grace;c.maxOverdueInstallments=overdue;c.partialInstallmentPaymentAllowed=partial;c.refinancingAllowed=refinancing;c.maxRefinancingCount=maxRefinancing;c.validFrom=from;c.validUntil=until;c.active=active;}
     private PaymentPlanRequest reject(PaymentPlanRequest r,String reason,String action){r.status=PaymentPlanRequestStatus.REJECTED;r.resolutionReason=reason;r.resolvedBy=identity.get().userId();r.resolvedAt=OffsetDateTime.now();integrationEvents.paymentPlanRejected(r);audit.record("PaymentPlanRequest",r.id,action,r);return r;}

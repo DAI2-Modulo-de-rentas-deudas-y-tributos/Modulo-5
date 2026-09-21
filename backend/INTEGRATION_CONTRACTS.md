@@ -60,7 +60,20 @@ M7 es propietario de la infracción. M5 no replica el agregado completo: conserv
 
 `baseAmount`, agravantes y demás detalle propio de la infracción se conservan sólo en `IntegrationEventLog.payload`. La fecha de la infracción se usa como fecha local de exigibilidad porque el modelo económico actual exige `dueDate`; esto es una regla interna explícita, no un campo atribuido al contrato de M7.
 
-Las salidas M5 → M7 (por ejemplo pago, reversión o cancelación de deuda) permanecen `PENDING_EXTERNAL_CONTRACT`: no están confirmados nombres, payloads, routing, ACK ni DLQ y no se inventan en esta etapa.
+### M5 → M4 / M7 — application-level confirmed behavior
+
+Cuando una imputación afecta una deuda cuya `ExternalObligation` concreta proviene de M4 o M7, M5 guarda en el transactional outbox:
+
+| Target | eventType | Payload mínimo | Correlación |
+|---|---|---|---|
+| M4 | `paymentRegistered` | `paymentId`, `debtId`, `externalReferenceId`, `externalType`, importe imputado, saldo restante y fecha del pago | `ExternalObligation.externalReferenceId` |
+| M4 | `debtSettled` | `debtId`, `externalReferenceId`, `externalType`, fecha de cancelación y saldo cero | `ExternalObligation.externalReferenceId` |
+| M7 | `paymentRegistered` | `paymentId`, `debtId`, `externalReferenceId`, `externalType`, importe imputado, saldo restante y fecha del pago | `ExternalObligation.externalReferenceId` |
+| M7 | `debtSettled` | `debtId`, `externalReferenceId`, `externalType`, fecha de cancelación y saldo cero | `ExternalObligation.externalReferenceId` |
+
+El routing se expresa sólo mediante `OutboxEvent.targetModule`. Cada destino recibe su propio `OutboxEvent` y `eventId`. Una imputación parcial publica `paymentRegistered`; `debtSettled` se publica únicamente cuando la deuda llega efectivamente a `PAID`. El evento genérico interno de pago y el `debtSettled` existente hacia M8 se conservan.
+
+`paymentReversed`: `PAYMENT_REVERSED_EXTERNAL_CONTRACT_PENDING`. Broker, topics/queues, ACK y DLQ: `PENDING_EXTERNAL_CONTRACT`.
 
 ## Internal normalization
 
@@ -70,7 +83,7 @@ Las salidas M5 → M7 (por ejemplo pago, reversión o cancelación de deuda) per
 
 ## Outbox and ownership
 
-Todo evento confirmado M5 → M1/M2/M8 se serializa como contrato externo y se guarda como `OutboxEvent` junto con el cambio de dominio. `targetModule` distingue consumidores cuando comparten `eventType`. `EventPublisher` sigue siendo una abstracción; esta etapa no elige ni conecta un broker. No hay contrato outbound confirmado hacia M7.
+Todo evento confirmado M5 → M1/M2/M4/M7/M8 se serializa como contrato externo y se guarda como `OutboxEvent` junto con el cambio de dominio. `targetModule` distingue consumidores cuando comparten `eventType`. `EventPublisher` sigue siendo una abstracción; esta etapa no elige ni conecta un broker.
 
 M5 es propietario de `Debt`, `Payment`, `PaymentPlan`, `Exemption` y demás estado económico local. Ningún consumer accede a bases de otros módulos y no se exponen endpoints REST `/api/v1/events*`.
 
@@ -88,7 +101,7 @@ Se mantienen adapters genéricos existentes. No se agregaron DTOs ni schemas nue
 
 ### M7 outbound y otros eventos — PENDING_M7_CONTRACT
 
-Sólo está confirmado el inbound `infractionConfirmed`. Permanecen pendientes cualquier evento de anulación, acarreo, estadía y las notificaciones M5 → M7 relacionadas con pagos, reversiones o deuda saldada.
+Además del inbound `infractionConfirmed`, está confirmado a nivel aplicación el comportamiento M5 → M7 para `paymentRegistered` y `debtSettled`. Permanecen pendientes `paymentReversed`, cualquier evento de anulación, acarreo o estadía, y el contrato de transporte.
 
 ### Core / JWT / Broker — PENDING_EXTERNAL_CONTRACT
 

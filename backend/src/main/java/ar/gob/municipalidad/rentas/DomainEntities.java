@@ -331,6 +331,7 @@ class PaymentReversalRequest {
     @Column(name="requested_at",nullable=false) public OffsetDateTime requestedAt;
     @Column(name="resolved_by") public String resolvedBy;
     @Column(name="resolved_at") public OffsetDateTime resolvedAt;
+    @Column(name="resolution_reason") public String resolutionReason;
     @Column(name="executed_by") public String executedBy;
     @Column(name="executed_at") public OffsetDateTime executedAt;
     protected PaymentReversalRequest() {}

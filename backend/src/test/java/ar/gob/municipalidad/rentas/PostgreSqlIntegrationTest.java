@@ -156,14 +156,17 @@ class PostgreSqlIntegrationTest {
     @Autowired LateChargeRuleRepository lateChargeRules;
     @Autowired LateChargeService lateCharges;
     @Autowired DueDateService dueDates;
+    @Autowired PaymentPlanConfigurationRepository planConfigurations;
     @Autowired ReconciliationService reconciliations;
     @Autowired LiquidationRunService bulkRuns;
 
     @AfterEach void clearSecurity(){SecurityContextHolder.clearContext();}
 
     @Test void contextStartsAndFlywayAppliesEveryMigration(){
-        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(17);
-        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(17);
+        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(19);
+        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(18);
+        assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='payment_reversal_request'",String.class))
+            .contains("resolution_reason");
         assertThat(jdbc.queryForList("select id from demo_bootstrap_lock",Integer.class)).containsExactly(1);
         assertThat(jdbc.queryForObject("select current_setting('server_version_num')::integer",Integer.class)).isBetween(170000,179999);
         assertThat(jdbc.queryForList("select code from tax_concept where code in ('TASA_SERVICIOS','ABL','PATENTE') order by code",String.class)).containsExactly("ABL","PATENTE","TASA_SERVICIOS");
@@ -180,6 +183,33 @@ class PostgreSqlIntegrationTest {
         assertThat(uniques).anyMatch(x->x.contains("event_id"));
         assertThat(uniques).anyMatch(x->x.contains("taxpayer_id")&&x.contains("tax_concept_id")&&x.contains("period"));
         assertThat(uniques).anyMatch(x->x.contains("source_module")&&x.contains("external_type")&&x.contains("external_reference_id"));
+    }
+
+    @Test void concurrentPlanConfigurationVersioningUsesUniqueSequentialVersions() throws Exception {
+        authenticate();
+        PaymentPlanConfiguration source=workflow.createConfiguration(new ApiDtos.CreatePaymentPlanConfigurationRequest(2,6,BigDecimal.ZERO,new BigDecimal("5"),0,1,true,true,2,LocalDate.now().minusDays(1),null,true));
+        var versions=new java.util.concurrent.CopyOnWriteArrayList<Integer>();
+        var patchSeven=new ApiDtos.UpdatePaymentPlanConfigurationRequest(null,null,null,new BigDecimal("7"),null,null,null,null,null,null,null,null);
+        var patchNine=new ApiDtos.UpdatePaymentPlanConfigurationRequest(null,null,null,new BigDecimal("9"),null,null,null,null,null,null,null,null);
+
+        assertThat(runTogether(()->{versions.add(workflow.updateConfiguration(source.id,patchSeven).version);return null;},
+            ()->{versions.add(workflow.updateConfiguration(source.id,patchNine).version);return null;})).containsOnlyNulls();
+
+        assertThat(versions).hasSize(2).doesNotHaveDuplicates();
+        assertThat(versions).containsExactlyInAnyOrder(source.version+1,source.version+2);
+        assertThat(planConfigurations.findById(source.id).orElseThrow().interestRate).isEqualByComparingTo("5");
+    }
+
+    @Test void billPricingPreviewRunsReadOnlyOnPostgreSql() {
+        authenticate();Debt debt=debt("BILL-PRICING",null);debt.dueDate=LocalDate.now().minusDays(2);debts.saveAndFlush(debt);Bill bill=billing.create(new ApiDtos.CreateBillRequest(debt.taxpayerId,List.of(debt.id),LocalDate.now().plusDays(10)));LateChargeRule rule=new LateChargeRule();rule.code="PG-BILL-"+UUID.randomUUID();rule.surchargeRate=new BigDecimal("10");rule.dailyInterestRate=new BigDecimal("1");rule.active=true;rule.validFrom=LocalDate.now();lateChargeRules.save(rule);long applicationsBefore=jdbc.queryForObject("select count(*) from late_charge_application",Long.class),adjustmentsBefore=jdbc.queryForObject("select count(*) from adjustment_request",Long.class);
+        try {
+            ApiDtos.BillDetailResponse detail=billing.pricingDetail(bill.id);
+            assertThat(detail.updatedPayableAmount()).isEqualByComparingTo("112");
+            assertThat(detail.pricingDetails()).singleElement().satisfies(price->{assertThat(price.pendingSurchargeAmount()).isEqualByComparingTo("10");assertThat(price.pendingInterestAmount()).isEqualByComparingTo("2");});
+            assertThat(jdbc.queryForObject("select count(*) from late_charge_application",Long.class)).isEqualTo(applicationsBefore);
+            assertThat(jdbc.queryForObject("select count(*) from adjustment_request",Long.class)).isEqualTo(adjustmentsBefore);
+            assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("100");
+        } finally { rule.active=false;lateChargeRules.save(rule); }
     }
 
     @Test void recommendedOperationalIndexesExist(){

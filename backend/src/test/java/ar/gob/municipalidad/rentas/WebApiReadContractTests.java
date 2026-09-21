@@ -70,7 +70,7 @@ class WebApiReadContractTests {
             "/api/v1/tax-configurations/999999", "/api/v1/liquidations/999999",
             "/api/v1/liquidation-runs/999999", "/api/v1/adjustments/999999",
             "/api/v1/debts/999999", "/api/v1/bills/999999", "/api/v1/payments/999999",
-            "/api/v1/credit-balances/999999", "/api/v1/payment-reversals/999999",
+            "/api/v1/credit-balances/999999", "/api/v1/credit-balances/999999/applications", "/api/v1/payment-reversals/999999",
             "/api/v1/payment-plan-configurations/999999", "/api/v1/payment-plan-requests/999999",
             "/api/v1/payment-plans/999999", "/api/v1/payment-plan-expirations/999999",
             "/api/v1/refinancing-requests/999999", "/api/v1/exemption-requests/999999",
