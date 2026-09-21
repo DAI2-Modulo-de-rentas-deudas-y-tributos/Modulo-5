@@ -89,6 +89,16 @@ public final class ApiDtos {
         BigDecimal discountAmount, BigDecimal exemptionAmount, BigDecimal surchargeAmount,
         BigDecimal interestAmount, BigDecimal finalAmount, LocalDate dueDate, String status,
         String createdBy, OffsetDateTime issuedAt, List<LiquidationComponentResponse> components) {}
+    public record LiquidationOriginResponse(DebtOriginType type,String module,String event,String reference) {}
+    public record LiquidationHistoryEntryResponse(String type,OffsetDateTime at,String status,String action,
+        String actor,String note,String referenceType,String referenceId,BigDecimal amount) {}
+    public record LiquidationDetailResponse(Long id,Long taxpayerId,Long taxConceptId,Long taxConfigurationId,
+        int configurationVersion,String period,BigDecimal taxableBase,BigDecimal baseAmount,
+        BigDecimal discountAmount,BigDecimal exemptionAmount,BigDecimal surchargeAmount,
+        BigDecimal interestAmount,BigDecimal finalAmount,LocalDate dueDate,String status,
+        String createdBy,OffsetDateTime issuedAt,List<LiquidationComponentResponse> components,
+        LiquidationOriginResponse origin,DebtResponse debt,String historyOrder,
+        List<LiquidationHistoryEntryResponse> history,List<AdjustmentResponse> adjustments) {}
     public record RegisterPaymentRequest(@NotNull Long taxpayerId, Long billId, @NotNull PaymentMethod paymentMethod,
         @NotNull @Positive BigDecimal amount, List<AllocationRequest> allocations) {
         public RegisterPaymentRequest(Long taxpayerId, PaymentMethod method, BigDecimal amount, List<AllocationRequest> allocations) { this(taxpayerId,null,method,amount,allocations); }

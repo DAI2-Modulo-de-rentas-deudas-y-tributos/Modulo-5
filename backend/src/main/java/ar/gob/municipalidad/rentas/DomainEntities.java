@@ -165,6 +165,7 @@ class Debt {
     @Enumerated(EnumType.STRING) @Column(nullable=false) public DebtStatus status;
     @Column(name="created_at",nullable=false) public OffsetDateTime createdAt;
     @Column(name="updated_at",nullable=false) public OffsetDateTime updatedAt;
+    boolean isCollectible() { return (status==DebtStatus.PENDING||status==DebtStatus.PARTIALLY_PAID)&&outstandingBalance!=null&&outstandingBalance.signum()>0; }
     protected Debt() {}
 }
 
