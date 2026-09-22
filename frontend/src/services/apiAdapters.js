@@ -168,7 +168,7 @@ function taxConfigurationBody(body = {}) {
   };
 }
 
-function paymentBody(body) { const amount = body.amount ?? body.amountPaid; return { taxpayerId: body.taxpayerId, billId: body.billId ?? null, paymentMethod: body.paymentMethod ?? body.method, amount, allocations: body.allocations ?? (body.debtId ? [{ debtId: body.debtId, installmentId: null, amount }] : []) }; }
+function paymentBody(body) { const amount = body.amount ?? body.amountPaid; return { taxpayerId: body.taxpayerId, billId: body.billId ?? null, paymentMethod: body.paymentMethod ?? body.method, amount, allocations: body.allocations ?? (body.debtId ? [{ debtId: body.debtId, installmentId: null, amount }] : body.installmentId ? [{ debtId: null, installmentId: body.installmentId, amount }] : []) }; }
 function cashier(path, body) {
   if (path.startsWith("/api/v1/cashier/search")) return { path: `/api/v1/taxpayers?${qs(path, { query: "q" })}`, body };
   if (path.includes("/charge-context/")) { const [, kind, id] = path.match(/charge-context\/(\w+)\/(\d+)/); return { path: kind === "DEBT" ? `/api/v1/debts/${id}` : kind === "BILL" ? `/api/v1/bills/${id}` : `/api/v1/taxpayers/${id}`, body }; }

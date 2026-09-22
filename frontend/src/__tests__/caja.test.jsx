@@ -93,6 +93,38 @@ describe("ventanilla de caja", () => {
     expect(screen.getByRole("button", { name: /registrar otro/i })).toBeDefined();
   });
 
+  it("cobra una cuota pendiente usando installmentId y conserva el flujo de caja", async () => {
+    let paymentBody;
+    const plan = { id: 850, taxpayerId: 123, status: "ACTIVE", outstandingPlanAmount: 33000, installmentCount: 3 };
+    const installment = { id: 8601, paymentPlanId: 850, number: 1, type: "REGULAR", totalAmount: 11000, paidAmount: 0, outstandingAmount: 11000, dueDate: "2026-10-21", status: "PENDING" };
+    instalarBackendFalso({
+      "GET /api/v1/taxpayers/{id}/payment-plans": { content: [plan], page: { number: 0, size: 100, totalElements: 1, totalPages: 1 } },
+      "GET /api/v1/payment-plans/{id}/installments": [installment],
+      "GET /api/v1/payment-plans/{id}/installments/{id}": { ...installment, paidAmount: 11000, outstandingAmount: 0, status: "PAID" },
+      "POST /api/v1/payments": ({ cuerpo }) => {
+        paymentBody = cuerpo;
+        return { id: 9010, taxpayerId: 123, amount: 11000, allocatedAmount: 11000, unallocatedAmount: 0, paymentMethod: "CASH", status: "CONFIRMED", receiptNumber: "REC-CUOTA-1", paidAt: "2026-09-21T12:00:00-03:00", registeredBy: "pcabrera" };
+      },
+    });
+
+    await loginAsCajero(user);
+    await user.click(screen.getByRole("link", { name: /cobros/i }));
+    const search = await screen.findByLabelText(/n° de boleta \/ n° de deuda/i);
+    await user.type(search, "40111222");
+    await user.click(screen.getByRole("button", { name: /buscar/i }));
+    await user.click(await screen.findByText("Juan Pérez"));
+
+    const target = await screen.findByLabelText(/deuda a cobrar/i);
+    await user.selectOptions(target, "INSTALLMENT:8601");
+    expect(await screen.findByText(/cuota 1 del plan #850/i)).toBeDefined();
+    await user.selectOptions(screen.getByLabelText(/medio de pago/i), "CASH");
+    await user.click(screen.getByRole("button", { name: /^registrar pago$/i }));
+
+    await screen.findByText(/la cuota quedó pagada/i);
+    expect(paymentBody.allocations).toEqual([{ debtId: null, installmentId: 8601, amount: 11000 }]);
+    expect(paymentBody.taxpayerId).toBe(123);
+  });
+
   it("cobra una boleta desde el buscador de boletas", async () => {
     // Tras el cobro la deuda queda saldada: la relectura devuelve saldo cero.
     let cobrada = false;

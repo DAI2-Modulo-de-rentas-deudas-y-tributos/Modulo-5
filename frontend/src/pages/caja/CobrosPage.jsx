@@ -213,10 +213,10 @@ export default function CobrosPage() {
           <Alert variant="success" title="Pago registrado correctamente">
             {receipt.receiptNumber} por {formatCurrency(receipt.amountPaid)}
             {receipt.settled
-              ? " — la deuda quedó cancelada."
+              ? receipt.targetType === "INSTALLMENT" ? " — la cuota quedó pagada." : " — la deuda quedó cancelada."
               : receipt.remainingBalance == null
                 ? " — no se pudo consultar el saldo actualizado. El pago ya está registrado."
-                : ` — queda un saldo de ${formatCurrency(receipt.remainingBalance)}.`}
+                : ` — queda un saldo de ${formatCurrency(receipt.remainingBalance)} en ${receipt.targetType === "INSTALLMENT" ? "la cuota" : "la deuda"}.`}
           </Alert>
 
           <div className="flex items-center gap-2 text-emerald-600 no-print">
@@ -246,30 +246,33 @@ export default function CobrosPage() {
  * Si la búsqueda entró por boleta o por deuda, la obligación ya viene elegida.
  */
 export function ChargeStep({ context, cashier, onCharged, onCancel }) {
-  const { taxpayer, bill, debts, totals, kind } = context;
+  const { taxpayer, bill, debts, installments = [], totals, kind } = context;
   const intentKey = useRef(null);
   const requestInFlight = useRef(false);
 
-  const [debtId, setDebtId] = useState(String(context.selectedDebtId ?? ""));
+  const [target, setTarget] = useState(context.selectedDebtId ? `DEBT:${context.selectedDebtId}` : "");
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState("");
   const [errors, setErrors] = useState({});
   const [submitError, setSubmitError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const selectedDebt = debts.find((d) => d.id === Number(debtId)) ?? null;
+  const [targetType, targetId] = target.split(":");
+  const selectedDebt = targetType === "DEBT" ? debts.find((d) => d.id === Number(targetId)) ?? null : null;
+  const selectedInstallment = targetType === "INSTALLMENT" ? installments.find((i) => i.id === Number(targetId)) ?? null : null;
+  const selectedBalance = selectedDebt?.outstandingAmount ?? selectedInstallment?.outstandingAmount;
 
   // Por defecto se cobra el saldo completo de la deuda elegida.
   useEffect(() => {
-    setAmount(selectedDebt ? String(selectedDebt.outstandingAmount) : "");
-  }, [selectedDebt]);
+    setAmount(selectedBalance == null ? "" : String(selectedBalance));
+  }, [selectedBalance]);
 
   const validate = () => {
     const found = {};
-    if (!debtId) found.debtId = "Elegí la deuda a cobrar.";
+    if (!target) found.target = "Elegí la deuda o cuota a cobrar.";
     if (!(Number(amount) > 0)) found.amount = "Ingresá un importe mayor a cero.";
-    if (selectedDebt && Number(amount) > selectedDebt.outstandingAmount) {
-      found.amount = "El importe supera el saldo de la deuda.";
+    if (selectedBalance != null && Number(amount) > selectedBalance) {
+      found.amount = `El importe supera el saldo de ${selectedInstallment ? "la cuota" : "la deuda"}.`;
     }
     if (!method) found.method = "Indicá el medio de pago.";
     setErrors(found);
@@ -286,7 +289,10 @@ export function ChargeStep({ context, cashier, onCharged, onCancel }) {
     setSubmitting(true);
     try {
       const payment = await cashierService.registerCounterPayment({
-          debtId,
+          taxpayerId: taxpayer.id,
+          debtId: selectedDebt?.id ?? null,
+          installmentId: selectedInstallment?.id ?? null,
+          paymentPlanId: selectedInstallment?.paymentPlanId ?? null,
           billId: bill?.id ?? null,
           amountPaid: Number(amount),
           method,
@@ -330,10 +336,10 @@ export function ChargeStep({ context, cashier, onCharged, onCancel }) {
         </Alert>
       )}
 
-      {debts.length === 0 ? (
+      {debts.length === 0 && installments.length === 0 ? (
         <Alert variant="info" title="Sin deuda para cobrar">
           {kind === "TAXPAYER"
-            ? "El contribuyente no tiene deudas con saldo pendiente."
+            ? "El contribuyente no tiene deudas ni cuotas con saldo pendiente."
             : "La obligación seleccionada ya está cancelada."}
         </Alert>
       ) : (
@@ -348,19 +354,25 @@ export function ChargeStep({ context, cashier, onCharged, onCancel }) {
               </Alert>
             )}
 
-            {kind === "TAXPAYER" || debts.length > 1 ? (
+            {kind === "TAXPAYER" || debts.length > 1 || installments.length > 0 ? (
               <FormField
-                label="Deuda a cobrar"
-                name="debtId"
+                label="Deuda a cobrar o cuota del plan"
+                name="target"
                 type="select"
-                value={debtId}
-                onChange={(event) => setDebtId(event.target.value)}
-                error={errors.debtId}
+                value={target}
+                onChange={(event) => setTarget(event.target.value)}
+                error={errors.target}
                 required
-                options={debts.map((debt) => ({
-                  value: String(debt.id),
-                  label: `#${debt.id} · ${debt.conceptCode} · ${formatCurrency(debt.outstandingAmount)}`,
-                }))}
+                options={[
+                  ...debts.map((debt) => ({
+                    value: `DEBT:${debt.id}`,
+                    label: `Deuda #${debt.id} · ${debt.conceptCode} · ${formatCurrency(debt.outstandingAmount)}`,
+                  })),
+                  ...installments.map((installment) => ({
+                    value: `INSTALLMENT:${installment.id}`,
+                    label: `Plan #${installment.paymentPlanId} · Cuota ${installment.number} · ${formatCurrency(installment.outstandingAmount)}`,
+                  })),
+                ]}
               />
             ) : (
               selectedDebt && (
@@ -413,6 +425,12 @@ export function ChargeStep({ context, cashier, onCharged, onCancel }) {
                 Queda un saldo de{" "}
                 {formatCurrency(selectedDebt.outstandingAmount - Number(amount))} en la deuda #
                 {selectedDebt.id}.
+              </Alert>
+            )}
+
+            {selectedInstallment && (
+              <Alert variant="info" title={`Cuota ${selectedInstallment.number} del plan #${selectedInstallment.paymentPlanId}`}>
+                Vence el {formatDate(selectedInstallment.dueDate)} · saldo actual {formatCurrency(selectedInstallment.outstandingAmount)}.
               </Alert>
             )}
 

@@ -1050,25 +1050,44 @@ export const cashierService = {
     } else {
       throw new ApiError("El tipo de búsqueda no es válido.", 400);
     }
-    const taxpayer = await taxpayerService.getById(taxpayerId);
+    const [taxpayer, taxpayerPlans] = await Promise.all([
+      taxpayerService.getById(taxpayerId),
+      allPages(`/api/v1/taxpayers/${taxpayerId}/payment-plans`),
+    ]);
+    const activePlans = taxpayerPlans.filter((plan) => plan.status === "ACTIVE");
+    const installmentGroups = await Promise.all(
+      activePlans.map(async (plan) => {
+        const installments = await request(`/api/v1/payment-plans/${plan.id}/installments`);
+        return installments.map((installment) => ({ ...installment, paymentPlanId: plan.id }));
+      }),
+    );
+    const installments = installmentGroups.flat().filter(
+      (installment) => Number(installment.outstandingAmount) > 0 && !["PAID", "CANCELLED"].includes(installment.status),
+    );
     const payable = openDebts(debts).filter((debt) => !debt.inPaymentPlan);
-    return { kind, taxpayer, bill, debts: payable, totals: debtTotals(debts), selectedDebtId: kind !== "TAXPAYER" && payable.length === 1 ? payable[0].id : null };
+    return { kind, taxpayer, bill, debts: payable, installments, totals: debtTotals(debts), selectedDebtId: kind !== "TAXPAYER" && payable.length === 1 ? payable[0].id : null };
   },
 
   /** RegisterCounterPaymentRequest → CounterPaymentReceiptResponse */
-  async registerCounterPayment({ debtId, billId, amountPaid, method, registeredBy, idempotencyKey }) {
-    const debt = await request(`/api/v1/debts/${debtId}`);
-    const taxpayer = await taxpayerService.getById(debt.taxpayerId);
+  async registerCounterPayment({ taxpayerId, debtId, installmentId, paymentPlanId, billId, amountPaid, method, registeredBy, idempotencyKey }) {
+    const debt = debtId ? await request(`/api/v1/debts/${debtId}`) : null;
+    const plan = installmentId ? await request(`/api/v1/payment-plans/${paymentPlanId}`) : null;
+    const ownerId = debt?.taxpayerId ?? plan?.taxpayerId ?? taxpayerId;
+    const taxpayer = await taxpayerService.getById(ownerId);
     const payment = await request("/api/v1/cashier/payments", {
       method: "POST",
-      body: { taxpayerId: debt.taxpayerId, debtId, billId, amountPaid, method, registeredBy },
+      body: { taxpayerId: ownerId, debtId: debtId || null, installmentId: installmentId || null, billId: debtId ? billId : null, amountPaid, method, registeredBy },
       headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {},
     });
-    const receipt = { ...paymentReceipt(payment, taxpayer), debtId: Number(debtId), conceptCode: debt.conceptCode, wasOverdue: debt.overdue || debt.status === "OVERDUE" };
+    const receipt = debt
+      ? { ...paymentReceipt(payment, taxpayer), targetType: "DEBT", debtId: Number(debtId), conceptCode: debt.conceptCode, wasOverdue: debt.overdue || debt.status === "OVERDUE" }
+      : { ...paymentReceipt(payment, taxpayer), targetType: "INSTALLMENT", installmentId: Number(installmentId), paymentPlanId: Number(paymentPlanId) };
     try {
-      const updatedDebt = await request(`/api/v1/debts/${debtId}`);
-      receipt.remainingBalance = updatedDebt.outstandingAmount;
-      receipt.settled = Number(updatedDebt.outstandingAmount) === 0;
+      const updated = debt
+        ? await request(`/api/v1/debts/${debtId}`)
+        : await request(`/api/v1/payment-plans/${paymentPlanId}/installments/${installmentId}`);
+      receipt.remainingBalance = updated.outstandingAmount;
+      receipt.settled = Number(updated.outstandingAmount) === 0;
     } catch {
       // El pago ya se confirmó: no presentar este fallo de lectura como un alta fallida.
       receipt.balanceUnavailable = true;
