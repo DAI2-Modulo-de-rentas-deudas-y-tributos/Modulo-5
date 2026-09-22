@@ -23,6 +23,7 @@ const KIND_LABELS = {
   TAXPAYER: "Contribuyente",
   BILL: "Boleta",
   DEBT: "Deuda",
+  INSTALLMENT: "Cuota",
 };
 
 /**
@@ -39,6 +40,15 @@ export default function CobrosPage() {
   const [query, setQuery] = useState(searchParams.get("q") ?? "");
   const [submitted, setSubmitted] = useState(searchParams.get("q") ?? "");
   const [selection, setSelection] = useState(() => {
+    const installment = searchParams.get("cuota");
+    if (installment) {
+      return {
+        kind: "INSTALLMENT",
+        id: Number(installment),
+        planId: Number(searchParams.get("plan")),
+        taxpayerId: Number(searchParams.get("contribuyente")),
+      };
+    }
     const bill = searchParams.get("boleta");
     if (bill) return { kind: "BILL", id: Number(bill) };
     const debt = searchParams.get("deuda");
@@ -213,7 +223,9 @@ export default function CobrosPage() {
           <Alert variant="success" title="Pago registrado correctamente">
             {receipt.receiptNumber} por {formatCurrency(receipt.amountPaid)}
             {receipt.settled
-              ? " — la deuda quedó cancelada."
+              ? receipt.targetType === "INSTALLMENT"
+                ? " — la cuota quedó cancelada."
+                : " — la deuda quedó cancelada."
               : receipt.remainingBalance == null
                 ? " — no se pudo consultar el saldo actualizado. El pago ya está registrado."
                 : ` — queda un saldo de ${formatCurrency(receipt.remainingBalance)}.`}
@@ -246,7 +258,7 @@ export default function CobrosPage() {
  * Si la búsqueda entró por boleta o por deuda, la obligación ya viene elegida.
  */
 export function ChargeStep({ context, cashier, onCharged, onCancel }) {
-  const { taxpayer, bill, debts, totals, kind } = context;
+  const { taxpayer, bill, debts, installments = [], totals, kind } = context;
   const intentKey = useRef(null);
   const requestInFlight = useRef(false);
 
@@ -258,18 +270,21 @@ export function ChargeStep({ context, cashier, onCharged, onCancel }) {
   const [submitting, setSubmitting] = useState(false);
 
   const selectedDebt = debts.find((d) => d.id === Number(debtId)) ?? null;
+  const selectedInstallment = installments.find((item) => item.id === Number(context.selectedInstallmentId)) ?? null;
+  const isInstallment = kind === "INSTALLMENT";
+  const selectedTarget = isInstallment ? selectedInstallment : selectedDebt;
 
-  // Por defecto se cobra el saldo completo de la deuda elegida.
+  // Por defecto se cobra el saldo completo de la obligación elegida.
   useEffect(() => {
-    setAmount(selectedDebt ? String(selectedDebt.outstandingAmount) : "");
-  }, [selectedDebt]);
+    setAmount(selectedTarget ? String(selectedTarget.outstandingAmount) : "");
+  }, [selectedTarget]);
 
   const validate = () => {
     const found = {};
-    if (!debtId) found.debtId = "Elegí la deuda a cobrar.";
+    if (isInstallment ? !selectedInstallment : !debtId) found.debtId = "Elegí la obligación a cobrar.";
     if (!(Number(amount) > 0)) found.amount = "Ingresá un importe mayor a cero.";
-    if (selectedDebt && Number(amount) > selectedDebt.outstandingAmount) {
-      found.amount = "El importe supera el saldo de la deuda.";
+    if (selectedTarget && Number(amount) > selectedTarget.outstandingAmount) {
+      found.amount = `El importe supera el saldo de ${isInstallment ? "la cuota" : "la deuda"}.`;
     }
     if (!method) found.method = "Indicá el medio de pago.";
     setErrors(found);
@@ -286,13 +301,16 @@ export function ChargeStep({ context, cashier, onCharged, onCancel }) {
     setSubmitting(true);
     try {
       const payment = await cashierService.registerCounterPayment({
-          debtId,
-          billId: bill?.id ?? null,
-          amountPaid: Number(amount),
-          method,
-          registeredBy: cashier,
-          idempotencyKey: intentKey.current,
-        });
+        debtId: isInstallment ? null : debtId,
+        installmentId: isInstallment ? selectedInstallment.id : null,
+        paymentPlanId: isInstallment ? selectedInstallment.planId : null,
+        taxpayerId: taxpayer.id,
+        billId: bill?.id ?? null,
+        amountPaid: Number(amount),
+        method,
+        registeredBy: cashier,
+        idempotencyKey: intentKey.current,
+      });
       intentKey.current = null;
       onCharged(payment);
     } catch (caught) {
@@ -308,8 +326,8 @@ export function ChargeStep({ context, cashier, onCharged, onCancel }) {
       <Card title={taxpayer.name} description={`${taxpayer.documentType} ${taxpayer.document} · CUIT ${taxpayer.cuit}`}>
         <div className="grid grid-cols-2 gap-4 px-5 py-4 sm:grid-cols-4">
           <Metric label="Situación" value={<StatusBadge status={taxpayer.status} />} />
-          <Metric label="Deudas pendientes" value={totals.pendingCount} />
-          <Metric label="Deuda total" value={formatCurrency(totals.outstanding)} />
+          <Metric label={isInstallment ? "Cuotas a cobrar" : "Deudas pendientes"} value={totals.pendingCount} />
+          <Metric label={isInstallment ? "Saldo de cuota" : "Deuda total"} value={formatCurrency(totals.outstanding)} />
           <Metric
             label="Vencida"
             value={formatCurrency(totals.overdue)}
@@ -319,7 +337,14 @@ export function ChargeStep({ context, cashier, onCharged, onCancel }) {
       </Card>
 
       {kind !== "TAXPAYER" && (
-        <Alert variant="info" title={bill ? `Boleta #${bill.id}` : `Deuda #${debts[0]?.id}`}>
+        <Alert
+          variant="info"
+          title={isInstallment
+            ? `Plan #${selectedInstallment?.planId} · ${selectedInstallment?.type === "DOWN_PAYMENT" ? "Anticipo" : `Cuota #${selectedInstallment?.number}`}`
+            : bill
+              ? `Boleta #${bill.id}`
+              : `Deuda #${debts[0]?.id}`}
+        >
           Vinculada a {taxpayer.name} ({taxpayer.documentType} {taxpayer.document}).
         </Alert>
       )}
@@ -330,16 +355,18 @@ export function ChargeStep({ context, cashier, onCharged, onCancel }) {
         </Alert>
       )}
 
-      {debts.length === 0 ? (
-        <Alert variant="info" title="Sin deuda para cobrar">
-          {kind === "TAXPAYER"
+      {(isInstallment ? !selectedInstallment : debts.length === 0) ? (
+        <Alert variant="info" title="Sin obligación para cobrar">
+          {isInstallment
+            ? "La cuota seleccionada ya no admite pagos."
+            : kind === "TAXPAYER"
             ? "El contribuyente no tiene deudas con saldo pendiente."
             : "La obligación seleccionada ya está cancelada."}
         </Alert>
       ) : (
         <Card
           title="Registrar el cobro"
-          description="El pago se registra e imputa a la deuda en el backend."
+          description={`El pago se registra e imputa a ${isInstallment ? "la cuota del plan" : "la deuda"} en el backend.`}
         >
           <form onSubmit={onSubmit} noValidate className="flex flex-col gap-4 px-5 py-5">
             {submitError && (
@@ -348,7 +375,23 @@ export function ChargeStep({ context, cashier, onCharged, onCancel }) {
               </Alert>
             )}
 
-            {kind === "TAXPAYER" || debts.length > 1 ? (
+            {isInstallment ? (
+              <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-4 text-[13px] text-neutral-600">
+                <p>
+                  Plan: <span className="font-medium text-neutral-800">#{selectedInstallment.planId}</span>
+                </p>
+                <p className="mt-1">
+                  Cuota: <span className="font-medium text-neutral-800">{selectedInstallment.type === "DOWN_PAYMENT" ? "Anticipo" : `#${selectedInstallment.number}`}</span>
+                </p>
+                <p className="mt-1">
+                  Vencimiento: <span className="font-medium text-neutral-800">{formatDate(selectedInstallment.dueDate)}</span>{" "}
+                  · <StatusBadge status={selectedInstallment.status} />
+                </p>
+                <p className="mt-1">
+                  Saldo: <span className="font-semibold text-[#0F2C59]">{formatCurrency(selectedInstallment.outstandingAmount)}</span>
+                </p>
+              </div>
+            ) : kind === "TAXPAYER" || debts.length > 1 ? (
               <FormField
                 label="Deuda a cobrar"
                 name="debtId"
@@ -408,11 +451,10 @@ export function ChargeStep({ context, cashier, onCharged, onCancel }) {
               />
             </div>
 
-            {selectedDebt && Number(amount) > 0 && Number(amount) < selectedDebt.outstandingAmount && (
+            {selectedTarget && Number(amount) > 0 && Number(amount) < selectedTarget.outstandingAmount && (
               <Alert variant="info" title="Pago parcial">
                 Queda un saldo de{" "}
-                {formatCurrency(selectedDebt.outstandingAmount - Number(amount))} en la deuda #
-                {selectedDebt.id}.
+                {formatCurrency(selectedTarget.outstandingAmount - Number(amount))} en {isInstallment ? "la cuota" : `la deuda #${selectedDebt.id}`}.
               </Alert>
             )}
 

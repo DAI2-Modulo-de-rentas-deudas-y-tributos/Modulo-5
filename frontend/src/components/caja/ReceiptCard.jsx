@@ -46,12 +46,23 @@ export default function ReceiptCard({ receipt }) {
             }
           />
           <Line label="Concepto" value={receipt.conceptCode ?? "—"} />
-          <Line label="Deuda" value={receipt.debtId ? `#${receipt.debtId}` : receipt.allocationStatus === "UNALLOCATED" ? "Sin imputar" : "Consultar detalle en Rentas"} />
+          <Line
+            label={receipt.installmentId ? "Cuota" : "Deuda"}
+            value={
+              receipt.installmentId
+                ? `${receipt.installmentNumber === 0 ? "Anticipo" : `#${receipt.installmentNumber}`} · ID #${receipt.installmentId}`
+                : receipt.debtId
+                  ? `#${receipt.debtId}`
+                  : receipt.allocationStatus === "UNALLOCATED"
+                    ? "Sin imputar"
+                    : "Consultar detalle en Rentas"
+            }
+          />
           <Line label="Boleta" value={receipt.billId ? `#${receipt.billId}` : "—"} />
           <Line label="Medio de pago" value={labelFor(receipt.method)} />
           <Line label="Fecha y hora" value={formatDateTime(receipt.issuedAt)} />
           <Line
-            label="Situación de la deuda"
+            label={receipt.installmentId ? "Situación de la cuota" : "Situación de la deuda"}
             value={
               receipt.wasOverdue === null || receipt.wasOverdue === undefined
                 ? "—"
@@ -81,7 +92,7 @@ export default function ReceiptCard({ receipt }) {
 
         {receipt.settled && (
           <p className="text-[13px] font-medium text-emerald-700">
-            La deuda quedó cancelada con este pago.
+            {receipt.installmentId ? "La cuota quedó cancelada con este pago." : "La deuda quedó cancelada con este pago."}
           </p>
         )}
         {receipt.status === "REVERSED" && (

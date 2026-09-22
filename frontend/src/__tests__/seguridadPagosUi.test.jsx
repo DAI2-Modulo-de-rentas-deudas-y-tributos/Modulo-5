@@ -64,3 +64,55 @@ describe.each(["RENTAS", "CAJA"])("seguridad de la intención de pago en %s", (a
     expect(completado).not.toHaveBeenCalled();
   });
 });
+
+describe("cobro de cuotas en Caja", () => {
+  it("registra la cuota seleccionada con su plan y contribuyente", async () => {
+    const user = userEvent.setup();
+    const completado = vi.fn();
+    const registrar = vi.spyOn(cashierService, "registerCounterPayment").mockResolvedValue({
+      id: 72,
+      targetType: "INSTALLMENT",
+    });
+    const installment = {
+      id: 77,
+      planId: 850,
+      paymentPlanId: 850,
+      number: 1,
+      type: "REGULAR",
+      outstandingAmount: 12000,
+      dueDate: "2026-10-10",
+      status: "PENDING",
+      overdue: false,
+    };
+
+    render(
+      <ChargeStep
+        context={{
+          taxpayer: { id: 9, name: "QA", documentType: "DNI", document: "40111222", status: "ACTIVE" },
+          bill: null,
+          debts: [],
+          installments: [installment],
+          totals: { pendingCount: 1, outstanding: 12000, overdue: 0 },
+          kind: "INSTALLMENT",
+          selectedInstallmentId: 77,
+        }}
+        cashier="cajero.qa"
+        onCharged={completado}
+        onCancel={() => {}}
+      />,
+    );
+
+    await user.selectOptions(screen.getByLabelText(/medio de pago/i), "CASH");
+    await user.click(screen.getByRole("button", { name: /registrar pago/i }));
+
+    await waitFor(() => expect(completado).toHaveBeenCalledTimes(1));
+    expect(registrar).toHaveBeenCalledWith(expect.objectContaining({
+      debtId: null,
+      installmentId: 77,
+      paymentPlanId: 850,
+      taxpayerId: 9,
+      amountPaid: 12000,
+      method: "CASH",
+    }));
+  });
+});

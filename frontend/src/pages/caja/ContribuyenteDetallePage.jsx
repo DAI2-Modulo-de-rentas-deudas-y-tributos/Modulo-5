@@ -92,6 +92,44 @@ export default function ContribuyenteDetallePage() {
     { key: "status", header: "Estado", render: (row) => <StatusBadge status={row.status} /> },
   ];
 
+  const installmentColumns = [
+    {
+      key: "planId",
+      header: "Plan",
+      render: (row) => <span className="tabular-nums">#{row.planId}</span>,
+    },
+    {
+      key: "number",
+      header: "Cuota",
+      render: (row) => row.type === "DOWN_PAYMENT" ? "Anticipo" : `#${row.number}`,
+    },
+    { key: "dueDate", header: "Vencimiento", render: (row) => formatDate(row.dueDate) },
+    {
+      key: "outstandingAmount",
+      header: "Saldo",
+      align: "right",
+      render: (row) => formatCurrency(row.outstandingAmount),
+    },
+    { key: "status", header: "Estado", render: (row) => <StatusBadge status={row.status} /> },
+    {
+      key: "actions",
+      header: "",
+      align: "right",
+      render: (row) =>
+        Number(row.outstandingAmount) > 0 && !["CANCELLED", "SETTLED"].includes(row.status) ? (
+          <Button
+            size="sm"
+            variant="primary"
+            onClick={() => navigate(`/caja/cobros?cuota=${row.id}&plan=${row.planId}&contribuyente=${taxpayerId}`)}
+          >
+            Cobrar cuota
+          </Button>
+        ) : (
+          <span className="text-neutral-300">—</span>
+        ),
+    },
+  ];
+
   const billColumns = [
     { key: "id", header: "Boleta", render: (row) => <span className="tabular-nums">#{row.id}</span> },
     { key: "conceptCode", header: "Concepto" },
@@ -193,6 +231,20 @@ export default function ContribuyenteDetallePage() {
           emptyIconName="FileWarning"
           emptyTitle="Sin deudas"
           emptyDescription="El contribuyente no tiene obligaciones registradas."
+        />
+      </Card>
+
+      <Card
+        title="Cuotas de planes de pago"
+        description="Las deudas incluidas en un plan se cobran desde su cuota pendiente."
+      >
+        <DataTable
+          columns={installmentColumns}
+          rows={file.installments}
+          rowKey={(row) => row.id}
+          emptyIconName="CalendarCheck"
+          emptyTitle="Sin cuotas pendientes"
+          emptyDescription="El contribuyente no tiene cuotas activas para cobrar."
         />
       </Card>
 

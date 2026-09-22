@@ -148,6 +148,52 @@ describe("construcción de los requests", () => {
     expect(alta.cuerpo.paymentMethod).toBe("CASH");
   });
 
+  it("el cobro de una cuota se imputa por installmentId", async () => {
+    const backend = instalarBackendFalso({
+      "GET /api/v1/payment-plans/{id}/installments/{id}": {
+        id: 77,
+        paymentPlanId: 850,
+        number: 1,
+        type: "REGULAR",
+        totalAmount: 12000,
+        paidAmount: 0,
+        outstandingAmount: 12000,
+        dueDate: "2026-10-10",
+        status: "PENDING",
+        overdue: false,
+      },
+      "GET /api/v1/taxpayers/{id}": {
+        id: 123,
+        taxpayerType: "CITIZEN",
+        dni: "40111222",
+        displayName: "Juan Pérez",
+        status: "ACTIVE",
+      },
+      "POST /api/v1/payments": {
+        id: 9002,
+        taxpayerId: 123,
+        amount: 12000,
+        paymentMethod: "CASH",
+        unallocatedAmount: 0,
+        status: "CONFIRMED",
+      },
+    });
+
+    const receipt = await cashierService.registerCounterPayment({
+      installmentId: 77,
+      paymentPlanId: 850,
+      taxpayerId: 123,
+      amountPaid: 12000,
+      method: "CASH",
+      registeredBy: "pcabrera",
+    });
+
+    const alta = backend.llamadas.find((call) => call.metodo === "POST");
+    expect(alta.ruta).toBe("/api/v1/payments");
+    expect(alta.cuerpo.allocations).toEqual([{ debtId: null, installmentId: 77, amount: 12000 }]);
+    expect(receipt).toMatchObject({ targetType: "INSTALLMENT", installmentId: 77, paymentPlanId: 850 });
+  });
+
   it("la reversión viaja con su motivo", async () => {
     const backend = instalarBackendFalso({
       "POST /api/v1/payments/{id}/reversal-requests": { id: 1, status: "REQUESTED" },
@@ -197,12 +243,21 @@ describe("lectura de la respuesta", () => {
         { id: 9005, taxpayerId: 123, amount: 25000, paymentMethod: "CASH", unallocatedAmount: 0, status: "CONFIRMED" },
       ]),
       "GET /api/v1/taxpayers/{id}/bills": pagina([]),
+      "GET /api/v1/taxpayers/{id}/payment-plans": pagina([
+        { id: 850, taxpayerId: 123, status: "ACTIVE", totalPlanAmount: 137500, installmentCount: 6, outstandingPlanAmount: 137500 },
+      ]),
+      "GET /api/v1/payment-plans/{id}/installments": [
+        { id: 77, paymentPlanId: 850, number: 1, type: "REGULAR", totalAmount: 12000, paidAmount: 0, outstandingAmount: 12000, dueDate: "2026-10-10", status: "PENDING", overdue: false },
+      ],
     });
 
     const ficha = await cashierService.taxpayerFile(123);
 
     expect(ficha.taxpayer.name).toBe("Juan Pérez");
     expect(ficha.debts).toHaveLength(2);
+    expect(ficha.installments).toEqual([
+      expect.objectContaining({ id: 77, planId: 850, outstandingAmount: 12000 }),
+    ]);
     expect(ficha.totals.outstanding).toBe(125000);
     // Sólo la vencida cuenta como exigible.
     expect(ficha.totals.overdue).toBe(40000);

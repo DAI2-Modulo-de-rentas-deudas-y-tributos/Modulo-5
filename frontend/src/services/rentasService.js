@@ -1032,10 +1032,11 @@ export const cashierService = {
    * Por contribuyente devuelve todas sus deudas con saldo; por boleta o deuda,
    * sólo la obligación elegida.
    */
-  async chargeContext({ kind, id }) {
+  async chargeContext({ kind, id, planId, taxpayerId: selectedTaxpayerId }) {
     let taxpayerId = id;
     let bill = null;
     let debts;
+    let installments = [];
     if (kind === "DEBT") {
       const debt = await request(`/api/v1/debts/${id}`);
       taxpayerId = debt.taxpayerId;
@@ -1047,28 +1048,97 @@ export const cashierService = {
       debts = await Promise.all((bill.debts ?? []).map((item) => request(`/api/v1/debts/${item.debtId}`)));
     } else if (kind === "TAXPAYER") {
       debts = await allPages(`/api/v1/taxpayers/${id}/debts`);
+    } else if (kind === "INSTALLMENT") {
+      if (!planId || !selectedTaxpayerId) {
+        throw new ApiError("No se pudo identificar el plan y el contribuyente de la cuota.", 400);
+      }
+      taxpayerId = Number(selectedTaxpayerId);
+      const installment = await request(`/api/v1/payment-plans/${planId}/installments/${id}`);
+      if (Number(installment.paymentPlanId) !== Number(planId)) {
+        throw new ApiError("La cuota no pertenece al plan informado.", 409);
+      }
+      installments = [{ ...installment, planId: Number(planId) }];
+      debts = [];
     } else {
       throw new ApiError("El tipo de búsqueda no es válido.", 400);
     }
     const taxpayer = await taxpayerService.getById(taxpayerId);
     const payable = openDebts(debts).filter((debt) => !debt.inPaymentPlan);
-    return { kind, taxpayer, bill, debts: payable, totals: debtTotals(debts), selectedDebtId: kind !== "TAXPAYER" && payable.length === 1 ? payable[0].id : null };
+    const installment = installments[0] ?? null;
+    const totals = kind === "INSTALLMENT"
+      ? {
+          pendingCount: installment ? 1 : 0,
+          outstanding: Number(installment?.outstandingAmount ?? 0),
+          overdue: installment?.overdue || installment?.status === "OVERDUE" ? Number(installment.outstandingAmount) : 0,
+        }
+      : debtTotals(debts);
+    return {
+      kind,
+      taxpayer,
+      bill,
+      debts: payable,
+      installments,
+      totals,
+      selectedDebtId: kind !== "TAXPAYER" && payable.length === 1 ? payable[0].id : null,
+      selectedInstallmentId: kind === "INSTALLMENT" ? installment?.id : null,
+    };
   },
 
   /** RegisterCounterPaymentRequest → CounterPaymentReceiptResponse */
-  async registerCounterPayment({ debtId, billId, amountPaid, method, registeredBy, idempotencyKey }) {
-    const debt = await request(`/api/v1/debts/${debtId}`);
-    const taxpayer = await taxpayerService.getById(debt.taxpayerId);
+  async registerCounterPayment({ debtId, installmentId, paymentPlanId, taxpayerId, billId, amountPaid, method, registeredBy, idempotencyKey }) {
+    const isInstallment = Boolean(installmentId);
+    let debt = null;
+    let installment = null;
+    let resolvedTaxpayerId = taxpayerId;
+    if (isInstallment) {
+      if (!paymentPlanId || !resolvedTaxpayerId) {
+        throw new ApiError("No se pudo identificar el plan y el contribuyente de la cuota.", 400);
+      }
+      installment = await request(`/api/v1/payment-plans/${paymentPlanId}/installments/${installmentId}`);
+    } else {
+      debt = await request(`/api/v1/debts/${debtId}`);
+      resolvedTaxpayerId = debt.taxpayerId;
+    }
+    const taxpayer = await taxpayerService.getById(resolvedTaxpayerId);
     const payment = await request("/api/v1/cashier/payments", {
       method: "POST",
-      body: { taxpayerId: debt.taxpayerId, debtId, billId, amountPaid, method, registeredBy },
+      body: {
+        taxpayerId: resolvedTaxpayerId,
+        billId: isInstallment ? null : billId,
+        amountPaid,
+        method,
+        registeredBy,
+        allocations: [{
+          debtId: isInstallment ? null : Number(debtId),
+          installmentId: isInstallment ? Number(installmentId) : null,
+          amount: amountPaid,
+        }],
+      },
       headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {},
     });
-    const receipt = { ...paymentReceipt(payment, taxpayer), debtId: Number(debtId), conceptCode: debt.conceptCode, wasOverdue: debt.overdue || debt.status === "OVERDUE" };
+    const receipt = isInstallment
+      ? {
+          ...paymentReceipt(payment, taxpayer),
+          targetType: "INSTALLMENT",
+          installmentId: Number(installmentId),
+          paymentPlanId: Number(paymentPlanId),
+          installmentNumber: installment.number,
+          conceptCode: `Plan #${paymentPlanId}`,
+          wasOverdue: installment.overdue || installment.status === "OVERDUE",
+        }
+      : {
+          ...paymentReceipt(payment, taxpayer),
+          targetType: "DEBT",
+          debtId: Number(debtId),
+          conceptCode: debt.conceptCode,
+          wasOverdue: debt.overdue || debt.status === "OVERDUE",
+        };
     try {
-      const updatedDebt = await request(`/api/v1/debts/${debtId}`);
-      receipt.remainingBalance = updatedDebt.outstandingAmount;
-      receipt.settled = Number(updatedDebt.outstandingAmount) === 0;
+      const updatedTarget = isInstallment
+        ? await request(`/api/v1/payment-plans/${paymentPlanId}/installments/${installmentId}`)
+        : await request(`/api/v1/debts/${debtId}`);
+      receipt.remainingBalance = updatedTarget.outstandingAmount;
+      receipt.settled = Number(updatedTarget.outstandingAmount) === 0;
     } catch {
       // El pago ya se confirmó: no presentar este fallo de lectura como un alta fallida.
       receipt.balanceUnavailable = true;
@@ -1088,13 +1158,31 @@ export const cashierService = {
 
   /** Ficha de ventanilla: deudas, pagos y boletas del contribuyente en una consulta. */
   async taxpayerFile(taxpayerId) {
-    const [taxpayer, debts, payments, bills] = await Promise.all([
+    const [taxpayer, debts, payments, bills, plans] = await Promise.all([
       taxpayerService.getById(taxpayerId),
       allPages(`/api/v1/taxpayers/${taxpayerId}/debts`),
       allPages(`/api/v1/payments?taxpayerId=${taxpayerId}`),
       allPages(`/api/v1/taxpayers/${taxpayerId}/bills`),
+      allPages(`/api/v1/taxpayers/${taxpayerId}/payment-plans`),
     ]);
-    return { taxpayer, debts, payments, bills, totals: { ...debtTotals(debts), paid: round2(payments.filter((payment) => payment.status !== "REVERSED").reduce((sum, payment) => sum + Number(payment.amountPaid), 0)) } };
+    const activePlans = plans.filter((plan) => plan.status === "ACTIVE" || plan.lifecycle === "CURRENT");
+    const installments = (await Promise.all(activePlans.map(async (plan) => {
+      const planId = plan.planId ?? plan.id;
+      const schedule = await request(`/api/v1/payment-plans/${planId}/installments`);
+      return schedule.map((installment) => ({ ...installment, planId }));
+    }))).flat();
+    return {
+      taxpayer,
+      debts,
+      payments,
+      bills,
+      plans,
+      installments,
+      totals: {
+        ...debtTotals(debts),
+        paid: round2(payments.filter((payment) => payment.status !== "REVERSED").reduce((sum, payment) => sum + Number(payment.amountPaid), 0)),
+      },
+    };
   },
 
   /** Agentes que pueden figurar como responsables de un cobro. */
