@@ -20,10 +20,14 @@ class DemoAuthDisabledTests {
     @Test void perfilDevNoHabilitaAuthDemoPorDefecto() throws Exception {
         assertThat(context.getEnvironment().getProperty("rentas.security.dev-mode",Boolean.class)).isFalse();
         assertThat(context.getBeansOfType(DemoAuthService.class)).isEmpty();
+        assertThat(context.getBeansOfType(DemoDataService.class)).isEmpty();
         assertThat(context.getBeansOfType(DemoAuthController.class)).isEmpty();
         mvc.perform(get("/api/v1/dev-auth/me").header("X-Demo-Session","sesion-forjada")).andExpect(status().isUnauthorized());
         mvc.perform(post("/api/v1/dev-auth/login").contentType("application/json")
             .content("{\"username\":\"qa\",\"password\":\"fixture\"}"))
+            .andExpect(result -> assertThat(result.getResponse().getStatus()).isBetween(400,499));
+        mvc.perform(post("/api/v1/dev-auth/demo-data").contentType("application/json")
+            .content("{\"password\":\"clave-demo\"}"))
             .andExpect(result -> assertThat(result.getResponse().getStatus()).isBetween(400,499));
     }
 }

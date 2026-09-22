@@ -21,11 +21,14 @@ class DemoAuthController {
         @NotBlank @Size(max=255) String displayName) {}
     record CreateUserRequest(@NotBlank @Size(max=100) String username,@NotBlank @Size(min=8,max=100) String password,
         @NotBlank @Size(max=255) String displayName,@NotNull DemoRole role,Long taxpayerId) {}
+    record DemoDataRequest(@NotBlank @Size(min=8,max=100) String password) {}
+    record DemoDataResponse(Long taxpayerId,Long debtA,Long debtB,Long activePlanConfigurationId,List<String> users) {}
     record UserResponse(Long id,String username,String displayName,DemoRole role,List<String> authorities,Long taxpayerId,boolean active,OffsetDateTime createdAt) {}
     record LoginResponse(String token,UserResponse user) {}
 
     private final DemoAuthService auth;
-    DemoAuthController(DemoAuthService auth){this.auth=auth;}
+    private final DemoDataService demoData;
+    DemoAuthController(DemoAuthService auth,DemoDataService demoData){this.auth=auth;this.demoData=demoData;}
 
     @PostMapping("/login")
     LoginResponse login(@Valid @RequestBody LoginRequest request){return auth.login(request);}
@@ -46,4 +49,8 @@ class DemoAuthController {
 
     @GetMapping("/users") @PreAuthorize("hasRole('SUPERVISOR')")
     List<UserResponse> list(){return auth.list();}
+
+    @io.swagger.v3.oas.annotations.Hidden
+    @PostMapping("/demo-data") @PreAuthorize("hasRole('SUPERVISOR')")
+    DemoDataResponse initializeDemoData(@Valid @RequestBody DemoDataRequest request){return demoData.initialize(request.password());}
 }

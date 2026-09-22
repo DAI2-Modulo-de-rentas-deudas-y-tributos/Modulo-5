@@ -65,6 +65,13 @@ con `POST /api/v1/dev-auth/users`. El login emite un token opaco persistido en
 `demo_auth_session`; el frontend lo reenvía como `X-Demo-Session`.
 No hay usuarios hardcodeados en el runtime del frontend.
 
+Con el modo DEV habilitado, un SUPERVISOR puede ejecutar una vez
+`POST /api/v1/dev-auth/demo-data` enviando `{"password":"<clave-local-demo>"}`
+y `X-Demo-Session`. La operación es idempotente y prepara las cuentas de Rentas,
+Caja y Contribuyente, el contribuyente DEMO, dos deudas elegibles y una
+configuración de planes de 3 a 12 cuotas. La ruta no se publica en OpenAPI y no
+existe con el perfil `prod` ni con `RENTAS_SECURITY_DEV_MODE=false`.
+
 Arquitectura de las imágenes base: `eclipse-temurin:17-*-jammy` tiene manifest
 AMD64 y ARM64. En una PC AMD64 el build local no demuestra runtime ARM64:
 
