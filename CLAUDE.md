@@ -62,6 +62,8 @@ cd infra/environments/test && terraform init -backend=false && terraform validat
 
 - Ramas: desarrollo en `feature/*` → PR a `develop` (ambiente `dev`) → promoción del **mismo
   artefacto inmutable** a `test`. `main` es la versión estable.
+- `dev` solo verifica el despliegue: el deploy del backend enciende RDS, prueba
+  `/actuator/health` y apaga ECS y RDS al terminar (ADR 0003). El ambiente para usar la app es `test`.
 - CI (`.github/workflows/ci.yml`): job `repository-structure` verifica que existan
   `frontend`, `backend`, `contracts`, `infra/environments/{dev,test}` y `docs/adr`; job
   `terraform` corre fmt/validate; `ci-required` es el check final obligatorio — si se agregan

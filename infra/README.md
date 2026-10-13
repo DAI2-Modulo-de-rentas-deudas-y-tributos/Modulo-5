@@ -35,7 +35,9 @@ seguridad solo permite entrada desde el ALB. RDS nunca es publico.
 2. Si cambia IAM, el bootstrap se aplica localmente con `rentas-admin`.
 3. Al fusionar infraestructura en `develop`, `cd-dev.yml` ejecuta Terraform.
 4. Cuando exista backend, `cd-backend-dev.yml` publica una imagen inmutable en
-   ECR y actualiza el servicio ECS.
+   ECR, enciende RDS, actualiza el servicio ECS, verifica `/actuator/health`
+   a traves de CloudFront y al terminar apaga ECS y RDS, aunque el despliegue
+   falle (ver ADR 0003).
 5. Cuando exista frontend, `cd-frontend-dev.yml` construye `dist` y lo publica
    mediante la API de despliegue manual de Amplify.
 
@@ -59,8 +61,14 @@ y se omiten hasta que el equipo de desarrollo agregue las aplicaciones.
 
 ## Costos
 
-Aunque no haya tareas Fargate ejecutandose, RDS y el Application Load Balancer
-generan costo continuo. CloudFront y Amplify se cobran principalmente por uso.
+DEV solo verifica despliegues: fuera de cada ejecucion de `cd-backend-dev.yml`,
+ECS queda en cero tareas y RDS detenida. Un apagado nocturno de respaldo
+(04:00/04:15 de Argentina, `environments/dev/cost_controls.tf`) cubre un apagado
+fallido y el reinicio automatico que AWS aplica a RDS tras siete dias detenida.
+El ambiente para usar la aplicacion es TEST.
+
+Aunque no haya tareas Fargate ejecutandose, el Application Load Balancer y el
+almacenamiento de RDS generan costo continuo. CloudFront y Amplify se cobran principalmente por uso.
 La configuracion DEV usa una instancia RDS pequena, una sola zona y no crea NAT
 Gateway. Revisar AWS Cost Explorer y definir un presupuesto antes del apply.
 

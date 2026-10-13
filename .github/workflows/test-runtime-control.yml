@@ -70,6 +70,11 @@ jobs:
               ;;
           esac
 
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
       - name: Configure temporary AWS credentials
         uses: aws-actions/configure-aws-credentials@v6.2.3
         with:
@@ -95,28 +100,7 @@ jobs:
             exit 1
           fi
 
-          rds_status=$(aws rds describe-db-instances \
-            --db-instance-identifier "${RDS_INSTANCE}" \
-            --query 'DBInstances[0].DBInstanceStatus' \
-            --output text)
-
-          case "${rds_status}" in
-            stopped)
-              aws rds start-db-instance --db-instance-identifier "${RDS_INSTANCE}" > /dev/null
-              ;;
-            stopping)
-              aws rds wait db-instance-stopped --db-instance-identifier "${RDS_INSTANCE}"
-              aws rds start-db-instance --db-instance-identifier "${RDS_INSTANCE}" > /dev/null
-              ;;
-            starting|available)
-              ;;
-            *)
-              echo "RDS cannot be started from status ${rds_status}."
-              exit 1
-              ;;
-          esac
-
-          aws rds wait db-instance-available --db-instance-identifier "${RDS_INSTANCE}"
+          bash scripts/aws/runtime.sh db-start
 
           aws ecs update-service \
             --cluster "${ECS_CLUSTER}" \
@@ -131,41 +115,7 @@ jobs:
       - name: Stop TEST
         if: inputs.operation == 'stop'
         shell: bash
-        run: |
-          set -euo pipefail
-
-          aws ecs update-service \
-            --cluster "${ECS_CLUSTER}" \
-            --service "${ECS_SERVICE}" \
-            --desired-count 0 \
-            > /dev/null
-
-          aws ecs wait services-stable \
-            --cluster "${ECS_CLUSTER}" \
-            --services "${ECS_SERVICE}"
-
-          rds_status=$(aws rds describe-db-instances \
-            --db-instance-identifier "${RDS_INSTANCE}" \
-            --query 'DBInstances[0].DBInstanceStatus' \
-            --output text)
-
-          case "${rds_status}" in
-            available)
-              aws rds stop-db-instance --db-instance-identifier "${RDS_INSTANCE}" > /dev/null
-              ;;
-            starting)
-              aws rds wait db-instance-available --db-instance-identifier "${RDS_INSTANCE}"
-              aws rds stop-db-instance --db-instance-identifier "${RDS_INSTANCE}" > /dev/null
-              ;;
-            stopping|stopped)
-              ;;
-            *)
-              echo "RDS cannot be stopped from status ${rds_status}."
-              exit 1
-              ;;
-          esac
-
-          aws rds wait db-instance-stopped --db-instance-identifier "${RDS_INSTANCE}"
+        run: bash scripts/aws/runtime.sh stop
 
       - name: Publish runtime status
         if: always()

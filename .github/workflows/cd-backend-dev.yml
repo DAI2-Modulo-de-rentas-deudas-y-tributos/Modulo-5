@@ -17,6 +17,11 @@ concurrency:
   group: backend-dev
   cancel-in-progress: false
 
+env:
+  ECS_CLUSTER: "modulo-5-rentas-dev-cluster"
+  ECS_SERVICE: "modulo-5-rentas-dev-backend"
+  RDS_INSTANCE: "modulo-5-rentas-dev-postgres"
+
 jobs:
   detect:
     name: detect-backend
@@ -45,15 +50,13 @@ jobs:
     needs: detect
     if: needs.detect.outputs.ready == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 60
     environment: dev
 
     env:
       AWS_REGION: ${{ vars.AWS_REGION }}
       AWS_ACCOUNT_ID: "060712744495"
       ECR_REPOSITORY: "modulo-5-rentas-dev-backend"
-      ECS_CLUSTER: "modulo-5-rentas-dev-cluster"
-      ECS_SERVICE: "modulo-5-rentas-dev-backend"
       ECS_TASK_FAMILY: "modulo-5-rentas-dev-backend"
       ECS_CONTAINER_NAME: "backend"
       AMPLIFY_APP_NAME: "modulo-5-rentas-dev-frontend"
@@ -80,7 +83,7 @@ jobs:
           set -euo pipefail
           : "${AWS_REGION:?Missing AWS_REGION in the dev environment}"
 
-      - name: Resolve frontend origin
+      - name: Resolve DEV URLs
         id: frontend
         shell: bash
         run: |
@@ -101,6 +104,15 @@ jobs:
             exit 1
           fi
           echo "origin=https://${AMPLIFY_BRANCH}.${default_domain}" >> "${GITHUB_OUTPUT}"
+          api_base_url=$(aws amplify get-app \
+            --app-id "${app_id}" \
+            --query 'app.environmentVariables.VITE_API_BASE_URL' \
+            --output text)
+          if [[ -z "${api_base_url}" || "${api_base_url}" == "None" ]]; then
+            echo "Amplify app does not expose VITE_API_BASE_URL."
+            exit 1
+          fi
+          echo "api-base-url=${api_base_url}" >> "${GITHUB_OUTPUT}"
 
       - name: Login to Amazon ECR
         shell: bash
@@ -129,6 +141,10 @@ jobs:
           fi
 
           echo "uri=${image_uri}" >> "${GITHUB_OUTPUT}"
+
+      - name: Start DEV database
+        shell: bash
+        run: bash scripts/aws/runtime.sh db-start
 
       - name: Register task definition revision
         id: task
@@ -208,6 +224,29 @@ jobs:
             --cluster "${ECS_CLUSTER}" \
             --services "${ECS_SERVICE}"
 
+          # El circuit breaker puede volver a la revision anterior y el servicio
+          # queda estable igual: exigir que corra la revision recien registrada.
+          read -r running_task_definition rollout_state <<< "$(aws ecs describe-services \
+            --cluster "${ECS_CLUSTER}" \
+            --services "${ECS_SERVICE}" \
+            --query 'services[0].deployments[0].[taskDefinition,rolloutState]' \
+            --output text)"
+          if [[ "${running_task_definition}" != "${TASK_DEFINITION_ARN}" || "${rollout_state}" != "COMPLETED" ]]; then
+            echo "ECS no quedo con la revision nueva (${running_task_definition}, ${rollout_state}); probable rollback."
+            exit 1
+          fi
+
+      - name: Smoke test through CloudFront
+        shell: bash
+        env:
+          API_BASE_URL: ${{ steps.frontend.outputs.api-base-url }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error \
+            --retry 10 --retry-delay 15 --retry-all-errors --max-time 10 \
+            "${API_BASE_URL}/actuator/health" \
+            | jq -e '.status == "UP"'
+
       - name: Publish deployment summary
         shell: bash
         env:
@@ -231,3 +270,36 @@ jobs:
             --services "${ECS_SERVICE}" \
             --query 'services[0].events[:10]' \
             --output table || true
+
+  # DEV solo verifica el despliegue; el ambiente de uso es TEST.
+  # Job aparte: corre completo aunque el deploy falle, se cancele o venza, con
+  # su propia sesion OIDC (un paso always() tras cancelar tiene ~5 minutos).
+  shutdown:
+    name: shutdown-dev-runtime
+    needs: [detect, deploy]
+    if: always() && needs.detect.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: dev
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Configure temporary AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: "060712744495"
+          mask-aws-account-id: true
+          role-session-name: backend-dev-shutdown-${{ github.run_id }}
+
+      - name: Stop DEV runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/aws/runtime.sh stop
+          echo "### Runtime DEV apagado: ECS en 0 tareas y RDS detenida" >> "${GITHUB_STEP_SUMMARY}"

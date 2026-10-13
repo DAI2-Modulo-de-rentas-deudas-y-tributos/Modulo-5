@@ -70,7 +70,9 @@ backend hasta una promocion explicita.
 
 Backend:
 
-1. Identificar el tag SHA desplegado y validado en ECR DEV.
+1. Identificar el tag SHA desplegado y validado en ECR DEV: el run de
+   `Deploy backend AWS DEV` de ese SHA debe estar en verde (incluye el smoke
+   test). DEV queda apagado despues; la validacion funcional se hace en TEST.
 2. Ejecutar `Promote backend to AWS TEST` con ese `image_tag`.
 3. Escribir `DEPLOY_TEST` y aprobar el environment.
 
@@ -80,7 +82,7 @@ el servicio TEST con una revision nueva de la task definition.
 Frontend:
 
 1. Ejecutar `Promote frontend to AWS TEST`.
-2. Indicar como `source_ref` el SHA exacto validado en DEV.
+2. Indicar como `source_ref` el SHA exacto validado en DEV (deploy DEV en verde).
 3. Escribir `DEPLOY_TEST` y aprobar el environment.
 
 El frontend se construye desde ese commit usando `VITE_API_BASE_URL` de TEST y

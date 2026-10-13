@@ -41,7 +41,11 @@ terraform -chdir=infra/bootstrap apply bootstrap-runtime.tfplan
 ```
 
 El plan correcto agrega dos politicas administradas y sus attachments al rol
-DEV. Si propone reemplazar o eliminar el bucket de estado, el proveedor OIDC o
+DEV. Desde el apagado automatico (ADR 0003) esas politicas incluyen
+`rds:StartDBInstance`, `rds:StopDBInstance`, los schedules
+`modulo-5-rentas-dev-stop-*` y el rol `modulo-5-rentas-dev-nightly-shutdown`:
+aplicarlas antes de fusionar, o `cd-dev.yml` y `cd-backend-dev.yml` fallan por
+permisos. Si propone reemplazar o eliminar el bucket de estado, el proveedor OIDC o
 los roles, no aplicar y revisar la inicializacion del backend.
 
 ## 4. Pull Request y despliegue
@@ -78,3 +82,35 @@ aws amplify list-apps `
 
 El resultado esperado de ECS antes de recibir codigo es `ACTIVE, 0, 0`; RDS
 debe estar `available` y con `PubliclyAccessible` igual a `false`.
+
+## 6. Apagado automatico
+
+DEV solo verifica que el despliegue funciona; para usar la aplicacion esta TEST.
+Cada ejecucion de `Deploy backend AWS DEV`:
+
+1. publica la imagen inmutable en ECR (la que luego se promueve a TEST);
+2. enciende RDS y espera que este `available`;
+3. despliega ECS con una tarea, espera que el servicio se estabilice y exige
+   que corra la revision nueva (un rollback del circuit breaker hace fallar
+   el run);
+4. consulta `/actuator/health` por CloudFront y exige `{"status":"UP"}`;
+5. siempre, aun si el deploy fallo, se cancelo o vencio, el job
+   `shutdown-dev-runtime` lleva ECS a cero y detiene RDS
+   (`scripts/aws/runtime.sh stop`).
+
+Fuera de un despliegue, el estado esperado es ECS `ACTIVE, 0, 0` y RDS
+`stopping` o `stopped`. Si quedara encendido, EventBridge Scheduler lo apaga
+a las 04:00 (ECS) y 04:15 (RDS) de Argentina; ese respaldo tambien cubre el
+reinicio automatico de RDS luego de siete dias detenida.
+
+`Deploy AWS DEV infrastructure` no enciende el runtime. Si un cambio de
+Terraform necesita modificar RDS mientras esta detenida, el apply falla con
+`InvalidDBInstanceState`. En ese caso encenderla con el perfil administrador,
+volver a ejecutar el workflow y luego detenerla:
+
+```powershell
+aws rds start-db-instance --db-instance-identifier modulo-5-rentas-dev-postgres --profile rentas-admin --region sa-east-1
+aws rds wait db-instance-available --db-instance-identifier modulo-5-rentas-dev-postgres --profile rentas-admin --region sa-east-1
+# re-ejecutar "Deploy AWS DEV infrastructure"
+aws rds stop-db-instance --db-instance-identifier modulo-5-rentas-dev-postgres --profile rentas-admin --region sa-east-1
+```

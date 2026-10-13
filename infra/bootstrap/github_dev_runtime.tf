@@ -4,6 +4,8 @@ locals {
   dev_ecs_service_arn            = "arn:${data.aws_partition.current.partition}:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:service/${var.project_name}-dev-cluster/${var.project_name}-dev-backend"
   dev_ecs_task_definition_arn    = "arn:${data.aws_partition.current.partition}:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task-definition/${var.project_name}-dev-backend:*"
   dev_amplify_app_arn            = "arn:${data.aws_partition.current.partition}:amplify:${var.aws_region}:${data.aws_caller_identity.current.account_id}:apps/*"
+  dev_nightly_shutdown_role_arn  = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${var.project_name}-dev-nightly-shutdown"
+  dev_scheduler_schedule_arn     = "arn:${data.aws_partition.current.partition}:scheduler:${var.aws_region}:${data.aws_caller_identity.current.account_id}:schedule/default/${var.project_name}-dev-stop-*"
 }
 
 data "aws_iam_policy_document" "github_dev_runtime_compute" {
@@ -80,6 +82,7 @@ data "aws_iam_policy_document" "github_dev_runtime_compute" {
       "iam:GetRole",
       "iam:GetRolePolicy",
       "iam:ListAttachedRolePolicies",
+      "iam:ListInstanceProfilesForRole",
       "iam:ListRolePolicies",
       "iam:ListRoleTags",
       "iam:PutRolePolicy",
@@ -89,7 +92,8 @@ data "aws_iam_policy_document" "github_dev_runtime_compute" {
     ]
     resources = [
       local.dev_backend_execution_role_arn,
-      local.dev_backend_task_role_arn
+      local.dev_backend_task_role_arn,
+      local.dev_nightly_shutdown_role_arn
     ]
   }
 
@@ -105,6 +109,18 @@ data "aws_iam_policy_document" "github_dev_runtime_compute" {
       test     = "StringEquals"
       variable = "iam:PassedToService"
       values   = ["ecs-tasks.amazonaws.com"]
+    }
+  }
+
+  statement {
+    sid       = "PassDevShutdownRoleToScheduler"
+    actions   = ["iam:PassRole"]
+    resources = [local.dev_nightly_shutdown_role_arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["scheduler.amazonaws.com"]
     }
   }
 }
@@ -171,8 +187,27 @@ data "aws_iam_policy_document" "github_dev_runtime_infrastructure" {
       "rds:ListTagsForResource",
       "rds:ModifyDBInstance",
       "rds:ModifyDBSubnetGroup",
-      "rds:RemoveTagsFromResource"
+      "rds:RemoveTagsFromResource",
+      "rds:StartDBInstance",
+      "rds:StopDBInstance"
     ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid = "ManageDevNightlySchedules"
+    actions = [
+      "scheduler:CreateSchedule",
+      "scheduler:DeleteSchedule",
+      "scheduler:GetSchedule",
+      "scheduler:UpdateSchedule"
+    ]
+    resources = [local.dev_scheduler_schedule_arn]
+  }
+
+  statement {
+    sid       = "ListDevNightlySchedules"
+    actions   = ["scheduler:ListSchedules"]
     resources = ["*"]
   }
 

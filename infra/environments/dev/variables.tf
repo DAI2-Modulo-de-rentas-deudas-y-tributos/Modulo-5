@@ -62,6 +62,23 @@ variable "log_retention_days" {
   default     = 14
 }
 
+variable "enable_nightly_shutdown" {
+  description = "Habilita el apagado automatico nocturno de respaldo de ECS y RDS en DEV."
+  type        = bool
+  default     = true
+}
+
+variable "nightly_shutdown_timezone" {
+  description = "Zona horaria IANA utilizada por EventBridge Scheduler."
+  type        = string
+  default     = "America/Argentina/Buenos_Aires"
+
+  validation {
+    condition     = length(trimspace(var.nightly_shutdown_timezone)) > 0
+    error_message = "nightly_shutdown_timezone no puede estar vacia."
+  }
+}
+
 variable "backend_container_port" {
   description = "Puerto HTTP esperado por el contrato del backend."
   type        = number
