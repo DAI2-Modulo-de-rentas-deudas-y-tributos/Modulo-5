@@ -5,6 +5,7 @@ import Topbar from "./Topbar.jsx";
 import Footer from "./Footer.jsx";
 import { CAJA_MODULES } from "../../config/cajaModules.js";
 import { useAuth } from "../../context/AuthContext.jsx";
+import "./workspace.css";
 
 /** Shell de la ventanilla de caja: mismo esqueleto que Rentas con sus propios módulos. */
 export default function CajaLayout() {
@@ -12,7 +13,8 @@ export default function CajaLayout() {
   const { user } = useAuth();
 
   return (
-    <div className="flex min-h-screen">
+    <div className="workspace-app">
+      <a className="workspace-skip" href="#workspace-content">Ir al contenido</a>
       <Sidebar
         open={menuOpen}
         onClose={() => setMenuOpen(false)}
@@ -24,9 +26,9 @@ export default function CajaLayout() {
         footerLines={["Módulo 5 — Rentas", user.counter ?? "Ventanilla de caja"]}
       />
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        <Topbar onOpenMenu={() => setMenuOpen(true)} areaLabel="Ventanilla" areaName="Caja de Rentas" />
-        <main className="flex-1">
+      <div className="workspace-body">
+        <Topbar onOpenMenu={() => setMenuOpen(true)} menuOpen={menuOpen} areaLabel="Ventanilla" areaName="Caja de Rentas" />
+        <main id="workspace-content" className="workspace-main" tabIndex={-1}>
           <Outlet />
         </main>
         <Footer areaName="Caja — Dirección General de Rentas" areaEmail="caja@ciudaduade.gob.ar" />

@@ -102,7 +102,7 @@ export default function ContribuyenteAuditorDetallePage() {
         </div>
       </Card>
 
-      <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <section className="workspace-metrics workspace-metrics-three" aria-label="Situación del contribuyente">
         <StatTile
           label="Deuda total"
           value={formatCurrency(totals.totalDebt)}

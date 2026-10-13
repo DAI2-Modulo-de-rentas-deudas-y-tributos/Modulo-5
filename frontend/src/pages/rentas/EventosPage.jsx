@@ -120,7 +120,7 @@ export default function EventosPage() {
       )}
       {error && <Alert variant="error" title="No pudimos cargar la bitácora">{error}</Alert>}
 
-      <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <section className="workspace-metrics workspace-metrics-three" aria-label="Resumen de eventos">
         <StatTile label="Eventos listados" value={rows.length} iconName="Activity" />
         <StatTile
           label="Reintentando"

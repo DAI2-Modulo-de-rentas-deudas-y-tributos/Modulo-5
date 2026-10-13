@@ -2,8 +2,8 @@ import { useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import FeatureCard from "../components/ui/FeatureCard.jsx";
 import Alert from "../components/ui/Alert.jsx";
-import Spinner from "../components/ui/Spinner.jsx";
-import PageHeader from "../components/ui/PageHeader.jsx";
+import DashboardLoading from "../components/common/DashboardLoading.jsx";
+import PageHeader from "../components/layout/WorkspaceHeader.jsx";
 import StatTile from "../components/common/StatTile.jsx";
 import { modulesForRole } from "../config/modules.js";
 import { dashboardService } from "../services/rentasService.js";
@@ -30,18 +30,15 @@ export default function DashboardPage() {
         description="Prioridades de la jornada y acceso directo a cada módulo del área."
       />
 
-      <div className="mx-auto flex max-w-6xl flex-col gap-8 px-5 py-8">
+      <div className="workspace-container workspace-content workspace-dashboard">
         {error && <Alert variant="error" title="No pudimos cargar el panel">{error}</Alert>}
 
         {loading ? (
-          <div className="flex items-center justify-center gap-3 py-10">
-            <Spinner />
-            <span className="text-[13px] text-neutral-400">Calculando métricas…</span>
-          </div>
+          <DashboardLoading label="Calculando métricas…" />
         ) : (
           metrics && (
             <>
-              <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <section className="workspace-metrics" aria-label="Resumen de Rentas">
                 <StatTile
                   label="Deuda vencida"
                   value={formatCurrency(metrics.totalOverdueAmount)}
@@ -76,14 +73,15 @@ export default function DashboardPage() {
                     Módulos del área
                   </h2>
                   <p className="text-[13px] text-neutral-400">
-                    El orden sigue el flujo operativo: liquidación → deuda → boleta → pago.
+                    Tus herramientas para gestionar los tributos del municipio.
                   </p>
                 </div>
 
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                <div className="workspace-directory">
                   {modules.map((module) => (
                     <FeatureCard
                       key={module.id}
+                      className="workspace-module-link"
                       title={module.label}
                       description={module.description}
                       iconName={module.iconName}
