@@ -70,7 +70,7 @@ export default function StatusBadge({ status, tone, label }) {
   const resolvedTone = tone ?? STATUS_TONES[status] ?? "neutral";
   return (
     <span
-      className={`inline-flex items-center whitespace-nowrap rounded-full border px-2.5 py-0.5 text-[11px] font-semibold leading-5 tracking-[0.01em] ${TONES[resolvedTone]}`}
+      className={`workspace-status inline-flex items-center whitespace-nowrap rounded-full border px-2.5 py-0.5 text-[11px] font-semibold leading-5 tracking-[0.01em] ${TONES[resolvedTone]}`}
     >
       {label ?? labelFor(status)}
     </span>

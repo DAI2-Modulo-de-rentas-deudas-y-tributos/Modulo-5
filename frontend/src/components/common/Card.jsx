@@ -2,7 +2,7 @@
 export default function Card({ title, description, actions, children, className = "" }) {
   return (
     <section
-      className={`rounded-xl border border-neutral-200/70 bg-white overflow-hidden ${className}`}
+      className={`workspace-card rounded-xl border border-neutral-200/70 bg-white overflow-hidden ${className}`}
     >
       {(title || actions) && (
         <header className="flex items-start justify-between gap-4 border-b border-neutral-100 px-5 py-4">

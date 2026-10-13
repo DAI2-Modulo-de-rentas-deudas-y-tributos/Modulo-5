@@ -171,7 +171,7 @@ export default function DeudasPage() {
         </Alert>
       )}
 
-      <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <section className="workspace-metrics workspace-metrics-three" aria-label="Resumen de deudas">
         <StatTile label="Deudas listadas" value={rows.length} iconName="FileWarning" />
         <StatTile
           label="Saldo total"

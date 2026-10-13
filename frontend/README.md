@@ -78,7 +78,14 @@ desde el endpoint protegido del backend.
 
 ## Design system
 
-Tipografía Inter, navy `#0F2C59` y coral `#D63031` como acento, fondo `#FAFAFA`.
-Los tokens viven en `src/index.css` (`@theme` de Tailwind v4). Los componentes de
-`src/components/ui/` son la fuente canónica del UI kit: reutilizarlos siempre en vez
-de escribir markup o colores nuevos.
+El login es la referencia visual: Geist, navy `#0F2C59`, superficies claras y el
+motivo de arcos institucional. Las áreas autenticadas extienden ese lenguaje en
+`src/components/layout/workspace.css`, bajo `.workspace-app`: navegación clara,
+encabezados `WorkspaceHeader`, métricas agrupadas, tablas y formularios legibles.
+El color se reserva para estados y acciones que necesitan atención.
+
+Los tokens base de Tailwind v4 siguen en `src/index.css`. El kit de
+`src/components/ui/` y los componentes usados por el login se conservan intactos.
+Las variantes autenticadas reutilizan el kit por props y clases, sin cambiar la
+pantalla de ingreso. La navegación móvil se cierra con Escape y mantiene el foco;
+las filas con detalle se pueden abrir con Enter o Espacio.

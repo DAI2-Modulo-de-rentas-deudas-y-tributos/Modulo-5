@@ -27,7 +27,7 @@ export default function Modal({ open, title, description, onClose, children, foo
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className={`relative w-full ${WIDTHS[size] ?? WIDTHS.lg} max-h-[90vh] overflow-y-auto rounded-xl border border-neutral-200/70 bg-white
+        className={`workspace-dialog relative w-full ${WIDTHS[size] ?? WIDTHS.lg} max-h-[90vh] overflow-y-auto rounded-xl border border-neutral-200/70 bg-white
                    shadow-[0_20px_60px_-20px_rgba(15,44,89,0.45)] animate-[modal-in_200ms_cubic-bezier(0.4,0,0.2,1)]`}
       >
         <div className="flex items-start justify-between gap-4 border-b border-neutral-100 px-5 py-4">
