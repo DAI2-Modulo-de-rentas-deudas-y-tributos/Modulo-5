@@ -105,10 +105,13 @@ export default function ExencionesPage() {
         }
         return (
           <div className="flex justify-end gap-2">
-            {user.role === "PERSONAL" && (
+            {user.role === "PERSONAL" && row.backendStatus !== "DOCUMENTATION_REQUIRED" && (
               <Button size="sm" variant="secondary" onClick={() => setWorkflow(row)}>
                 Trámite
               </Button>
+            )}
+            {user.role === "PERSONAL" && row.backendStatus === "DOCUMENTATION_REQUIRED" && (
+              <span className="text-[12px] text-neutral-400">Espera documentación del ciudadano</span>
             )}
             {user.role === "SUPERVISOR" && row.internalStatus === "PENDING_RESOLUTION" && (
               <Button size="sm" variant="primary" onClick={() => setSelected(row)}>
@@ -142,13 +145,7 @@ export default function ExencionesPage() {
       <Card
         title="Solicitudes de exención"
         description="Un beneficio social activo en M8 respalda la solicitud, pero no la aprueba automáticamente."
-        actions={
-          user.role === "PERSONAL" ? (
-            <Button size="sm" variant="primary" onClick={() => setCreating(true)}>
-              Nueva solicitud
-            </Button>
-          ) : null
-        }
+        actions={null}
       >
         <FilterBar
           filters={[
@@ -384,10 +381,9 @@ function NewExemptionModal({ taxpayerOptions, conceptOptions, onClose, onDone })
  */
 function WorkflowModal({ exemption, actor, onClose, onDone }) {
   const [accion, setAccion] = useState(
-    exemption.internalStatus === "DOCUMENTATION_REQUIRED" ? "RECEIVE" : "REQUIRE",
+    exemption.backendStatus === "PENDING" ? "START" : "RESOLUTION",
   );
   const [note, setNote] = useState("");
-  const [files, setFiles] = useState([]);
   const [error, setError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -396,22 +392,13 @@ function WorkflowModal({ exemption, actor, onClose, onDone }) {
     setError(null);
     setSubmitting(true);
     try {
-      if (accion === "RECEIVE") {
-        const resultado = await exemptionService.attachDocumentation({
-          requestId: exemption.requestId,
-          attachments: files,
-          actor,
-        });
-        onDone(resultado, `Se registraron ${files.length} archivo(s) de la solicitud #${exemption.requestId}.`);
-        return;
-      }
       if (accion === "REQUIRE" && !note?.trim()) {
         // Pedir documentación sin decir cuál deja al ciudadano sin saber qué presentar.
         setError("Indicá qué documentación falta.");
         setSubmitting(false);
         return;
       }
-      const internalStatus = accion === "REQUIRE" ? "DOCUMENTATION_REQUIRED" : "PENDING_RESOLUTION";
+      const internalStatus = accion === "START" ? "PENDING_REVIEW" : accion === "REQUIRE" ? "DOCUMENTATION_REQUIRED" : "PENDING_RESOLUTION";
       const resultado = await exemptionService.advanceWorkflow({
         requestId: exemption.requestId,
         internalStatus,
@@ -420,9 +407,11 @@ function WorkflowModal({ exemption, actor, onClose, onDone }) {
       });
       onDone(
         resultado,
-        internalStatus === "DOCUMENTATION_REQUIRED"
-          ? `Se le pidió documentación al ciudadano por la solicitud #${exemption.requestId}.`
-          : `La solicitud #${exemption.requestId} quedó lista para resolver.`,
+        accion === "START"
+          ? `La solicitud #${exemption.requestId} está en revisión.`
+          : internalStatus === "DOCUMENTATION_REQUIRED"
+            ? `Se le pidió documentación al ciudadano por la solicitud #${exemption.requestId}.`
+            : `La solicitud #${exemption.requestId} quedó lista para resolver.`,
       );
     } catch (caught) {
       setError(caught.message);
@@ -466,22 +455,16 @@ function WorkflowModal({ exemption, actor, onClose, onDone }) {
           type="select"
           value={accion}
           onChange={(event) => setAccion(event.target.value)}
-          options={[
-            { value: "REQUIRE", label: "Solicitar documentación" },
-            { value: "RECEIVE", label: "Registrar documentación recibida" },
-            { value: "RESOLUTION", label: "Enviar a resolución" },
-          ]}
+          options={exemption.backendStatus === "PENDING"
+            ? [{ value: "START", label: "Iniciar revisión" }]
+            : [
+                { value: "RESOLUTION", label: "Enviar a resolución" },
+                { value: "REQUIRE", label: "Solicitar documentación" },
+              ]}
           required
         />
 
-        {accion === "RECEIVE" ? (
-          <FileUpload
-            files={files}
-            onChange={setFiles}
-            label="Documentación presentada"
-            hint="Lo que el ciudadano entregó por mesa de entradas."
-          />
-        ) : (
+        {accion !== "START" && (
           <FormField
             label={accion === "REQUIRE" ? "Qué documentación falta" : "Observaciones"}
             name="note"

@@ -42,7 +42,10 @@ class FullStackFeatureTests {
     @Test void lateChargePreviewConfirmationAndDailyProcessingAreIdempotent(){
         Debt debt=debt(taxpayer("LATE-1","30111223"),new BigDecimal("100.00"),LocalDate.now().minusDays(10));rule();
         var preview=lateCharges.preview(debt.id,LocalDate.now());assertThat(preview.surchargeAmount()).isEqualByComparingTo("2.00");assertThat(preview.interestAmount()).isEqualByComparingTo("1.00");assertThat(preview.applied()).isFalse();
-        var applied=lateCharges.apply(debt.id,LocalDate.now());var duplicate=lateCharges.apply(debt.id,LocalDate.now());assertThat(applied.applied()).isTrue();assertThat(duplicate.applied()).isFalse();assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("103.00");assertThat(adjustments.count()).isEqualTo(2);
+        var applied=lateCharges.apply(debt.id,LocalDate.now());var duplicatePreview=lateCharges.preview(debt.id,LocalDate.now());var duplicate=lateCharges.apply(debt.id,LocalDate.now());
+        assertThat(applied.applied()).isTrue();assertThat(duplicatePreview.applicationId()).isEqualTo(applied.applicationId());
+        assertThat(duplicatePreview.totalAdjustment()).isEqualByComparingTo("3.00");assertThat(duplicatePreview.updatedTotal()).isEqualByComparingTo("103.00");
+        assertThat(duplicate.applied()).isFalse();assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("103.00");assertThat(adjustments.count()).isEqualTo(2);
         var first=dueDates.process(LocalDate.now());var again=dueDates.process(LocalDate.now());assertThat(again.id()).isEqualTo(first.id());assertThat(again.skippedAlreadyProcessed()).isGreaterThanOrEqualTo(1);
     }
 

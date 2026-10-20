@@ -117,7 +117,7 @@ function RefinancingModal({ plan, onClose, onDone }) {
             { label: "Interés estimado", value: formatCurrency(preview.estimatedInterest ?? preview.interest) },
             { label: "Total estimado", value: formatCurrency(preview.estimatedTotalAmount ?? preview.total) },
             { label: "Cuotas", value: preview.installments },
-            { label: "Valor de cuota", value: formatCurrency(preview.regularInstallmentAmount) },
+            { label: "Cuota estimada", value: formatCurrency(Number(preview.total) / Number(preview.installments)) },
             { label: "Excepcional", value: preview.exceptional ? "Sí" : "No" },
           ]} />
         </div>
@@ -145,8 +145,12 @@ function RefinancingStatus({ requestId }) {
       {requestData && (
         <Card title="Estado de la solicitud">
           <div className="flex flex-col gap-5 px-5 py-5">
-            <Alert variant={requestData.status === "REJECTED" ? "error" : requestData.status === "GRANTED" ? "success" : "info"} title={requestData.status === "REQUESTED" ? "Pendiente de evaluación" : "Solicitud actualizada"}>
-              El plan actual continúa vigente hasta que esta solicitud sea aprobada.
+            <Alert variant={requestData.status === "REJECTED" ? "error" : requestData.status === "GRANTED" ? "success" : "info"} title={requestData.status === "REQUESTED" ? "Pendiente de evaluación" : requestData.status === "GRANTED" ? "Refinanciación otorgada" : "Solicitud actualizada"}>
+              {requestData.status === "GRANTED"
+                ? `El plan #${requestData.planId} quedó como antecedente y el plan #${requestData.newPaymentPlanId} es el vigente.`
+                : requestData.status === "REJECTED"
+                  ? "La solicitud fue rechazada; el plan original conserva sus condiciones."
+                  : "El plan original continúa vigente hasta que se apruebe esta solicitud."}
             </Alert>
             <FieldGrid columns={3} items={[
               { label: "Estado", value: <StatusBadge status={requestData.status} /> },

@@ -10,5 +10,6 @@ describe("formatDate", () => {
     expect(labelFor("ROLE_CASHIER")).toBe("Caja");
     expect(actionLabelFor("PAYMENT_ALLOCATED")).toBe("Pago imputado");
     expect(entityLabelFor("PaymentAllocation")).toBe("Imputación de pago");
+    expect(labelFor("CANCELLED")).toBe("Anulada");
   });
 });

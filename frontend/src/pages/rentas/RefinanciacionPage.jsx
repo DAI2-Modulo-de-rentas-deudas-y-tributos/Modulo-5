@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
 import Card from "../../components/common/Card.jsx";
 import DataTable from "../../components/common/DataTable.jsx";
@@ -12,7 +12,7 @@ import useTaxpayerIndex from "../../hooks/useTaxpayerIndex.js";
 import { refinancingService } from "../../services/rentasService.js";
 import usePlanConfiguration from "../../hooks/usePlanConfiguration.js";
 import { useAuth } from "../../context/AuthContext.jsx";
-import { formatCurrency, formatDate, formatPercentage } from "../../lib/format.js";
+import { formatCurrency, formatDate } from "../../lib/format.js";
 
 /**
  * Refinanciación de planes activos, según la configuración del backend.
@@ -253,8 +253,8 @@ export default function RefinanciacionPage() {
 function ProposeModal({ plan, taxpayerName, requestedBy, onClose, onDone }) {
   const { installmentChoices, loading: cargandoConfig, error: errorConfig } = usePlanConfiguration();
   const [installments, setInstallments] = useState(null);
-  const [downPayment, setDownPayment] = useState("");
-  const [note, setNote] = useState("");
+  const [alternativas, setAlternativas] = useState([]);
+  const [loadingAlternativas, setLoadingAlternativas] = useState(false);
   const [error, setError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -262,29 +262,25 @@ function ProposeModal({ plan, taxpayerName, requestedBy, onClose, onDone }) {
     if (installments === null && installmentChoices.length > 0) setInstallments(installmentChoices[0]);
   }, [installmentChoices, installments]);
 
-  const anticipo = Number(downPayment) || 0;
-  const valido = anticipo >= 0 && anticipo < plan.outstandingAmount;
-
-  const alternativas = useMemo(
-    () =>
-      valido
-        ? installmentChoices.map((n) =>
-            refinancingService.simulate({
-              outstandingAmount: plan.outstandingAmount,
-              installments: n,
-              downPayment: anticipo,
-            }),
-          )
-        : [],
-    [plan.outstandingAmount, anticipo, valido],
-  );
+  const choicesKey = installmentChoices.join(",");
+  useEffect(() => {
+    if (!plan.planId || !choicesKey) return;
+    let active = true;
+    setLoadingAlternativas(true);
+    setError(null);
+    Promise.all(choicesKey.split(",").map((value) => refinancingService.simulate({ planId: plan.planId, installments: Number(value) })))
+      .then((results) => { if (active) setAlternativas(results); })
+      .catch((caught) => { if (active) setError(caught.message); })
+      .finally(() => { if (active) setLoadingAlternativas(false); });
+    return () => { active = false; };
+  }, [plan.planId, choicesKey]);
   const elegida = alternativas.find((a) => a.installments === installments) ?? null;
 
   const onSubmit = async (event) => {
     event.preventDefault();
     setError(null);
-    if (!valido) {
-      setError("El anticipo tiene que ser menor al saldo vivo.");
+    if (!elegida) {
+      setError("Elegí una alternativa calculada antes de continuar.");
       return;
     }
     setSubmitting(true);
@@ -293,9 +289,7 @@ function ProposeModal({ plan, taxpayerName, requestedBy, onClose, onDone }) {
         await refinancingService.request({
           planId: plan.planId,
           installments,
-          downPayment: anticipo,
           requestedBy,
-          note,
         }),
       );
     } catch (caught) {
@@ -316,7 +310,7 @@ function ProposeModal({ plan, taxpayerName, requestedBy, onClose, onDone }) {
           <Button variant="secondary" onClick={onClose}>
             Cancelar
           </Button>
-          <Button variant="primary" loading={submitting} onClick={onSubmit}>
+          <Button variant="primary" loading={submitting} disabled={!elegida} onClick={onSubmit}>
             Proponer refinanciación
           </Button>
         </>
@@ -339,21 +333,14 @@ function ProposeModal({ plan, taxpayerName, requestedBy, onClose, onDone }) {
       </p>
 
       <form onSubmit={onSubmit} noValidate className="flex flex-col gap-4">
-        <FormField
-          label="Anticipo (opcional)"
-          name="downPayment"
-          type="number"
-          placeholder="0"
-          value={downPayment}
-          onChange={(event) => setDownPayment(event.target.value)}
-        />
-
         <fieldset className="flex flex-col gap-2">
           <legend className="mb-1 text-[13px] font-medium text-neutral-700">
             Alternativas de cuotas
           </legend>
           {alternativas.length === 0 ? (
-            <p className="text-[13px] text-neutral-400">Corregí el anticipo para ver las opciones.</p>
+            <p className="text-[13px] text-neutral-400">
+              {loadingAlternativas || cargandoConfig ? "Calculando alternativas…" : errorConfig ?? "No hay alternativas disponibles."}
+            </p>
           ) : (
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
               {alternativas.map((alt) => {
@@ -374,10 +361,10 @@ function ProposeModal({ plan, taxpayerName, requestedBy, onClose, onDone }) {
                       {alt.installments} cuotas
                     </span>
                     <span className="text-[16px] font-extrabold tabular-nums leading-tight text-[#0F2C59]">
-                      {formatCurrency(alt.installmentAmount)}
+                      {formatCurrency(Number(alt.total) / Number(alt.installments))}
                     </span>
                     <span className="text-[11px] text-neutral-400">
-                      +{formatPercentage(alt.interestRate * 100)} interés
+                      {formatCurrency(alt.interest)} de interés estimado
                     </span>
                   </button>
                 );
@@ -391,20 +378,12 @@ function ProposeModal({ plan, taxpayerName, requestedBy, onClose, onDone }) {
             <div className="flex items-center justify-between">
               <span className="text-neutral-500">Total del nuevo plan</span>
               <span className="font-semibold tabular-nums text-[#0F2C59]">
-                {formatCurrency(elegida.totalAmount)}
+                {formatCurrency(elegida.total)}
               </span>
             </div>
           </div>
         )}
 
-        <FormField
-          label="Observaciones"
-          name="note"
-          type="textarea"
-          placeholder="Contexto para quien evalúe la solicitud."
-          value={note}
-          onChange={(event) => setNote(event.target.value)}
-        />
       </form>
     </Modal>
   );

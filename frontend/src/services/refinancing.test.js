@@ -102,14 +102,21 @@ describe("elegibilidad para refinanciar", () => {
 });
 
 describe("propuesta de refinanciación", () => {
-  it("simula sobre el saldo vivo, no sobre la deuda original", () => {
-    const simulacion = refinancingService.simulate({
-      outstandingAmount: 10000,
-      installments: 6,
-      downPayment: 2000,
+  it("simula el saldo vivo del plan en el backend, sin inventar un anticipo", async () => {
+    const backend = instalarBackendFalso({
+      "POST /api/v1/payment-plans/{id}/refinancing/simulations": {
+        originalPlanId: 851, outstandingPrincipal: 8000, interest: 400,
+        total: 8400, installments: 6, exceptional: false,
+      },
     });
 
-    expect(simulacion.financedAmount).toBe(8000);
+    const simulacion = await refinancingService.simulate({ planId: 851, installments: 6 });
+
+    expect(simulacion.outstandingPrincipal).toBe(8000);
+    expect(backend.llamadas[0]).toMatchObject({
+      ruta: "/api/v1/payment-plans/851/refinancing/simulations",
+      cuerpo: { installments: 6 },
+    });
   });
 
   it("pide la refinanciación contra el plan, sin tocarlo", async () => {

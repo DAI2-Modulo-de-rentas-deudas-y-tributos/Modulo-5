@@ -58,6 +58,25 @@ describe("pasos del trámite", () => {
 });
 
 describe("documentación", () => {
+  it("registra referencias externas junto con la solicitud inicial", async () => {
+    const backend = instalarBackendFalso({
+      "GET /api/v1/tax-concepts": pagina([{ id: 2, code: "ABL", name: "ABL", type: "FEE", active: true }]),
+      "POST /api/v1/exemption-requests": { id: 600, status: "PENDING" },
+    });
+
+    await exemptionService.requestExemption({
+      citizenId: 123, conceptCode: "ABL", reason: "Situación económica",
+      requestedPercentage: 50, requestedFrom: "2027-03-01", requestedUntil: "2027-12-31",
+      attachments: [{ name: "certificado.pdf", type: "INCOME_PROOF", externalDocumentId: "docs/600/1" }],
+    });
+
+    const posts = backend.llamadas.filter((call) => call.metodo === "POST");
+    expect(posts).toHaveLength(1);
+    expect(posts[0].cuerpo.documents).toEqual([{
+      externalDocumentId: "docs/600/1", documentType: "INCOME_PROOF", fileName: "certificado.pdf",
+    }]);
+  });
+
   it("exige al menos un archivo antes de llamar al backend", async () => {
     const backend = instalarBackendFalso();
 
@@ -76,7 +95,7 @@ describe("documentación", () => {
       requestId: 600,
       attachments: [
         { name: "certificado.pdf", type: "INCOME_PROOF", externalDocumentId: "s3://docs/certificado.pdf" },
-        { name: "dni.jpg", type: "ID" },
+        { name: "dni.jpg", type: "ID", externalDocumentId: "s3://docs/dni.jpg" },
       ],
       actor: "mrivas",
     });
@@ -87,8 +106,16 @@ describe("documentación", () => {
       documentType: "INCOME_PROOF",
       fileName: "certificado.pdf",
     });
-    // Sin id externo cae al nombre: lo que viaja es una referencia, no el archivo.
-    expect(backend.llamadas[1].cuerpo.externalDocumentId).toBe("dni.jpg");
+    expect(backend.llamadas[1].cuerpo.externalDocumentId).toBe("s3://docs/dni.jpg");
+  });
+
+  it("no simula una carga de archivo usando sólo su nombre", async () => {
+    const backend = instalarBackendFalso();
+    await expect(exemptionService.attachDocumentation({
+      requestId: 600,
+      attachments: [{ name: "dni.jpg", type: "ID" }],
+    })).rejects.toMatchObject({ status: 400 });
+    expect(backend).not.toHaveBeenCalled();
   });
 });
 

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
 import Card from "../../components/common/Card.jsx";
 import DataTable from "../../components/common/DataTable.jsx";
@@ -6,7 +6,6 @@ import StatusBadge from "../../components/common/StatusBadge.jsx";
 import Modal from "../../components/common/Modal.jsx";
 import Button from "../../components/common/Button.jsx";
 import Alert from "../../components/ui/Alert.jsx";
-import FormField from "../../components/ui/FormField.jsx";
 import useResource from "../../hooks/useResource.js";
 import { portalService } from "../../services/rentasService.js";
 import { useAuth } from "../../context/AuthContext.jsx";
@@ -48,7 +47,9 @@ export default function PlanesPortalPage() {
     {
       key: "debts",
       header: "Deudas incluidas",
-      render: (row) => row.debts.map((d) => d.conceptName).join(", "),
+      render: (row) => row.debts.length
+        ? row.debts.map((d) => d.conceptName).join(", ")
+        : <span className="text-neutral-400">Detalle no disponible</span>,
     },
     { key: "installments", header: "Cuotas", align: "right" },
     {
@@ -147,17 +148,18 @@ export default function PlanesPortalPage() {
 /**
  * RequestPaymentPlanRequest: elegir deudas, comparar alternativas de cuotas y enviar.
  *
- * Las alternativas se muestran lado a lado en vez de una por vez: el contribuyente
- * decide viendo la cuota de cada opción, no probando de a una. El anticipo es
- * opcional y baja la base financiada, así que abarata el interés y la cuota.
+ * Las alternativas se consultan al backend con la configuración vigente.
+ * El anticipo definitivo lo determina Rentas al otorgar el plan.
  */
 function RequestPlanModal({ taxpayerId, onClose, onDone }) {
   const debtsLoader = useCallback(() => portalService.debts({ taxpayerId }), [taxpayerId]);
   const { data: debts } = useResource(debtsLoader, []);
 
   const [selectedIds, setSelectedIds] = useState([]);
-  const [downPayment, setDownPayment] = useState("");
   const [installments, setInstallments] = useState(6);
+  const [alternativas, setAlternativas] = useState([]);
+  const [simulationError, setSimulationError] = useState(null);
+  const [simulating, setSimulating] = useState(false);
   const [errors, setErrors] = useState({});
   const [submitError, setSubmitError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -172,22 +174,38 @@ function RequestPlanModal({ taxpayerId, onClose, onDone }) {
     [elegibles, selectedIds],
   );
 
-  const anticipo = Number(downPayment) || 0;
-  const anticipoValido = anticipo >= 0 && anticipo < totalDebt;
-
-  const alternativas = useMemo(
-    () =>
-      totalDebt > 0 && anticipoValido
-        ? INSTALLMENT_CHOICES.map((n) =>
-            portalService.simulatePaymentPlan({
-              totalDebt,
-              installments: n,
-              downPayment: anticipo,
-            }),
-          )
-        : [],
-    [totalDebt, anticipo, anticipoValido],
-  );
+  useEffect(() => {
+    let active = true;
+    if (selectedIds.length === 0) {
+      setAlternativas([]);
+      setSimulationError(null);
+      return () => { active = false; };
+    }
+    setSimulating(true);
+    setSimulationError(null);
+    Promise.all(INSTALLMENT_CHOICES.map((n) =>
+      portalService.simulatePaymentPlan({ taxpayerId, debtIds: selectedIds, installments: n }),
+    )).then((results) => {
+      if (!active) return;
+      setAlternativas(results.map((result) => ({
+        installments: result.installments,
+        downPayment: Number(result.downPayment),
+        financedAmount: Number(result.financedPrincipal),
+        interestAmount: Number(result.interest),
+        totalAmount: Number(result.total),
+        installmentAmount: Number(result.regularInstallmentAmount),
+        interestRate: Number(result.financedPrincipal) > 0
+          ? Number(result.interest) / Number(result.financedPrincipal)
+          : 0,
+        exceptional: result.exceptional,
+      })));
+    }).catch((caught) => {
+      if (!active) return;
+      setAlternativas([]);
+      setSimulationError(caught.message);
+    }).finally(() => { if (active) setSimulating(false); });
+    return () => { active = false; };
+  }, [taxpayerId, selectedIds]);
 
   const elegida = alternativas.find((a) => a.installments === installments) ?? null;
 
@@ -197,10 +215,7 @@ function RequestPlanModal({ taxpayerId, onClose, onDone }) {
   const validate = () => {
     const found = {};
     if (selectedIds.length === 0) found.debts = "Elegí al menos una deuda para financiar.";
-    if (anticipo < 0) found.downPayment = "El anticipo no puede ser negativo.";
-    if (totalDebt > 0 && anticipo >= totalDebt) {
-      found.downPayment = "El anticipo tiene que ser menor a la deuda: si no, no hay nada que financiar.";
-    }
+    if (!elegida) found.debts = "Esperá a que se calculen las cuotas antes de enviar.";
     setErrors(found);
     return Object.keys(found).length === 0;
   };
@@ -216,7 +231,6 @@ function RequestPlanModal({ taxpayerId, onClose, onDone }) {
           taxpayerId,
           debtIds: selectedIds,
           installments,
-          downPayment: anticipo,
         }),
       );
     } catch (caught) {
@@ -237,7 +251,7 @@ function RequestPlanModal({ taxpayerId, onClose, onDone }) {
           <Button variant="secondary" onClick={onClose}>
             Cancelar
           </Button>
-          <Button variant="primary" loading={submitting} onClick={onSubmit}>
+          <Button variant="primary" loading={submitting} disabled={simulating || !elegida} onClick={onSubmit}>
             Enviar solicitud
           </Button>
         </>
@@ -295,30 +309,17 @@ function RequestPlanModal({ taxpayerId, onClose, onDone }) {
                 </span>
               </div>
 
-              <FormField
-                label="Anticipo (opcional)"
-                name="downPayment"
-                type="number"
-                placeholder="0"
-                value={downPayment}
-                onChange={(event) => {
-                  setDownPayment(event.target.value);
-                  setErrors((previous) => ({ ...previous, downPayment: undefined }));
-                }}
-                error={errors.downPayment}
-              />
-              <p className="-mt-3 text-[12px] text-neutral-400">
-                Lo que pagues al contado baja la base financiada, así que reduce el interés
-                y la cuota.
-              </p>
-
               <fieldset className="flex flex-col gap-2">
                 <legend className="mb-1 text-[13px] font-medium text-neutral-700">
                   Elegí en cuántas cuotas
                 </legend>
-                {alternativas.length === 0 ? (
+                {simulating ? (
+                  <p className="text-[13px] text-neutral-500">Calculando cuotas…</p>
+                ) : simulationError ? (
+                  <Alert variant="error" title="No se pudieron calcular las cuotas">{simulationError}</Alert>
+                ) : alternativas.length === 0 ? (
                   <p className="text-[13px] text-neutral-400">
-                    Corregí el anticipo para ver las alternativas.
+                    No hay alternativas disponibles para estas deudas.
                   </p>
                 ) : (
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
@@ -343,7 +344,7 @@ function RequestPlanModal({ taxpayerId, onClose, onDone }) {
                             {formatCurrency(alt.installmentAmount)}
                           </span>
                           <span className="text-[11px] text-neutral-400">
-                            +{formatPercentage(alt.interestRate * 100)} interés
+                            +{formatPercentage(alt.interestRate * 100)} interés{alt.exceptional ? " · requiere excepción" : ""}
                           </span>
                           <span className="text-[11px] tabular-nums text-neutral-400">
                             Total {formatCurrency(alt.totalAmount)}
@@ -362,7 +363,7 @@ function RequestPlanModal({ taxpayerId, onClose, onDone }) {
                   </p>
                   <dl className="mt-3 flex flex-col gap-2">
                     <Line label="Deuda seleccionada" value={formatCurrency(totalDebt)} />
-                    <Line label="Anticipo al contado" value={formatCurrency(elegida.downPayment)} />
+                    <Line label="Anticipo mínimo estimado" value={formatCurrency(elegida.downPayment)} />
                     <Line label="Importe financiado" value={formatCurrency(elegida.financedAmount)} />
                     <Line
                       label={`Interés (${formatPercentage(elegida.interestRate * 100)})`}
@@ -379,7 +380,7 @@ function RequestPlanModal({ taxpayerId, onClose, onDone }) {
                     </div>
                   </dl>
                   <p className="mt-3 text-[12px] text-neutral-400">
-                    Es una estimación. El importe final lo confirma Rentas al resolver.
+                    El cálculo usa la configuración vigente. Rentas confirma el anticipo y el importe final al otorgar el plan.
                   </p>
                 </div>
               )}
@@ -414,11 +415,11 @@ function PlanDetailModal({ plan, onClose }) {
         <Field label="Anticipo" value={formatCurrency(plan.downPayment)} />
         <Field
           label="Importe financiado"
-          value={plan.financedAmount ? formatCurrency(plan.financedAmount) : "A confirmar"}
+          value={plan.financedAmount != null ? formatCurrency(plan.financedAmount) : "A confirmar"}
         />
         <Field
           label="Interés"
-          value={plan.interestAmount ? formatCurrency(plan.interestAmount) : "A confirmar"}
+          value={plan.interestAmount != null ? formatCurrency(plan.interestAmount) : "A confirmar"}
         />
         <Field
           label="Total del plan"
@@ -439,7 +440,7 @@ function PlanDetailModal({ plan, onClose }) {
         </Alert>
       )}
 
-      <div>
+      {plan.debts.length > 0 && <div>
         <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-neutral-400">
           Deudas incluidas
         </p>
@@ -450,12 +451,12 @@ function PlanDetailModal({ plan, onClose }) {
                 {debt.conceptName} <span className="text-neutral-400">#{debt.id}</span>
               </span>
               <span className="font-medium tabular-nums text-neutral-800">
-                {formatCurrency(debt.originalAmount)}
+                {formatCurrency(debt.balanceAtRequest)}
               </span>
             </li>
           ))}
         </ul>
-      </div>
+      </div>}
 
       {plan.schedule?.length > 0 && (
         <div>
@@ -469,8 +470,13 @@ function PlanDetailModal({ plan, onClose }) {
                   Cuota {cuota.number} · vence {formatDate(cuota.dueDate)}
                 </span>
                 <span className="flex items-center gap-2">
-                  <span className="font-medium tabular-nums text-neutral-800">
-                    {formatCurrency(cuota.amount)}
+                  <span className="flex flex-col text-right font-medium tabular-nums text-neutral-800">
+                    <span>{formatCurrency(cuota.amount)}</span>
+                    {Number(cuota.paidAmount) > 0 && (
+                      <span className="text-[11px] font-normal text-neutral-500">
+                        Pagado {formatCurrency(cuota.paidAmount)} · saldo {formatCurrency(cuota.outstandingAmount)}
+                      </span>
+                    )}
                   </span>
                   <StatusBadge status={cuota.status} />
                 </span>

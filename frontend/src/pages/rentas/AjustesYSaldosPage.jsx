@@ -21,7 +21,7 @@ import { formatCurrency, formatDate, formatDateTime } from "../../lib/format.js"
  * Ajustes manuales y saldos a favor.
  *
  * Dos operaciones que corrigen el saldo de una deuda sin que medie un pago nuevo.
- * El ajuste exige autorización del Supervisor y se ejecuta en un segundo acto;
+ * El ajuste se aplica al aprobarlo el Supervisor;
  * aplicar un saldo a favor sólo usa un crédito que ya se había registrado.
  */
 export default function AjustesYSaldosPage() {
@@ -32,7 +32,6 @@ export default function AjustesYSaldosPage() {
   const [resolviendo, setResolviendo] = useState(null);
   const [aplicando, setAplicando] = useState(null);
   const [feedback, setFeedback] = useState(null);
-  const [trabajando, setTrabajando] = useState(null);
 
   const adjLoader = useCallback(() => debtAdjustmentService.list(), []);
   const { data: ajustes, loading, error, reload } = useResource(adjLoader, []);
@@ -43,29 +42,6 @@ export default function AjustesYSaldosPage() {
   const refrescar = () => {
     reload();
     reloadSaldos();
-  };
-
-  const ejecutar = async (ajuste) => {
-    setTrabajando(ajuste.id);
-    setFeedback(null);
-    try {
-      const { debt } = await debtAdjustmentService.execute({
-        adjustmentId: ajuste.id,
-        executedBy: user.username,
-      });
-      setFeedback({
-        variant: "success",
-        title: "Ajuste ejecutado",
-        message: ajuste.reportedToM8
-          ? `La deuda #${debt.id} quedó en ${formatCurrency(debt.outstandingAmount)}. Se informó la actualización a M8 con debtUpdated.`
-          : `La deuda #${debt.id} quedó en ${formatCurrency(debt.outstandingAmount)}.`,
-      });
-      refrescar();
-    } catch (caught) {
-      setFeedback({ variant: "error", title: "No se pudo ejecutar", message: caught.message });
-    } finally {
-      setTrabajando(null);
-    }
   };
 
   const adjColumns = [
@@ -83,32 +59,18 @@ export default function AjustesYSaldosPage() {
     },
     {
       key: "importe",
-      header: "Importe",
+      header: "Cambio de saldo",
       align: "right",
-      render: (row) =>
-        row.previousAmount === row.newAmount ? (
-          <span className="text-neutral-300">sin cambio</span>
-        ) : (
+      render: (row) => row.status === "PENDING_APPROVAL" ? (
           <span className="tabular-nums">
             <span className="text-neutral-400 line-through">
               {formatCurrency(row.previousAmount)}
             </span>{" "}
             <span className="font-semibold text-[#0F2C59]">{formatCurrency(row.newAmount)}</span>
           </span>
-        ),
-    },
-    {
-      key: "vencimiento",
-      header: "Vencimiento",
-      render: (row) =>
-        row.previousDueDate === row.newDueDate ? (
-          <span className="text-neutral-300">sin cambio</span>
         ) : (
-          <span>
-            <span className="text-neutral-400 line-through">
-              {formatDate(row.previousDueDate)}
-            </span>{" "}
-            <span className="font-semibold text-[#0F2C59]">{formatDate(row.newDueDate)}</span>
+          <span className="font-semibold tabular-nums text-[#0F2C59]">
+            {row.type === "DISCOUNT" ? "−" : "+"}{formatCurrency(row.amount)}
           </span>
         ),
     },
@@ -129,21 +91,10 @@ export default function AjustesYSaldosPage() {
             <span className="text-[12px] text-neutral-400">Espera al Supervisor</span>
           );
         }
-        if (row.status === "APPROVED") {
-          return (
-            <Button
-              size="sm"
-              variant="accent"
-              loading={trabajando === row.id}
-              onClick={() => ejecutar(row)}
-            >
-              Ejecutar
-            </Button>
-          );
-        }
+        if (row.status === "APPROVED") return <span className="text-[12px] text-emerald-700">Aplicado</span>;
         return (
           <span className="text-[12px] text-neutral-400">
-            {row.status === "EXECUTED" ? `Por ${row.executedBy}` : row.rejectionReason}
+            {row.resolutionReason ?? "Rechazado"}
           </span>
         );
       },
@@ -227,17 +178,14 @@ export default function AjustesYSaldosPage() {
         />
       </Card>
 
-      <Alert variant="info" title="Autorizar y ejecutar son actos distintos">
-        El Supervisor autoriza el ajuste, pero se aplica cuando el analista lo ejecuta.
-        Si la deuda ya fue informada a Desarrollo Social, la ejecución comunica la
-        corrección con <code className="font-semibold">debtUpdated</code>, sin volver a
-        publicar <code className="font-semibold">overdueDebt</code>: se leería como una
-        deuda nueva.
+      <Alert variant="info" title="La aprobación aplica el ajuste">
+        La propuesta no modifica la deuda. Al aprobarla, el Supervisor aplica el
+        cambio de importe en la misma operación y queda registrado en auditoría.
       </Alert>
 
       <Card
         title="Ajustes manuales"
-        description="Sólo se puede corregir el importe, el vencimiento o ambos."
+        description="Se puede corregir el importe. El cambio de vencimiento aún no está disponible."
         actions={
           <Button size="sm" variant="primary" onClick={() => setProponiendo(true)}>
             Proponer ajuste
@@ -280,10 +228,10 @@ export default function AjustesYSaldosPage() {
             setResolviendo(null);
             setFeedback({
               variant: "success",
-              title: decision === "APPROVED" ? "Ajuste autorizado" : "Ajuste rechazado",
+              title: decision === "APPROVED" ? "Ajuste aprobado y aplicado" : "Ajuste rechazado",
               message:
                 decision === "APPROVED"
-                  ? "Todavía no se aplicó: alguien del área tiene que ejecutarlo."
+                  ? `La deuda #${ajuste.debtId} ya refleja el ajuste aprobado.`
                   : ajuste.rejectionReason,
             });
             refrescar();
@@ -314,14 +262,14 @@ export default function AjustesYSaldosPage() {
   );
 }
 
-/** RequestDebtAdjustmentRequest: importe, vencimiento o ambos, con motivo. */
+/** Solicitud de ajuste de importe con motivo. */
 function ProposeAdjustmentModal({ requestedBy, onClose, onDone }) {
   const loader = useCallback(() => debtService.list(), []);
   const { data: debts } = useResource(loader, []);
   const { nameOf } = useTaxpayerIndex();
 
   const [debtId, setDebtId] = useState("");
-  const [form, setForm] = useState({ newAmount: "", newDueDate: "", reason: "" });
+  const [form, setForm] = useState({ newAmount: "", reason: "" });
   const [error, setError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -385,7 +333,6 @@ function ProposeAdjustmentModal({ requestedBy, onClose, onDone }) {
             setForm((previous) => ({
               ...previous,
               newAmount: d ? String(d.outstandingAmount) : "",
-              newDueDate: d ? d.dueDate : "",
             }));
           }}
           required
@@ -397,34 +344,18 @@ function ProposeAdjustmentModal({ requestedBy, onClose, onDone }) {
 
         {seleccionada && (
           <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-4 text-[13px] text-neutral-600">
-            Hoy: {formatCurrency(seleccionada.outstandingAmount)} con vencimiento{" "}
-            {formatDate(seleccionada.dueDate)}.
-            {seleccionada.reportedToM8 && (
-              <p className="mt-1 font-medium text-[#0F2C59]">
-                Ya fue informada a M8: al ejecutar se comunicará la corrección.
-              </p>
-            )}
+            Saldo actual: {formatCurrency(seleccionada.outstandingAmount)}.
           </div>
         )}
 
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <FormField
-            label="Importe ajustado"
-            name="newAmount"
-            type="number"
-            value={form.newAmount}
-            onChange={onChange}
-            disabled={!debtId}
-          />
-          <FormField
-            label="Vencimiento ajustado"
-            name="newDueDate"
-            type="date"
-            value={form.newDueDate}
-            onChange={onChange}
-            disabled={!debtId}
-          />
-        </div>
+        <FormField
+          label="Nuevo saldo pendiente"
+          name="newAmount"
+          type="number"
+          value={form.newAmount}
+          onChange={onChange}
+          disabled={!debtId}
+        />
 
         <FormField
           label="Motivo del ajuste"
@@ -440,7 +371,7 @@ function ProposeAdjustmentModal({ requestedBy, onClose, onDone }) {
   );
 }
 
-/** El Supervisor autoriza o rechaza. Autorizar no aplica el cambio. */
+/** El Supervisor aprueba y aplica el ajuste, o lo rechaza. */
 function ResolveAdjustmentModal({ ajuste, user, onClose, onDone }) {
   const [decision, setDecision] = useState("APPROVED");
   const [reason, setReason] = useState("");
@@ -497,8 +428,6 @@ function ResolveAdjustmentModal({ ajuste, user, onClose, onDone }) {
       <dl className="grid grid-cols-2 gap-3 text-[13px]">
         <Campo label="Importe actual" value={formatCurrency(ajuste.previousAmount)} />
         <Campo label="Importe propuesto" value={formatCurrency(ajuste.newAmount)} />
-        <Campo label="Vencimiento actual" value={formatDate(ajuste.previousDueDate)} />
-        <Campo label="Vencimiento propuesto" value={formatDate(ajuste.newDueDate)} />
         <Campo label="Propuso" value={ajuste.requestedBy} />
         <Campo label="Fecha" value={formatDate(ajuste.requestedAt)} />
       </dl>
@@ -518,9 +447,8 @@ function ResolveAdjustmentModal({ ajuste, user, onClose, onDone }) {
         />
 
         {decision === "APPROVED" ? (
-          <Alert variant="info" title="Autorizar no aplica el cambio">
-            El ajuste queda habilitado, pero la deuda se modifica recién cuando alguien
-            del área lo ejecuta.
+          <Alert variant="info" title="Aprobar aplica el cambio">
+            El nuevo saldo quedará reflejado en la deuda inmediatamente después de confirmar.
           </Alert>
         ) : (
           <FormField

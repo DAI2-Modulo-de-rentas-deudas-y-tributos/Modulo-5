@@ -97,7 +97,7 @@ describe("generación masiva de liquidaciones", () => {
     expect(within(dialog).getByLabelText(/base imponible/i)).toBeDefined();
   });
 
-  it("genera el lote en borrador y lo informa", async () => {
+  it("envía el mismo lote a aprobación sin crear deudas todavía", async () => {
     const dialog = await abrirGeneracionMasiva(user);
     instalarBackendFalso({
       "POST /api/v1/liquidation-runs": { id: 56 },
@@ -108,15 +108,16 @@ describe("generación masiva de liquidaciones", () => {
           { id: 2, taxpayerId: 78, status: "PENDING", previewAmount: 20000 },
         ],
       },
+      "POST /api/v1/liquidation-runs/{id}/submit": { id: 56, status: "SUBMITTED" },
     });
     await completarFormulario(user, dialog, { period: "2027-11" });
     await user.click(within(dialog).getByRole("button", { name: /previsualizar/i }));
 
-    await user.click(await within(dialog).findByRole("button", { name: /generar \d+ liquidaciones/i }));
+    await user.click(await within(dialog).findByRole("button", { name: /enviar corrida a aprobación/i }));
 
-    expect(await within(dialog).findByText(/liquidaciones generadas en borrador/i)).toBeDefined();
+    expect(await within(dialog).findByText(/corrida #56 enviada a aprobación/i)).toBeDefined();
 
     await user.click(within(dialog).getByRole("button", { name: /finalizar/i }));
-    expect(await screen.findByText(/lote generado/i)).toBeDefined();
+    expect(await screen.findByText(/corrida enviada a aprobación/i)).toBeDefined();
   });
 });

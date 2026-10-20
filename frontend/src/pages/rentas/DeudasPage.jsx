@@ -73,7 +73,14 @@ export default function DeudasPage() {
 
   const onApplyLateCharge = async () => {
     setLateCharge((value) => ({ ...value, applying: true }));
-    try { const result = await debtService.applyLateCharge(lateCharge.debt.id, lateCharge.preview.calculationDate);setLateCharge(null);setFeedback({ variant: "success", title: "Recargo aplicado", message: `Se aplicaron ${formatCurrency(result.totalAdjustment)} a la deuda #${result.debtId}.` });reload(); }
+    try {
+      const result = await debtService.applyLateCharge(lateCharge.debt.id, lateCharge.preview.calculationDate);
+      setLateCharge(null);
+      setFeedback(result.applied
+        ? { variant: "success", title: "Recargo aplicado", message: `Se aplicaron ${formatCurrency(result.totalAdjustment)} a la deuda #${result.debtId}.` }
+        : { variant: "info", title: "Recargo ya aplicado", message: `La deuda #${result.debtId} ya incluye el recargo del ${formatDate(result.calculationDate)}. No se agregó otro cargo.` });
+      reload();
+    }
     catch (caught) { setLateCharge((value) => ({ ...value, applying: false }));setFeedback({ variant: "error", title: "No se pudo aplicar", message: caught.message }); }
   };
 
@@ -212,14 +219,17 @@ export default function DeudasPage() {
         />
       </Card>
 
-      {lateCharge && <Modal open title={`Recargos de deuda #${lateCharge.debt.id}`} description={`Regla ${lateCharge.preview.ruleCode} al ${formatDate(lateCharge.preview.calculationDate)}`} onClose={() => setLateCharge(null)} footer={<><Button variant="secondary" onClick={() => setLateCharge(null)}>Cancelar</Button><Button variant="primary" loading={lateCharge.applying} onClick={onApplyLateCharge}>Confirmar aplicación</Button></>}>
+      {lateCharge && <Modal open title={`Recargos de deuda #${lateCharge.debt.id}`} description={`Regla ${lateCharge.preview.ruleCode} al ${formatDate(lateCharge.preview.calculationDate)}`} onClose={() => setLateCharge(null)} footer={lateCharge.preview.applicationId != null
+        ? <Button variant="secondary" onClick={() => setLateCharge(null)}>Cerrar</Button>
+        : <><Button variant="secondary" onClick={() => setLateCharge(null)}>Cancelar</Button><Button variant="primary" loading={lateCharge.applying} onClick={onApplyLateCharge}>Confirmar aplicación</Button></>}>
+        {lateCharge.preview.applicationId != null && <p className="mb-4 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">El recargo de esta fecha ya fue aplicado. Los importes de abajo son los registrados; no se agregará otro cargo.</p>}
         <dl className="grid grid-cols-2 gap-3 text-sm">
           <div><dt>Días vencidos</dt><dd className="font-semibold">{lateCharge.preview.daysOverdue}</dd></div>
-          <div><dt>Capital</dt><dd className="font-semibold">{formatCurrency(lateCharge.preview.principal)}</dd></div>
+          <div><dt>{lateCharge.preview.applicationId != null ? "Capital al aplicar" : "Capital"}</dt><dd className="font-semibold">{formatCurrency(lateCharge.preview.principal)}</dd></div>
           <div><dt>Recargo ({lateCharge.preview.surchargeRate}%)</dt><dd>{formatCurrency(lateCharge.preview.surchargeAmount)}</dd></div>
           <div><dt>Interés diario ({lateCharge.preview.interestRate}%)</dt><dd>{formatCurrency(lateCharge.preview.interestAmount)}</dd></div>
           <div><dt>Ajuste total</dt><dd className="font-semibold">{formatCurrency(lateCharge.preview.totalAdjustment)}</dd></div>
-          <div><dt>Total actualizado</dt><dd className="font-semibold">{formatCurrency(lateCharge.preview.updatedTotal)}</dd></div>
+          <div><dt>{lateCharge.preview.applicationId != null ? "Total tras la aplicación" : "Total actualizado"}</dt><dd className="font-semibold">{formatCurrency(lateCharge.preview.updatedTotal)}</dd></div>
         </dl>
       </Modal>}
     </ModuleShell>

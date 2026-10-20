@@ -7,12 +7,9 @@
   "required": [
     "eventId",
     "eventType",
-    "eventVersion",
     "occurredAt",
-    "producer",
-    "aggregateId",
-    "correlationId",
-    "payload"
+    "sourceModule",
+    "data"
   ],
   "properties": {
     "eventId": {
@@ -21,36 +18,33 @@
     },
     "eventType": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "maxLength": 120,
+      "pattern": "^[a-z][A-Za-z0-9]*$"
     },
     "eventVersion": {
-      "type": "integer",
-      "minimum": 1
+      "type": "string",
+      "maxLength": 20,
+      "default": "1.0"
     },
     "occurredAt": {
       "type": "string",
       "format": "date-time"
     },
-    "producer": {
+    "sourceModule": {
       "type": "string",
+      "maxLength": 60,
       "const": "rentas"
     },
-    "aggregateType": {
-      "type": "string"
-    },
-    "aggregateId": {
-      "type": "string",
-      "minLength": 1
-    },
     "correlationId": {
-      "type": "string",
+      "type": ["string", "null"],
       "format": "uuid"
     },
     "causationId": {
       "type": ["string", "null"],
       "format": "uuid"
     },
-    "payload": {
+    "data": {
       "type": "object"
     }
   }

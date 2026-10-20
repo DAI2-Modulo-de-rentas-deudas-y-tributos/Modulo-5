@@ -75,6 +75,7 @@ export const STATUS_LABELS = {
   PENDING_SUPERVISOR: "Derivado a Supervisor",
   UNDER_REVIEW: "En evaluación del Supervisor",
   REFINANCED: "Refinanciado",
+  CANCELLED: "Anulada",
   APPROVED: "Aprobada",
   REJECTED: "Rechazada",
   OPEN: "Abierto",

@@ -105,30 +105,27 @@ describe("portal del contribuyente", () => {
     expect(doce.getAttribute("aria-pressed")).toBe("true");
   });
 
-  it("descuenta el anticipo de la base financiada", async () => {
+  it("muestra el anticipo mínimo calculado por el backend", async () => {
     await loginAsContribuyente(user);
     await user.click(screen.getByRole("link", { name: /^planes de pago$/i }));
     await user.click(await screen.findByRole("button", { name: /solicitar plan de pago/i }));
 
     const dialog = await screen.findByRole("dialog");
     await user.click((await within(dialog).findAllByRole("checkbox"))[0]);
-    await user.type(within(dialog).getByLabelText(/anticipo/i), "10000");
 
-    expect(await within(dialog).findByText(/anticipo al contado/i)).toBeDefined();
+    expect(await within(dialog).findByText(/anticipo mínimo estimado/i)).toBeDefined();
     expect(within(dialog).getByText(/importe financiado/i)).toBeDefined();
   });
 
-  it("rechaza un anticipo que cubre toda la deuda", async () => {
+  it("no ofrece editar un anticipo que el backend no admite al solicitar", async () => {
     await loginAsContribuyente(user);
     await user.click(screen.getByRole("link", { name: /^planes de pago$/i }));
     await user.click(await screen.findByRole("button", { name: /solicitar plan de pago/i }));
 
     const dialog = await screen.findByRole("dialog");
     await user.click((await within(dialog).findAllByRole("checkbox"))[0]);
-    await user.type(within(dialog).getByLabelText(/anticipo/i), "999999");
-    await user.click(within(dialog).getByRole("button", { name: /enviar solicitud/i }));
-
-    expect(await within(dialog).findByText(/tiene que ser menor a la deuda/i)).toBeDefined();
+    expect(await within(dialog).findByText(/anticipo mínimo estimado/i)).toBeDefined();
+    expect(within(dialog).queryByRole("spinbutton", { name: /anticipo/i })).toBeNull();
   });
 
   it("solicita un plan de pago viendo la cuota antes de enviarlo", async () => {
@@ -147,22 +144,14 @@ describe("portal del contribuyente", () => {
     expect(await screen.findByText(/solicitud enviada/i)).toBeDefined();
   });
 
-  it("adjunta documentación a la solicitud de exención", async () => {
+  it("aclara que la carga de archivos de exención no está integrada", async () => {
     await loginAsContribuyente(user);
     await user.click(screen.getByRole("link", { name: /^exenciones$/i }));
     await user.click(await screen.findByRole("button", { name: /solicitar exención/i }));
 
     const dialog = await screen.findByRole("dialog");
-    const archivo = new File(["certificado"], "constancia-anses.pdf", {
-      type: "application/pdf",
-    });
-    await user.upload(within(dialog).getByLabelText(/documentación respaldatoria/i), archivo);
-
-    expect(await within(dialog).findByText("constancia-anses.pdf")).toBeDefined();
-
-    // Se puede quitar antes de enviar.
-    await user.click(within(dialog).getByRole("button", { name: /quitar constancia/i }));
-    expect(within(dialog).queryByText("constancia-anses.pdf")).toBeNull();
+    expect(within(dialog).getByText(/la carga de archivos en línea todavía no está disponible/i)).toBeDefined();
+    expect(within(dialog).queryByLabelText(/subir archivo/i)).toBeNull();
   });
 
   it("abre la boleta imprimible con su código de barras", async () => {

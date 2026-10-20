@@ -5,11 +5,7 @@ import App from "../App.jsx";
 import { ingresarComoAgente, ingresarComoContribuyente } from "./helpers/ingresar.js";
 import { instalarBackendFalso } from "./fixtures/backendFalso.js";
 
-/**
- * Ingreso: dos puertas, una por tipo de usuario. Abre la del contribuyente y el agente
- * municipal cruza a la suya. Entrar por un acceso que no corresponde no abre sesión ni
- * revela a qué área pertenece el usuario.
- */
+/** Ingreso único: el perfil autenticado determina el espacio de destino. */
 describe("ingreso al área de trabajo", () => {
   let user;
 
@@ -25,16 +21,18 @@ describe("ingreso al área de trabajo", () => {
     vi.unstubAllGlobals();
   });
 
-  it("abre en el acceso ciudadano cuando no hay sesión", () => {
+  it("abre en el acceso unificado cuando no hay sesión", () => {
     render(<App />);
-    expect(screen.getByRole("heading", { name: /entrar al portal/i })).toBeDefined();
-    expect(screen.getByText(/estás en el acceso para ciudadanos/i)).toBeDefined();
+    expect(screen.getByRole("heading", { name: /iniciar sesión/i })).toBeDefined();
+    expect(screen.getByText(/tu perfil determina los permisos/i)).toBeDefined();
+    expect(screen.queryByText(/acceso ciudadano/i)).toBeNull();
+    expect(screen.queryByText(/acceso municipal/i)).toBeNull();
   });
 
   it("marca los campos obligatorios sin llamar al backend", async () => {
     render(<App />);
 
-    await user.click(screen.getByRole("button", { name: /ingresar al portal/i }));
+    await user.click(screen.getByRole("button", { name: /^ingresar$/i }));
 
     expect(await screen.findByText(/ingresá tu usuario/i)).toBeDefined();
     expect(screen.getByText(/ingresá tu contraseña/i)).toBeDefined();
@@ -42,7 +40,7 @@ describe("ingreso al área de trabajo", () => {
     expect(screen.getByLabelText(/contraseña/i).getAttribute("aria-describedby")).toBe("password-error");
   });
 
-  it("permite mostrar y ocultar la contraseña y conserva los datos al cambiar de acceso", async () => {
+  it("permite mostrar y ocultar la contraseña", async () => {
     render(<App />);
     await user.type(screen.getByLabelText(/usuario/i), "jperez");
     await user.type(screen.getByLabelText(/contraseña/i), "ciudadano123");
@@ -51,10 +49,6 @@ describe("ingreso al área de trabajo", () => {
     expect(screen.getByLabelText(/contraseña/i).type).toBe("text");
     await user.click(screen.getByRole("button", { name: "Ocultar" }));
     expect(screen.getByLabelText(/contraseña/i).type).toBe("password");
-    await user.click(screen.getByRole("button", { name: /trabajo en el municipio/i }));
-    expect(screen.getByLabelText(/usuario/i).value).toBe("jperez");
-    expect(screen.getByLabelText(/contraseña/i).value).toBe("ciudadano123");
-    expect(screen.getByRole("button", { name: "Personal de Rentas" }).getAttribute("aria-pressed")).toBe("true");
   });
 
   it("informa credenciales inválidas", async () => {
@@ -73,7 +67,7 @@ describe("ingreso al área de trabajo", () => {
     await waitFor(() => expect(screen.getByRole("heading", { name: /hola, juan/i })).toBeDefined());
   });
 
-  it("el agente cruza de puerta, elige su área y entra", async () => {
+  it("deriva al agente a su área después de autenticarlo", async () => {
     render(<App />);
 
     await ingresarComoAgente(user, "mrivas");
@@ -110,32 +104,9 @@ describe("ingreso al área de trabajo", () => {
     expect(screen.getByRole("link", { name: /bitácora/i })).toBeDefined();
   });
 
-  it("no revela el rol del contribuyente cuando intenta entrar por el acceso municipal", async () => {
+  it("no pide elegir tipo de usuario ni área de trabajo", () => {
     render(<App />);
-
-    await user.click(screen.getByRole("button", { name: /trabajo en el municipio/i }));
-    await user.type(screen.getByLabelText(/usuario/i), "jperez");
-    await user.type(screen.getByLabelText(/contraseña/i), "ciudadano123");
-    await user.click(screen.getByRole("button", { name: /entrar a personal de rentas/i }));
-
-    expect(await screen.findByText(/usuario o contraseña incorrectos/i)).toBeDefined();
-    expect(screen.queryByRole("heading", { name: /hola,/i })).toBeNull();
-    expect(screen.queryByText(/tu usuario pertenece/i)).toBeNull();
-    expect(screen.queryByRole("button", { name: /llevame a la puerta correcta/i })).toBeNull();
-  });
-
-  it("no revela el área del agente cuando intenta entrar por otra área municipal", async () => {
-    render(<App />);
-
-    await user.click(screen.getByRole("button", { name: /trabajo en el municipio/i }));
-    await user.click(screen.getByRole("button", { name: "Ventanilla de Caja" }));
-    await user.type(screen.getByLabelText(/usuario/i), "mrivas");
-    await user.type(screen.getByLabelText(/contraseña/i), "rentas123");
-    await user.click(screen.getByRole("button", { name: /entrar a ventanilla de caja/i }));
-
-    expect(await screen.findByText(/usuario o contraseña incorrectos/i)).toBeDefined();
-    expect(screen.queryByRole("heading", { name: /hola,/i })).toBeNull();
-    expect(screen.queryByText(/tu usuario pertenece/i)).toBeNull();
-    expect(screen.queryByRole("button", { name: /llevame a la puerta correcta/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /trabajo en el municipio/i })).toBeNull();
+    expect(screen.queryByRole("group", { name: /área de trabajo/i })).toBeNull();
   });
 });

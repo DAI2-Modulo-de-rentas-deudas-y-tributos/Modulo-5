@@ -62,7 +62,7 @@ class M2TicketEventTests {
 
         mvc.perform(post("/api/v1/tickets/{id}/assign",ticket.id).header("X-Demo-Session",new DemoAuthSessions(demoUsers,taxpayers,encoder,demoAuth).token(DemoRole.RENTAS)))
             .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("IN_PROGRESS"));
-        assertThat(outbox.findAll()).anyMatch(x->x.eventType.equals("updateTicketStatus")&&x.targetModule.equals("M2"));
+        assertThat(outbox.findAll()).anyMatch(x->x.eventType.equals("updateTicketStatus")&&x.targetModule.equals("PLATFORM"));
     }
 
     @Test void reintentaUnEventoFallidoHastaEnviarloALaColaDeErrores() {

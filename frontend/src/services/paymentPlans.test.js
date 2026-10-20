@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { paymentPlanService } from "./rentasService.js";
+import { paymentPlanService, portalService } from "./rentasService.js";
 import { instalarBackendFalso, pagina } from "../__tests__/fixtures/backendFalso.js";
 
 /**
@@ -19,7 +19,7 @@ describe("resolución de la solicitud", () => {
     });
     await paymentPlanService.resolve({ requestId: 800, status: "GRANTED", installments: 6, resolvedBy: "jlopez" });
     expect(otorgar.llamadas[0].ruta).toBe("/api/v1/payment-plan-requests/800/grant");
-    expect(otorgar.llamadas[0].cuerpo).toEqual({ downPaymentAmount: 0 });
+    expect(otorgar.llamadas[0].cuerpo).toBeNull();
     vi.unstubAllGlobals();
 
     const rechazar = instalarBackendFalso({
@@ -45,6 +45,27 @@ describe("derivación al Supervisor", () => {
 });
 
 describe("listado", () => {
+  it("muestra el ciclo real de un plan refinanciado", async () => {
+    instalarBackendFalso({
+      "GET /api/v1/taxpayers/{id}/payment-plan-requests": pagina([{
+        id: 800, taxpayerId: 123, status: "GRANTED", paymentPlanId: 850,
+        totalDebtAtRequest: 120000, requestedInstallments: 6,
+      }]),
+      "GET /api/v1/payment-plans/{id}": {
+        id: 850, taxpayerId: 123, status: "REFINANCED", installmentCount: 6,
+        downPaymentAmount: 0, financedPrincipalAmount: 120000,
+        financingInterestAmount: 0, totalPlanAmount: 120000,
+      },
+      "GET /api/v1/payment-plans/{id}/installments": [],
+      "GET /api/v1/payment-plan-requests/{id}/debts": [{
+        id: 3001, taxConceptId: 2, conceptName: "Alumbrado, barrido y limpieza", balanceAtRequest: 120000,
+      }],
+    });
+
+    const [plan] = await portalService.paymentPlans({ taxpayerId: 123 });
+    expect(plan).toMatchObject({ lifecycle: "REFINANCED", debtIds: [3001] });
+  });
+
   it("lee las solicitudes desde el recurso real", async () => {
     const backend = instalarBackendFalso({
       "GET /api/v1/payment-plan-requests": pagina([

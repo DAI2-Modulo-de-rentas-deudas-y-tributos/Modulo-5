@@ -58,7 +58,12 @@ class LateChargeService {
     LateChargeService(DebtRepository debts,LateChargeRuleRepository rules,LateChargeApplicationRepository applications,
         AdjustmentRepository adjustments,AuditService audit,CurrentIdentity identity){this.debts=debts;this.rules=rules;this.applications=applications;this.adjustments=adjustments;this.audit=audit;this.identity=identity;}
 
-    FiscalProcessingController.LateChargeResponse preview(Long debtId,LocalDate date){return calculate(debt(debtId),rule(date),date,false,null);}
+    FiscalProcessingController.LateChargeResponse preview(Long debtId,LocalDate date){
+        Debt debt=debt(debtId);LateChargeRule rule=rule(date);
+        return applications.findByDebtIdAndRuleIdAndCalculationDate(debt.id,rule.id,date)
+            .map(existing->response(existing,rule.code,false))
+            .orElseGet(()->calculate(debt,rule,date,false,null));
+    }
     @Transactional(readOnly=true) Map<Long,FiscalProcessingController.LateChargeResponse> previewIfApplicable(Collection<Debt> candidates,LocalDate date){List<Debt> chargeable=candidates.stream().filter(debt->debt.status!=DebtStatus.PAID&&debt.status!=DebtStatus.CANCELLED&&debt.outstandingBalance.signum()>0&&date.isAfter(debt.dueDate)).toList();if(chargeable.isEmpty())return Map.of();List<LateChargeRule> applicable=rules.findApplicable(date,PageRequest.of(0,1));if(applicable.isEmpty())return Map.of();LateChargeRule rule=applicable.get(0);List<LateChargeApplication> previous=applications.findByDebtIdIn(chargeable.stream().map(x->x.id).toList());Map<Long,BigDecimal> totals=previous.stream().collect(java.util.stream.Collectors.groupingBy(x->x.debtId,java.util.stream.Collectors.reducing(BigDecimal.ZERO,x->x.totalAdjustment,BigDecimal::add)));Set<Long> alreadyApplied=previous.stream().filter(x->x.ruleId.equals(rule.id)&&x.calculationDate.equals(date)).map(x->x.debtId).collect(java.util.stream.Collectors.toSet());Map<Long,FiscalProcessingController.LateChargeResponse> result=new HashMap<>();for(Debt debt:chargeable)if(!alreadyApplied.contains(debt.id))result.put(debt.id,calculate(debt,rule,date,false,null,money(totals.getOrDefault(debt.id,BigDecimal.ZERO))));return result;}
     @Transactional FiscalProcessingController.LateChargeResponse apply(Long debtId,LocalDate date){
         Debt debt=debts.findByIdForUpdate(debtId).orElseThrow(()->CatalogService.notFound("Deuda"));LateChargeRule rule=rule(date);

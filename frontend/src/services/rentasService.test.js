@@ -6,7 +6,6 @@ import {
   debtAdjustmentService,
   debtService,
   exemptionService,
-  paymentPlanService,
   paymentService,
   portalService,
 } from "./rentasService.js";
@@ -26,47 +25,23 @@ afterEach(() => {
 });
 
 describe("simulación de planes de pago", () => {
-  // El cálculo es del cliente: la pantalla muestra alternativas antes de enviar nada.
-  it("suma 5% de interés por cada tramo de tres cuotas", () => {
-    expect(paymentPlanService.simulate({ totalDebt: 100000, installments: 3 })).toMatchObject({
-      interestRate: 0.05,
-      totalAmount: 105000,
+  it("consulta el cálculo versionado del backend sin inventar intereses", async () => {
+    const backend = instalarBackendFalso({
+      "POST /api/v1/payment-plans/simulations": {
+        configurationId: 7, configurationVersion: 2, principal: 120000,
+        downPayment: 0, financedPrincipal: 120000, interest: 0,
+        total: 120000, installments: 6, regularInstallmentAmount: 20000,
+        exceptional: false,
+      },
     });
-    expect(paymentPlanService.simulate({ totalDebt: 100000, installments: 6 }).totalAmount).toBe(110000);
-  });
 
-  it("descuenta el anticipo de la base financiada y abarata la cuota", () => {
-    const sinAnticipo = paymentPlanService.simulate({ totalDebt: 100000, installments: 6 });
-    const conAnticipo = paymentPlanService.simulate({ totalDebt: 100000, installments: 6, downPayment: 40000 });
+    const simulacion = await portalService.simulatePaymentPlan({ taxpayerId: 123, debtIds: [3001], installments: 6 });
 
-    expect(conAnticipo.financedAmount).toBe(60000);
-    // El interés se calcula sobre lo financiado, no sobre la deuda entera.
-    expect(conAnticipo.interestAmount).toBe(6000);
-    expect(conAnticipo.totalAmount).toBe(106000);
-    expect(conAnticipo.installmentAmount).toBeLessThan(sinAnticipo.installmentAmount);
-  });
-
-  it("sin anticipo financia la deuda entera", () => {
-    const simulacion = paymentPlanService.simulate({ totalDebt: 100000, installments: 6 });
-
-    expect(simulacion.downPayment).toBe(0);
-    expect(simulacion.financedAmount).toBe(100000);
-    expect(simulacion.totalAmount).toBe(110000);
-  });
-
-  it("nunca financia más que la deuda aunque el anticipo se pase", () => {
-    const simulacion = paymentPlanService.simulate({ totalDebt: 50000, installments: 3, downPayment: 90000 });
-
-    expect(simulacion.downPayment).toBe(50000);
-    expect(simulacion.financedAmount).toBe(0);
-  });
-
-  it("el portal simula con el mismo cálculo que la pantalla interna", () => {
-    const simulacion = portalService.simulatePaymentPlan({ totalDebt: 120000, installments: 6 });
-
-    expect(simulacion.installments).toBe(6);
-    expect(simulacion.totalAmount).toBeGreaterThan(120000);
-    expect(simulacion.installmentAmount).toBeCloseTo(simulacion.totalAmount / 6, 2);
+    expect(simulacion).toMatchObject({ configurationVersion: 2, total: 120000, regularInstallmentAmount: 20000 });
+    expect(backend.llamadas[0]).toMatchObject({
+      ruta: "/api/v1/payment-plans/simulations",
+      cuerpo: { taxpayerId: 123, debtIds: [3001], installments: 6 },
+    });
   });
 });
 
@@ -231,6 +206,23 @@ describe("construcción de los requests", () => {
 });
 
 describe("lectura de la respuesta", () => {
+  it("muestra el nombre del concepto tributario en las deudas del portal", async () => {
+    instalarBackendFalso({
+      "GET /api/v1/taxpayers/{id}/debts": pagina([
+        { id: 3001, taxpayerId: 123, taxConceptId: 2, originalAmount: 120000,
+          outstandingBalance: 60000, dueDate: "2027-03-31", status: "PENDING" },
+      ]),
+      "GET /api/v1/taxpayers/{id}/bills": pagina([]),
+      "GET /api/v1/tax-concepts": pagina([
+        { id: 2, code: "ABL", name: "Alumbrado, barrido y limpieza", type: "FEE", active: true },
+      ]),
+    });
+
+    expect(await portalService.debts({ taxpayerId: 123 })).toMatchObject([
+      { id: 3001, conceptName: "Alumbrado, barrido y limpieza", outstandingAmount: 60000 },
+    ]);
+  });
+
   it("la ficha de caja cruza deudas, pagos y boletas con sus totales", async () => {
     // El backend expone cada frente por separado; juntarlos y totalizar es del cliente.
     instalarBackendFalso({

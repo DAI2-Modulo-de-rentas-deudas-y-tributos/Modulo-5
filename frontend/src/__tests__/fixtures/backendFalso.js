@@ -150,6 +150,16 @@ export function instalarBackendFalso(rutas = {}) {
       return json(pagina([]));
     }
 
+    if (metodo === "POST" && ruta === "/api/v1/payment-plans/simulations") {
+      const principal = datos.DEUDAS.filter((debt) => cuerpo.debtIds?.includes(debt.id))
+        .reduce((sum, debt) => sum + Number(debt.outstandingBalance), 0);
+      return json({ configurationId: 1, configurationVersion: 1, principal,
+        downPayment: 0, financedPrincipal: principal, interest: 0, total: principal,
+        installments: cuerpo.installments,
+        regularInstallmentAmount: Math.round(principal / cuerpo.installments * 100) / 100,
+        exceptional: false });
+    }
+
     // Escritura sin declarar: eco con un id nuevo, que es lo que devuelve el backend.
     return json({ id: ++siguienteId, ...(cuerpo ?? {}) }, metodo === "POST" ? 201 : 200);
   });

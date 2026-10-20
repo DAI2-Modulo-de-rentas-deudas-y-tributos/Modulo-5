@@ -7,7 +7,6 @@ import Modal from "../../components/common/Modal.jsx";
 import Button from "../../components/common/Button.jsx";
 import Alert from "../../components/ui/Alert.jsx";
 import FormField from "../../components/ui/FormField.jsx";
-import FileUpload from "../../components/common/FileUpload.jsx";
 import useResource from "../../hooks/useResource.js";
 import useTaxConcepts from "../../hooks/useTaxConcepts.js";
 import { portalService } from "../../services/rentasService.js";
@@ -102,8 +101,8 @@ export default function ExencionesPortalPage() {
 
       <Alert variant="info" title="Qué documentación hace falta">
         Si pedís la exención por motivos socioeconómicos, Rentas puede pedirte
-        documentación respaldatoria. La presentás en la oficina y queda asociada a tu
-        solicitud.
+        documentación respaldatoria. Por ahora, consultá en la oficina cómo presentarla;
+        el seguimiento de archivos en línea todavía no está integrado.
       </Alert>
 
       {requesting && (
@@ -137,7 +136,6 @@ function RequestExemptionModal({ taxpayerId, onClose, onDone }) {
     requestedFrom: "",
     requestedUntil: "",
   });
-  const [attachments, setAttachments] = useState([]);
   const [errors, setErrors] = useState({});
   const [submitError, setSubmitError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -169,7 +167,7 @@ function RequestExemptionModal({ taxpayerId, onClose, onDone }) {
     if (!validate()) return;
     setSubmitting(true);
     try {
-      onDone(await portalService.requestExemption({ taxpayerId, ...form, attachments }));
+      onDone(await portalService.requestExemption({ taxpayerId, ...form }));
     } catch (caught) {
       setSubmitError(caught.message);
     } finally {
@@ -253,11 +251,10 @@ function RequestExemptionModal({ taxpayerId, onClose, onDone }) {
           />
         </div>
 
-        <FileUpload
-          files={attachments}
-          onChange={setAttachments}
-          hint="Certificados, constancias o comprobantes que respalden el pedido. PDF, JPG o PNG, hasta 5 MB."
-        />
+        <Alert variant="info" title="Documentación respaldatoria">
+          La carga de archivos en línea todavía no está disponible. Si Rentas te pide
+          documentación, presentala por mesa de entradas indicando el número de solicitud.
+        </Alert>
 
         <Alert variant="info" title="Podés recibir menos de lo que pedís">
           Rentas puede otorgar un porcentaje menor al solicitado según tu situación. La
@@ -335,7 +332,7 @@ function ExemptionDetailModal({ exemption, onClose }) {
 
       {exemption.status === "REJECTED" && (
         <Alert variant="error" title="Solicitud rechazada">
-          {exemption.reason_rejected}
+          {exemption.resolutionReason ?? "Rentas rechazó la solicitud."}
         </Alert>
       )}
 

@@ -12,7 +12,6 @@ import FormField from "../../components/ui/FormField.jsx";
 import useResource from "../../hooks/useResource.js";
 import useTaxpayerIndex from "../../hooks/useTaxpayerIndex.js";
 import { ticketService } from "../../services/rentasService.js";
-import { useAuth } from "../../context/AuthContext.jsx";
 import { formatDateTime, labelFor } from "../../lib/format.js";
 
 /** Estados acordados con M2: viajan dentro de updateTicketStatus, no como eventos sueltos. */
@@ -24,7 +23,7 @@ const TICKET_STATUSES = [
 ];
 
 /**
- * Tickets: reclamos que M2 deriva a Rentas (ticketCreated / ticketUpdated).
+ * Tickets: reclamos que M2 deriva a Rentas mediante ticketUpdated.
  * El área responde cambiando el estado con updateTicketStatus.
  */
 export default function TicketsPage() {
@@ -43,9 +42,9 @@ export default function TicketsPage() {
     {
       key: "ticketId",
       header: "Ticket",
-      render: (row) => <span className="tabular-nums">#{row.ticketId}</span>,
+      render: (row) => <span className="tabular-nums">{row.publicId ?? `#${row.ticketId}`}</span>,
     },
-    { key: "citizen", header: "Ciudadano", render: (row) => nameOf(row.citizenId) },
+    { key: "citizen", header: "Ciudadano", render: (row) => row.citizenId ? nameOf(row.citizenId) : "Anónimo" },
     {
       key: "description",
       header: "Reclamo",
@@ -79,9 +78,9 @@ export default function TicketsPage() {
       header: "",
       align: "right",
       render: (row) => (
-        <Button size="sm" variant="secondary" onClick={() => setSelected(row)}>
-          Cambiar estado
-        </Button>
+        ["COMPLETED", "REJECTED"].includes(row.status)
+          ? <span className="text-neutral-400">—</span>
+          : <Button size="sm" variant="secondary" onClick={() => setSelected(row)}>Cambiar estado</Button>
       ),
     },
   ];
@@ -146,14 +145,14 @@ export default function TicketsPage() {
       {selected && (
         <UpdateTicketModal
           ticket={selected}
-          citizenName={nameOf(selected.citizenId)}
+          citizenName={selected.citizenId ? nameOf(selected.citizenId) : "Anónimo"}
           onClose={() => setSelected(null)}
           onDone={(ticket) => {
             setSelected(null);
             setFeedback({
               variant: "success",
               title: "Estado actualizado",
-              message: `El ticket #${ticket.ticketId} quedó en "${labelFor(ticket.status)}" y se notificó a M2.`,
+              message: `El ticket ${ticket.publicId ?? `#${ticket.ticketId}`} quedó en "${labelFor(ticket.status)}". La actualización se registró localmente; el envío a M2 sigue pendiente de integración.`,
             });
             reload();
           }}
@@ -163,11 +162,10 @@ export default function TicketsPage() {
   );
 }
 
-/** UpdateTicketStatusRequest: el rechazo exige motivo porque viaja en el payload. */
+/** M5 solicita la transición a M2 mediante los casos de uso del backend. */
 function UpdateTicketModal({ ticket, citizenName, onClose, onDone }) {
-  const { user } = useAuth();
   const [status, setStatus] = useState(ticket.status === "OPEN" ? "IN_PROGRESS" : ticket.status);
-  const [reason, setReason] = useState("");
+  const [message, setMessage] = useState("");
   const [takeOwnership, setTakeOwnership] = useState(!ticket.assignedTo);
   const [error, setError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -175,8 +173,8 @@ function UpdateTicketModal({ ticket, citizenName, onClose, onDone }) {
   const onSubmit = async (event) => {
     event.preventDefault();
     setError(null);
-    if (status === "REJECTED" && !reason.trim()) {
-      setError("El motivo del rechazo viaja en el evento: es obligatorio.");
+    if (status !== "IN_PROGRESS" && !message.trim()) {
+      setError("Escribí un mensaje para continuar con la gestión del ticket.");
       return;
     }
     setSubmitting(true);
@@ -185,8 +183,8 @@ function UpdateTicketModal({ ticket, citizenName, onClose, onDone }) {
         await ticketService.updateStatus({
           ticketId: ticket.ticketId,
           status,
-          reason,
-          assignedTo: takeOwnership ? user.username : undefined,
+          message: message.trim(),
+          takeOwnership,
         }),
       );
     } catch (caught) {
@@ -199,7 +197,7 @@ function UpdateTicketModal({ ticket, citizenName, onClose, onDone }) {
   return (
     <Modal
       open
-      title={`Ticket #${ticket.ticketId}`}
+      title={`Ticket ${ticket.publicId ?? `#${ticket.ticketId}`}`}
       description={`${citizenName} · prioridad ${labelFor(ticket.priority).toLowerCase()}`}
       onClose={onClose}
       footer={
@@ -266,14 +264,14 @@ function UpdateTicketModal({ ticket, citizenName, onClose, onDone }) {
         required
       />
 
-      {status === "REJECTED" && (
+      {status !== "IN_PROGRESS" && (
         <FormField
-          label="Motivo del rechazo"
-          name="reason"
+          label={status === "REJECTED" ? "Motivo del rechazo" : status === "COMPLETED" ? "Resolución" : "Información solicitada"}
+          name="message"
           type="textarea"
-          placeholder="El caso no corresponde al módulo de Rentas"
-          value={reason}
-          onChange={(event) => setReason(event.target.value)}
+          placeholder={status === "REJECTED" ? "Explicá por qué se rechaza" : status === "COMPLETED" ? "Explicá cómo se resolvió" : "Indicá qué documentación necesitás"}
+          value={message}
+          onChange={(event) => setMessage(event.target.value)}
           required
         />
       )}

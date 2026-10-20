@@ -15,16 +15,12 @@ import { settlementService } from "../../services/rentasService.js";
 import GeneracionMasivaModal from "./GeneracionMasivaModal.jsx";
 import { formatCurrency, formatDate, formatPercentage } from "../../lib/format.js";
 
-/**
- * Liquidaciones: primer paso del flujo. Se genera en borrador, se revisa el
- * descuento aplicado por beneficio social y recién al emitirla nace la deuda.
- */
+/** La liquidación individual se emite y crea la deuda en una sola operación. */
 export default function LiquidacionesPage() {
   const [filters, setFilters] = useState({ period: "", conceptCode: "", status: "" });
   const [creating, setCreating] = useState(false);
   const [batchOpen, setBatchOpen] = useState(false);
   const [feedback, setFeedback] = useState(null);
-  const [issuing, setIssuing] = useState(null);
 
   const loader = useCallback(() => settlementService.list(filters), [filters]);
   const { data: settlements, loading, error, reload } = useResource(loader, []);
@@ -33,24 +29,6 @@ export default function LiquidacionesPage() {
 
   const onFilterChange = (name, value) =>
     setFilters((previous) => ({ ...previous, [name]: value }));
-
-  const onIssue = async (settlement) => {
-    setIssuing(settlement.id);
-    setFeedback(null);
-    try {
-      await settlementService.issue(settlement.id);
-      setFeedback({
-        variant: "success",
-        title: "Liquidación emitida",
-        message: `Se generó la deuda asociada a la liquidación #${settlement.id}.`,
-      });
-      reload();
-    } catch (caught) {
-      setFeedback({ variant: "error", title: "No se pudo emitir", message: caught.message });
-    } finally {
-      setIssuing(null);
-    }
-  };
 
   const columns = [
     { key: "id", header: "N°", render: (row) => <span className="tabular-nums">#{row.id}</span> },
@@ -84,22 +62,6 @@ export default function LiquidacionesPage() {
     },
     { key: "dueDate", header: "Vencimiento", render: (row) => formatDate(row.dueDate) },
     { key: "status", header: "Estado", render: (row) => <StatusBadge status={row.status} /> },
-    {
-      key: "actions",
-      header: "",
-      align: "right",
-      render: (row) =>
-        row.status === "DRAFT" ? (
-          <Button
-            size="sm"
-            variant="accent"
-            loading={issuing === row.id}
-            onClick={() => onIssue(row)}
-          >
-            Emitir
-          </Button>
-        ) : null,
-    },
   ];
 
   return (
@@ -107,7 +69,7 @@ export default function LiquidacionesPage() {
       label="Operación"
       title="Liquidaciones"
       highlight="del período"
-      description="Generá la liquidación de un concepto, revisá el descuento aplicado y emitila para que genere deuda."
+      description="Al generar una liquidación individual, se emite y crea su deuda inmediatamente."
       breadcrumb={[{ id: "liquidaciones", label: "Liquidaciones" }]}
     >
       {feedback && (
@@ -123,7 +85,7 @@ export default function LiquidacionesPage() {
 
       <Card
         title="Liquidaciones registradas"
-        description="Las liquidaciones en borrador no generan deuda hasta ser emitidas."
+        description="Cada liquidación individual registrada ya tiene una deuda asociada."
         actions={
           <>
             <Button size="sm" variant="secondary" onClick={() => setBatchOpen(true)}>
@@ -145,11 +107,7 @@ export default function LiquidacionesPage() {
             {
               name: "status",
               label: "Estado",
-              options: [
-                { value: "DRAFT", label: "Borrador" },
-                { value: "ISSUED", label: "Emitida" },
-                { value: "SETTLED", label: "Cancelada" },
-              ],
+              options: [{ value: "ISSUED", label: "Emitida" }],
             },
             {
               name: "period",
@@ -185,8 +143,8 @@ export default function LiquidacionesPage() {
           setCreating(false);
           setFeedback({
             variant: "success",
-            title: "Liquidación generada en borrador",
-            message: `#${settlement.id} por ${formatCurrency(settlement.amount)}. Revisala y emitila para generar la deuda.`,
+            title: "Liquidación emitida",
+            message: `#${settlement.id} por ${formatCurrency(settlement.amount)}. La deuda ya está disponible en el estado de cuenta.`,
           });
           reload();
         }}
@@ -200,8 +158,8 @@ export default function LiquidacionesPage() {
             setBatchOpen(false);
             setFeedback({
               variant: "success",
-              title: "Lote generado",
-              message: `${result.generated.length} liquidaciones en borrador por ${formatCurrency(result.totals.amount)}. Emitilas para que generen deuda.`,
+              title: "Corrida enviada a aprobación",
+              message: `Corrida #${result.run.id} con ${result.submitted} liquidaciones previstas. El Supervisor debe aprobarla y luego Rentas ejecutarla para crear las deudas.`,
             });
             reload();
           }}
@@ -270,7 +228,7 @@ function NewSettlementModal({ open, taxpayerOptions, conceptOptions, onClose, on
             Cancelar
           </Button>
           <Button variant="primary" loading={submitting} onClick={onSubmit}>
-            Generar borrador
+          Generar liquidación y deuda
           </Button>
         </>
       }

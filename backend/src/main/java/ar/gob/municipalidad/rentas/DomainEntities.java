@@ -357,6 +357,7 @@ class IntegrationEventLog {
     @Id @GeneratedValue(strategy=GenerationType.IDENTITY) public Long id;
     @Column(name="event_id",nullable=false) public UUID eventId;
     @Column(name="external_event_id",nullable=false) public String externalEventId;
+    @Column(name="business_key") public String businessKey;
     @Column(name="event_type",nullable=false) public String eventType;
     @Column(name="source_module",nullable=false) public String sourceModule;
     @Column(name="target_module") public String targetModule;
@@ -552,6 +553,10 @@ class LiquidationRunItem {
 class TicketCase {
     @Id @GeneratedValue(strategy=GenerationType.IDENTITY) public Long id;
     @Column(name="external_ticket_id",nullable=false,unique=true) public String externalTicketId;
+    @Column(name="public_id") public String publicId;
+    @Column(name="correlation_id") public String correlationId;
+    @Column(name="last_source_event_id") public String lastSourceEventId;
+    @Column(name="last_external_updated_at") public OffsetDateTime lastExternalUpdatedAt;
     @Column(name="taxpayer_id") public Long taxpayerId;
     @Column(name="external_citizen_id") public String externalCitizenId;
     @Column(nullable=false) public String category;

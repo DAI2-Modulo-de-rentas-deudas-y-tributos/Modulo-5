@@ -47,7 +47,7 @@ describe("API adapters", () => {
     expect(adaptApiResponse("x", "/api/v1/debts/1", { originType: "LIQUIDATION", status: "PAID", outstandingBalance: 0 })).toMatchObject({ originType: "LIQUIDATION", status: "SETTLED" });
     expect(adaptApiResponse("x", "/api/v1/payment-plans/1", { id: 1, status: "ACTIVE" }).lifecycle).toBe("CURRENT");
     expect(adaptApiResponse("x", "/api/v1/payment-plans/1/installments", { id: 1, status: "PARTIALLY_PAID" }).status).toBe("PARTIAL");
-    expect(adaptApiResponse("x", "/api/v1/exemption-requests/1", { id: 1, taxConceptId: 2, status: "PENDING" })).toMatchObject({ status: "REQUESTED", internalStatus: "PENDING_REVIEW", attachments: [] });
+    expect(adaptApiResponse("x", "/api/v1/exemption-requests/1", { id: 1, taxConceptId: 2, status: "PENDING" })).toMatchObject({ status: "REQUESTED", internalStatus: "PENDING", attachments: [] });
   });
 
   it("preserves an unknown exemption status instead of silently presenting it as requested", () => {

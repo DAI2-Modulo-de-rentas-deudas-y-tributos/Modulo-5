@@ -65,7 +65,7 @@ describe("navegación por los módulos funcionales", () => {
     await user.selectOptions(debtSelect, firstDebt);
 
     await user.type(within(dialog).getByLabelText(/importe/i), "1000");
-    await user.selectOptions(within(dialog).getByLabelText(/canal/i), "VENTANILLA");
+    await user.selectOptions(within(dialog).getByLabelText(/medio de pago/i), "CASH");
     await user.click(within(dialog).getByRole("button", { name: /^registrar$/i }));
 
     expect(await screen.findByText(/pago registrado/i)).toBeDefined();

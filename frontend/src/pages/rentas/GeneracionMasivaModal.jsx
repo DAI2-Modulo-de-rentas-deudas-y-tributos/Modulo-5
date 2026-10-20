@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { CircleCheckBig, TriangleAlert } from "lucide-react";
+import { CircleCheckBig } from "lucide-react";
 import Modal from "../../components/common/Modal.jsx";
 import Button from "../../components/common/Button.jsx";
 import DataTable from "../../components/common/DataTable.jsx";
@@ -9,9 +9,9 @@ import FormField from "../../components/ui/FormField.jsx";
 import Spinner from "../../components/ui/Spinner.jsx";
 import StepIndicatorGeneric from "../../components/ui/StepIndicatorGeneric.jsx";
 import { settlementService } from "../../services/rentasService.js";
-import { formatCurrency, formatPercentage } from "../../lib/format.js";
+import { formatCurrency } from "../../lib/format.js";
 
-const STEPS = [{ label: "Configurar" }, { label: "Previsualizar" }, { label: "Resultado" }];
+const STEPS = [{ label: "Configurar" }, { label: "Previsualizar" }, { label: "Enviar a aprobación" }];
 
 const SCOPE_OPTIONS = [
   { value: "", label: "Todos los contribuyentes" },
@@ -20,11 +20,8 @@ const SCOPE_OPTIONS = [
 ];
 
 /**
- * Generación masiva de liquidaciones, en tres pasos.
- *
- * El paso de previsualización existe para que el operador vea qué va a pasar antes
- * de crear doscientos registros: cuántos se generan, cuántos quedan afuera y por qué.
- * El lote se crea en borrador; emitir sigue siendo un acto explícito.
+ * La vista previa crea una corrida borrador. Al confirmar se envía esa misma
+ * corrida a aprobación; sólo ejecutarla genera liquidaciones y deudas.
  */
 export default function GeneracionMasivaModal({ conceptOptions = [], onClose, onGenerated }) {
   const [form, setForm] = useState({
@@ -72,11 +69,11 @@ export default function GeneracionMasivaModal({ conceptOptions = [], onClose, on
     }
   };
 
-  const onGenerate = async () => {
+  const onSubmitRun = async () => {
     setSubmitError(null);
     setWorking(true);
     try {
-      setResult(await settlementService.generateBatch(form));
+      setResult(await settlementService.submitBatch(preview));
     } catch (caught) {
       setSubmitError(caught.message);
     } finally {
@@ -111,13 +108,13 @@ export default function GeneracionMasivaModal({ conceptOptions = [], onClose, on
   return (
     <Modal
       open
-      title="Generar liquidaciones masivas"
+      title="Preparar liquidación masiva"
       description={
         step === 0
           ? "Definí el concepto, el período y la base imponible."
           : step === 1
-            ? "Revisá qué se va a generar antes de confirmar."
-            : "Resultado del lote."
+            ? "Revisá la corrida antes de enviarla a aprobación."
+            : "La corrida espera la decisión del Supervisor."
       }
       onClose={onClose}
       footer={
@@ -139,9 +136,9 @@ export default function GeneracionMasivaModal({ conceptOptions = [], onClose, on
               variant="accent"
               loading={working}
               disabled={preview.items.length === 0}
-              onClick={onGenerate}
+              onClick={onSubmitRun}
             >
-              Generar {preview.totals.toGenerate} liquidaciones
+              Enviar corrida a aprobación
             </Button>
           </>
         ) : (
@@ -259,8 +256,9 @@ export default function GeneracionMasivaModal({ conceptOptions = [], onClose, on
           )}
 
           <p className="text-[12px] text-neutral-400">
-            El lote se crea en <strong>borrador</strong>. Cada liquidación se emite después,
-            y recién ahí genera la deuda.
+            Esta vista previa quedó guardada como corrida <strong>borrador</strong>.
+            Enviarla no crea deudas: el Supervisor debe aprobarla y Rentas ejecutarla
+            desde «Corridas masivas».
           </p>
         </div>
       )}
@@ -270,30 +268,18 @@ export default function GeneracionMasivaModal({ conceptOptions = [], onClose, on
           <div className="flex items-center gap-2 text-emerald-600">
             <CircleCheckBig className="h-5 w-5" strokeWidth={2} />
             <span className="text-[14px] font-semibold">
-              {result.generated.length} liquidaciones generadas en borrador
+              Corrida #{result.run.id} enviada a aprobación
             </span>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
-            <Metric label="Generadas" value={result.generated.length} tone="navy" />
-            <Metric label="Total liquidado" value={formatCurrency(result.totals.amount)} tone="navy" />
+            <Metric label="Liquidaciones previstas" value={result.submitted} tone="navy" />
+            <Metric label="Total previsto" value={formatCurrency(result.totals.amount)} tone="navy" />
           </div>
 
-          {result.warnings.length > 0 && (
-            <Alert variant="info" title="Revisá estas antes de emitir">
-              <span className="flex items-start gap-2">
-                <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={2} />
-                <span>
-                  {result.warnings.length} liquidaciones son de contribuyentes bloqueados o
-                  fallecidos. Se generaron igual, pero no emitas la boleta sin verificar.
-                </span>
-              </span>
-            </Alert>
-          )}
-
           <p className="text-[13px] text-neutral-500">
-            Quedaron en el listado con estado <strong>Borrador</strong>. Emitilas una por
-            una cuando estén verificadas.
+            El Supervisor debe aprobar la corrida y luego Personal de Rentas debe
+            ejecutarla en «Corridas masivas». Recién entonces nacen las deudas.
           </p>
         </div>
       )}

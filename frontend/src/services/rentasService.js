@@ -241,7 +241,7 @@ export const settlementService = {
     return request(`/api/v1/settlements?${params}`);
   },
 
-  /** GenerateSettlementRequest → SettlementResponse */
+  /** Emite la liquidación individual y crea su deuda en la misma operación. */
   async generate({ taxpayerId, conceptCode, period, baseAmount, dueDate }) {
     const concept = await apiConceptByCode(conceptCode);
     return request("/api/v1/settlements", {
@@ -285,29 +285,11 @@ export const settlementService = {
     return { ...preview, items, errors, totals: { toGenerate: items.length, skipped: errors.length, amount: preview.run?.estimatedTotalAmount ?? 0 } };
   },
 
-  /**
-   * GenerateSettlementBatchRequest → genera el lote en borrador.
-   *
-   * Queda en `DRAFT` a propósito: emitir doscientas liquidaciones de una es
-   * irreversible, así que la emisión sigue siendo un acto explícito por liquidación.
-   */
-  async generateBatch({ conceptCode, period, baseAmount, dueDate, taxpayerType = "" }) {
-    const [concept, taxpayers] = await Promise.all([
-      apiConceptByCode(conceptCode),
-      taxpayerService.search({ type: taxpayerType }),
-    ]);
-    const run = await request("/api/v1/liquidation-runs", {
-      method: "POST",
-      body: { taxConceptId: concept.id, period, dueDate, items: taxpayers.map((item) => ({ taxpayerId: item.id, taxableBase: Number(baseAmount) })) },
-    });
-    const preview = await request(`/api/v1/liquidation-runs/${run.id}/preview`, { method: "POST" });
-    const items = (preview.items ?? []).filter((item) => item.status !== "ERROR");
-    return { run: preview.run, generated: items.map((item) => ({ ...item, status: "DRAFT" })), errors: (preview.items ?? []).filter((item) => item.status === "ERROR"), warnings: [], totals: { amount: preview.run?.estimatedTotalAmount ?? 0 } };
-  },
-
-  /** Confirma la liquidación y genera la deuda asociada (evento interno debtGenerated). */
-  async issue(settlementId) {
-    return request(`/api/v1/settlements/${settlementId}/issue`, { method: "POST" });
+  /** Envía la corrida ya previsualizada; aprobación y ejecución siguen separadas. */
+  async submitBatch(preview) {
+    if (!preview?.run?.id) throw new ApiError("Previsualizá la corrida antes de enviarla.", 400);
+    const run = await request(`/api/v1/liquidation-runs/${preview.run.id}/submit`, { method: "POST" });
+    return { run, submitted: preview.items.length, totals: preview.totals, errors: preview.errors };
   },
 };
 
@@ -361,16 +343,22 @@ export const reconciliationService = {
 /**
  * Ajustes manuales de deuda.
  *
- * Separa autorizar de ejecutar: el Supervisor aprueba, pero el ajuste se aplica
- * cuando el analista lo ejecuta. Si la deuda ya fue informada a otro módulo por
- * `overdueDebt`, la corrección **no** se comunica republicando ese evento —se
- * interpretaría como una deuda nueva—, sino con `debtUpdated`, que todavía no está
- * en el contrato y queda registrado como pendiente de acuerdo intermodular.
+ * La aprobación del Supervisor aplica el ajuste en la misma transacción.
  */
 export const debtAdjustmentService = {
   async list({ status = "", debtId = "" } = {}) {
     const params = new URLSearchParams({ status, debtId });
-    return request(`/api/v1/debt-adjustments?${params}`);
+    const rows = await request(`/api/v1/debt-adjustments?${params}`);
+    return Promise.all(rows.map(async (row) => {
+      if (row.status !== "PENDING_APPROVAL") return row;
+      const debt = await request(`/api/v1/debts/${row.debtId}`);
+      const delta = row.type === "DISCOUNT" ? -Number(row.amount) : Number(row.amount);
+      return {
+        ...row,
+        previousAmount: Number(debt.outstandingAmount),
+        newAmount: round2(Number(debt.outstandingAmount) + delta),
+      };
+    }));
   },
 
   /** RequestDebtAdjustmentRequest: el analista propone el cambio con su motivo. */
@@ -387,22 +375,12 @@ export const debtAdjustmentService = {
     });
   },
 
-  /** El Supervisor autoriza o rechaza. Autorizar no aplica el cambio todavía. */
+  /** El Supervisor autoriza y aplica el cambio, o rechaza la solicitud. */
   async resolve({ adjustmentId, status, resolvedBy, resolverRole, reason }) {
     const action = status === "REJECTED" ? "reject" : "approve";
     return request(`/api/v1/adjustments/${adjustmentId}/${action}`, { method: "POST", body: action === "reject" ? { reason } : { observation: reason ?? null } });
   },
 
-  /**
-   * ExecuteDebtAdjustmentRequest: aplica el cambio autorizado.
-   *
-   * Si la deuda ya viajó a M8 en `overdueDebt`, se registra `debtUpdated` con los
-   * valores anterior y posterior. No se republica `overdueDebt`: el consumidor lo
-   * leería como una deuda distinta y la contaría dos veces.
-   */
-  async execute({ adjustmentId, executedBy }) {
-    return request(`/api/v1/adjustments/${adjustmentId}`);
-  },
 };
 
 // ----------------------------------------------------------------------- Boletas
@@ -442,13 +420,13 @@ export const paymentService = {
   /**
    * RegisterPaymentRequest → PaymentResponse
    *
-   * `channel` es por dónde entró el dinero (ventanilla, homebanking…); `method` es el
-   * instrumento con el que pagó el contribuyente y `registeredBy` el agente responsable.
+   * La API registra el medio de pago; el origen, el agente y la fecha los establece
+   * el backend a partir de la sesión y del momento de la operación.
    */
-  async register({ taxpayerId, debtId, amountPaid, channel, paidAt, method, registeredBy, idempotencyKey }) {
+  async register({ taxpayerId, debtId, amountPaid, method, idempotencyKey }) {
     return request("/api/v1/payments", {
       method: "POST",
-      body: { taxpayerId, debtId, amountPaid, channel, paidAt, method, registeredBy },
+      body: { taxpayerId, debtId, amountPaid, method },
       headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {},
     });
   },
@@ -594,46 +572,30 @@ export const creditBalanceService = {
 export const paymentPlanService = {
   async list({ status = "", internalStatus = "" } = {}) {
     const params = new URLSearchParams({ status, internalStatus });
-    return request(`/api/v1/payment-plan-requests?${params}`);
+    const rows = await allPages(`/api/v1/payment-plan-requests?${params}`);
+    return Promise.all(rows.map(async (row) => {
+      const debts = await request(`/api/v1/payment-plan-requests/${row.requestId}/debts`).catch(() => []);
+      return { ...row, debts, debtIds: debts.map((debt) => debt.id) };
+    }));
   },
 
   /**
    * RequestPaymentPlanRequest → publica paymentPlanRequested.
    * La solicitud nace en el contribuyente; Rentas la resuelve después.
    */
-  async request({ taxpayerId, debtIds, installments, downPayment = 0 }) {
-    return request("/api/v1/payment-plans", {
+  async request({ taxpayerId, debtIds, installments }) {
+    return request("/api/v1/payment-plan-requests", {
       method: "POST",
-      body: { taxpayerId, debtIds, installments, downPayment },
+      body: { taxpayerId, debtIds, installments },
     });
   },
 
-  /**
-   * Simula el plan: interés fijo del 5% por cada 3 cuotas.
-   *
-   * El anticipo se paga al contado y sale de la base financiada, así que baja el
-   * interés y la cuota. Sin anticipo el cálculo es el de siempre.
-   */
-  simulate({ totalDebt, installments, downPayment = 0 }) {
-    const n = Number(installments) || 1;
-    const total = Number(totalDebt);
-    const anticipo = Math.min(Math.max(Number(downPayment) || 0, 0), total);
-
-    const financedAmount = round2(total - anticipo);
-    const interestRate = Math.floor(n / 3) * 0.05;
-    const interestAmount = round2(financedAmount * interestRate);
-    const totalAmount = round2(anticipo + financedAmount + interestAmount);
-
-    return {
-      installments: n,
-      interestRate,
-      downPayment: round2(anticipo),
-      financedAmount,
-      interestAmount,
-      totalAmount,
-      // La diferencia por redondeo se absorbe en la última cuota al generar el plan.
-      installmentAmount: round2((financedAmount + interestAmount) / n),
-    };
+  /** Calcula con la configuración versionada vigente del backend. */
+  async simulate({ taxpayerId, debtIds, installments }) {
+    return request("/api/v1/payment-plans/simulations", {
+      method: "POST",
+      body: { taxpayerId, debtIds, installments },
+    });
   },
 
   /**
@@ -651,7 +613,7 @@ export const paymentPlanService = {
   },
 
   /** ResolvePaymentPlanRequest → publica updatePaymentPlanStatus (GRANTED | REJECTED). */
-  async resolve({ requestId, status, installments, downPayment = 0, reason, resolvedBy, resolverRole }) {
+  async resolve({ requestId, status, installments, downPayment, reason, resolvedBy, resolverRole }) {
     const exceptional = resolverRole === "SUPERVISOR";
     if (exceptional && status !== "REJECTED") {
       await request(`/api/v1/payment-plan-requests/${requestId}/approve-exception`, {
@@ -660,13 +622,13 @@ export const paymentPlanService = {
       });
       return request(`/api/v1/payment-plan-requests/${requestId}/grant`, {
         method: "POST",
-        body: { downPaymentAmount: downPayment },
+        body: downPayment == null ? undefined : { downPaymentAmount: downPayment },
       });
     }
     const action = status === "REJECTED" ? (exceptional ? "reject-exception" : "reject") : "grant";
     return request(`/api/v1/payment-plan-requests/${requestId}/${action}`, {
       method: "POST",
-      body: action.includes("reject") ? { reason } : { downPaymentAmount: downPayment },
+      body: action.includes("reject") ? { reason } : downPayment == null ? undefined : { downPaymentAmount: downPayment },
     });
   },
 };
@@ -751,15 +713,11 @@ export const refinancingService = {
     }).filter((plan) => !onlyEligible || plan.eligible);
   },
 
-  /**
-   * Simula la refinanciación sobre el saldo vivo del plan, no sobre la deuda original:
-   * lo ya pagado no se vuelve a financiar.
-   */
-  simulate({ outstandingAmount, installments, downPayment = 0 }) {
-    return paymentPlanService.simulate({
-      totalDebt: outstandingAmount,
-      installments,
-      downPayment,
+  /** El backend calcula el saldo vivo y la propuesta para el plan indicado. */
+  simulate({ planId, installments }) {
+    return request(`/api/v1/payment-plans/${planId}/refinancing/simulations`, {
+      method: "POST",
+      body: { installments },
     });
   },
 
@@ -876,12 +834,15 @@ export const exemptionService = {
     return request(`/api/v1/exemption-requests/${requestId}/${action}`, { method: "POST", body: action === "request-documentation" ? { message: note } : action === "submit-resolution" ? { observation: note ?? null } : undefined });
   },
 
-  /** Registra la documentación que el ciudadano presentó por mesa de entradas. */
+  /** Registra una referencia a documentación ya almacenada fuera de M5. */
   async attachDocumentation({ requestId, attachments, actor }) {
-    if (!attachments?.length) throw new ApiError("Adjuntá al menos un archivo.", 400);
+    if (!attachments?.length) throw new ApiError("Indicá al menos un documento.", 400);
+    if (attachments.some((file) => !file.externalDocumentId || !file.type)) {
+      throw new ApiError("Cada documento necesita un identificador externo y un tipo; M5 no almacena archivos.", 400);
+    }
     let result;
     for (const file of attachments) {
-      result = await request(`/api/v1/exemption-requests/${requestId}/documentation`, { method: "POST", body: { externalDocumentId: file.externalDocumentId ?? file.name ?? String(file), documentType: file.type ?? "DOCUMENT", fileName: file.name ?? String(file) } });
+      result = await request(`/api/v1/exemption-requests/${requestId}/documentation`, { method: "POST", body: { externalDocumentId: file.externalDocumentId, documentType: file.type, fileName: file.name ?? null } });
     }
     return result;
   },
@@ -897,6 +858,9 @@ export const exemptionService = {
     attachments = [],
   }) {
     const concept = await apiConceptByCode(conceptCode);
+    if (attachments.some((file) => !file.externalDocumentId || !file.type)) {
+      throw new ApiError("Cada documento necesita un identificador externo y un tipo; M5 no almacena archivos.", 400);
+    }
     const created = await request("/api/v1/exemption-requests", {
       method: "POST",
       body: {
@@ -906,16 +870,19 @@ export const exemptionService = {
         percentage: requestedPercentage,
         validFrom: requestedFrom,
         validUntil: requestedUntil,
+        documents: attachments.map((file) => ({ externalDocumentId: file.externalDocumentId, documentType: file.type, fileName: file.name ?? null })),
       },
     });
-    if (attachments.length) await exemptionService.attachDocumentation({ requestId: created.id, attachments });
     return created;
   },
 
   /** ResolveExemptionRequest → publica updateExemptionStatus (APPROVED | REJECTED). */
   async resolve({ requestId, status, percentage, validFrom, validUntil, reason, resolvedBy }) {
     const action = status === "REJECTED" ? "reject" : "approve";
-    return request(`/api/v1/exemption-requests/${requestId}/${action}`, { method: "POST", body: action === "reject" ? { reason } : { percentage, validFrom, validUntil, observation: reason ?? null } });
+    const result = await request(`/api/v1/exemption-requests/${requestId}/${action}`, { method: "POST", body: action === "reject" ? { reason } : { percentage, validFrom, validUntil, observation: reason ?? null } });
+    return action === "approve"
+      ? { ...result, exemptionId: result.id, status: "APPROVED" }
+      : result;
   },
 };
 
@@ -927,12 +894,21 @@ export const ticketService = {
     return request(`/api/v1/tickets?${params}`);
   },
 
-  /** UpdateTicketStatusRequest → publica updateTicketStatus hacia M2. */
-  async updateStatus({ ticketId, status, reason, assignedTo }) {
-    return request(`/api/v1/tickets/${ticketId}/status`, {
-      method: "PUT",
-      body: { status, reason },
-    });
+  /** Usa los casos de uso reales de M5; cada operación deja su evento en el outbox local. */
+  async updateStatus({ ticketId, status, message, takeOwnership = false }) {
+    const base = `/api/v1/tickets/${ticketId}`;
+    if (status === "IN_PROGRESS") return request(`${base}/assign`, { method: "POST" });
+    if (takeOwnership) await request(`${base}/assign`, { method: "POST" });
+    if (status === "WAITING_FOR_INFORMATION") {
+      return request(`${base}/request-information`, { method: "POST", body: { message } });
+    }
+    if (status === "COMPLETED") {
+      return request(`${base}/complete`, { method: "POST", body: { resolution: message } });
+    }
+    if (status === "REJECTED") {
+      return request(`${base}/reject`, { method: "POST", body: { reason: message } });
+    }
+    throw new Error("Estado de ticket no soportado.");
   },
 };
 
@@ -1499,12 +1475,15 @@ export const portalService = {
 
   async debts({ taxpayerId, status = "" }) {
     const params = new URLSearchParams({ status });
-    const [debts, bills] = await Promise.all([
+    const [debts, bills, concepts] = await Promise.all([
       request(`/api/v1/portal/${taxpayerId}/debts?${params}`),
       request(`/api/v1/portal/${taxpayerId}/bills`),
+      allPages("/api/v1/tax-concepts"),
     ]);
+    const conceptById = new Map(concepts.map((concept) => [concept.id, concept]));
     return debts.map((debt) => ({
       ...debt,
+      conceptName: conceptById.get(debt.conceptId)?.name ?? debt.conceptName,
       billId: bills.find((bill) => bill.debtId === debt.id)?.id ?? null,
     }));
   },
@@ -1532,11 +1511,49 @@ export const portalService = {
   },
 
   async paymentPlans({ taxpayerId }) {
-    return request(`/api/v1/portal/${taxpayerId}/payment-plans`);
+    const requests = await allPages(`/api/v1/taxpayers/${taxpayerId}/payment-plan-requests`);
+    return Promise.all(requests.map(async (row) => {
+      const [debts, plan, schedule] = await Promise.all([
+        request(`/api/v1/payment-plan-requests/${row.requestId}/debts`).catch(() => []),
+        row.planId ? request(`/api/v1/payment-plans/${row.planId}`) : null,
+        row.planId ? request(`/api/v1/payment-plans/${row.planId}/installments`) : [],
+      ]);
+      return {
+        ...row,
+        debts,
+        debtIds: debts.map((debt) => debt.id),
+        lifecycle: plan?.lifecycle ?? null,
+        downPayment: plan ? Number(plan.downPaymentAmount) : Number(row.downPayment),
+        financedAmount: plan ? Number(plan.financedPrincipalAmount) : Number(row.estimatedFinancedAmount),
+        interestAmount: plan ? Number(plan.financingInterestAmount) : Number(row.estimatedInterest),
+        totalAmount: plan ? Number(plan.totalPlanAmount) : Number(row.totalAmount),
+        schedule: schedule.map((installment) => ({
+          ...installment,
+          amount: Number(installment.totalAmount),
+        })),
+      };
+    }));
   },
 
   async exemptions({ taxpayerId }) {
-    return request(`/api/v1/portal/${taxpayerId}/exemptions`);
+    const [requests, granted, concepts] = await Promise.all([
+      allPages(`/api/v1/taxpayers/${taxpayerId}/exemption-requests`),
+      request(`/api/v1/taxpayers/${taxpayerId}/exemptions`),
+      allPages("/api/v1/tax-concepts"),
+    ]);
+    return Promise.all(requests.map(async (row) => {
+      const approval = granted.find((item) => Number(item.requestId) === Number(row.requestId));
+      const concept = concepts.find((item) => Number(item.id) === Number(row.conceptId));
+      const documents = await request(`/api/v1/exemption-requests/${row.requestId}/documents`);
+      return {
+        ...row,
+        conceptName: concept?.name ?? row.conceptName,
+        percentage: approval?.percentage ?? null,
+        validFrom: approval?.validFrom ?? null,
+        validUntil: approval?.validUntil ?? null,
+        attachments: documents,
+      };
+    }));
   },
 
   async benefits({ taxpayerId }) {
@@ -1554,13 +1571,13 @@ export const portalService = {
   // ---------------------------------------------------------------- Trámites
 
   /** Simulación previa: el ciudadano ve la cuota antes de mandar la solicitud. */
-  simulatePaymentPlan({ totalDebt, installments, downPayment = 0 }) {
-    return paymentPlanService.simulate({ totalDebt, installments, downPayment });
+  async simulatePaymentPlan({ taxpayerId, debtIds, installments }) {
+    return paymentPlanService.simulate({ taxpayerId, debtIds, installments });
   },
 
   /** Pedir financiar deudas en cuotas → publica paymentPlanRequested. */
-  async requestPaymentPlan({ taxpayerId, debtIds, installments, downPayment = 0 }) {
-    return paymentPlanService.request({ taxpayerId, debtIds, installments, downPayment });
+  async requestPaymentPlan({ taxpayerId, debtIds, installments }) {
+    return paymentPlanService.request({ taxpayerId, debtIds, installments });
   },
 
   async previewElectronicPayment({ debtId, paymentMethod, amount }) {

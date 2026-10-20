@@ -28,6 +28,7 @@ class PaymentPlanFlowTests {
     @Autowired PaymentPlanRepository plans;
     @Autowired PaymentPlanDebtRepository planDebts;
     @Autowired InstallmentRepository installments;
+    @Autowired PaymentPlanRequestDebtController requestDebtController;
 
     @BeforeEach void authenticate() {
         var authorities=List.of("RENTAS","SUPERVISOR","CASHIER").stream().map(x->new SimpleGrantedAuthority("ROLE_"+x)).toList();
@@ -49,6 +50,25 @@ class PaymentPlanFlowTests {
         assertThat(planDebts.findByPaymentPlanId(plan.id)).singleElement();
         assertThat(installments.findByPaymentPlanIdOrderByNumber(plan.id)).extracting(x->x.type)
             .containsExactly(InstallmentType.DOWN_PAYMENT,InstallmentType.REGULAR,InstallmentType.REGULAR);
+    }
+
+    @Test void requestDebtsShowRealConceptAndAreLimitedToTheirOwner() {
+        Debt debt=debt("PLAN-REQUEST-DETAIL-OWNER","PLAN-REQUEST-DETAIL-CONCEPT");
+        PaymentPlanRequest request=workflow.request(new ApiDtos.CreatePaymentPlanRequest(debt.taxpayerId,List.of(debt.id),2));
+        var taxpayerRole=List.of(new SimpleGrantedAuthority("ROLE_TAXPAYER"));
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+            new AuthenticatedIdentity("owner",debt.taxpayerId),null,taxpayerRole));
+
+        assertThat(requestDebtController.list(request.id)).singleElement().satisfies(item -> {
+            assertThat(item.id()).isEqualTo(debt.id);
+            assertThat(item.conceptName()).isEqualTo("PLAN-REQUEST-DETAIL-CONCEPT");
+            assertThat(item.balanceAtRequest()).isEqualByComparingTo("100.00");
+        });
+
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+            new AuthenticatedIdentity("other",debt.taxpayerId+1),null,taxpayerRole));
+        assertThatThrownBy(()->requestDebtController.list(request.id))
+            .isInstanceOfSatisfying(BusinessException.class,exception->assertThat(exception.code).isEqualTo("FORBIDDEN_OWNERSHIP"));
     }
 
     @Test void installmentPaymentReducesOnlyItsPrincipalAndBlocksDirectDebtPayment() {
