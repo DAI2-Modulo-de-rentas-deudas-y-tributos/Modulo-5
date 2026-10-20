@@ -1,5 +1,11 @@
 # Contratos de integración de M5 — Rentas
 
+> **Actualización 17/10/2026:** este documento conserva contratos históricos
+> de la primera entrega. Para el envelope saliente vigente de Core y el estado
+> de adaptación local de M2/M4, ver `../contracts/events/README.md` y
+> `../contracts/schemas/common-event-envelope.schema.json`. M1/M7/M8 entrantes
+> y la entrega real por RabbitMQ siguen pendientes de acuerdo/implementación.
+
 Este documento registra únicamente contratos externos confirmados. M5 deserializa cada contrato en su DTO de módulo, lo valida y recién después lo normaliza/mapea a su modelo interno. Las entidades JPA no se usan como payloads y el adaptador de publicación continúa desacoplado de Kafka, RabbitMQ u otro broker concreto.
 
 ## Confirmed contracts

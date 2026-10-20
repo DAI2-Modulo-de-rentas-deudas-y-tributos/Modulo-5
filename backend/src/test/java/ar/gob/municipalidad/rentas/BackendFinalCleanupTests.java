@@ -115,11 +115,12 @@ class BackendFinalCleanupTests {
     @Test void unallocatedPaymentsAreConfirmedAndSupportExactFiltersAndPaging() throws Exception {
         TaxpayerReference owner=taxpayer("UNALLOCATED-OWNER",TaxpayerStatus.ACTIVE);
         TaxpayerReference other=taxpayer("UNALLOCATED-OTHER",TaxpayerStatus.ACTIVE);
-        Payment expected=payment(owner,"UNALLOC-EXACT",PaymentStatus.CONFIRMED,"125.00","25.00",OffsetDateTime.now());
+        Payment expected=payment(owner,"UNALLOC-EXACT",PaymentStatus.CONFIRMED,"125.00","25.00",
+            OffsetDateTime.of(2026,10,19,23,30,0,0,ZoneOffset.ofHours(-3)));
         payment(owner,"UNALLOC-REVERSED",PaymentStatus.REVERSED,"125.00","25.00",OffsetDateTime.now());
         payment(owner,"UNALLOC-ZERO",PaymentStatus.CONFIRMED,"125.00","0.00",OffsetDateTime.now());
         payment(other,"UNALLOC-OTHER",PaymentStatus.CONFIRMED,"125.00","25.00",OffsetDateTime.now());
-        String session=demo.token(DemoRole.RENTAS),today=LocalDate.now().toString();SecurityContextHolder.clearContext();
+        String session=demo.token(DemoRole.RENTAS),today=expected.paidAt.toLocalDate().toString();SecurityContextHolder.clearContext();
 
         mvc.perform(get("/api/v1/payments/unallocated").header("X-Demo-Session",session)
                 .param("taxpayerId",owner.id.toString()).param("amount","125.00").param("reference",expected.receiptNumber)

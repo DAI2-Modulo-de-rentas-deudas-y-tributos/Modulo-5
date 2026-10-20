@@ -117,6 +117,8 @@ class ExemptionHistoryTests {
             .andExpect(jsonPath("$.entries[2].message").doesNotExist());
         mvc.perform(get("/api/v1/exemption-requests/{id}",request.id).header("X-Demo-Session",owner))
             .andExpect(status().isOk()).andExpect(jsonPath("$.resolutionReason").doesNotExist());
+        mvc.perform(get("/api/v1/taxpayers/{id}/exemption-requests",taxpayer.id).header("X-Demo-Session",owner))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.content[0].resolutionReason").doesNotExist());
         mvc.perform(get("/api/v1/exemption-requests/{id}/history",request.id).header("X-Demo-Session",rentas))
             .andExpect(status().isOk()).andExpect(jsonPath("$.entries[2].message").value("OBSERVACIÓN INTERNA RESERVADA"));
         mvc.perform(get("/api/v1/exemption-requests/{id}",request.id).header("X-Demo-Session",rentas))

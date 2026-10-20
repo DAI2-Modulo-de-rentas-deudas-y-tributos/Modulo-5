@@ -19,6 +19,24 @@ afterEach(() => {
 });
 
 describe("previsualización del lote", () => {
+  it("envía la misma corrida previsualizada y no crea otra", async () => {
+    const backend = instalarBackendFalso({
+      "POST /api/v1/liquidation-runs/{id}/submit": { id: 55, status: "SUBMITTED" },
+    });
+    const preview = {
+      run: { id: 55 },
+      items: [{ taxpayerId: 101, amount: 20000 }],
+      errors: [], totals: { toGenerate: 1, skipped: 0, amount: 20000 },
+    };
+
+    const result = await settlementService.submitBatch(preview);
+
+    expect(backend.llamadas).toEqual([{
+      metodo: "POST", ruta: "/api/v1/liquidation-runs/55/submit", cuerpo: null,
+    }]);
+    expect(result.run.status).toBe("SUBMITTED");
+  });
+
   it("resuelve el concepto y el padrón antes de crear la corrida", async () => {
     const backend = instalarBackendFalso({
       "GET /api/v1/tax-concepts": CONCEPTO,

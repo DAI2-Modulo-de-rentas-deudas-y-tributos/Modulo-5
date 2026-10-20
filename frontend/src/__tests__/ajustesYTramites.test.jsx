@@ -27,10 +27,10 @@ describe("ajustes y saldos a favor", () => {
     vi.unstubAllGlobals();
   });
 
-  it("aclara que autorizar y ejecutar son actos distintos", async () => {
+  it("aclara que la aprobación aplica el ajuste", async () => {
     await entrar(user, "mrivas", /ajustes y saldos/i);
 
-    expect(await screen.findByText(/autorizar y ejecutar son actos distintos/i)).toBeDefined();
+    expect(await screen.findByText(/la aprobación aplica el ajuste/i)).toBeDefined();
   });
 
   it("muestra el saldo a favor disponible", async () => {
@@ -84,8 +84,8 @@ describe("ajustes y saldos a favor", () => {
       expect(within(select).getAllByRole("option").length).toBeGreaterThan(1),
     );
     await user.selectOptions(select, within(select).getAllByRole("option")[1]);
-    await user.clear(within(dialog).getByLabelText(/importe ajustado/i));
-    await user.type(within(dialog).getByLabelText(/importe ajustado/i), "1000");
+    await user.clear(within(dialog).getByLabelText(/nuevo saldo pendiente/i));
+    await user.type(within(dialog).getByLabelText(/nuevo saldo pendiente/i), "1000");
     await user.type(within(dialog).getByLabelText(/motivo del ajuste/i), "Error de carga");
     await user.click(within(dialog).getByRole("button", { name: /^proponer$/i }));
 
@@ -111,7 +111,7 @@ describe("ajustes y saldos a favor", () => {
     const dialog = await screen.findByRole("dialog");
     await user.click(within(dialog).getByRole("button", { name: /confirmar/i }));
 
-    expect(await screen.findByText(/ajuste autorizado/i)).toBeDefined();
+    expect(await screen.findByText(/ajuste aprobado y aplicado/i)).toBeDefined();
     expect(screen.queryByRole("button", { name: /^autorizar$/i })).toBeNull();
   });
 });
@@ -137,10 +137,18 @@ describe("trámite de documentación en exenciones", () => {
   });
 
   it("pedir documentación exige decir cuál falta", async () => {
+    instalarBackendFalso({
+      "GET /api/v1/exemption-requests": pagina([{
+        id: 600, taxpayerId: 123, taxConceptId: 1, requestedPercentage: 100,
+        requestedFrom: "2026-09-01", requestedUntil: "2027-08-31",
+        status: "UNDER_REVIEW",
+      }]),
+    });
     await entrar(user, "mrivas", /exenciones/i);
     await user.click((await screen.findAllByRole("button", { name: /trámite/i }))[0]);
 
     const dialog = await screen.findByRole("dialog");
+    await user.selectOptions(within(dialog).getByLabelText(/acción/i), "REQUIRE");
     await user.click(within(dialog).getByRole("button", { name: /confirmar/i }));
 
     expect(await within(dialog).findByText(/indicá qué documentación falta/i)).toBeDefined();
@@ -155,13 +163,14 @@ describe("trámite de documentación en exenciones", () => {
         return { id: 600, status: "DOCUMENTATION_REQUIRED" };
       },
       "GET /api/v1/exemption-requests": () => pagina([
-        { id: 600, taxpayerId: 123, taxConceptId: 1, status: pedida ? "DOCUMENTATION_REQUIRED" : "PENDING", requestedPercentage: 100, reason: "Situación socioeconómica", requestedFrom: "2026-09-01", requestedUntil: "2027-08-31", requestedAt: "2026-08-18T10:00:00-03:00" },
+        { id: 600, taxpayerId: 123, taxConceptId: 1, status: pedida ? "DOCUMENTATION_REQUIRED" : "UNDER_REVIEW", requestedPercentage: 100, reason: "Situación socioeconómica", requestedFrom: "2026-09-01", requestedUntil: "2027-08-31", requestedAt: "2026-08-18T10:00:00-03:00" },
       ]),
     });
     await entrar(user, "mrivas", /exenciones/i);
     await user.click((await screen.findAllByRole("button", { name: /trámite/i }))[0]);
 
     const dialog = await screen.findByRole("dialog");
+    await user.selectOptions(within(dialog).getByLabelText(/acción/i), "REQUIRE");
     await user.type(
       within(dialog).getByLabelText(/qué documentación falta/i),
       "Certificado de ingresos",

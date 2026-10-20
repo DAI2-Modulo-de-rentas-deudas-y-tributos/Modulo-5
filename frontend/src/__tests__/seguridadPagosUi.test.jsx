@@ -16,7 +16,7 @@ async function abrir(area, completado) {
     render(<RegisterPaymentModal taxpayerOptions={[{ value: "9", label: "QA" }]} onClose={() => {}} onDone={completado} />);
     await user.selectOptions(screen.getByLabelText(/contribuyente/i), "9");
     await user.type(screen.getByLabelText(/^importe/i), "100");
-    await user.selectOptions(screen.getByLabelText(/canal/i), "VENTANILLA");
+    await user.selectOptions(screen.getByLabelText(/medio de pago/i), "CASH");
   } else {
     render(<ChargeStep context={{ taxpayer: { id: 9, name: "QA", status: "ACTIVE" }, debts: [deuda], totals: { pendingCount: 1, outstanding: 100, overdue: 0 }, kind: "TAXPAYER", selectedDebtId: 51 }} cashier="QA" onCharged={completado} onCancel={() => {}} />);
     await user.selectOptions(screen.getByLabelText(/medio de pago/i), "CASH");
@@ -63,6 +63,18 @@ describe.each(["RENTAS", "CAJA"])("seguridad de la intención de pago en %s", (a
     expect(registrar.mock.calls[1][0].idempotencyKey).toBe(registrar.mock.calls[0][0].idempotencyKey);
     expect(completado).not.toHaveBeenCalled();
   });
+});
+
+it("Rentas exige el medio de pago antes de enviar el cobro", async () => {
+  const user = userEvent.setup();
+  const registrar = vi.spyOn(paymentService, "register");
+  vi.spyOn(debtService, "list").mockResolvedValue([]);
+  render(<RegisterPaymentModal taxpayerOptions={[{ value: "9", label: "QA" }]} onClose={() => {}} onDone={() => {}} />);
+  await user.selectOptions(screen.getByLabelText(/contribuyente/i), "9");
+  await user.type(screen.getByLabelText(/^importe/i), "100");
+  await user.click(screen.getByRole("button", { name: /^registrar$/i }));
+  expect(screen.getByText("Indicá el medio de pago.")).toBeDefined();
+  expect(registrar).not.toHaveBeenCalled();
 });
 
 describe("cobro de cuotas en Caja", () => {

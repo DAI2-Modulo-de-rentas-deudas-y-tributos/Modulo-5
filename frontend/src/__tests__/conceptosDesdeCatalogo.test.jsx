@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "../App.jsx";
-import { ingresarComoAgente } from "./helpers/ingresar.js";
+import { ingresarComoAgente, ingresarComoContribuyente } from "./helpers/ingresar.js";
 import { resetTaxConceptsCache } from "../hooks/useTaxConcepts.js";
 import { instalarBackendFalso } from "./fixtures/backendFalso.js";
 
@@ -20,6 +20,15 @@ async function entrar(user, usuario, modulo) {
   await waitFor(() => expect(screen.getByRole("heading", { name: /hola,/i })).toBeDefined());
   await user.click(screen.getByRole("link", { name: modulo }));
   await waitFor(() => expect(screen.queryByText(/cargando información/i)).toBeNull());
+}
+
+async function entrarAlPortalDeExenciones(user) {
+  render(<App />);
+  await ingresarComoContribuyente(user);
+  await user.click(await screen.findByRole("link", { name: /^exenciones$/i }));
+  await waitFor(() => expect(screen.queryByText(/cargando información/i)).toBeNull());
+  await user.click(await screen.findByRole("button", { name: /solicitar exención/i }));
+  return screen.findByRole("dialog");
 }
 
 /** Códigos ofrecidos por un combo de conceptos, sin la opción vacía del placeholder. */
@@ -46,10 +55,7 @@ describe("conceptos de los combos operativos", () => {
   });
 
   it("la nueva solicitud de exención ofrece los conceptos del catálogo", async () => {
-    await entrar(user, "mrivas", /^exenciones$/i);
-    await user.click(await screen.findByRole("button", { name: /nueva solicitud/i }));
-
-    const dialog = await screen.findByRole("dialog");
+    const dialog = await entrarAlPortalDeExenciones(user);
     const combo = within(dialog).getByLabelText(/concepto/i);
 
     await waitFor(() => expect(codigosDe(combo).length).toBeGreaterThan(0));
@@ -65,10 +71,7 @@ describe("conceptos de los combos operativos", () => {
     const baja = todos.find((c) => c.status !== "ACTIVE");
     expect(baja).toBeDefined();
 
-    await entrar(user, "mrivas", /^exenciones$/i);
-    await user.click(await screen.findByRole("button", { name: /nueva solicitud/i }));
-
-    const dialog = await screen.findByRole("dialog");
+    const dialog = await entrarAlPortalDeExenciones(user);
     const combo = within(dialog).getByLabelText(/concepto/i);
 
     await waitFor(() => expect(codigosDe(combo).length).toBeGreaterThan(0));
@@ -76,22 +79,19 @@ describe("conceptos de los combos operativos", () => {
   });
 
   it("registra la solicitud con un concepto elegido del catálogo", async () => {
-    await entrar(user, "mrivas", /^exenciones$/i);
-    await user.click(await screen.findByRole("button", { name: /nueva solicitud/i }));
-
-    const dialog = await screen.findByRole("dialog");
+    const dialog = await entrarAlPortalDeExenciones(user);
     const combo = within(dialog).getByLabelText(/concepto/i);
     await waitFor(() => expect(codigosDe(combo).length).toBeGreaterThan(0));
 
-    await user.selectOptions(within(dialog).getByLabelText(/ciudadano/i), codigoDelPrimerCiudadano(dialog));
     await user.selectOptions(combo, codigosDe(combo)[0]);
+    await user.clear(within(dialog).getByLabelText(/porcentaje solicitado/i));
     await user.type(within(dialog).getByLabelText(/porcentaje solicitado/i), "50");
     await user.type(within(dialog).getByLabelText(/vigente desde/i), "2027-01-01");
     await user.type(within(dialog).getByLabelText(/vigente hasta/i), "2027-12-31");
     await user.type(within(dialog).getByLabelText(/motivo/i), "Situación socioeconómica");
-    await user.click(within(dialog).getByRole("button", { name: /registrar solicitud/i }));
+    await user.click(within(dialog).getByRole("button", { name: /enviar solicitud/i }));
 
-    expect(await screen.findByText(/solicitud registrada/i)).toBeDefined();
+    expect(await screen.findByText(/solicitud enviada/i)).toBeDefined();
   });
 
   it("la liquidación y su generación masiva usan el mismo catálogo", async () => {
@@ -120,23 +120,13 @@ describe("conceptos de los combos operativos", () => {
     const { taxConfigService } = await import("../services/rentasService.js");
     const catalogo = (await taxConfigService.concepts()).map((c) => c.code);
 
-    await entrar(user, "mrivas", /^exenciones$/i);
-    await user.click(await screen.findByRole("button", { name: /nueva solicitud/i }));
-    const dialog = await screen.findByRole("dialog");
+    const dialog = await entrarAlPortalDeExenciones(user);
     const combo = within(dialog).getByLabelText(/concepto/i);
     await waitFor(() => expect(codigosDe(combo).length).toBeGreaterThan(0));
 
     codigosDe(combo).forEach((codigo) => expect(catalogo).toContain(codigo));
   });
 });
-
-/** Primer ciudadano del padrón, para completar el formulario sin fijar un id. */
-function codigoDelPrimerCiudadano(dialog) {
-  return within(within(dialog).getByLabelText(/ciudadano/i))
-    .getAllByRole("option")
-    .map((option) => option.value)
-    .filter(Boolean)[0];
-}
 
 describe("catálogo de conceptos del servicio", () => {
   beforeEach(() => {

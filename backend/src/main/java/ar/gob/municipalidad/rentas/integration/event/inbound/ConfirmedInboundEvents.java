@@ -43,14 +43,14 @@ public final class ConfirmedInboundEvents {
     public record M1RepresentationData(@NotNull Long representationId,@NotNull Long personId,@NotNull Long cuit,
         String scope,LocalDate from,LocalDate until,@NotBlank String status) {}
 
-    public record M2TicketUpdatedEvent(@NotBlank String specVersion,@NotBlank String eventId,
-        @NotBlank String eventType,@NotNull OffsetDateTime occurredAt,@NotNull @Valid Producer producer,
-        @NotBlank String subject,@NotNull @Valid M2TicketUpdatedData data) {}
-    public record M2TicketUpdatedData(@NotNull Long ticketId,Long citizenId,boolean isAnonymous,
+    public record M2TicketUpdatedEvent(@NotNull UUID eventId,@NotBlank String eventType,
+        String eventVersion,@NotNull OffsetDateTime occurredAt,@NotBlank String sourceModule,
+        UUID correlationId,UUID causationId,@NotNull @Valid M2TicketUpdatedData data) {}
+    public record M2TicketUpdatedData(@NotNull UUID ticketId,@NotBlank String publicId,UUID citizenId,boolean isAnonymous,
         @NotBlank String responsibleAreaId,@NotBlank String updateType,@NotBlank String currentStatus,
         @NotBlank String currentPriority,String publicMessage,JsonNode details,List<@Valid M2Attachment> attachments,
         @NotNull OffsetDateTime updatedAt) {}
-    public record M2Attachment(@NotNull Long attachmentId,@NotBlank String fileName,@NotBlank String contentType,
+    public record M2Attachment(@NotBlank String fileName,@NotBlank String contentType,
         @NotBlank String url,@NotNull Long sizeBytes) {}
 
     public record M8SocialBenefitUpdatedEvent(@NotBlank String eventId,@NotBlank String eventType,

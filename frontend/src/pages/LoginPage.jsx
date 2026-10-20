@@ -1,6 +1,5 @@
 import { useState } from "react";
-import { ArrowRight, LockKeyhole, Mail, UserRound } from "lucide-react";
-import BorderGlow from "../components/react-bits/BorderGlow.jsx";
+import { ArrowRight, Eye, EyeOff, LockKeyhole, Mail, UserRound } from "lucide-react";
 import "./LoginPage.css";
 import { useLocation, useNavigate, Navigate } from "react-router-dom";
 import FormField from "../components/ui/FormField.jsx";
@@ -8,18 +7,13 @@ import Alert from "../components/ui/Alert.jsx";
 import Button from "../components/common/Button.jsx";
 import logo from "../assets/logo.png";
 import { useAuth } from "../context/AuthContext.jsx";
-import { WORKSPACES, homePathForRole } from "../config/workspaces.js";
-
-// El ciudadano ingresa por defecto; los agentes eligen su área antes de autenticarse.
-const AREAS_AGENTE = ["PERSONAL", "SUPERVISOR", "CAJERO", "AUDITOR"];
+import { homePathForRole } from "../config/workspaces.js";
 
 export default function LoginPage() {
   const { login, isAuthenticated, user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
-  const [door, setDoor] = useState("ciudadano");
-  const [area, setArea] = useState("PERSONAL");
   const [form, setForm] = useState({ username: "", password: "" });
   const [verContrasena, setVerContrasena] = useState(false);
   const [errors, setErrors] = useState({});
@@ -30,27 +24,10 @@ export default function LoginPage() {
     return <Navigate to={location.state?.from ?? homePathForRole(user.role)} replace />;
   }
 
-  const esCiudadano = door === "ciudadano";
-  const areaActiva = esCiudadano ? "CONTRIBUYENTE" : area;
-
-  const espacio = WORKSPACES[areaActiva];
-
   const onChange = (event) => {
     const { name, value } = event.target;
     setForm((previous) => ({ ...previous, [name]: value }));
     setErrors((previous) => ({ ...previous, [name]: undefined }));
-  };
-
-  const cambiarPuerta = (siguiente) => {
-    setDoor(siguiente);
-    setErrors({});
-    setSubmitError(null);
-  };
-
-  const elegirArea = (siguiente) => {
-    setArea(siguiente);
-    setDoor("agente");
-    setSubmitError(null);
   };
 
   const validate = () => {
@@ -68,9 +45,7 @@ export default function LoginPage() {
 
     setSubmitting(true);
     try {
-      const { profile } = await login(form, {
-        accept: (perfil) => perfil.role === areaActiva,
-      });
+      const { profile } = await login(form);
       navigate(location.state?.from ?? homePathForRole(profile.role), { replace: true });
     } catch (caught) {
       setSubmitError(caught.message);
@@ -104,11 +79,10 @@ export default function LoginPage() {
         </div>
           </header>
           <div className="login-intro-copy">
-          <h1 id="login-intro-title">Tus tributos,<br />en un solo lugar.</h1>
-          <p className="login-description">
-            Consultá tus deudas, accedé a tus boletas y seguí tus gestiones con el municipio.
-          </p>
-
+            <h1 id="login-intro-title">Tu acceso a Rentas,<br />en un solo lugar.</h1>
+            <p className="login-description">
+              Ingresá con tu cuenta y accedé al espacio asignado a tu perfil.
+            </p>
           </div>
           <footer className="login-intro-footer">
             <p>Cerca tuyo. También en línea.</p>
@@ -125,35 +99,14 @@ export default function LoginPage() {
           </header>
           <div className="login-card">
             <div className="login-card-heading">
-              <span>{esCiudadano ? "Acceso ciudadano" : "Acceso municipal"}</span>
+              <span>Acceso unificado</span>
             </div>
-            <h2 id="login-title">{esCiudadano ? "Entrar al Portal" : "Iniciar sesión"}</h2>
+            <h2 id="login-title">Iniciar sesión</h2>
             <p className="login-card-description">
-              {esCiudadano
-                ? "Ingresá con el usuario que te asignó el municipio."
-                : "Seleccioná tu área e ingresá con tu usuario municipal."}
+              Usá tus credenciales. Te llevaremos automáticamente al portal o área de trabajo que te corresponde.
             </p>
 
             <form id="login-form" onSubmit={onSubmit} noValidate aria-labelledby="login-title" aria-busy={submitting} tabIndex={-1}>
-              {!esCiudadano && (
-                <fieldset className="login-areas" disabled={submitting}>
-                  <legend>Área de trabajo</legend>
-                  <div>
-                    {AREAS_AGENTE.map((clave) => (
-                      <button
-                        key={clave}
-                        type="button"
-                        aria-label={WORKSPACES[clave].label}
-                        aria-pressed={area === clave}
-                        onClick={() => elegirArea(clave)}
-                      >
-                        {{ PERSONAL: "Rentas", SUPERVISOR: "Supervisión", CAJERO: "Caja", AUDITOR: "Auditoría" }[clave]}
-                      </button>
-                    ))}
-                  </div>
-                </fieldset>
-              )}
-
               <div className="login-fields">
                 <div aria-live="polite" aria-atomic="true">
                   {submitError && (
@@ -163,7 +116,7 @@ export default function LoginPage() {
                 <FormField
                   label="Usuario"
                   name="username"
-                  placeholder="nombre.apellido"
+                  placeholder="Ingresá tu nombre de usuario"
                   value={form.username}
                   onChange={onChange}
                   error={errors.username}
@@ -190,51 +143,27 @@ export default function LoginPage() {
                       onClick={() => setVerContrasena((previous) => !previous)}
                       className="login-password-toggle"
                       aria-pressed={verContrasena}
+                      aria-controls="password"
                       disabled={submitting}
                     >
-                      {verContrasena ? "Ocultar" : "Mostrar"}
+                      {verContrasena ? <EyeOff size={16} aria-hidden="true" /> : <Eye size={16} aria-hidden="true" />}
+                      <span>{verContrasena ? "Ocultar" : "Mostrar"}</span>
                     </button>
                   }
                 />
-                <BorderGlow
-                  className="login-submit-glow"
-                  backgroundColor="#0F2C59"
-                  borderRadius={8}
-                  glowColor="215 70 70"
-                  colors={["#7199cf", "#b2cbed", "#4779b8"]}
-                  glowRadius={20}
-                  glowIntensity={0.85}
-                  edgeSensitivity={10}
-                  coneSpread={35}
-                  fillOpacity={0.15}
-                  animated
-                >
-                  <Button type="submit" loading={submitting} className="login-submit">
-                  {submitting ? "Verificando…" : esCiudadano ? "Ingresar al Portal" : `Entrar a ${espacio.label}`}
+                <Button type="submit" loading={submitting} className="login-submit">
+                  {submitting ? "Verificando…" : "Ingresar"}
                   {!submitting && <ArrowRight size={17} aria-hidden="true" />}
-                  </Button>
-                </BorderGlow>
+                </Button>
               </div>
               <p className="login-account-note">
-                Los campos son obligatorios. Si aún no tenés usuario, solicitá tu cuenta en la Dirección de Rentas.
+                El acceso se define según tu perfil. Si todavía no tenés usuario, solicitá tu cuenta en la Dirección de Rentas.
               </p>
             </form>
-
-            <div className="login-switch">
-              <p>{esCiudadano ? "¿Sos agente municipal?" : "¿Querés consultar tus tributos?"}</p>
-              <button
-                type="button"
-                onClick={() => cambiarPuerta(esCiudadano ? "agente" : "ciudadano")}
-                disabled={submitting}
-              >
-                {esCiudadano ? "Trabajo en el municipio" : "Soy ciudadano o contribuyente"}
-                <ArrowRight size={15} aria-hidden="true" />
-              </button>
-            </div>
           </div>
           <p className="login-access-note">
             <LockKeyhole size={13} aria-hidden="true" />
-            {esCiudadano ? "Estás en el acceso para ciudadanos" : "Acceso exclusivo para agentes municipales"}
+            Tu perfil determina los permisos y el espacio de trabajo
           </p>
         </section>
       </main>

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
 import Card from "../../components/common/Card.jsx";
 import DataTable from "../../components/common/DataTable.jsx";
@@ -14,11 +14,6 @@ import useTaxpayerIndex from "../../hooks/useTaxpayerIndex.js";
 import { paymentPlanConfigurationService, paymentPlanService } from "../../services/rentasService.js";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { formatCurrency, formatDateTime } from "../../lib/format.js";
-
-const INSTALLMENT_OPTIONS = [3, 6, 9, 12, 18].map((n) => ({
-  value: String(n),
-  label: `${n} cuotas`,
-}));
 
 const STEPS = [
   { label: "Solicitud" },
@@ -53,7 +48,7 @@ export default function PlanesPage() {
       header: "Deudas",
       render: (row) => (
         <span className="text-[12px] text-neutral-500 tabular-nums">
-          {row.debtIds.map((id) => `#${id}`).join(", ")}
+          {row.debtIds.length ? row.debtIds.map((id) => `#${id}`).join(", ") : "No informado por la API"}
         </span>
       ),
     },
@@ -310,7 +305,6 @@ function EscalatePlanModal({ plan, taxpayerName, escalatedBy, onClose, onDone })
 
 function ResolvePlanModal({ plan, taxpayerName, onClose, onDone }) {
   const { user } = useAuth();
-  const [installments, setInstallments] = useState(String(plan.installments));
   const [decision, setDecision] = useState("GRANTED");
   const [reason, setReason] = useState("");
   const [error, setError] = useState(null);
@@ -320,18 +314,10 @@ function ResolvePlanModal({ plan, taxpayerName, onClose, onDone }) {
   const standard = (configurations ?? []).find((item) => item.active) ?? configurations?.[0];
   const exceptional = user.role === "SUPERVISOR" && plan.internalStatus === "PENDING_SUPERVISOR";
 
-  const simulation = useMemo(
-    () =>
-      paymentPlanService.simulate({
-        totalDebt: plan.totalDebt,
-        installments,
-        // El anticipo lo ofreció el contribuyente al solicitar: la resolución lo respeta.
-        downPayment: plan.downPayment,
-      }),
-    [plan.totalDebt, plan.downPayment, installments],
-  );
-
-  const currentStep = decision === "REJECTED" ? 2 : installments ? 1 : 0;
+  const financedAmount = Number(plan.estimatedFinancedAmount ?? plan.totalDebt - plan.downPayment);
+  const interestAmount = Number(plan.estimatedInterest ?? 0);
+  const installmentAmount = (financedAmount + interestAmount) / plan.installments;
+  const currentStep = decision === "REJECTED" ? 2 : 1;
 
   const onSubmit = async (event) => {
     event.preventDefault();
@@ -346,8 +332,7 @@ function ResolvePlanModal({ plan, taxpayerName, onClose, onDone }) {
         await paymentPlanService.resolve({
           requestId: plan.requestId,
           status: decision,
-          installments: Number(installments),
-          downPayment: plan.downPayment,
+          installments: plan.installments,
           reason,
           resolvedBy: user.username,
           // El servicio rechaza que un analista resuelva una solicitud ya derivada.
@@ -365,7 +350,7 @@ function ResolvePlanModal({ plan, taxpayerName, onClose, onDone }) {
     <Modal
       open
       title={`Solicitud #${plan.requestId}`}
-      description={`${taxpayerName} · ${formatCurrency(plan.totalDebt)} en ${plan.debtIds.length} deudas`}
+      description={`${taxpayerName} · ${formatCurrency(plan.totalDebt)} · ${plan.installments} cuotas solicitadas`}
       onClose={onClose}
       footer={
         <>
@@ -397,7 +382,7 @@ function ResolvePlanModal({ plan, taxpayerName, onClose, onDone }) {
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-amber-700">Excepción solicitada</p>
             <p className="mt-2 text-[13px] text-amber-900">
-              {plan.installments} cuotas · anticipo {formatCurrency(plan.downPayment)}
+              {plan.installments} cuotas · anticipo mínimo estimado {formatCurrency(plan.downPayment)}
               {plan.exceptionReason ? ` · ${plan.exceptionReason}` : ""}
             </p>
           </div>
@@ -419,15 +404,9 @@ function ResolvePlanModal({ plan, taxpayerName, onClose, onDone }) {
 
       {decision === "GRANTED" ? (
         <>
-          <FormField
-            label="Cantidad de cuotas"
-            name="installments"
-            type="select"
-            value={installments}
-            onChange={(event) => setInstallments(event.target.value)}
-            options={INSTALLMENT_OPTIONS}
-            required
-          />
+          <p className="text-[13px] text-neutral-600">
+            La solicitud es por {plan.installments} cuotas. Su cantidad no cambia al otorgarla.
+          </p>
 
           <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-4">
             <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-neutral-400">
@@ -437,35 +416,35 @@ function ResolvePlanModal({ plan, taxpayerName, onClose, onDone }) {
               <div>
                 <p className="text-[12px] text-neutral-400">Cuotas</p>
                 <p className="text-[18px] font-bold tabular-nums text-[#0F2C59]">
-                  {simulation.installments}
+                  {plan.installments}
                 </p>
               </div>
               <div>
                 <p className="text-[12px] text-neutral-400">Valor cuota</p>
                 <p className="text-[18px] font-bold tabular-nums text-[#0F2C59]">
-                  {formatCurrency(simulation.installmentAmount)}
+                  {formatCurrency(installmentAmount)}
                 </p>
               </div>
               <div>
                 <p className="text-[12px] text-neutral-400">Total con interés</p>
                 <p className="text-[18px] font-bold tabular-nums text-[#D63031]">
-                  {formatCurrency(simulation.totalAmount)}
+                  {formatCurrency(plan.totalAmount)}
                 </p>
               </div>
             </div>
-            {simulation.downPayment > 0 && (
+            {plan.downPayment > 0 && (
               <div className="mt-3 flex items-center justify-between border-t border-neutral-200 pt-3 text-[13px]">
                 <span className="text-neutral-500">
-                  Anticipo ofrecido por el contribuyente
+                  Anticipo mínimo estimado
                 </span>
                 <span className="font-semibold tabular-nums text-neutral-800">
-                  {formatCurrency(simulation.downPayment)}
+                  {formatCurrency(plan.downPayment)}
                 </span>
               </div>
             )}
             <p className="mt-3 text-[12px] text-neutral-400">
-              Interés aplicado: {(simulation.interestRate * 100).toFixed(0)}% sobre{" "}
-              {formatCurrency(simulation.financedAmount)} financiados.
+              Interés estimado: {formatCurrency(interestAmount)} sobre{" "}
+              {formatCurrency(financedAmount)} financiados. El monto definitivo se confirma al otorgar.
             </p>
           </div>
         </>

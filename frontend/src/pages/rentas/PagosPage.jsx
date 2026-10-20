@@ -11,14 +11,8 @@ import FormField from "../../components/ui/FormField.jsx";
 import useResource from "../../hooks/useResource.js";
 import useTaxpayerIndex from "../../hooks/useTaxpayerIndex.js";
 import { debtService, paymentService, reconciliationService } from "../../services/rentasService.js";
+import { PAYMENT_METHODS } from "../../config/catalogosDominio.js";
 import { formatCurrency, formatDateTime } from "../../lib/format.js";
-
-const CHANNELS = [
-  { value: "VENTANILLA", label: "Ventanilla" },
-  { value: "TRANSFERENCIA", label: "Transferencia" },
-  { value: "HOMEBANKING", label: "Homebanking" },
-  { value: "DEBITO_AUTOMATICO", label: "Débito automático" },
-];
 
 /**
  * Pagos: el corazón operativo del área.
@@ -57,14 +51,15 @@ export default function PagosPage() {
     },
     { key: "taxpayer", header: "Contribuyente", render: (row) => nameOf(row.taxpayerId) },
     {
-      key: "debtId",
+      key: "allocationStatus",
       header: "Imputación",
-      render: (row) =>
-        row.debtId ? (
-          <span className="tabular-nums text-neutral-600">Deuda #{row.debtId}</span>
-        ) : (
-          <StatusBadge tone="warning" label="Sin imputar" />
-        ),
+      render: (row) => {
+        if (row.status === "REVERSED") return <StatusBadge label="Reversado" />;
+        if (Number(row.unallocatedAmount) > 0) {
+          return <StatusBadge tone="warning" label={Number(row.allocatedAmount) > 0 ? "Parcialmente imputado" : "Sin imputar"} />;
+        }
+        return <StatusBadge label="Imputado" />;
+      },
     },
     {
       key: "amountPaid",
@@ -85,7 +80,7 @@ export default function PagosPage() {
       align: "right",
       render: (row) => (
         <div className="flex justify-end gap-2">
-          {!row.allocated && row.status !== "REVERSED" && (
+          {Number(row.unallocatedAmount) > 0 && row.status !== "REVERSED" && (
             <Button
               size="sm"
               variant="secondary"
@@ -168,9 +163,9 @@ export default function PagosPage() {
           onDone={(payment) =>
             afterAction(
               "Pago registrado",
-              payment.allocated
-                ? `${payment.receiptNumber} imputado a la deuda #${payment.debtId}.`
-                : `${payment.receiptNumber} quedó sin imputar: asignalo a una deuda cuando se identifique.`,
+              Number(payment.unallocatedAmount) > 0
+                ? `${payment.receiptNumber} quedó sin imputar: asignalo a una deuda cuando se identifique.`
+                : `${payment.receiptNumber} quedó imputado.`,
             )
           }
         />
@@ -244,8 +239,7 @@ export function RegisterPaymentModal({ taxpayerOptions, onClose, onDone }) {
     taxpayerId: "",
     debtId: "",
     amountPaid: "",
-    channel: "",
-    paidAt: "",
+    method: "",
   });
   const [errors, setErrors] = useState({});
   const [submitError, setSubmitError] = useState(null);
@@ -277,7 +271,7 @@ export function RegisterPaymentModal({ taxpayerOptions, onClose, onDone }) {
     const found = {};
     if (!form.taxpayerId) found.taxpayerId = "Seleccioná el contribuyente.";
     if (!(Number(form.amountPaid) > 0)) found.amountPaid = "Ingresá un importe mayor a cero.";
-    if (!form.channel) found.channel = "Indicá el canal de cobro.";
+    if (!form.method) found.method = "Indicá el medio de pago.";
     if (selectedDebt && Number(form.amountPaid) > selectedDebt.outstandingAmount) {
       found.amountPaid = "El importe supera el saldo de la deuda.";
     }
@@ -359,23 +353,16 @@ export function RegisterPaymentModal({ taxpayerOptions, onClose, onDone }) {
             required
           />
           <FormField
-            label="Canal"
-            name="channel"
+            label="Medio de pago"
+            name="method"
             type="select"
-            value={form.channel}
+            value={form.method}
             onChange={onChange}
-            options={CHANNELS}
-            error={errors.channel}
+            options={PAYMENT_METHODS}
+            error={errors.method}
             required
           />
         </div>
-        <FormField
-          label="Fecha de pago"
-          name="paidAt"
-          type="datetime-local"
-          value={form.paidAt}
-          onChange={onChange}
-        />
 
         {selectedDebt && (
           <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-4 text-[13px] text-neutral-600">

@@ -258,13 +258,14 @@ function adaptRow(path, row) {
   if (path.includes("/credit-balances")) return { ...row, amount: row.availableAmount };
   if (path.includes("/payment-plan-requests")) return { ...requestWorkflow(row), requestId: row.id, debtIds: row.debtIds ?? [], debts: row.debts ?? [], installments: row.requestedInstallments, totalDebt: row.totalDebt ?? row.totalDebtAtRequest, downPayment: row.downPayment ?? row.estimatedDownPayment ?? 0, totalAmount: row.estimatedTotalAmount, planId: row.paymentPlanId };
   if (path.includes("/refinancing-requests")) return { ...requestWorkflow(row), requestId: row.id, planId: row.originalPlanId, installments: row.requestedInstallments, outstandingAmount: row.outstandingPrincipalAtRequest, totalAmount: row.estimatedTotalAmount };
+  if (pathname.endsWith("/payment-plans/simulations") || pathname.endsWith("/refinancing/simulations")) return row;
   if (path.includes("/payment-plans") && path.includes("/installments")) return { ...row, status: INSTALLMENT_STATUS_FROM_API[row.status] ?? row.status };
   if (path.includes("/payment-plans")) return { ...row, planId: row.id, installments: row.installmentCount, totalAmount: row.totalPlanAmount, outstandingAmount: row.outstandingPlanAmount, lifecycle: PLAN_STATUS_FROM_API[row.status] ?? row.status };
-  if (path.includes("/adjustments")) return { ...row, requestId: row.id, status: row.status === "APPROVED" ? "EXECUTED" : row.status };
+  if (path.includes("/adjustments")) return { ...row, requestId: row.id };
   if (path.includes("/exemption")) {
     const pending = ["PENDING", "UNDER_REVIEW", "DOCUMENTATION_REQUIRED", "PENDING_RESOLUTION"].includes(row.status);
-    const internalStatus = ({ PENDING: "PENDING_REVIEW", UNDER_REVIEW: "PENDING_REVIEW" })[row.status] ?? row.status;
-    return { ...row, requestId: row.requestId ?? row.id, citizenId: row.taxpayerId, conceptId: row.taxConceptId, conceptCode: row.conceptCode ?? `#${row.taxConceptId}`, conceptName: row.conceptName ?? `Concepto #${row.taxConceptId}`, requestedPercentage: row.requestedPercentage ?? row.percentage, requestedFrom: row.requestedFrom ?? row.validFrom, requestedUntil: row.requestedUntil ?? row.validUntil, status: pending ? "REQUESTED" : row.status, internalStatus, attachments: row.attachments ?? [], hasSocialBenefit: row.hasSocialBenefit ?? false };
+    const internalStatus = ({ PENDING: "PENDING", UNDER_REVIEW: "PENDING_REVIEW" })[row.status] ?? row.status;
+    return { ...row, requestId: row.requestId ?? row.id, citizenId: row.taxpayerId, conceptId: row.taxConceptId, conceptCode: row.conceptCode ?? `#${row.taxConceptId}`, conceptName: row.conceptName ?? `Concepto #${row.taxConceptId}`, requestedPercentage: row.requestedPercentage ?? row.percentage, requestedFrom: row.requestedFrom ?? row.validFrom, requestedUntil: row.requestedUntil ?? row.validUntil, backendStatus: row.status, status: pending ? "REQUESTED" : row.status, internalStatus, attachments: row.attachments ?? [], hasSocialBenefit: row.hasSocialBenefit ?? false };
   }
   // TicketResponse no expone adjuntos ni la información que el ciudadano adjuntó en M2:
   // se representa como ausencia, no se inventa.

@@ -99,11 +99,7 @@ describe("ajuste de deuda", () => {
     expect(rechazar.llamadas[0].cuerpo).toEqual({ reason: "No corresponde" });
   });
 
-  it("ejecutar sólo relee el ajuste: el backend ya lo aplicó al aprobarlo", async () => {
-    const backend = instalarBackendFalso({ "GET /api/v1/adjustments/{id}": { id: 1, status: "APPROVED" } });
-
-    await debtAdjustmentService.execute({ adjustmentId: 1, executedBy: "mrivas" });
-
-    expect(backend.llamadas).toEqual([{ metodo: "GET", ruta: "/api/v1/adjustments/1", cuerpo: null }]);
+  it("no ofrece una ejecución posterior ficticia: aprobar aplica el ajuste", () => {
+    expect(debtAdjustmentService.execute).toBeUndefined();
   });
 });

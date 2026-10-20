@@ -18,8 +18,12 @@ class MigrationValidationTest {
         registry.add("spring.datasource.password",()->"");
     }
     @Test void flywaySchemaMatchesJpaModel() {
-        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(20);
-        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(19);
+        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(21);
+        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(20);
+        assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='ticket_case'",String.class))
+            .contains("public_id","correlation_id","last_source_event_id","last_external_updated_at");
+        assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='integration_event_log'",String.class))
+            .contains("business_key");
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='payment_reversal_request'",String.class))
             .contains("resolution_reason");
         assertThat(jdbc.queryForList("select code from tax_concept where code in ('TASA_SERVICIOS','ABL','PATENTE') order by code",String.class))
