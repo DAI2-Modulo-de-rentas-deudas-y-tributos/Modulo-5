@@ -103,7 +103,9 @@ class ConfirmedM7Consumer {
 
     @Transactional ExternalObligation consume(ConfirmedInboundEvents.M7InfractionConfirmedEvent event){
         validator.validate(event);
+        CatalogService.require(event.eventId().version()==4,"INVALID_EVENT_ID","eventId debe ser UUIDv4");
         CatalogService.require("infractionConfirmed".equals(event.eventType()),"UNSUPPORTED_EVENT_TYPE","Se esperaba infractionConfirmed");
+        CatalogService.require("1.0".equals(event.eventVersion()),"UNSUPPORTED_EVENT_VERSION","infractionConfirmed sólo admite eventVersion 1.0");
         CatalogService.require("transito".equals(event.sourceModule()),"INVALID_SOURCE_MODULE","infractionConfirmed sólo admite sourceModule transito");
         return obligations.consumeConfirmedInfraction(event);
     }

@@ -37,6 +37,8 @@ class ExternalPaymentEventsTests {
         assertThat(payload.path("data").path("debtId").asText()).isEqualTo("debt-"+debt.id);
         assertThat(payload.path("data").path("originId").asText()).isEqualTo("INF-EXACT-001");
         assertThat(payload.path("data").path("originType").asText()).isEqualTo("TRAFFIC_FINE");
+        assertThat(payload.path("data").path("infractionId").asText()).isEqualTo(payload.path("data").path("originId").asText());
+        assertFields(payload.path("data"),"paymentId","debtId","originType","originId","infractionId","amountApplied","paidAt","remainingBalance");
         assertThat(payload.path("data").path("amountApplied").decimalValue()).isEqualByComparingTo("60.00");
         assertThat(payload.path("data").path("remainingBalance").decimalValue()).isEqualByComparingTo("40.00");
         assertThat(events("debtSettled","M7",debt.id)).isEmpty();
@@ -50,6 +52,7 @@ class ExternalPaymentEventsTests {
         assertThat(Set.of(registered.id,settled.id)).hasSize(2);
         JsonNode payload=payload(settled);assertEnvelope(settled,payload,"debtSettled","Debt");
         assertThat(payload.path("data").path("originId").asText()).isEqualTo("INF-EXACT-002");
+        assertThat(payload.path("data").path("infractionId").asText()).isEqualTo(payload.path("data").path("originId").asText());
         assertThat(payload.path("data").path("outstandingBalance").decimalValue()).isZero();
     }
 
@@ -57,14 +60,33 @@ class ExternalPaymentEventsTests {
         TaxpayerReference taxpayer=taxpayer("M4-TOTAL");Debt debt=externalDebt(taxpayer,"M4",ExternalObligationType.PERMIT_FEE,"FEE-EXACT-001","80");
         Payment payment=payments.register(request(taxpayer.id,"80",new ApiDtos.AllocationRequest(debt.id,new BigDecimal("80"))));
 
-        assertThat(payload(event("paymentRegistered","M4",payment.id,debt.id)).path("data").path("originId").asText()).isEqualTo("FEE-EXACT-001");
-        assertThat(payload(events("debtSettled","M4",debt.id).get(0)).path("data").path("originId").asText()).isEqualTo("FEE-EXACT-001");
+        JsonNode registered=payload(event("paymentRegistered","M4",payment.id,debt.id)).path("data");
+        JsonNode settled=payload(events("debtSettled","M4",debt.id).get(0)).path("data");
+        assertThat(registered.path("originId").asText()).isEqualTo("FEE-EXACT-001");assertThat(registered.has("infractionId")).isFalse();
+        assertThat(settled.path("originId").asText()).isEqualTo("FEE-EXACT-001");assertThat(settled.has("infractionId")).isFalse();
+        assertFields(registered,"paymentId","debtId","originType","originId","amountApplied","paidAt","remainingBalance");
+        assertFields(settled,"debtId","citizenId","conceptCode","originType","originId","settledAt","remainingBalance","outstandingBalance");
     }
 
     @Test void localDebtDoesNotPublishTargetSpecificEvents(){
         TaxpayerReference taxpayer=taxpayer("LOCAL");Debt debt=localDebt(taxpayer,"50");Payment payment=payments.register(request(taxpayer.id,"50",new ApiDtos.AllocationRequest(debt.id,new BigDecimal("50"))));
         assertThat(eventsForPayment("paymentRegistered","M4",payment.id)).isEmpty();assertThat(eventsForPayment("paymentRegistered","M7",payment.id)).isEmpty();
         assertThat(events("debtSettled","M4",debt.id)).hasSize(1);assertThat(payloadUnchecked(events("debtSettled","M4",debt.id).get(0)).path("data").path("originType").asText()).isEqualTo("MUNICIPAL_TAX");
+    }
+
+    @Test void municipalDebtSettledRemainsOneSharedCoreEventForM8WithoutTrafficFields(){
+        TaxpayerReference taxpayer=taxpayer("M8-SHARED");Debt debt=localDebt(taxpayer,"50");
+        payments.register(request(taxpayer.id,"50",new ApiDtos.AllocationRequest(debt.id,new BigDecimal("50"))));
+
+        List<OutboxEvent> published=events("debtSettled","CORE",debt.id);
+        assertThat(published).hasSize(1);
+        assertThat(published.get(0).targetModule).isEqualTo("CORE");
+        JsonNode data=payloadUnchecked(published.get(0)).path("data");
+        assertThat(data.path("originType").asText()).isEqualTo("MUNICIPAL_TAX");
+        assertThat(data.path("infractionId").isMissingNode()).isTrue();
+        assertThat(data.path("remainingBalance").decimalValue()).isZero();
+        assertThat(data.path("outstandingBalance").decimalValue()).isZero();
+        assertFields(data,"debtId","citizenId","conceptCode","originType","originId","settledAt","remainingBalance","outstandingBalance");
     }
 
     @Test void mixedPaymentRoutesEachAllocationWithItsOwnAmount()throws Exception{
@@ -106,8 +128,30 @@ class ExternalPaymentEventsTests {
         assertEnvelope(event,payload(event),"paymentReversed","PaymentAllocation");
         assertThat(data.path("originType").asText()).isEqualTo("COMMERCIAL_FINE");
         assertThat(data.path("originId").asText()).isEqualTo("FINE-REVERSAL");
+        assertThat(data.has("infractionId")).isFalse();
         assertThat(data.path("reversedAmount").decimalValue()).isEqualByComparingTo("40.00");
         assertThat(data.path("remainingBalance").decimalValue()).isEqualByComparingTo("100.00");
+        assertFields(data,"paymentId","debtId","originType","originId","reversedAmount","reversedAt","remainingBalance","reason");
+    }
+
+    @Test void authorizedM7ReversalPublishesTrafficReferencesOnlyAfterExecution()throws Exception{
+        TaxpayerReference taxpayer=taxpayer("M7-REVERSAL");String infractionId=UUID.randomUUID().toString();
+        Debt debt=externalDebt(taxpayer,"transito",ExternalObligationType.TRAFFIC_INFRACTION,infractionId,"100");
+        Payment payment=payments.register(request(taxpayer.id,"40",new ApiDtos.AllocationRequest(debt.id,new BigDecimal("40"))));
+        PaymentReversalRequest reversal=reversals.request(payment.id,"Reversión autorizada");
+
+        assertThat(eventsForPayment("paymentReversed","CORE",payment.id)).isEmpty();
+        reversals.approve(reversal.id);reversals.execute(reversal.id);
+
+        List<OutboxEvent> events=eventsForPayment("paymentReversed","CORE",payment.id);
+        assertThat(events).hasSize(1);
+        JsonNode data=payload(events.get(0)).path("data");
+        assertThat(data.path("originType").asText()).isEqualTo("TRAFFIC_FINE");
+        assertThat(data.path("originId").asText()).isEqualTo(infractionId);
+        assertThat(data.path("infractionId").asText()).isEqualTo(infractionId);
+        assertThat(data.path("reversedAmount").decimalValue()).isEqualByComparingTo("40.00");
+        assertThat(data.path("remainingBalance").decimalValue()).isEqualByComparingTo("100.00");
+        assertFields(data,"paymentId","debtId","originType","originId","infractionId","reversedAmount","reversedAt","remainingBalance","reason");
     }
 
     @Test void rollbackLeavesNoPaymentAllocationOrOutboxEvent(){
@@ -128,5 +172,6 @@ class ExternalPaymentEventsTests {
     private List<OutboxEvent> events(String type,String target,Long debtId){return outbox.findAll().stream().filter(x->type.equals(x.eventType)&&"CORE".equals(x.targetModule)).filter(x->payloadUnchecked(x).path("data").path("debtId").asText().equals("debt-"+debtId)).toList();}
     private JsonNode payload(OutboxEvent event)throws Exception{return json.readTree(event.payload);}
     private JsonNode payloadUnchecked(OutboxEvent event){try{return payload(event);}catch(Exception ex){throw new AssertionError(ex);}}
+    private void assertFields(JsonNode data,String... expected){Set<String> actual=new HashSet<>();data.fieldNames().forEachRemaining(actual::add);assertThat(actual).containsExactlyInAnyOrder(expected);}
     private void assertEnvelope(OutboxEvent event,JsonNode tree,String type,String aggregate){assertThat(tree.path("eventId").asText()).isEqualTo(event.id.toString());assertThat(event.id.version()).isEqualTo(4);assertThat(tree.path("eventType").asText()).isEqualTo(type);assertThat(tree.path("eventVersion").asText()).isEqualTo("1.0");assertThat(tree.path("occurredAt").isTextual()).isTrue();assertThat(tree.path("sourceModule").asText()).isEqualTo("rentas");assertThat(tree.path("correlationId").isTextual()).isTrue();assertThat(tree.path("data").isObject()).isTrue();assertThat(tree.has("payload")).isFalse();assertThat(tree.has("timestamp")).isFalse();assertThat(event.targetModule).isEqualTo("CORE");assertThat(event.aggregateType).isEqualTo(aggregate);assertThat(event.aggregateId).isNotBlank();}
 }
