@@ -54,6 +54,32 @@ class PaymentPlanFlowTests {
             .containsExactly(InstallmentType.DOWN_PAYMENT,InstallmentType.REGULAR,InstallmentType.REGULAR);
     }
 
+    @Test void simulationMatchesPersistedInstallmentAndPlanTotalsConserveCentsAfterReversal() {
+        Debt debt=debt("PLAN-ROUNDING","PLAN-ROUNDING-CONCEPT","100.01");
+        ApiDtos.PaymentPlanSimulationResponse simulation=workflow.simulate(new ApiDtos.PaymentPlanSimulationRequest(debt.taxpayerId,List.of(debt.id),2));
+        PaymentPlan plan=grant(debt,2);
+        List<Installment> schedule=installments.findByPaymentPlanIdOrderByNumber(plan.id);
+
+        assertThat(simulation.regularInstallmentAmount()).isEqualByComparingTo(schedule.get(1).totalAmount);
+        assertThat(schedule.stream().map(x->x.totalAmount).reduce(BigDecimal.ZERO,BigDecimal::add)).isEqualByComparingTo(plan.totalPlanAmount);
+        assertThat(schedule.stream().map(x->x.principalAmount).reduce(BigDecimal.ZERO,BigDecimal::add)).isEqualByComparingTo(plan.originalPrincipalAmount);
+        assertThat(schedule.stream().map(x->x.interestAmount).reduce(BigDecimal.ZERO,BigDecimal::add)).isEqualByComparingTo(plan.financingInterestAmount);
+
+        Installment firstRegular=schedule.get(1);
+        Payment payment=payments.register(new ApiDtos.RegisterPaymentRequest(debt.taxpayerId,null,PaymentMethod.CASH,
+            new BigDecimal("5.04"),List.of(new ApiDtos.AllocationRequest(null,firstRegular.id,new BigDecimal("5.04")))));
+        PaymentAllocation allocation=paymentsAllocation(payment.id);
+        assertThat(allocation.principalApplied.add(allocation.interestApplied)).isEqualByComparingTo(allocation.amount);
+        assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("95.51");
+
+        PaymentReversalRequest reversal=reversals.request(payment.id,"Prueba de reversión monetaria");
+        reversals.approve(reversal.id);
+        reversals.execute(reversal.id);
+
+        assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("100.01");
+        assertThat(installments.findById(firstRegular.id).orElseThrow().paidAmount).isEqualByComparingTo("0.00");
+    }
+
     @Test void requestDebtsShowRealConceptAndAreLimitedToTheirOwner() {
         Debt debt=debt("PLAN-REQUEST-DETAIL-OWNER","PLAN-REQUEST-DETAIL-CONCEPT");
         PaymentPlanRequest request=workflow.request(new ApiDtos.CreatePaymentPlanRequest(debt.taxpayerId,List.of(debt.id),2));
@@ -146,5 +172,6 @@ class PaymentPlanFlowTests {
     private PaymentPlan grant(Debt debt,int count){PaymentPlanRequest request=workflow.request(new ApiDtos.CreatePaymentPlanRequest(debt.taxpayerId,List.of(debt.id),count));workflow.grant(request.id,null);return plans.findById(request.paymentPlanId).orElseThrow();}
     @Autowired PaymentAllocationRepository paymentAllocations;
     private PaymentAllocation paymentsAllocation(Long paymentId){return paymentAllocations.findByPaymentId(paymentId).get(0);}
-    private Debt debt(String externalId,String conceptCode){TaxpayerReference taxpayer=catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(TaxpayerType.CITIZEN,externalId,"123",null,"Persona "+externalId));TaxConcept concept=catalog.createConcept(new ApiDtos.CreateTaxConceptRequest(conceptCode,conceptCode,null,TaxConceptType.FEE,"M5"));TaxConfiguration config=catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(concept.id,CalculationType.FIXED,null,new BigDecimal("100"),null,null,true,true,LocalDate.now().minusDays(1),null));catalog.submit(config.id);catalog.approve(config.id);liquidations.create(new ApiDtos.LiquidationRequest(taxpayer.id,concept.id,YearMonth.now().toString(),BigDecimal.ZERO,LocalDate.now().plusDays(30)));return debts.findByTaxpayerId(taxpayer.id).get(0);}
+    private Debt debt(String externalId,String conceptCode){return debt(externalId,conceptCode,"100");}
+    private Debt debt(String externalId,String conceptCode,String amount){TaxpayerReference taxpayer=catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(TaxpayerType.CITIZEN,externalId,"123",null,"Persona "+externalId));TaxConcept concept=catalog.createConcept(new ApiDtos.CreateTaxConceptRequest(conceptCode,conceptCode,null,TaxConceptType.FEE,"M5"));TaxConfiguration config=catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(concept.id,CalculationType.FIXED,null,new BigDecimal(amount),null,null,true,true,LocalDate.now().minusDays(1),null));catalog.submit(config.id);catalog.approve(config.id);liquidations.create(new ApiDtos.LiquidationRequest(taxpayer.id,concept.id,YearMonth.now().toString(),BigDecimal.ZERO,LocalDate.now().plusDays(30)));return debts.findByTaxpayerId(taxpayer.id).get(0);}
 }

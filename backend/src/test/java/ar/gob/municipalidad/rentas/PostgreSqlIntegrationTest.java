@@ -324,6 +324,38 @@ class PostgreSqlIntegrationTest {
         assertThat(allocations.findAll().stream().filter(x->concurrent.id.equals(x.debtId)&&"ACTIVE".equals(x.status)).map(x->x.amount).reduce(BigDecimal.ZERO,BigDecimal::add)).isEqualByComparingTo("100.00");
     }
 
+    @Test void fractionalInstallmentSimulationPersistencePaymentAndReversalConserveCentsOnPostgreSql() {
+        authenticate();
+        Debt debt=debt("PG-MONEY-ROUNDING",null);
+        debt.originalAmount=debt.currentAmount=debt.outstandingBalance=new BigDecimal("100.01");
+        debts.saveAndFlush(debt);
+        workflow.createConfiguration(new ApiDtos.CreatePaymentPlanConfigurationRequest(2,2,new BigDecimal("10"),
+            new BigDecimal("12"),0,1,true,true,1,LocalDate.now().minusDays(1),null,true));
+
+        var simulation=workflow.simulate(new ApiDtos.PaymentPlanSimulationRequest(debt.taxpayerId,List.of(debt.id),2));
+        PaymentPlanRequest request=workflow.request(new ApiDtos.CreatePaymentPlanRequest(debt.taxpayerId,List.of(debt.id),2));
+        PaymentPlanRequest granted=workflow.grant(request.id,null);
+        PaymentPlan plan=planRepository.findById(granted.paymentPlanId).orElseThrow();
+        List<Installment> schedule=installments.findByPaymentPlanIdOrderByNumber(plan.id);
+
+        assertThat(simulation.regularInstallmentAmount()).isEqualByComparingTo("50.40");
+        assertThat(schedule.get(1).totalAmount).isEqualByComparingTo(simulation.regularInstallmentAmount());
+        assertThat(schedule.stream().map(x->x.totalAmount).reduce(BigDecimal.ZERO,BigDecimal::add)).isEqualByComparingTo(plan.totalPlanAmount);
+        assertThat(schedule.stream().map(x->x.principalAmount).reduce(BigDecimal.ZERO,BigDecimal::add)).isEqualByComparingTo(plan.originalPrincipalAmount);
+        assertThat(schedule.stream().map(x->x.interestAmount).reduce(BigDecimal.ZERO,BigDecimal::add)).isEqualByComparingTo(plan.financingInterestAmount);
+
+        Payment payment=payments.register(new ApiDtos.RegisterPaymentRequest(debt.taxpayerId,null,PaymentMethod.CASH,
+            new BigDecimal("5.04"),List.of(new ApiDtos.AllocationRequest(null,schedule.get(1).id,new BigDecimal("5.04")))));
+        PaymentAllocation allocation=allocations.findByPaymentId(payment.id).get(0);
+        assertThat(allocation.principalApplied.add(allocation.interestApplied)).isEqualByComparingTo(allocation.amount);
+        assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("95.51");
+
+        PaymentReversalRequest reversal=reversals.request(payment.id,"Prueba monetaria PostgreSQL");
+        reversals.approve(reversal.id);reversals.execute(reversal.id);
+        assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("100.01");
+        assertThat(installments.findById(schedule.get(1).id).orElseThrow().paidAmount).isEqualByComparingTo("0.00");
+    }
+
     @Test void planReversalAndCreditSingleExecutionLocksRunOnPostgreSql() throws Exception {
         authenticate();Debt planDebt=debt("PG-PLAN",null);List<Throwable> planFailures=runTogether(()->plans.grant(new ApiDtos.GrantPlanRequest(planDebt.id,3,BigDecimal.ZERO)),()->plans.grant(new ApiDtos.GrantPlanRequest(planDebt.id,3,BigDecimal.ZERO)));
         assertThat(planRepository.findAll().stream().filter(x->planDebt.id.equals(x.debtId)&&x.status==PaymentPlanStatus.ACTIVE)).hasSize(1);assertThat(planFailures.stream().filter(Objects::nonNull)).hasSize(1);
