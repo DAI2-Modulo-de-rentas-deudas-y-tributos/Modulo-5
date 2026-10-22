@@ -23,7 +23,7 @@ class FiscalProcessingController {
         int installmentsOverdue,int plansDefaulted,int skippedAlreadyProcessed,int errors) {}
     record ReconciliationItemRequest(@NotBlank String externalReference,@NotBlank String taxpayerDocument,
         @NotNull @Positive BigDecimal amount,@NotNull OffsetDateTime paidAt) {}
-    record ImportReconciliationRequest(@NotBlank String batchReference,@NotEmpty List<@Valid ReconciliationItemRequest> items) {}
+    record ImportReconciliationRequest(@NotBlank String batchReference,@NotEmpty List<@NotNull @Valid ReconciliationItemRequest> items) {}
     record ReconciliationItemResponse(Long id,Long batchId,String externalReference,String taxpayerDocument,BigDecimal amount,
         OffsetDateTime paidAt,ReconciliationStatus status,Long matchedPaymentId,String resolutionReason,String resolvedBy,OffsetDateTime resolvedAt) {}
     record ReconciliationBatchResponse(Long id,String batchReference,int totalItems,int reconciledItems,int observedItems,

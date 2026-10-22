@@ -20,7 +20,7 @@ class DemoAuthController {
     record BootstrapRequest(@NotBlank @Size(max=100) String username,@NotBlank @Size(min=8,max=100) String password,
         @NotBlank @Size(max=255) String displayName) {}
     record CreateUserRequest(@NotBlank @Size(max=100) String username,@NotBlank @Size(min=8,max=100) String password,
-        @NotBlank @Size(max=255) String displayName,@NotNull DemoRole role,Long taxpayerId) {}
+        @NotBlank @Size(max=255) String displayName,@NotNull DemoRole role,@Positive Long taxpayerId) {}
     record UserResponse(Long id,String username,String displayName,DemoRole role,List<String> authorities,Long taxpayerId,boolean active,OffsetDateTime createdAt) {}
     record LoginResponse(String token,UserResponse user) {}
 
