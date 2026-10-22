@@ -1,6 +1,8 @@
 package ar.gob.municipalidad.rentas;
 
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.dao.ConcurrencyFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -45,16 +47,25 @@ class BoundaryHardeningTests {
         assertThat(ApiResponses.of(electronic).amount()).isEqualByComparingTo("7.25");
     }
 
-    @Test void infrastructureErrorsAreTranslatedWithoutLeakingTechnicalDetails() {
+    @Test void infrastructureErrorsAreTranslatedWithoutLeakingTechnicalDetails() throws Exception {
         GlobalExceptionHandler handler=new GlobalExceptionHandler();MockHttpServletRequest request=new MockHttpServletRequest("POST","/api/v1/payments");
         var integrity=handler.integrity(new DataIntegrityViolationException("secret SQL constraint"),request);
         assertThat(integrity.getStatusCode().value()).isEqualTo(409);
         assertThat(integrity.getBody().message()).doesNotContain("SQL","secret");
         var concurrency=handler.concurrency(new ConcurrencyFailureException("lock internals"),request);
         assertThat(concurrency.getStatusCode().value()).isEqualTo(409);
-        var unexpected=handler.unexpected(new IllegalStateException("database password"),request);
-        assertThat(unexpected.getStatusCode().value()).isEqualTo(500);
-        assertThat(unexpected.getBody().message()).doesNotContain("password");
-        assertThat(unexpected.getBody().timestamp()).isBeforeOrEqualTo(OffsetDateTime.now());
+        MDC.put("traceId","boundary-trace");
+        try {
+            var unexpected=handler.unexpected(new IllegalStateException("database password SQL"),request);
+            assertThat(unexpected.getStatusCode().value()).isEqualTo(500);
+            assertThat(unexpected.getBody().code()).isEqualTo("INTERNAL_ERROR");
+            assertThat(unexpected.getBody().message()).doesNotContain("password","SQL");
+            assertThat(unexpected.getBody().path()).isEqualTo("/api/v1/payments");
+            assertThat(unexpected.getBody().traceId()).isEqualTo("boundary-trace");
+            assertThat(unexpected.getBody().details()).isNull();
+            assertThat(unexpected.getBody().timestamp()).isBeforeOrEqualTo(OffsetDateTime.now());
+            assertThat(new ObjectMapper().findAndRegisterModules().writeValueAsString(unexpected.getBody()))
+                .doesNotContain("database password","SQL");
+        } finally { MDC.remove("traceId"); }
     }
 }

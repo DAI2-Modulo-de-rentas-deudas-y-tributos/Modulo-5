@@ -273,10 +273,11 @@ describe("API client modes", () => {
     expect(authHeaders()).toEqual({});
   });
 
-  it("preserves backend error code and trace id", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: "INVALID", message: "Dato inválido", traceId: "trace-1" }), { status: 400, headers: { "content-type": "application/json" } })));
+  it("preserves backend error code, trace id and structured details", async () => {
+    const payload = { code: "INVALID", message: "Dato inválido", traceId: "trace-1", details: { fieldErrors: [{ field: "code", messages: ["no debe estar vacío"] }] } };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), { status: 400, headers: { "content-type": "application/json" } })));
     const { request } = await import("./apiClient.js");
-    await expect(request("/api/v1/health")).rejects.toMatchObject({ status: 400, code: "INVALID", traceId: "trace-1" });
+    await expect(request("/api/v1/health")).rejects.toMatchObject({ status: 400, code: "INVALID", traceId: "trace-1", details: payload });
   });
 
   it("uses fetch, not mockDb, for business data in API mode", async () => {
