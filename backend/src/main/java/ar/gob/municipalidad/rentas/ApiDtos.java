@@ -1,5 +1,6 @@
 package ar.gob.municipalidad.rentas;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import jakarta.validation.constraints.*;
 import jakarta.validation.Valid;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -185,6 +186,7 @@ public final class ApiDtos {
     public record DebtSummaryResponse(Long taxpayerId,long totalDebts,long openDebts,long paidDebts,long overdueDebts,BigDecimal outstandingAmount) {}
     public record ReprocessEventRequest(String reason) {}
     @Schema(name="ErrorResponse",description="Contrato estándar de errores de la API")
+    @JsonInclude(JsonInclude.Include.ALWAYS)
     public record ErrorResponse(
         @Schema(description="Fecha y hora del error") OffsetDateTime timestamp,
         @Schema(description="Código HTTP",example="400") int status,

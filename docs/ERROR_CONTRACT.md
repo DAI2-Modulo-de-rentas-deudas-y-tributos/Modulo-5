@@ -50,3 +50,35 @@ Los mensajes se agrupan por campo y ordenan determinísticamente. No se incluyen
 ```
 
 Los errores inesperados devuelven un mensaje genérico y el `traceId`; el detalle técnico queda únicamente en los logs del servidor. El frontend actual continúa leyendo `message`, `code` y `traceId`, y conserva el objeto completo en `ApiError.details`.
+
+## Ejemplo: autenticación ausente o inválida (401)
+
+Las respuestas 401 generadas por Spring Security o por una sesión DEMO inválida usan el mismo contrato. El identificador de correlación coincide con el header `X-Correlation-Id`.
+
+```json
+{
+  "timestamp": "2026-10-22T14:30:00Z",
+  "status": 401,
+  "code": "UNAUTHENTICATED",
+  "message": "Se requiere autenticación",
+  "path": "/api/v1/tax-concepts",
+  "traceId": "9e669771-3d87-49a1-bcd7-bf4ebfc164ec",
+  "details": null
+}
+```
+
+## Ejemplo: usuario autenticado sin permiso (403)
+
+```json
+{
+  "timestamp": "2026-10-22T14:30:00Z",
+  "status": 403,
+  "code": "ACCESS_DENIED",
+  "message": "No tiene permisos para realizar esta operación",
+  "path": "/api/v1/tax-concepts",
+  "traceId": "9e669771-3d87-49a1-bcd7-bf4ebfc164ec",
+  "details": null
+}
+```
+
+Las respuestas de seguridad no incluyen tokens, contraseñas ni detalles de implementación.

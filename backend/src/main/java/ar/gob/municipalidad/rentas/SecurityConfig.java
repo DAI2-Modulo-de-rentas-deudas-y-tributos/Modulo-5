@@ -1,5 +1,6 @@
 package ar.gob.municipalidad.rentas;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -27,7 +28,6 @@ import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
-import java.time.OffsetDateTime;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
@@ -53,14 +53,15 @@ class SecurityConfig {
         return source;
     }
 
-    @Bean SecurityFilterChain securityFilterChain(HttpSecurity http, DevIdentityFilter filter) throws Exception {
+    @Bean SecurityFilterChain securityFilterChain(HttpSecurity http, DevIdentityFilter filter,
+            SecurityErrorResponseWriter errors) throws Exception {
         return http.csrf(csrf -> csrf.disable())
             .sessionManagement(session -> session.sessionCreationPolicy(org.springframework.security.config.http.SessionCreationPolicy.STATELESS))
-            .exceptionHandling(errors -> errors.authenticationEntryPoint((request,response,error) -> {
-                response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-                response.setContentType("application/json");
-                response.getWriter().write("{\"status\":401,\"code\":\"UNAUTHENTICATED\",\"message\":\"Se requiere autenticación\"}");
-            }))
+            .exceptionHandling(securityErrors -> securityErrors
+                .authenticationEntryPoint((request,response,error) -> errors.write(request,response,401,
+                    "UNAUTHENTICATED","Se requiere autenticación"))
+                .accessDeniedHandler((request,response,error) -> errors.write(request,response,403,
+                    "ACCESS_DENIED","No tiene permisos para realizar esta operación")))
             .cors(Customizer.withDefaults())
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
@@ -70,6 +71,28 @@ class SecurityConfig {
                 .anyRequest().authenticated())
             .addFilterBefore(filter, UsernamePasswordAuthenticationFilter.class)
             .build();
+    }
+}
+
+@Component
+class SecurityErrorResponseWriter {
+    private final ObjectMapper json;
+
+    SecurityErrorResponseWriter(ObjectMapper json) { this.json=json; }
+
+    void write(HttpServletRequest request,HttpServletResponse response,int status,String code,String message)
+            throws IOException {
+        String traceId=MDC.get("traceId");
+        if(traceId==null||traceId.isBlank()) {
+            String supplied=request.getHeader(CorrelationIdFilter.HEADER);
+            traceId=supplied!=null&&supplied.matches("[A-Za-z0-9._:-]{1,100}")?supplied:UUID.randomUUID().toString();
+        }
+        response.setStatus(status);
+        response.setCharacterEncoding("UTF-8");
+        response.setContentType("application/json");
+        response.setHeader(CorrelationIdFilter.HEADER,traceId);
+        json.writeValue(response.getOutputStream(),new ApiDtos.ErrorResponse(
+            java.time.OffsetDateTime.now(),status,code,message,request.getRequestURI(),traceId,null));
     }
 }
 
@@ -94,8 +117,10 @@ class CorrelationIdFilter extends OncePerRequestFilter {
 class DevIdentityFilter extends OncePerRequestFilter {
     private final boolean enabled;
     private final ObjectProvider<DemoAuthService> demoAuth;
-    DevIdentityFilter(@Value("${rentas.security.dev-mode:false}") boolean enabled,ObjectProvider<DemoAuthService> demoAuth) {
-        this.enabled=enabled;this.demoAuth=demoAuth;
+    private final SecurityErrorResponseWriter errors;
+    DevIdentityFilter(@Value("${rentas.security.dev-mode:false}") boolean enabled,ObjectProvider<DemoAuthService> demoAuth,
+            SecurityErrorResponseWriter errors) {
+        this.enabled=enabled;this.demoAuth=demoAuth;this.errors=errors;
     }
 
     @Override protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
@@ -112,8 +137,8 @@ class DevIdentityFilter extends OncePerRequestFilter {
                 DemoAuthService.ResolvedSession session=auth.resolve(token);
                 var authentication=new UsernamePasswordAuthenticationToken(session.identity(),null,session.authorities());
                 SecurityContextHolder.getContext().setAuthentication(authentication);
-            } catch(BusinessException ex) {
-                unauthorized(response,ex.getMessage());
+            } catch(BusinessException ignored) {
+                errors.write(request,response,HttpServletResponse.SC_UNAUTHORIZED,"UNAUTHENTICATED","Sesión DEMO inválida");
                 return;
             }
         }
@@ -128,14 +153,6 @@ class DevIdentityFilter extends OncePerRequestFilter {
         return "POST".equalsIgnoreCase(method)&&(path.equals("/api/v1/dev-auth/login")||path.equals("/api/v1/dev-auth/bootstrap"));
     }
 
-    private void unauthorized(HttpServletResponse response,String message) throws IOException {
-        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-        response.setContentType("application/json");
-        String traceId=MDC.get("traceId");
-        if(traceId==null) traceId=UUID.randomUUID().toString();
-        String escaped=message.replace("\\","\\\\").replace("\"","\\\"");
-        response.getWriter().write("{\"timestamp\":\""+OffsetDateTime.now()+"\",\"status\":401,\"code\":\"UNAUTHENTICATED\",\"message\":\""+escaped+"\",\"traceId\":\""+traceId+"\"}");
-    }
 }
 
 @Component
