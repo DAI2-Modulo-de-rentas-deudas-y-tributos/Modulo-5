@@ -92,7 +92,10 @@ interface CreditBalanceApplicationRepository extends JpaRepository<CreditBalance
 interface PaymentReversalRepository extends FilteredRepository<PaymentReversalRequest,Long> { @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select r from PaymentReversalRequest r where r.id=:id") Optional<PaymentReversalRequest> findByIdForUpdate(Long id); boolean existsByPaymentIdAndStatusIn(Long paymentId,Collection<PaymentReversalStatus> statuses); long countByStatus(PaymentReversalStatus status); }
 interface ProcessedEventRepository extends JpaRepository<ProcessedEvent,UUID> { boolean existsByExternalEventId(String eventId); }
 interface IntegrationEventLogRepository extends FilteredRepository<IntegrationEventLog,Long> { Optional<IntegrationEventLog> findFirstByEventIdOrderByIdDesc(UUID eventId); Optional<IntegrationEventLog> findFirstByExternalEventIdOrderByIdDesc(String eventId); Optional<IntegrationEventLog> findFirstByBusinessKeyOrderByIdDesc(String businessKey); Page<IntegrationEventLog> findByStatusIn(Collection<IntegrationEventStatus> statuses,Pageable pageable); }
-interface OutboxRepository extends JpaRepository<OutboxEvent,UUID> { @Query(value="select * from outbox_event where status in ('PENDING','FAILED') order by created_at for update skip locked",nativeQuery=true) List<OutboxEvent> findPublishable(Pageable pageable); }
+interface OutboxRepository extends JpaRepository<OutboxEvent,UUID> {
+    @Query(value="select * from outbox_event where status in ('PENDING','FAILED') order by created_at for update skip locked",nativeQuery=true) List<OutboxEvent> findPublishable(Pageable pageable);
+    boolean existsByIdempotencyKey(String idempotencyKey);
+}
 interface AuditRepository extends FilteredRepository<AuditEntry,Long> { List<AuditEntry> findByEntityTypeAndEntityIdOrderByOccurredAt(String entityType,String entityId); List<AuditEntry> findByEntityTypeAndEntityIdOrderByOccurredAtAscIdAsc(String entityType,String entityId); List<AuditEntry> findTop10ByEntityTypeInOrderByOccurredAtDescIdDesc(Collection<String> entityTypes); }
 interface PaymentPlanConfigurationRepository extends FilteredRepository<PaymentPlanConfiguration,Long> {
     Optional<PaymentPlanConfiguration> findFirstByOrderByVersionDesc();

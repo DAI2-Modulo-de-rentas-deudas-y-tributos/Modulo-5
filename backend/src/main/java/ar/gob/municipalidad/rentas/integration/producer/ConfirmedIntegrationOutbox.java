@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
@@ -24,7 +25,19 @@ class ConfirmedIntegrationOutbox {
     void paymentPlanGranted(PaymentPlanRequest request,PaymentPlan plan){var payload=new ConfirmedOutboundEvents.UpdatePaymentPlanStatusPayload("ppr-"+request.id,taxpayer(request.taxpayerId).externalId,"GRANTED","plan-"+plan.id,plan.installmentCount,plan.totalPlanAmount,null);enqueueSimple("updatePaymentPlanStatus",payload,"PaymentPlanRequest",request.id);}
     void paymentPlanRejected(PaymentPlanRequest request){var payload=new ConfirmedOutboundEvents.UpdatePaymentPlanStatusPayload("ppr-"+request.id,taxpayer(request.taxpayerId).externalId,"REJECTED",null,null,null,request.resolutionReason);enqueueSimple("updatePaymentPlanStatus",payload,"PaymentPlanRequest",request.id);}
 
-    void overdueDebt(Debt debt){TaxpayerReference taxpayer=taxpayer(debt.taxpayerId);TaxConcept concept=concept(debt.taxConceptId);var payload=new ConfirmedOutboundEvents.OverdueDebtPayload("debt-"+debt.id,taxpayer.taxpayerType==TaxpayerType.CITIZEN?taxpayer.externalId:null,concept.code,debt.outstandingBalance,debt.dueDate);enqueueSimple("overdueDebt",payload,"Debt",debt.id);}
+    void overdueDebt(Debt debt,LocalDate processingDate){
+        if(!debt.isCollectible()||!debt.dueDate.isBefore(processingDate))return;
+        Debt lockedDebt=debts.findByIdForUpdate(debt.id).orElseThrow(()->CatalogService.notFound("Deuda"));
+        if(!lockedDebt.isCollectible()||!lockedDebt.dueDate.isBefore(processingDate))return;
+        String idempotencyKey="overdueDebt:Debt:"+lockedDebt.id;
+        if(outbox.existsByIdempotencyKey(idempotencyKey))return;
+        TaxpayerReference taxpayer=taxpayer(lockedDebt.taxpayerId);
+        if(taxpayer.taxpayerType!=TaxpayerType.CITIZEN||taxpayer.externalId==null||taxpayer.externalId.isBlank())return;
+        TaxConcept concept=concept(lockedDebt.taxConceptId);
+        var payload=new ConfirmedOutboundEvents.OverdueDebtPayload("debt-"+lockedDebt.id,taxpayer.externalId,concept.code,lockedDebt.outstandingBalance,lockedDebt.dueDate);
+        String aggregateId=String.valueOf(lockedDebt.id);var event=core("overdueDebt",payload,"Debt",aggregateId);
+        OutboxEvent entity=new OutboxEvent();entity.id=UUID.fromString(event.eventId());entity.eventType=event.eventType();entity.targetModule="CORE";entity.aggregateType="Debt";entity.aggregateId=aggregateId;entity.idempotencyKey=idempotencyKey;entity.payload=write(event);entity.status=OutboxStatus.PENDING;entity.retryCount=0;entity.createdAt=OffsetDateTime.now();outbox.save(entity);
+    }
     void paymentRegistered(Payment payment,PaymentAllocation allocation,Debt debt){externalOrigin(debt).ifPresent(origin->{var payload=new ConfirmedOutboundEvents.ExternalPaymentRegisteredPayload("payment-"+payment.id,"debt-"+debt.id,originType(origin.externalType()),origin.externalReferenceId(),infractionId(origin),allocation.amount,payment.paidAt,debt.outstandingBalance);enqueue("PaymentAllocation",allocation.id.toString(),core("paymentRegistered",payload,"Debt",debt.id.toString()));});}
     void paymentReversed(Payment payment,PaymentAllocation allocation,Debt debt,String reason){externalOrigin(debt).ifPresent(origin->{var payload=new ConfirmedOutboundEvents.PaymentReversedPayload("payment-"+payment.id,"debt-"+debt.id,originType(origin.externalType()),origin.externalReferenceId(),infractionId(origin),allocation.amount,allocation.reversedAt,debt.outstandingBalance,reason);enqueue("PaymentAllocation",allocation.id.toString(),core("paymentReversed",payload,"Debt",debt.id.toString()));});}
     void debtSettled(Debt debt){TaxpayerReference taxpayer=taxpayer(debt.taxpayerId);TaxConcept concept=concept(debt.taxConceptId);OffsetDateTime settledAt=OffsetDateTime.now();var origin=externalOrigin(debt);String originType=origin.map(x->originType(x.externalType())).orElse("MUNICIPAL_TAX");String originId=origin.map(ExternalDebtOrigin::externalReferenceId).orElse("liq-"+debt.liquidationId);var payload=new ConfirmedOutboundEvents.DebtSettledPayload("debt-"+debt.id,taxpayer.taxpayerType==TaxpayerType.CITIZEN?taxpayer.externalId:null,concept.code,originType,originId,origin.flatMap(x->Optional.ofNullable(infractionId(x))).orElse(null),settledAt,BigDecimal.ZERO.setScale(2),BigDecimal.ZERO.setScale(2));enqueueSimple("debtSettled",payload,"Debt",debt.id);}

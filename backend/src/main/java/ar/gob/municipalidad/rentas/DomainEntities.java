@@ -380,6 +380,7 @@ class OutboxEvent {
     @Column(name="target_module",nullable=false) public String targetModule;
     @Column(name="aggregate_type",nullable=false) public String aggregateType;
     @Column(name="aggregate_id",nullable=false) public String aggregateId;
+    @Column(name="idempotency_key",unique=true) public String idempotencyKey;
     @Column(nullable=false,columnDefinition="text") public String payload;
     @Enumerated(EnumType.STRING) @Column(nullable=false) public OutboxStatus status;
     @Column(name="retry_count",nullable=false) public int retryCount;

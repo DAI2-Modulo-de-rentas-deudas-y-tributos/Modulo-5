@@ -56,6 +56,8 @@ M8 es propietario del estado del beneficio social. M5 conserva una referencia/pr
 
 El payload M8 no informa porcentaje ni conceptos tributarios para `TAX_EXEMPTION`; por eso M5 no inventa una reducción económica automática. Esa decisión requiere un contrato/regla adicional.
 
+La documentación Core disponible muestra `citizenId` en el payload de `overdueDebt`, pero no confirma expresamente el tratamiento de organizaciones. M5 sólo genera este evento para referencias `CITIZEN` con `external_id` no vacío; organizaciones y referencias sin identificador se omiten, sin enviar `citizenId` nulo, hasta que M8 confirme ese alcance.
+
 ### M7 — Tránsito
 
 M7 es propietario de la infracción. M5 no replica el agregado completo: conserva la referencia de negocio y el payload crudo en el log técnico, y crea únicamente la obligación económica y la deuda que le pertenecen.
