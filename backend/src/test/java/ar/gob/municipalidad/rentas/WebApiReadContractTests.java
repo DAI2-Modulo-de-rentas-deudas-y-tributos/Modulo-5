@@ -20,6 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @ActiveProfiles("test")
@@ -80,25 +81,55 @@ class WebApiReadContractTests {
             "/api/v1/integrations/events/00000000-0000-0000-0000-000000000001"
         };
         for (String url : missing) {
-            var result = mvc.perform(get(url).header("X-Demo-Session", staff))
+            var result = mvc.perform(get(url).header("X-Demo-Session", staff).header("X-Correlation-Id","scrum-653-business"))
                 .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.timestamp").isNotEmpty())
                 .andExpect(jsonPath("$.status").value(404))
                 .andExpect(jsonPath("$.code").value("NOT_FOUND"))
-                .andExpect(jsonPath("$.traceId").isNotEmpty())
+                .andExpect(jsonPath("$.message").isNotEmpty())
+                .andExpect(jsonPath("$.path").value(url))
+                .andExpect(jsonPath("$.traceId").value("scrum-653-business"))
+                .andExpect(jsonPath("$.details").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(header().string("X-Correlation-Id","scrum-653-business"))
                 .andReturn();
             assertThat(result.getResponse().getContentAsString()).doesNotContain("Exception", "Hibernate", "SQL");
         }
     }
 
     @Test void malformedAndInvalidRequestsReturnStableClientErrors() throws Exception {
-        mvc.perform(post("/api/v1/tax-concepts").header("X-Demo-Session",staff).contentType(MediaType.APPLICATION_JSON).content("{"))
-            .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+        mvc.perform(post("/api/v1/tax-concepts").header("X-Demo-Session",staff).header("X-Correlation-Id","scrum-653-malformed")
+                .contentType(MediaType.APPLICATION_JSON).content("{"))
+            .andExpect(status().isBadRequest()).andExpect(jsonPath("$.timestamp").isNotEmpty())
+            .andExpect(jsonPath("$.status").value(400)).andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
+            .andExpect(jsonPath("$.message").isNotEmpty()).andExpect(jsonPath("$.path").value("/api/v1/tax-concepts"))
+            .andExpect(jsonPath("$.traceId").value("scrum-653-malformed")).andExpect(jsonPath("$.details").value(org.hamcrest.Matchers.nullValue()))
+            .andExpect(header().string("X-Correlation-Id","scrum-653-malformed"));
         mvc.perform(post("/api/v1/tax-concepts").header("X-Demo-Session",staff).contentType(MediaType.APPLICATION_JSON)
                 .content("{\"code\":\"\",\"name\":\"\",\"type\":\"FEE\",\"originModule\":\"M5\"}"))
             .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
         mvc.perform(post("/api/v1/tax-concepts").header("X-Demo-Session",staff).contentType(MediaType.APPLICATION_JSON)
                 .content("{\"code\":\"X\",\"name\":\"X\",\"type\":\"NOT_A_TYPE\",\"originModule\":\"M5\"}"))
             .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+    }
+
+    @Test void validationErrorsIncludeSafeFieldDetailsAndPreserveCorrelation() throws Exception {
+        String traceId="scrum-653-correlation";
+        var result=mvc.perform(post("/api/v1/tax-concepts").header("X-Demo-Session",staff)
+                .header("X-Correlation-Id",traceId).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"code\":\"\",\"name\":\"\",\"description\":\"do-not-echo\",\"type\":\"FEE\",\"originModule\":\"M5\"}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.timestamp").isNotEmpty())
+            .andExpect(jsonPath("$.status").value(400))
+            .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+            .andExpect(jsonPath("$.message").isNotEmpty())
+            .andExpect(jsonPath("$.path").value("/api/v1/tax-concepts"))
+            .andExpect(jsonPath("$.traceId").value(traceId))
+            .andExpect(jsonPath("$.details.fieldErrors[0].field").value("code"))
+            .andExpect(jsonPath("$.details.fieldErrors[0].messages[0]").isNotEmpty())
+            .andExpect(jsonPath("$.details.fieldErrors[1].field").value("name"))
+            .andExpect(header().string("X-Correlation-Id",traceId))
+            .andReturn();
+        assertThat(result.getResponse().getContentAsString()).doesNotContain("do-not-echo","rejectedValue");
     }
 
     @Test void commandsAgainstMissingAggregatesReturnNotFoundWithoutSideEffects() throws Exception {

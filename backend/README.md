@@ -138,6 +138,7 @@ PostgreSQL y backend tienen healthchecks; el backend espera a que PostgreSQL est
 - OpenAPI: http://localhost:8080/v3/api-docs
 - Health: http://localhost:8080/actuator/health
 - API: `http://localhost:8080/api/v1`
+- Contrato de errores: [`docs/ERROR_CONTRACT.md`](../docs/ERROR_CONTRACT.md)
 
 ## Variables de entorno
 

@@ -2,6 +2,7 @@ package ar.gob.municipalidad.rentas;
 
 import jakarta.validation.constraints.*;
 import jakarta.validation.Valid;
+import io.swagger.v3.oas.annotations.media.Schema;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -183,5 +184,14 @@ public final class ApiDtos {
     public record TaxpayerSummaryResponse(Long taxpayerId,BigDecimal outstandingDebt,BigDecimal paidAmount,long openDebts,long activePlans,long activeBenefits) {}
     public record DebtSummaryResponse(Long taxpayerId,long totalDebts,long openDebts,long paidDebts,long overdueDebts,BigDecimal outstandingAmount) {}
     public record ReprocessEventRequest(String reason) {}
-    public record ErrorResponse(OffsetDateTime timestamp, int status, String code, String message, String path, String traceId, Object details) {}
+    @Schema(name="ErrorResponse",description="Contrato estándar de errores de la API")
+    public record ErrorResponse(
+        @Schema(description="Fecha y hora del error") OffsetDateTime timestamp,
+        @Schema(description="Código HTTP",example="400") int status,
+        @Schema(description="Código estable de error",example="VALIDATION_ERROR") String code,
+        @Schema(description="Mensaje funcional seguro",example="code: no debe estar vacío") String message,
+        @Schema(description="Ruta solicitada",example="/api/v1/tax-concepts") String path,
+        @Schema(description="Identificador de correlación; también se devuelve en X-Correlation-Id",example="9e669771-3d87-49a1-bcd7-bf4ebfc164ec") String traceId,
+        @Schema(description="Información estructurada segura cuando corresponde; errores de validación contienen fieldErrors con field y messages",
+            example="{\"fieldErrors\":[{\"field\":\"code\",\"messages\":[\"no debe estar vacío\"]}]}") Object details) {}
 }

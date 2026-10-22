@@ -16,6 +16,11 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.TreeMap;
 import java.util.UUID;
 
 class BusinessException extends RuntimeException {
@@ -34,7 +39,13 @@ class GlobalExceptionHandler {
     ResponseEntity<ApiDtos.ErrorResponse> validation(MethodArgumentNotValidException ex, HttpServletRequest request) {
         String message = ex.getBindingResult().getFieldErrors().stream().findFirst()
             .map(e -> e.getField()+": "+e.getDefaultMessage()).orElse("Solicitud inválida");
-        return response(400, "VALIDATION_ERROR", message, request);
+        Map<String,List<String>> fieldErrors=new TreeMap<>();
+        ex.getBindingResult().getFieldErrors().forEach(error -> fieldErrors
+            .computeIfAbsent(error.getField(),ignored -> new ArrayList<>())
+            .add(Objects.requireNonNullElse(error.getDefaultMessage(),"Valor inválido")));
+        List<Map<String,Object>> errors=fieldErrors.entrySet().stream()
+            .map(entry -> Map.<String,Object>of("field",entry.getKey(),"messages",entry.getValue())).toList();
+        return response(400,"VALIDATION_ERROR",message,request,traceId(),Map.of("fieldErrors",errors));
     }
     @ExceptionHandler({HttpMessageNotReadableException.class,MethodArgumentTypeMismatchException.class,MissingServletRequestParameterException.class})
     ResponseEntity<ApiDtos.ErrorResponse> malformed(Exception ex,HttpServletRequest request) {
@@ -66,13 +77,13 @@ class GlobalExceptionHandler {
     @ExceptionHandler(Exception.class)
     ResponseEntity<ApiDtos.ErrorResponse> unexpected(Exception ex,HttpServletRequest request) {
         String traceId=traceId();log.error("Unexpected API error traceId={}",traceId,ex);
-        return response(500,"INTERNAL_ERROR","Ocurrió un error interno",request,traceId);
+        return response(500,"INTERNAL_ERROR","Ocurrió un error interno",request,traceId,null);
     }
     private ResponseEntity<ApiDtos.ErrorResponse> response(int status, String code, String message, HttpServletRequest request) {
-        return response(status,code,message,request,traceId());
+        return response(status,code,message,request,traceId(),null);
     }
-    private ResponseEntity<ApiDtos.ErrorResponse> response(int status,String code,String message,HttpServletRequest request,String traceId) {
-        return ResponseEntity.status(status).body(new ApiDtos.ErrorResponse(OffsetDateTime.now(),status,code,message,request.getRequestURI(),traceId,null));
+    private ResponseEntity<ApiDtos.ErrorResponse> response(int status,String code,String message,HttpServletRequest request,String traceId,Object details) {
+        return ResponseEntity.status(status).body(new ApiDtos.ErrorResponse(OffsetDateTime.now(),status,code,message,request.getRequestURI(),traceId,details));
     }
     private String traceId(){String traceId=MDC.get("traceId");return traceId==null?UUID.randomUUID().toString():traceId;}
 }
