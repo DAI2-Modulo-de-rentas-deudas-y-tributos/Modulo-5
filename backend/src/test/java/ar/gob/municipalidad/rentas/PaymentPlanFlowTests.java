@@ -29,6 +29,8 @@ class PaymentPlanFlowTests {
     @Autowired PaymentPlanDebtRepository planDebts;
     @Autowired InstallmentRepository installments;
     @Autowired PaymentPlanRequestDebtController requestDebtController;
+    @Autowired OutboxRepository outbox;
+    @Autowired com.fasterxml.jackson.databind.ObjectMapper json;
 
     @BeforeEach void authenticate() {
         var authorities=List.of("RENTAS","SUPERVISOR","CASHIER").stream().map(x->new SimpleGrantedAuthority("ROLE_"+x)).toList();
@@ -100,7 +102,7 @@ class PaymentPlanFlowTests {
         assertThat(request.status).isEqualTo(PaymentPlanRequestStatus.GRANTED);
     }
 
-    @Test void approvedExpirationReleasesDebtsWithoutRestoringPaidPrincipal() {
+    @Test void approvedExpirationReleasesDebtsWithoutRestoringPaidPrincipal() throws Exception {
         Debt debt=debt("PLAN-FLOW-4","PLAN-FLOW-CONCEPT-4"); PaymentPlan plan=grant(debt,2);
         installments.findByPaymentPlanIdOrderByNumber(plan.id).forEach(x->x.dueDate=LocalDate.now().minusDays(1));
         assertThat(workflow.defaulted(org.springframework.data.domain.PageRequest.of(0,10))).extracting(x->x.id).contains(plan.id);
@@ -111,9 +113,10 @@ class PaymentPlanFlowTests {
         assertThat(plans.findById(plan.id).orElseThrow().status).isEqualTo(PaymentPlanStatus.EXPIRED);
         assertThat(planDebts.findByPaymentPlanId(plan.id)).allMatch(x->x.status==PaymentPlanDebtStatus.RELEASED);
         assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("100.00");
+        OutboxEvent expired=outbox.findAll().stream().filter(event->event.eventType.equals("paymentPlanExpired")&&event.aggregateId.equals(plan.id.toString())).findFirst().orElseThrow();assertThat(expired.targetModule).isEqualTo("PLATFORM");assertThat(json.readTree(expired.payload).path("paymentPlanId").longValue()).isEqualTo(plan.id);
     }
 
-    @Test void refinancingPreservesOldPlanAndCreatesNewOne() {
+    @Test void refinancingPreservesOldPlanAndCreatesNewOne() throws Exception {
         Debt debt=debt("PLAN-FLOW-5","PLAN-FLOW-CONCEPT-5"); PaymentPlan old=grant(debt,2);
         RefinancingRequest request=workflow.requestRefinancing(old.id,new ApiDtos.CreateRefinancingRequest(3));
 
@@ -122,7 +125,10 @@ class PaymentPlanFlowTests {
         assertThat(plans.findById(old.id).orElseThrow().status).isEqualTo(PaymentPlanStatus.REFINANCED);
         assertThat(request.status).isEqualTo(RefinancingRequestStatus.GRANTED);
         assertThat(plans.findById(request.newPaymentPlanId).orElseThrow().refinancingCount).isEqualTo(1);
+        OutboxEvent event=outbox.findAll().stream().filter(item->item.eventType.equals("paymentPlanRefinanced")&&item.aggregateId.equals(request.newPaymentPlanId.toString())).findFirst().orElseThrow();var payload=json.readTree(event.payload);assertThat(event.targetModule).isEqualTo("PLATFORM");assertThat(payload.path("oldPaymentPlanId").longValue()).isEqualTo(old.id);assertThat(payload.path("newPaymentPlanId").longValue()).isEqualTo(request.newPaymentPlanId);
     }
+
+    @Test void completingPlanPublishesItsExistingPlatformEventOnce() throws Exception {Debt debt=debt("PLAN-COMPLETE","PLAN-COMPLETE-CONCEPT");PaymentPlan plan=grant(debt,2);for(Installment installment:installments.findByPaymentPlanIdOrderByNumber(plan.id))payments.register(new ApiDtos.RegisterPaymentRequest(debt.taxpayerId,null,PaymentMethod.CASH,installment.totalAmount,List.of(new ApiDtos.AllocationRequest(null,installment.id,installment.totalAmount))));assertThat(plans.findById(plan.id).orElseThrow().status).isEqualTo(PaymentPlanStatus.COMPLETED);List<OutboxEvent> events=outbox.findAll().stream().filter(event->event.eventType.equals("paymentPlanCompleted")&&event.aggregateId.equals(plan.id.toString())).toList();assertThat(events).hasSize(1);assertThat(events.get(0).targetModule).isEqualTo("PLATFORM");assertThat(json.readTree(events.get(0).payload).path("paymentPlanId").longValue()).isEqualTo(plan.id);}
 
     @Test void refinancingRejectsOnlyAnotherActiveRequestForTheSamePlan() {
         Debt debt=debt("PLAN-FLOW-REFINANCING-DUPLICATE","PLAN-FLOW-REFINANCING-DUPLICATE");PaymentPlan plan=grant(debt,2);

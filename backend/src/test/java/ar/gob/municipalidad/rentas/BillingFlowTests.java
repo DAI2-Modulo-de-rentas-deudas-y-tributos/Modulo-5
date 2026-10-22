@@ -34,6 +34,8 @@ class BillingFlowTests {
     @Autowired AuditRepository audits;
     @Autowired PaymentRepository paymentRepository;
     @Autowired PaymentAllocationRepository paymentAllocations;
+    @Autowired OutboxRepository outbox;
+    @Autowired com.fasterxml.jackson.databind.ObjectMapper json;
     @Autowired ElectronicPaymentRepository electronicPaymentAttempts;
 
     @BeforeEach void authenticateEmployee() {
@@ -60,9 +62,13 @@ class BillingFlowTests {
             .isInstanceOf(BusinessException.class).hasMessageContaining("contribuyente");
     }
 
-    @Test void unallocatedPaymentCanBeAllocatedLater() {
+    @Test void unallocatedPaymentCanBeAllocatedLater() throws Exception {
         Debt debt = debt("BILL-4", "ALLOCATE-LATER");
         Payment payment = payments.register(new ApiDtos.RegisterPaymentRequest(debt.taxpayerId, PaymentMethod.CASH, new BigDecimal("100"), List.of()));
+
+        OutboxEvent registered=outbox.findAll().stream().filter(event->event.eventType.equals("paymentRegistered")&&event.aggregateId.equals(payment.id.toString())).findFirst().orElseThrow();
+        assertThat(registered.targetModule).isEqualTo("PLATFORM");assertThat(registered.aggregateType).isEqualTo("Payment");
+        var payload=json.readTree(registered.payload);assertThat(payload.path("paymentId").longValue()).isEqualTo(payment.id);assertThat(payload.path("taxpayerId").longValue()).isEqualTo(payment.taxpayerId);assertThat(payload.path("amount").decimalValue()).isEqualByComparingTo("100.00");
 
         payments.allocateExisting(payment.id, new ApiDtos.AllocationRequest(debt.id, new BigDecimal("100")));
 
@@ -102,6 +108,18 @@ class BillingFlowTests {
 
         assertThat(debts.findById(second.id).orElseThrow().outstandingBalance).isEqualByComparingTo("80.00");
         assertThat(credits.findBySourcePaymentId(payment.id).orElseThrow().status).isEqualTo(CreditBalanceStatus.USED);
+        assertThat(outbox.findAll()).noneMatch(event->event.eventType.equals("debtSettled")&&event.aggregateId.equals(second.id.toString()));
+    }
+
+    @Test void fullyAppliedCreditPublishesTheExistingCoreDebtSettledContract() throws Exception {
+        Debt source=debt("CREDIT-SETTLED-SOURCE","CREDIT-SETTLED-SOURCE-CONCEPT");Debt target=anotherDebt(source,"CREDIT-SETTLED-TARGET");
+        Payment payment=payments.register(new ApiDtos.RegisterPaymentRequest(source.taxpayerId,PaymentMethod.CASH,new BigDecimal("200"),List.of(new ApiDtos.AllocationRequest(source.id,new BigDecimal("200")))));
+        CreditBalance credit=credits.findBySourcePaymentId(payment.id).orElseThrow();creditService.apply(credit.id,new ApiDtos.ApplyCreditBalanceRequest(target.id,new BigDecimal("100")));
+        OutboxEvent settled=outbox.findAll().stream().filter(event->event.eventType.equals("debtSettled")&&event.aggregateId.equals(target.id.toString())).findFirst().orElseThrow();
+        assertThat(settled.targetModule).isEqualTo("CORE");assertThat(settled.aggregateType).isEqualTo("Debt");var envelope=json.readTree(settled.payload);
+        assertThat(envelope.path("eventType").asText()).isEqualTo("debtSettled");assertThat(envelope.path("sourceModule").asText()).isEqualTo("rentas");
+        var data=envelope.path("data");assertThat(data.path("debtId").asText()).isEqualTo("debt-"+target.id);assertThat(data.path("citizenId").asText()).isEqualTo("CREDIT-SETTLED-SOURCE");
+        assertThat(data.path("originType").asText()).isEqualTo("MUNICIPAL_TAX");assertThat(data.path("originId").asText()).startsWith("liq-");assertThat(data.path("remainingBalance").decimalValue()).isZero();assertThat(data.path("outstandingBalance").decimalValue()).isZero();
     }
 
     @Test void creditApplicationsRemainTraceableAfterPartialAndFullUse() {
