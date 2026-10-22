@@ -163,12 +163,16 @@ class PostgreSqlIntegrationTest {
     @AfterEach void clearSecurity(){SecurityContextHolder.clearContext();}
 
     @Test void contextStartsAndFlywayAppliesEveryMigration(){
-        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(21);
-        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(20);
+        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(22);
+        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(21);
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='ticket_case'",String.class))
             .contains("public_id","correlation_id","last_source_event_id","last_external_updated_at");
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='integration_event_log'",String.class))
             .contains("business_key");
+        assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='outbox_event'",String.class))
+            .contains("idempotency_key");
+        assertThat(jdbc.queryForList("select indexname from pg_indexes where tablename='outbox_event'",String.class))
+            .contains("uk_outbox_idempotency_key");
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='payment_reversal_request'",String.class))
             .contains("resolution_reason");
         assertThat(jdbc.queryForList("select id from demo_bootstrap_lock",Integer.class)).containsExactly(1);
@@ -441,6 +445,65 @@ class PostgreSqlIntegrationTest {
         assertThat(jdbc.queryForObject("select count(*) from late_charge_application where debt_id=?",Integer.class,debt.id)).isEqualTo(2);
     }
 
+    @Test void overdueDebtIsPublishedOnceForEligibleCitizensEvenWithoutLateChargeRule() throws Exception {
+        authenticate();
+        TaxpayerReference citizen=taxpayer(TaxpayerType.CITIZEN,"PG-OVERDUE-"+UUID.randomUUID(),uniqueDigits(8),null);
+        Debt eligible=debt("OVERDUE-"+UUID.randomUUID(),citizen.id);LocalDate processingDate=uniqueProcessingDate(eligible.id,0);eligible.dueDate=processingDate.minusDays(1);debts.save(eligible);
+        Debt paid=debt("OVERDUE-PAID-"+UUID.randomUUID(),citizen.id);paid.dueDate=processingDate.minusDays(1);paid.status=DebtStatus.PAID;debts.save(paid);
+        Debt cancelled=debt("OVERDUE-CANCELLED-"+UUID.randomUUID(),citizen.id);cancelled.dueDate=processingDate.minusDays(1);cancelled.status=DebtStatus.CANCELLED;debts.save(cancelled);
+        Debt withoutBalance=debt("OVERDUE-ZERO-"+UUID.randomUUID(),citizen.id);withoutBalance.dueDate=processingDate.minusDays(1);withoutBalance.outstandingBalance=BigDecimal.ZERO;debts.save(withoutBalance);
+        Debt notYetDue=debt("OVERDUE-FUTURE-"+UUID.randomUUID(),citizen.id);notYetDue.dueDate=processingDate.plusDays(1);debts.save(notYetDue);
+        TaxpayerReference organization=taxpayer(TaxpayerType.ORGANIZATION,"PG-OVERDUE-ORG-"+UUID.randomUUID(),null,uniqueDigits(11));
+        Debt organizationDebt=debt("OVERDUE-ORG-"+UUID.randomUUID(),organization.id);organizationDebt.dueDate=processingDate.minusDays(1);debts.save(organizationDebt);
+
+        FiscalProcessingController.DueDateResponse run=dueDates.process(processingDate);
+        assertThat(run.errors()).isGreaterThanOrEqualTo(1); // no applicable surcharge rule does not suppress overdueDebt
+        List<OutboxEvent> events=overdueEvents(eligible);
+        assertThat(events).hasSize(1);
+        OutboxEvent event=events.get(0);assertThat(event.targetModule).isEqualTo("CORE");assertThat(event.status).isEqualTo(OutboxStatus.PENDING);assertThat(event.idempotencyKey).isEqualTo("overdueDebt:Debt:"+eligible.id);
+        var envelope=json.readTree(event.payload);
+        assertThat(envelope.fieldNames()).toIterable().containsExactlyInAnyOrder("eventId","eventType","eventVersion","occurredAt","sourceModule","correlationId","causationId","data");
+        assertThat(envelope.path("eventId").asText()).isEqualTo(event.id.toString());assertThat(envelope.path("eventType").asText()).isEqualTo("overdueDebt");
+        assertThat(envelope.path("eventVersion").asText()).isEqualTo("1.0");assertThat(envelope.path("occurredAt").asText()).isNotBlank();
+        assertThat(envelope.path("sourceModule").asText()).isEqualTo("rentas");assertThat(envelope.path("correlationId").asText()).isNotBlank();
+        assertThat(envelope.path("causationId").isNull()).isTrue();
+        var data=envelope.path("data");assertThat(data.fieldNames()).toIterable().containsExactlyInAnyOrder("debtId","citizenId","conceptCode","outstandingAmount","dueDate");
+        assertThat(data.path("debtId").asText()).isEqualTo("debt-"+eligible.id);assertThat(data.path("citizenId").asText()).isEqualTo(citizen.externalId);
+        assertThat(data.path("conceptCode").asText()).isEqualTo(concepts.findById(eligible.taxConceptId).orElseThrow().code);
+        assertThat(data.path("outstandingAmount").decimalValue()).isEqualByComparingTo(eligible.outstandingBalance);
+        assertThat(data.path("dueDate").asText()).isEqualTo(eligible.dueDate.toString());
+        assertThat(overdueEvents(paid)).isEmpty();assertThat(overdueEvents(cancelled)).isEmpty();assertThat(overdueEvents(withoutBalance)).isEmpty();
+        assertThat(overdueEvents(notYetDue)).isEmpty();assertThat(overdueEvents(organizationDebt)).isEmpty();
+
+        assertThat(dueDates.process(processingDate).id()).isEqualTo(run.id());
+        for(OutboxStatus status:List.of(OutboxStatus.PUBLISHED,OutboxStatus.FAILED,OutboxStatus.DEAD_LETTER)){
+            event.status=status;outbox.save(event);dueDates.process(processingDate.plusDays(status.ordinal()));
+            assertThat(overdueEvents(eligible)).hasSize(1);
+        }
+    }
+
+    @Test void concurrentOverdueProcessingDoesNotCreateDuplicateOutboxEvents() throws Exception {
+        authenticate();Debt eligible=debt("OVERDUE-CONCURRENT-"+UUID.randomUUID(),null);
+        LocalDate firstDate=uniqueProcessingDate(eligible.id,2),secondDate=firstDate.plusDays(1);eligible.dueDate=firstDate.minusDays(1);debts.save(eligible);
+        assertThat(runTogether(()->dueDates.process(firstDate),()->dueDates.process(secondDate))).containsOnlyNulls();
+        assertThat(overdueEvents(eligible)).hasSize(1);
+    }
+
+    @Test void overdueOutboxFailureRollsBackTheDueDateProcessingTransaction() {
+        authenticate();Debt eligible=debt("OVERDUE-ROLLBACK-"+UUID.randomUUID(),null);LocalDate date=uniqueProcessingDate(eligible.id,4);eligible.dueDate=date.minusDays(1);debts.save(eligible);
+        String aggregateId=eligible.id.toString();
+        jdbc.execute("CREATE OR REPLACE FUNCTION fail_test_overdue_outbox() RETURNS trigger AS $$ BEGIN IF NEW.event_type='overdueDebt' AND NEW.aggregate_id='"+aggregateId+"' THEN RAISE EXCEPTION 'test overdue outbox failure'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql");
+        jdbc.execute("CREATE TRIGGER fail_test_overdue_outbox BEFORE INSERT ON outbox_event FOR EACH ROW EXECUTE FUNCTION fail_test_overdue_outbox()");
+        try {
+            assertThatThrownBy(()->dueDates.process(date)).hasMessageContaining("test overdue outbox failure");
+            assertThat(jdbc.queryForObject("select count(*) from due_date_processing where processing_date=?",Long.class,date)).isZero();
+            assertThat(overdueEvents(eligible)).isEmpty();
+        } finally {
+            jdbc.execute("DROP TRIGGER IF EXISTS fail_test_overdue_outbox ON outbox_event");
+            jdbc.execute("DROP FUNCTION IF EXISTS fail_test_overdue_outbox()");
+        }
+    }
+
     @Test void bootstrapAndArbitraryUsersPersistBcryptOnPostgreSql(){
         authenticate();
         // Sólo datos de este contenedor de pruebas: nunca omitir el bootstrap por orden de tests.
@@ -511,6 +574,8 @@ class PostgreSqlIntegrationTest {
     }
 
     private void assertEquation(Payment payment){Payment stored=paymentRepository.findById(payment.id).orElseThrow();assertThat(stored.allocatedAmount.add(stored.unallocatedAmount)).isEqualByComparingTo(stored.amount);}
+    private LocalDate uniqueProcessingDate(Long debtId,int offset){return LocalDate.of(1900,1,1).plusDays(debtId*10+offset);}
+    private List<OutboxEvent> overdueEvents(Debt debt){return outbox.findAll().stream().filter(x->x.eventType.equals("overdueDebt")&&x.targetModule.equals("CORE")&&x.aggregateType.equals("Debt")&&x.aggregateId.equals(debt.id.toString())).toList();}
     private void authenticate(){var authorities=List.of("RENTAS","SUPERVISOR","CASHIER").stream().map(x->new SimpleGrantedAuthority("ROLE_"+x)).toList();SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("postgres-it",null),null,authorities));}
     private Debt debt(String suffix,Long taxpayerId){if(taxpayerId==null)taxpayerId=taxpayer(TaxpayerType.CITIZEN,"PG-"+suffix+"-"+UUID.randomUUID(),uniqueDigits(8),null).id;TaxConcept concept=concept("PG_"+suffix+"_"+UUID.randomUUID(),TaxConceptType.FEE,"M5");TaxConfiguration configuration=catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(concept.id,CalculationType.FIXED,null,new BigDecimal("100"),null,null,true,true,LocalDate.now().minusDays(1),null));catalog.submit(configuration.id);catalog.approve(configuration.id);Liquidation liquidation=liquidations.create(new ApiDtos.LiquidationRequest(taxpayerId,concept.id,YearMonth.now().plusMonths(Math.abs(suffix.hashCode()%12)).toString(),BigDecimal.ZERO,LocalDate.now().plusDays(30)));return debts.findByTaxpayerId(taxpayerId).stream().filter(x->x.liquidationId.equals(liquidation.id)).findFirst().orElseThrow();}
     private Liquidation liquidationFor(Debt debt){return jdbc.queryForObject("select id from liquidation where id=?",(rs,n)->{Liquidation l=new Liquidation();l.id=rs.getLong(1);return l;},debt.liquidationId);}
