@@ -48,7 +48,7 @@ public final class ConfirmedInboundEvents {
         UUID correlationId,UUID causationId,@NotNull @Valid M2TicketUpdatedData data) {}
     public record M2TicketUpdatedData(@NotNull UUID ticketId,@NotBlank String publicId,UUID citizenId,boolean isAnonymous,
         @NotBlank String responsibleAreaId,@NotBlank String updateType,@NotBlank String currentStatus,
-        @NotBlank String currentPriority,String publicMessage,JsonNode details,List<@Valid M2Attachment> attachments,
+        @NotBlank String currentPriority,String publicMessage,JsonNode details,List<@NotNull @Valid M2Attachment> attachments,
         @NotNull OffsetDateTime updatedAt) {}
     public record M2Attachment(@NotBlank String fileName,@NotBlank String contentType,
         @NotBlank String url,@NotNull Long sizeBytes) {}
@@ -57,7 +57,7 @@ public final class ConfirmedInboundEvents {
         @NotNull OffsetDateTime timestamp,@NotBlank String sourceModule,@NotNull @Valid M8SocialBenefitData payload) {}
     public record M8SocialBenefitData(@NotBlank String benefitId,@NotBlank String citizenId,
         @NotBlank String applicationId,@NotBlank String programId,@NotBlank String programName,
-        @NotEmpty List<@Valid M8Benefit> benefits,@NotBlank String status,@NotNull LocalDate startDate,
+        @NotEmpty List<@NotNull @Valid M8Benefit> benefits,@NotBlank String status,@NotNull LocalDate startDate,
         LocalDate endDate,@NotNull OffsetDateTime updatedAt) {}
     public record M8Benefit(@NotBlank String type,BigDecimal amount) {}
 
