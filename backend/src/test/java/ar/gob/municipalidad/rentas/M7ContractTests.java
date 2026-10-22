@@ -22,8 +22,11 @@ class M7ContractTests {
         {
           "eventId": "7f9c91f0-03c6-4baf-8791-8cb2c38981d2",
           "eventType": "infractionConfirmed",
+          "eventVersion": "1.0",
           "occurredAt": "2026-08-24T14:30:00-03:00",
           "sourceModule": "transito",
+          "correlationId": "78cff4cc-3cd0-4f3f-b0f7-78ec2b15cf0b",
+          "causationId": null,
           "data": {
             "infractionId": "93fd4382-2343-4f3f-a127-9328b29fc520",
             "debtorId": "40123456",
@@ -60,6 +63,7 @@ class M7ContractTests {
         assertThat(first.sourceModule).isEqualTo("M7");assertThat(first.externalReferenceId).isEqualTo("93fd4382-2343-4f3f-a127-9328b29fc520");
         assertThat(first.externalTaxpayerType).isEqualTo(TaxpayerType.CITIZEN);assertThat(first.externalTaxpayerId).isEqualTo("40123456");
         assertThat(first.amount).isEqualByComparingTo("75000.00");assertThat(first.dueDate).isEqualTo(event.data().infractionDateTime().toLocalDate());
+        assertThat(event.eventVersion()).isEqualTo("1.0");assertThat(event.correlationId()).isEqualTo(UUID.fromString("78cff4cc-3cd0-4f3f-b0f7-78ec2b15cf0b"));
         assertThat(event.data().location().latitude()).isEqualByComparingTo("-34.5621");assertThat(event.data().location().longitude()).isEqualByComparingTo("-58.4563");
         assertThat(debts.findByTaxpayerId(taxpayer.id)).singleElement().satisfies(debt->{assertThat(debt.originalAmount).isEqualByComparingTo("75000.00");assertThat(debt.externalObligationId).isEqualTo(first.id);});
         assertThat(obligations.count()).isEqualTo(before+1);assertThat(processed.existsByExternalEventId(event.eventId().toString())).isTrue();
@@ -70,6 +74,13 @@ class M7ContractTests {
     @Test void onlyExactDocumentedSourceIsAcceptedWithoutPartialWrites() throws Exception {
         long obligationsBefore=obligations.count(),debtsBefore=debts.count(),logsBefore=logs.count();citizen("40123456");concept();var event=read(DOCUMENTED_EVENT.replace("\"transito\"","\"M7\""));
         assertThatThrownBy(()->m7.consume(event)).isInstanceOf(BusinessException.class).hasMessageContaining("sourceModule transito");
+        assertThat(obligations.count()).isEqualTo(obligationsBefore);assertThat(debts.count()).isEqualTo(debtsBefore);assertThat(logs.count()).isEqualTo(logsBefore);
+    }
+
+    @Test void unsupportedCoreEventVersionIsRejectedWithoutWrites() throws Exception {
+        long obligationsBefore=obligations.count(),debtsBefore=debts.count(),logsBefore=logs.count();
+        var event=read(DOCUMENTED_EVENT.replace("\"eventVersion\": \"1.0\"","\"eventVersion\": \"2.0\""));
+        assertThatThrownBy(()->m7.consume(event)).isInstanceOf(BusinessException.class).hasMessageContaining("eventVersion 1.0");
         assertThat(obligations.count()).isEqualTo(obligationsBefore);assertThat(debts.count()).isEqualTo(debtsBefore);assertThat(logs.count()).isEqualTo(logsBefore);
     }
 

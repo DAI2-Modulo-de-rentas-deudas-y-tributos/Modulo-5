@@ -63,7 +63,13 @@ public final class ConfirmedInboundEvents {
 
     public enum M7DebtorIdType { DNI, CUIT }
     public record M7InfractionConfirmedEvent(@NotNull UUID eventId,@NotBlank String eventType,
-        @NotNull OffsetDateTime occurredAt,@NotBlank String sourceModule,@NotNull @Valid M7InfractionData data) {}
+        @NotBlank String eventVersion,@NotNull OffsetDateTime occurredAt,@NotBlank String sourceModule,
+        UUID correlationId,UUID causationId,@NotNull @Valid M7InfractionData data) {
+        public M7InfractionConfirmedEvent(UUID eventId,String eventType,OffsetDateTime occurredAt,
+            String sourceModule,M7InfractionData data) {
+            this(eventId,eventType,"1.0",occurredAt,sourceModule,null,null,data);
+        }
+    }
     public record M7InfractionData(@NotNull UUID infractionId,@NotBlank String debtorId,
         @NotNull M7DebtorIdType debtorIdType,@NotBlank String licensePlate,@NotBlank String infractionType,
         @NotNull OffsetDateTime infractionDateTime,@NotNull @Positive BigDecimal baseAmount,
