@@ -21,7 +21,7 @@ class ErrorContractOpenApiConfiguration {
                 .content(new Content().addMediaType("application/json",new MediaType()
                     .schema(new Schema<>().$ref("#/components/schemas/ErrorResponse")))));
             if(openApi.getPaths()!=null)openApi.getPaths().values().forEach(path -> path.readOperations().forEach(operation -> {
-                for(String status:new String[]{"400","403","404","405","409","422","500"})
+                for(String status:new String[]{"400","401","403","404","405","409","422","500"})
                     operation.getResponses().putIfAbsent(status,new ApiResponse().$ref("#/components/responses/ApiError"));
             }));
         };
