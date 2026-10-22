@@ -75,6 +75,31 @@ class PostgreSqlIntegrationTest {
         assertThat(paymentRepository.findByTaxpayerId(deuda.taxpayerId)).hasSize(1);
     }
 
+    @Test void boletasIdempotentesConcurrentesNoDuplicanBoletaNiRelaciones() throws Exception {
+        authenticate();
+        Debt deuda=debt("BOLETA-IDEMPOTENTE",null);
+        var solicitud=new ApiDtos.CreateBillRequest(deuda.taxpayerId,List.of(deuda.id),LocalDate.now().plusDays(10));
+        String clave=UUID.randomUUID().toString();
+        var resultados=new java.util.concurrent.CopyOnWriteArrayList<Long>();
+        assertThat(runTogether(()->{resultados.add(billing.create(solicitud,clave).id);return null;},
+            ()->{resultados.add(billing.create(solicitud,clave).id);return null;})).containsOnlyNulls();
+        assertThat(resultados).hasSize(2);
+        assertThat(resultados.get(0)).isEqualTo(resultados.get(1));
+        Bill boleta=bills.findById(resultados.get(0)).orElseThrow();
+        assertThat(boleta.idempotencyKey).isEqualTo(clave);
+        assertThat(boleta.idempotencyFingerprint).hasSize(64);
+        assertThat(bills.findByTaxpayerId(deuda.taxpayerId)).hasSize(1);
+        assertThat(billDebts.findByBillId(boleta.id)).singleElement().satisfies(link->{
+            assertThat(link.debtId).isEqualTo(deuda.id);
+            assertThat(link.amountAtIssue).isEqualByComparingTo("100.00");
+        });
+        var cambiado=new ApiDtos.CreateBillRequest(deuda.taxpayerId,List.of(deuda.id),LocalDate.now().plusDays(11));
+        assertThatThrownBy(()->billing.create(cambiado,clave)).isInstanceOfSatisfying(BusinessException.class,
+            ex->{assertThat(ex.status).isEqualTo(409);assertThat(ex.code).isEqualTo("IDEMPOTENCY_KEY_REUSED");});
+        assertThat(bills.findByTaxpayerId(deuda.taxpayerId)).hasSize(1);
+        assertThat(billDebts.findByBillId(boleta.id)).hasSize(1);
+    }
+
     @Test void claveDePagoSeRevierteConLaTransaccionYEsOpcional() {
         authenticate();
         Debt deuda=debt("IDEMPOTENCIA-ROLLBACK",null);
@@ -163,8 +188,8 @@ class PostgreSqlIntegrationTest {
     @AfterEach void clearSecurity(){SecurityContextHolder.clearContext();}
 
     @Test void contextStartsAndFlywayAppliesEveryMigration(){
-        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(22);
-        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(21);
+        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(23);
+        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(22);
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='ticket_case'",String.class))
             .contains("public_id","correlation_id","last_source_event_id","last_external_updated_at");
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='integration_event_log'",String.class))

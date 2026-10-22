@@ -81,7 +81,7 @@ interface PaymentAllocationRepository extends FilteredRepository<PaymentAllocati
     List<PaymentAllocation> findByDebtIdOrderByAllocatedAtAscIdAsc(Long debtId);
     List<PaymentAllocation> findByInstallmentIdInOrderByAllocatedAtAscIdAsc(Collection<Long> installmentIds);
 }
-interface BillRepository extends FilteredRepository<Bill,Long> { List<Bill> findByTaxpayerId(Long taxpayerId); Page<Bill> findByTaxpayerId(Long taxpayerId,Pageable pageable); }
+interface BillRepository extends FilteredRepository<Bill,Long> { List<Bill> findByTaxpayerId(Long taxpayerId); Page<Bill> findByTaxpayerId(Long taxpayerId,Pageable pageable); Optional<Bill> findByTaxpayerIdAndIdempotencyKey(Long taxpayerId,String idempotencyKey); }
 interface BillDebtRepository extends JpaRepository<BillDebt,Long> { List<BillDebt> findByBillId(Long billId); List<BillDebt> findByBillIdOrderByIdAsc(Long billId); List<BillDebt> findByBillIdInOrderByBillIdAscIdAsc(Collection<Long> billIds); }
 interface ElectronicPaymentRepository extends JpaRepository<ElectronicPaymentAttempt,Long> { Optional<ElectronicPaymentAttempt> findByPaymentId(Long paymentId); Optional<ElectronicPaymentAttempt> findByTaxpayerIdAndIdempotencyKey(Long taxpayerId,String idempotencyKey); }
 interface CreditBalanceRepository extends FilteredRepository<CreditBalance,Long> { Optional<CreditBalance> findBySourcePaymentId(Long paymentId); @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select c from CreditBalance c where c.sourcePaymentId=:paymentId") Optional<CreditBalance> findBySourcePaymentIdForUpdate(Long paymentId); List<CreditBalance> findByTaxpayerId(Long taxpayerId); @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select c from CreditBalance c where c.id=:id") Optional<CreditBalance> findByIdForUpdate(Long id); }
