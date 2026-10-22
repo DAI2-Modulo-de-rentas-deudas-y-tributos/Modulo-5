@@ -60,7 +60,7 @@ class DashboardSummaryService {
 
     @Transactional(readOnly=true)
     ApiDtos.RentasDashboardResponse rentas() {
-        BigDecimal zero=BigDecimal.ZERO.setScale(2);
+        BigDecimal zero=MonetaryAmounts.zero();
         long unallocated=payments.countByStatusAndUnallocatedAmountGreaterThan(PaymentStatus.CONFIRMED,zero);
         BigDecimal unallocatedAmount=payments.sumUnallocatedAmount(PaymentStatus.CONFIRMED,zero);
         List<ApiDtos.RecentOperationResponse> recent=audit
