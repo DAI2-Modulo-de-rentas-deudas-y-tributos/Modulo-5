@@ -6,6 +6,7 @@ const AuthContext = createContext(null);
 
 const SESSION_KEY = "rentas.user";
 const TOKEN_KEY = "rentas.token";
+const PAYMENT_INTENT_KEY = "rentas.electronicPaymentIntent";
 
 function hasStoredToken() {
   if (AUTH_MODE === "core") return false;
@@ -40,6 +41,7 @@ export function AuthProvider({ children }) {
         if (cancelled || generation !== sessionGeneration.current) return;
         sessionStorage.removeItem(TOKEN_KEY);
         sessionStorage.removeItem(SESSION_KEY);
+        sessionStorage.removeItem(PAYMENT_INTENT_KEY);
         setUser(null);
       } finally {
         if (!cancelled && generation === sessionGeneration.current) setInitializing(false);
@@ -79,6 +81,7 @@ export function AuthProvider({ children }) {
     // Cerrar localmente antes de esperar la red evita restauraciones tardías.
     sessionStorage.removeItem(TOKEN_KEY);
     sessionStorage.removeItem(SESSION_KEY);
+    sessionStorage.removeItem(PAYMENT_INTENT_KEY);
     setUser(null);
     setInitializing(false);
     if (token) await authService.logout(token);

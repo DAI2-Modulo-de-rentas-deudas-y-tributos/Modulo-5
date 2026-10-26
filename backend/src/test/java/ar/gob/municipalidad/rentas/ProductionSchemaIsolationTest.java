@@ -13,7 +13,6 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
-import com.fasterxml.jackson.databind.ObjectMapper;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -27,7 +26,6 @@ class ProductionSchemaIsolationTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired ApplicationContext context;
     @Autowired MockMvc mvc;
-    @Autowired ObjectMapper json;
 
     @DynamicPropertySource
     static void productionDatabase(DynamicPropertyRegistry registry) {
@@ -72,16 +70,13 @@ class ProductionSchemaIsolationTest {
     }
 
     @Test
-    void productionDoesNotExposeDemoAuthHttpRoutesOrOpenApiOperations() throws Exception {
+    void productionDoesNotExposeDemoAuthHttpRoutesOrOpenApiDocumentation() throws Exception {
         mvc.perform(post("/api/v1/dev-auth/login").contentType(MediaType.APPLICATION_JSON).content("{}"))
             .andExpect(status().isNotFound());
         mvc.perform(post("/api/v1/dev-auth/bootstrap").contentType(MediaType.APPLICATION_JSON).content("{}"))
             .andExpect(status().isNotFound());
-        var paths=json.readTree(mvc.perform(get("/v3/api-docs")).andExpect(status().isOk())
-            .andReturn().getResponse().getContentAsString()).path("paths");
-        assertThat(paths.has("/api/v1/dev-auth/login")).isFalse();
-        assertThat(paths.has("/api/v1/dev-auth/bootstrap")).isFalse();
-        assertThat(paths.has("/api/v1/dev-auth/users")).isFalse();
+        mvc.perform(get("/v3/api-docs")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/swagger-ui/index.html")).andExpect(status().isUnauthorized());
     }
 
     @Test
