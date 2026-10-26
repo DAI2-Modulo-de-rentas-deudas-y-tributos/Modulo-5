@@ -14,7 +14,7 @@ interface EventPublisher { void publish(String eventType, String targetModule, S
 @Component
 class LocalLogEventPublisher implements EventPublisher {
     private static final Logger log=LoggerFactory.getLogger(LocalLogEventPublisher.class);
-    public void publish(String eventType,String targetModule,String payload){log.info("BROKER_ADAPTER local-log eventType={} targetModule={} payload={}",eventType,targetModule,payload);}
+    public void publish(String eventType,String targetModule,String payload){log.info("BROKER_ADAPTER local-log eventType={} targetModule={}",eventType,targetModule);}
 }
 
 @Service
@@ -42,5 +42,5 @@ class OutboxPublisher {
     private final OutboxRepository repository; private final EventPublisher publisher;
     OutboxPublisher(OutboxRepository repository,EventPublisher publisher){this.repository=repository;this.publisher=publisher;}
     @Scheduled(fixedDelayString="${rentas.outbox-delay-ms:5000}")
-    @Transactional void publishPending(){for(OutboxEvent event:repository.findPublishable(org.springframework.data.domain.PageRequest.of(0,50))){try{event.lastAttemptAt=OffsetDateTime.now();if("PLATFORM".equals(event.targetModule))log.info("INTERNAL_OUTBOX eventType={} payload={}",event.eventType,event.payload);else publisher.publish(event.eventType,event.targetModule,event.payload);event.status=OutboxStatus.PUBLISHED;event.publishedAt=OffsetDateTime.now();event.errorMessage=null;}catch(RuntimeException ex){event.retryCount++;String message=ex.getMessage()==null?ex.getClass().getSimpleName():ex.getMessage();event.errorMessage=message.substring(0,Math.min(message.length(),255));event.status=event.retryCount>=5?OutboxStatus.DEAD_LETTER:OutboxStatus.FAILED;}}}
+    @Transactional void publishPending(){for(OutboxEvent event:repository.findPublishable(org.springframework.data.domain.PageRequest.of(0,50))){try{event.lastAttemptAt=OffsetDateTime.now();if("PLATFORM".equals(event.targetModule))log.info("INTERNAL_OUTBOX eventType={} targetModule={}",event.eventType,event.targetModule);else publisher.publish(event.eventType,event.targetModule,event.payload);event.status=OutboxStatus.PUBLISHED;event.publishedAt=OffsetDateTime.now();event.errorMessage=null;}catch(RuntimeException ex){event.retryCount++;String message=ex.getMessage()==null?ex.getClass().getSimpleName():ex.getMessage();event.errorMessage=message.substring(0,Math.min(message.length(),255));event.status=event.retryCount>=5?OutboxStatus.DEAD_LETTER:OutboxStatus.FAILED;}}}
 }
