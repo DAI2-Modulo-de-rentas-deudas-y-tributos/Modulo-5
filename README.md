@@ -74,3 +74,9 @@ entorno intente habilitarlo y no utiliza sus tablas ni repositorios.
 El CI siempre valida la estructura DevOps y Terraform. Los jobs de frontend y
 backend se activan automáticamente cuando detectan `package.json`/lockfile o
 `pom.xml`, respectivamente.
+
+## Continuidad del traspaso técnico
+
+La documentación del Product Owner está versionada en [`docs/handoff/`](docs/handoff/).
+Para distinguir los reportes históricos de la evidencia comprobada en esta rama,
+consultar [`ESTADO_VERIFICADO_P0_P1_2026-10-26.md`](docs/handoff/ESTADO_VERIFICADO_P0_P1_2026-10-26.md).
