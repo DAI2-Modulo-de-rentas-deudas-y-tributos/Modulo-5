@@ -4,6 +4,9 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.data.web.config.EnableSpringDataWebSupport;
+import org.springframework.data.web.config.PageableHandlerMethodArgumentResolverCustomizer;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
 import org.springframework.boot.actuate.health.*;
 import org.springframework.web.bind.annotation.*;
 import io.swagger.v3.oas.annotations.Hidden;
@@ -14,6 +17,11 @@ import static org.springframework.data.web.config.EnableSpringDataWebSupport.Pag
 @SpringBootApplication
 public class RentasApplication {
     public static void main(String[] args) { SpringApplication.run(RentasApplication.class, args); }
+
+    @Bean PageableHandlerMethodArgumentResolverCustomizer pageableMaxPageSize(
+            @Value("${spring.data.web.pageable.max-page-size:100}") int maxPageSize) {
+        return resolver -> resolver.setMaxPageSize(maxPageSize);
+    }
 }
 
 @Hidden

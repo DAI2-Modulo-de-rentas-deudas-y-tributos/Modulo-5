@@ -24,6 +24,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
+MAX_PAGE_SIZE = 100
+
 
 @dataclass
 class HttpResponse:
@@ -140,6 +142,47 @@ def page_total(page: dict[str, Any]) -> int:
     return int(metadata.get("totalElements", len(page.get("content", []))))
 
 
+def get_all_pages(
+    client: ApiClient,
+    path: str,
+    query: dict[str, Any] | None = None,
+    page_size: int = MAX_PAGE_SIZE,
+) -> list[dict[str, Any]]:
+    """Lee una colección completa sin superar el límite de página de la API."""
+    require(0 < page_size <= MAX_PAGE_SIZE,
+            f"El tamaño de página debe estar entre 1 y {MAX_PAGE_SIZE}")
+    filters = dict(query or {})
+    results: list[dict[str, Any]] = []
+    expected_total: int | None = None
+    page_number = 0
+    while expected_total is None or len(results) < expected_total:
+        response = client.json(
+            "GET", path, query={**filters, "page": page_number, "size": page_size})
+        content = response.get("content")
+        metadata = response.get("page")
+        require(isinstance(content, list), f"{path} no devolvió una lista paginada")
+        require(isinstance(metadata, dict) and "totalElements" in metadata,
+                f"{path} no informó el total de elementos paginados")
+        total = int(metadata["totalElements"])
+        require(total >= 0, f"{path} informó un total negativo")
+        if expected_total is None:
+            expected_total = total
+        else:
+            require(total == expected_total, f"El total de {path} cambió durante la paginación")
+        require(len(content) <= page_size,
+                f"{path} devolvió más elementos que el tamaño de página solicitado")
+        if not content and len(results) < expected_total:
+            raise AcceptanceFailure(f"{path} devolvió una página vacía antes de completar {expected_total} elementos")
+        results.extend(content)
+        page_number += 1
+
+    require(len(results) == expected_total,
+            f"{path} devolvió {len(results)} elementos de {expected_total}")
+    ids = [item.get("id") for item in results if isinstance(item, dict) and item.get("id") is not None]
+    require(len(ids) == len(set(ids)), f"{path} duplicó elementos entre páginas")
+    return results
+
+
 def check_health(client: ApiClient) -> dict[str, Any]:
     parsed = urlsplit(client.api_base_url)
     health_url = urlunsplit((parsed.scheme, parsed.netloc, "/actuator/health", "", ""))
@@ -192,8 +235,7 @@ def create_active_concept(client: ApiClient, label: str, run_id: str,
 
 
 def load_taxpayers(client: ApiClient) -> list[dict[str, Any]]:
-    page = client.json("GET", "/taxpayers", query={"page": 0, "size": 200, "sort": "createdAt,asc"})
-    taxpayers = page.get("content", [])
+    taxpayers = get_all_pages(client, "/taxpayers", query={"sort": "createdAt,asc"})
     require(bool(taxpayers), "TEST no tiene contribuyentes. Debe cargarse al menos uno antes de ejecutar la aceptación.")
     return taxpayers
 
@@ -384,18 +426,14 @@ def run_bulk(
     require(elapsed_total <= max_duration_seconds, (
         f"La corrida tardó {elapsed_total:.2f}s y superó el máximo de {max_duration_seconds}s"
     ))
-    generated = client.json(
-        "GET",
-        "/liquidations",
-        query={"conceptId": concept["id"], "page": 0, "size": 200},
-    )
-    require(page_total(generated) == len(valid_taxpayers), "No se generó exactamente una liquidación por ítem válido")
+    generated = get_all_pages(client, "/liquidations", query={"conceptId": concept["id"]})
+    require(len(generated) == len(valid_taxpayers), "No se generó exactamente una liquidación por ítem válido")
     detail = client.json("GET", f"/liquidation-runs/{run['id']}")
     require(detail["run"]["status"] == "EXECUTED", "La ejecución no quedó persistida")
     require(validate_bulk_items(detail, set(expected_amounts), executed=True) == expected_amounts,
             "La ejecución cambió los importes del preview")
-    validate_bulk_economics(generated["content"], client.json("GET", "/debts",
-        query={"taxConceptId": concept["id"], "size": 200})["content"], expected_amounts, detail["items"])
+    generated_debts = get_all_pages(client, "/debts", query={"taxConceptId": concept["id"]})
+    validate_bulk_economics(generated, generated_debts, expected_amounts, detail["items"])
 
     second_execution = client.request(
         "POST",
@@ -403,17 +441,13 @@ def run_bulk(
         expected=None,
     )
     expect_run_rejection(second_execution)
-    generated_after_retry = client.json(
-        "GET",
-        "/liquidations",
-        query={"conceptId": concept["id"], "page": 0, "size": 200},
-    )
+    generated_after_retry = get_all_pages(client, "/liquidations", query={"conceptId": concept["id"]})
     require(
-        page_total(generated_after_retry) == len(valid_taxpayers),
+        len(generated_after_retry) == len(valid_taxpayers),
         "La segunda ejecución alteró la cantidad de liquidaciones",
     )
-    validate_bulk_economics(generated_after_retry["content"], client.json("GET", "/debts",
-        query={"taxConceptId": concept["id"], "size": 200})["content"], expected_amounts,
+    generated_debts_after_retry = get_all_pages(client, "/debts", query={"taxConceptId": concept["id"]})
+    validate_bulk_economics(generated_after_retry, generated_debts_after_retry, expected_amounts,
         client.json("GET", f"/liquidation-runs/{run['id']}")["items"])
 
     return {

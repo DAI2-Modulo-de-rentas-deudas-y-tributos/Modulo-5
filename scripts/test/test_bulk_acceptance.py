@@ -6,12 +6,62 @@ from decimal import Decimal
 from unittest.mock import Mock
 
 from aws_test_acceptance import (
-    AcceptanceFailure, HttpResponse, expect_run_rejection,
-    run_bulk, validate_bulk_economics, validate_bulk_items,
+    AcceptanceFailure, HttpResponse, expect_run_rejection, get_all_pages,
+    load_taxpayers, run_bulk, validate_bulk_economics, validate_bulk_items,
 )
 
 
 class BulkAcceptanceTests(unittest.TestCase):
+    def test_taxpayers_liquidations_and_debts_are_read_in_pages_of_at_most_100(self):
+        client = Mock()
+
+        def page(method, path, query):
+            self.assertEqual(method, "GET")
+            self.assertLessEqual(query["size"], 100)
+            self.assertIn(path, ("/taxpayers", "/liquidations", "/debts"))
+            start = query["page"] * query["size"]
+            return {
+                "content": [{"id": start + index + 1} for index in range(100)],
+                "page": {"number": query["page"], "size": query["size"], "totalElements": 200},
+            }
+
+        client.json.side_effect = page
+        taxpayers = load_taxpayers(client)
+        self.assertEqual([item["id"] for item in taxpayers], list(range(1, 201)))
+
+        for path in ("/liquidations", "/debts"):
+            with self.subTest(path=path):
+                items = get_all_pages(client, path, query={"taxConceptId": 9})
+                self.assertEqual([item["id"] for item in items], list(range(1, 201)))
+
+        calls = client.json.call_args_list
+        self.assertEqual(len(calls), 6)
+        for index in (0, 1):
+            self.assertEqual(calls[index].kwargs["query"]["page"], index)
+            self.assertEqual(calls[index].kwargs["query"]["size"], 100)
+            self.assertEqual(calls[index].args[1], "/taxpayers")
+        self.assertEqual([call.args[1] for call in calls[2:]], ["/liquidations", "/liquidations", "/debts", "/debts"])
+
+    def test_pagination_rejects_size_above_api_maximum(self):
+        with self.assertRaisesRegex(AcceptanceFailure, "entre 1 y 100"):
+            get_all_pages(Mock(), "/debts", page_size=200)
+
+    def test_pagination_rejects_incomplete_or_duplicate_pages(self):
+        client = Mock()
+        client.json.side_effect = [
+            {"content": [{"id": 1}], "page": {"totalElements": 2}},
+            {"content": [], "page": {"totalElements": 2}},
+        ]
+        with self.assertRaisesRegex(AcceptanceFailure, "página vacía"):
+            get_all_pages(client, "/debts", page_size=1)
+
+        client.json.side_effect = [
+            {"content": [{"id": 1}], "page": {"totalElements": 2}},
+            {"content": [{"id": 1}], "page": {"totalElements": 2}},
+        ]
+        with self.assertRaisesRegex(AcceptanceFailure, "duplicó elementos"):
+            get_all_pages(client, "/debts", page_size=1)
+
     def detail(self, executed=False):
         return {"run": {"estimatedTotalAmount": "300.75", "totalItems": 3, "validItems": 2, "errorItems": 1},
                 "items": [
