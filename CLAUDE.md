@@ -55,7 +55,7 @@ cd infra/environments/test && terraform init -backend=false && terraform validat
   `use_lockfile = true`, OIDC de GitHub, roles plan/deploy) se aplica una vez; `modules/` por
   capacidad (network, database, ecs, edge, messaging, storage); `environments/dev` y
   `environments/test` son composiciones con **estado remoto independiente** — no usar Terraform
-  workspaces para representar ambientes. Región por defecto `sa-east-1`, `project_name`
+  workspaces para representar ambientes. Región por defecto `us-east-2`, `project_name`
   `modulo-5-rentas`. No ejecutar `terraform apply` antes del bootstrap y la revisión del plan.
 
 ## Flujo de trabajo

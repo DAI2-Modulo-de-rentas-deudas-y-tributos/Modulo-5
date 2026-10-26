@@ -10,9 +10,9 @@ infraestructura usa `plan` como operacion predeterminada.
 
 Configurar estas variables, sin secretos ni access keys:
 
-- `AWS_REGION`: `sa-east-1`
-- `AWS_ROLE_ARN`: `arn:aws:iam::060712744495:role/modulo-5-rentas-github-test-deploy`
-- `TF_STATE_BUCKET`: `modulo-5-rentas-tfstate-060712744495-sa-east-1`
+- `AWS_REGION`: `us-east-2`
+- `AWS_ROLE_ARN`: `arn:aws:iam::756663253996:role/modulo-5-rentas-github-test-deploy`
+- `TF_STATE_BUCKET`: `modulo-5-rentas-tfstate-756663253996-us-east-2`
 - `TF_STATE_KEY`: `environments/test/terraform.tfstate`
 
 Agregar un reviewer obligatorio al environment `test` para que toda ejecucion
@@ -28,9 +28,9 @@ VPC, RDS, ALB, ECS, CloudFront ni Amplify TEST.
 $env:AWS_PROFILE = "rentas-admin"
 
 terraform -chdir=infra/bootstrap init -reconfigure `
-  -backend-config="bucket=modulo-5-rentas-tfstate-060712744495-sa-east-1" `
+  -backend-config="bucket=modulo-5-rentas-tfstate-756663253996-us-east-2" `
   -backend-config="key=bootstrap/terraform.tfstate" `
-  -backend-config="region=sa-east-1" `
+  -backend-config="region=us-east-2" `
   -backend-config="encrypt=true" `
   -backend-config="use_lockfile=true"
 

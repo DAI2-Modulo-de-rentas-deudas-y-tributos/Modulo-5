@@ -75,7 +75,7 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
-          allowed-account-ids: "060712744495"
+          allowed-account-ids: "756663253996"
           mask-aws-account-id: true
           role-session-name: test-runtime-${{ github.run_id }}
 

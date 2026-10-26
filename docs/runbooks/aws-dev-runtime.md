@@ -30,9 +30,9 @@ ejecuta localmente con el perfil administrador antes del merge:
 $env:AWS_PROFILE = "rentas-admin"
 
 terraform -chdir=infra/bootstrap init -reconfigure `
-  -backend-config="bucket=modulo-5-rentas-tfstate-060712744495-sa-east-1" `
+  -backend-config="bucket=modulo-5-rentas-tfstate-756663253996-us-east-2" `
   -backend-config="key=bootstrap/terraform.tfstate" `
-  -backend-config="region=sa-east-1" `
+  -backend-config="region=us-east-2" `
   -backend-config="encrypt=true" `
   -backend-config="use_lockfile=true"
 
@@ -61,18 +61,18 @@ aws ecs describe-services `
   --cluster modulo-5-rentas-dev-cluster `
   --services modulo-5-rentas-dev-backend `
   --profile rentas-admin `
-  --region sa-east-1 `
+  --region us-east-2 `
   --query "services[0].[status,desiredCount,runningCount]"
 
 aws rds describe-db-instances `
   --db-instance-identifier modulo-5-rentas-dev-postgres `
   --profile rentas-admin `
-  --region sa-east-1 `
+  --region us-east-2 `
   --query "DBInstances[0].[DBInstanceStatus,PubliclyAccessible,EngineVersion]"
 
 aws amplify list-apps `
   --profile rentas-admin `
-  --region sa-east-1 `
+  --region us-east-2 `
   --query "apps[?name=='modulo-5-rentas-dev-frontend'].[appId,defaultDomain]"
 ```
 

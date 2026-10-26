@@ -22,9 +22,9 @@ $env:AWS_PROFILE = "rentas-admin"
 Set-Location infra/bootstrap
 
 terraform init -reconfigure `
-  -backend-config="bucket=modulo-5-rentas-tfstate-060712744495-sa-east-1" `
+  -backend-config="bucket=modulo-5-rentas-tfstate-756663253996-us-east-2" `
   -backend-config="key=bootstrap/terraform.tfstate" `
-  -backend-config="region=sa-east-1" `
+  -backend-config="region=us-east-2" `
   -backend-config="encrypt=true" `
   -backend-config="use_lockfile=true"
 

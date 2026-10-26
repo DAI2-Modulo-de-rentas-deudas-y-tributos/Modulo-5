@@ -1,6 +1,6 @@
 project_name   = "modulo-5-rentas"
-aws_region     = "sa-east-1"
-aws_account_id = "060712744495"
+aws_region     = "us-east-2"
+aws_account_id = "756663253996"
 
 vpc_cidr             = "10.50.0.0/16"
 public_subnet_cidrs   = ["10.50.0.0/24", "10.50.1.0/24"]
@@ -24,7 +24,7 @@ backend_environment_variables = {
 
 # Los valores son ARNs de Secrets Manager, nunca secretos en texto plano.
 backend_secret_variables = {
-  RENTAS_DEMO_BOOTSTRAP_PASSWORD = "arn:aws:secretsmanager:sa-east-1:000000000000:secret:modulo-5-rentas-dev-demo-bootstrap"
+  RENTAS_DEMO_BOOTSTRAP_PASSWORD = "arn:aws:secretsmanager:us-east-2:000000000000:secret:modulo-5-rentas-dev-demo-bootstrap"
 }
 
 frontend_environment_variables = {
