@@ -9,6 +9,9 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.PageImpl;
@@ -18,6 +21,8 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.MockMvc;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.annotation.DirtiesContext;
@@ -43,6 +48,7 @@ import java.util.concurrent.TimeUnit;
 import static org.assertj.core.api.Assertions.*;
 
 @SpringBootTest(properties={"spring.jpa.properties.hibernate.generate_statistics=true","spring.jpa.properties.hibernate.session.events.log=false"})
+@AutoConfigureMockMvc
 @ActiveProfiles("postgres-it")
 @Testcontainers(disabledWithoutDocker=true)
 @DirtiesContext(classMode=DirtiesContext.ClassMode.AFTER_CLASS)
@@ -100,6 +106,114 @@ class PostgreSqlIntegrationTest {
         assertThat(billDebts.findByBillId(boleta.id)).hasSize(1);
     }
 
+    @Test void intentosElectronicosRechazadosConLaMismaClaveSonIdempotentesBajoConcurrencia() throws Exception {
+        authenticate();
+        Debt deuda=debt("ELECTRONICO-IDEMPOTENTE",null);
+        ApiDtos.ElectronicPaymentRequest solicitud=new ApiDtos.ElectronicPaymentRequest(deuda.id,PaymentMethod.CASH,new BigDecimal("25"));
+        String clave=UUID.randomUUID().toString();
+        String sesionA=new DemoAuthSessions(demoUsers,taxpayers,passwordEncoder,demoAuthService).token(DemoRole.TAXPAYER,deuda.taxpayerId);
+        String sesionB=new DemoAuthSessions(demoUsers,taxpayers,passwordEncoder,demoAuthService).token(DemoRole.TAXPAYER,deuda.taxpayerId);
+        long eventosPrevios=jdbc.queryForObject("select count(*) from outbox_event where event_type='paymentRegistered'",Long.class);
+        jdbc.execute("CREATE FUNCTION delay_test_electronic_attempt() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(2); RETURN NEW; END $$");
+        jdbc.execute("CREATE TRIGGER delay_test_electronic_attempt BEFORE INSERT ON electronic_payment_attempt FOR EACH ROW EXECUTE FUNCTION delay_test_electronic_attempt()");
+        var respuestas=new java.util.concurrent.CopyOnWriteArrayList<MockHttpServletResponse>();
+        List<Throwable> fallas;
+        try {
+            fallas=runTogether(
+                ()->{respuestas.add(postElectronic(sesionA,clave,solicitud));return null;},
+                ()->{respuestas.add(postElectronic(sesionB,clave,solicitud));return null;});
+            String claveConTimeout=UUID.randomUUID().toString();
+            ExecutorService cliente=Executors.newSingleThreadExecutor();
+            try {
+                Future<MockHttpServletResponse> respuestaTardia=cliente.submit(()->postElectronic(sesionA,claveConTimeout,solicitud));
+                assertThatThrownBy(()->respuestaTardia.get(100,TimeUnit.MILLISECONDS)).isInstanceOf(java.util.concurrent.TimeoutException.class);
+                MockHttpServletResponse confirmada=respuestaTardia.get(5,TimeUnit.SECONDS);
+                MockHttpServletResponse recuperada=postElectronic(sesionB,claveConTimeout,solicitud);
+                assertThat(confirmada.getStatus()).isEqualTo(201);
+                assertThat(recuperada.getStatus()).isEqualTo(201);
+                assertThat(json.readTree(recuperada.getContentAsString()).path("id").asLong())
+                    .isEqualTo(json.readTree(confirmada.getContentAsString()).path("id").asLong());
+            } finally { cliente.shutdownNow(); }
+            String claveConContenidoDistinto=UUID.randomUUID().toString();
+            ApiDtos.ElectronicPaymentRequest montoDistinto=new ApiDtos.ElectronicPaymentRequest(deuda.id,PaymentMethod.CASH,new BigDecimal("26"));
+            var respuestasDistintas=new java.util.concurrent.CopyOnWriteArrayList<MockHttpServletResponse>();
+            List<Throwable> erroresDistintos=runTogether(
+                ()->{respuestasDistintas.add(postElectronic(sesionA,claveConContenidoDistinto,solicitud));return null;},
+                ()->{respuestasDistintas.add(postElectronic(sesionB,claveConContenidoDistinto,montoDistinto));return null;});
+            assertThat(erroresDistintos).containsOnlyNulls();
+            assertThat(respuestasDistintas.stream().map(MockHttpServletResponse::getStatus).toList()).containsExactlyInAnyOrder(201,409);
+            assertThat(jdbc.queryForObject("select count(*) from electronic_payment_attempt where taxpayer_id=? and idempotency_key=?",Long.class,deuda.taxpayerId,claveConContenidoDistinto)).isOne();
+        } finally {
+            jdbc.execute("DROP TRIGGER delay_test_electronic_attempt ON electronic_payment_attempt");
+            jdbc.execute("DROP FUNCTION delay_test_electronic_attempt()");
+        }
+        assertThat(fallas).containsOnlyNulls();
+        assertThat(respuestas).hasSize(2).allSatisfy(response->assertThat(response.getStatus()).isEqualTo(201));
+        var respuestaA=json.readTree(respuestas.get(0).getContentAsString());
+        var respuestaB=json.readTree(respuestas.get(1).getContentAsString());
+        assertThat(respuestaA.path("id").asLong()).isEqualTo(respuestaB.path("id").asLong());
+        assertThat(respuestaA.path("status").asText()).isEqualTo("REJECTED");
+        List<ElectronicPaymentAttempt> persistidos=jdbc.query("select id, status from electronic_payment_attempt where taxpayer_id=? and idempotency_key=?",
+            (rs,row)->{ElectronicPaymentAttempt attempt=new ElectronicPaymentAttempt();attempt.id=rs.getLong("id");attempt.status=ElectronicPaymentStatus.valueOf(rs.getString("status"));return attempt;},deuda.taxpayerId,clave);
+        assertThat(persistidos).singleElement().satisfies(attempt->assertThat(attempt.status).isEqualTo(ElectronicPaymentStatus.REJECTED));
+        ApiDtos.ElectronicPaymentRequest distinto=new ApiDtos.ElectronicPaymentRequest(deuda.id,PaymentMethod.CASH,new BigDecimal("26"));
+        MockHttpServletResponse conflicto=postElectronic(sesionA,clave,distinto);
+        assertThat(conflicto.getStatus()).isEqualTo(409);
+        assertThat(json.readTree(conflicto.getContentAsString()).path("code").asText()).isEqualTo("IDEMPOTENCY_KEY_REUSED");
+        MockHttpServletResponse reintento=postElectronic(new DemoAuthSessions(demoUsers,taxpayers,passwordEncoder,demoAuthService).token(DemoRole.TAXPAYER,deuda.taxpayerId),clave,solicitud);
+        assertThat(reintento.getStatus()).isEqualTo(201);
+        assertThat(json.readTree(reintento.getContentAsString()).path("id").asLong()).isEqualTo(respuestaA.path("id").asLong());
+        assertThat(jdbc.queryForObject("select count(*) from electronic_payment_attempt where taxpayer_id=? and idempotency_key=?",Long.class,deuda.taxpayerId,clave)).isOne();
+        assertThat(paymentRepository.findByTaxpayerId(deuda.taxpayerId)).isEmpty();
+        assertThat(jdbc.queryForObject("select count(*) from outbox_event where event_type='paymentRegistered'",Long.class)).isEqualTo(eventosPrevios);
+        assertThat(debts.findById(deuda.id).orElseThrow().outstandingBalance).isEqualByComparingTo("100.00");
+    }
+
+    @Test void intentosElectronicosAprobadosConLaMismaClaveCreanUnSoloPago() throws Exception {
+        authenticate();
+        Debt deuda=debt("ELECTRONICO-APROBADO-IDEMPOTENTE",null);
+        ApiDtos.ElectronicPaymentRequest solicitud=new ApiDtos.ElectronicPaymentRequest(deuda.id,PaymentMethod.CARD,new BigDecimal("25"));
+        String clave=UUID.randomUUID().toString();
+        jdbc.execute("CREATE FUNCTION delay_test_electronic_attempt() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(2); RETURN NEW; END $$");
+        jdbc.execute("CREATE TRIGGER delay_test_electronic_attempt BEFORE INSERT ON electronic_payment_attempt FOR EACH ROW EXECUTE FUNCTION delay_test_electronic_attempt()");
+        var resultados=new java.util.concurrent.CopyOnWriteArrayList<Long>();
+        List<Throwable> fallas;
+        try {
+            fallas=runTogether(
+                ()->{authenticateTaxpayer(deuda.taxpayerId);resultados.add(electronicPayments.create(solicitud,clave).id);return null;},
+                ()->{authenticateTaxpayer(deuda.taxpayerId);resultados.add(electronicPayments.create(solicitud,clave).id);return null;});
+        } finally {
+            jdbc.execute("DROP TRIGGER delay_test_electronic_attempt ON electronic_payment_attempt");
+            jdbc.execute("DROP FUNCTION delay_test_electronic_attempt()");
+        }
+        assertThat(fallas).containsOnlyNulls();
+        assertThat(resultados).hasSize(2);
+        assertThat(resultados.get(0)).isEqualTo(resultados.get(1));
+        assertThat(paymentRepository.findByTaxpayerId(deuda.taxpayerId)).hasSize(1);
+        Payment pago=paymentRepository.findByTaxpayerId(deuda.taxpayerId).get(0);
+        assertThat(allocations.findByPaymentId(pago.id)).hasSize(1);
+        assertThat(jdbc.queryForObject("select count(*) from electronic_payment_attempt where taxpayer_id=? and idempotency_key=? and status='APPROVED'",Long.class,deuda.taxpayerId,clave)).isOne();
+        assertThat(jdbc.queryForObject("select count(*) from outbox_event where event_type='paymentRegistered' and aggregate_id=?",Long.class,pago.id.toString())).isOne();
+        assertThat(auditoria.findByEntityTypeAndEntityIdOrderByOccurredAt("Payment",pago.id.toString())).hasSize(1);
+    }
+
+    @Test void pagosElectronicosConcurrentesConClavesDistintasConservanElSaldoEconomico() throws Exception {
+        authenticate();
+        Debt deuda=debt("ELECTRONICO-SALDO-CONCURRENTE",null);
+        ApiDtos.ElectronicPaymentRequest solicitud=new ApiDtos.ElectronicPaymentRequest(deuda.id,PaymentMethod.CARD,new BigDecimal("80"));
+        assertThat(runTogether(
+            ()->{authenticateTaxpayer(deuda.taxpayerId);electronicPayments.create(solicitud,UUID.randomUUID().toString());return null;},
+            ()->{authenticateTaxpayer(deuda.taxpayerId);electronicPayments.create(solicitud,UUID.randomUUID().toString());return null;})).containsOnlyNulls();
+        List<Payment> pagos=paymentRepository.findByTaxpayerId(deuda.taxpayerId);
+        assertThat(pagos).hasSize(2);
+        assertThat(pagos.stream().map(x->x.amount).reduce(BigDecimal.ZERO,BigDecimal::add)).isEqualByComparingTo("160.00");
+        assertThat(pagos.stream().map(x->x.allocatedAmount).reduce(BigDecimal.ZERO,BigDecimal::add)).isEqualByComparingTo("100.00");
+        assertThat(debts.findById(deuda.id).orElseThrow().outstandingBalance).isZero();
+        assertThat(creditRepository.findByTaxpayerId(deuda.taxpayerId).stream().map(x->x.availableAmount).reduce(BigDecimal.ZERO,BigDecimal::add)).isEqualByComparingTo("60.00");
+        assertThat(jdbc.queryForObject("select count(*) from electronic_payment_attempt where taxpayer_id=? and status='APPROVED'",Long.class,deuda.taxpayerId)).isEqualTo(2L);
+        assertThat(jdbc.queryForObject("select count(*) from outbox_event where event_type='paymentRegistered' and aggregate_id in (?,?)",Long.class,pagos.get(0).id.toString(),pagos.get(1).id.toString())).isEqualTo(2L);
+    }
+
     @Test void claveDePagoSeRevierteConLaTransaccionYEsOpcional() {
         authenticate();
         Debt deuda=debt("IDEMPOTENCIA-ROLLBACK",null);
@@ -151,6 +265,7 @@ class PostgreSqlIntegrationTest {
     @Autowired LiquidationRepository liquidationRecords;
     @Autowired PlanWorkflowService workflow;
     @Autowired PaymentService payments;
+    @Autowired ElectronicPaymentService electronicPayments;
     @Autowired ReversalService reversals;
     @Autowired DebtRepository debts;
     @Autowired InstallmentRepository installments;
@@ -183,6 +298,8 @@ class PostgreSqlIntegrationTest {
     @Autowired DemoAuthController demoAuth;
     @Autowired DemoAuthService demoAuthService;
     @Autowired DemoUserRepository demoUsers;
+    @Autowired org.springframework.security.crypto.password.PasswordEncoder passwordEncoder;
+    @Autowired MockMvc mvc;
     @Autowired ConfirmedM8Consumer coreM8;
     @Autowired SocialBenefitRepository socialBenefits;
     @Autowired SocialBenefitEventHistoryRepository socialBenefitHistory;
@@ -849,10 +966,35 @@ class PostgreSqlIntegrationTest {
         assertThat(jdbc.queryForObject("select sum(outstanding_balance) from debt where tax_concept_id=?", BigDecimal.class, concept.id)).isEqualByComparingTo("2005.00");
     }
 
+    @Test void percentageStrategyPreviewAndPersistedLiquidationMatchOnPostgreSql() {
+        authenticate();
+        TaxpayerReference owner = taxpayer(TaxpayerType.CITIZEN, "PG-STRATEGY-" + UUID.randomUUID(), uniqueDigits(8), null);
+        TaxConcept concept = concept("PG_STRATEGY_" + UUID.randomUUID(), TaxConceptType.FEE, "M5");
+        TaxConfiguration config = catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(
+            concept.id, CalculationType.PERCENTAGE, new BigDecimal("2.0000"), null, null, null,
+            true, true, LocalDate.now().minusDays(1), null));
+        catalog.submit(config.id);
+        catalog.approve(config.id);
+        var request = new ApiDtos.LiquidationRequest(owner.id, concept.id, YearMonth.now().toString(),
+            new BigDecimal("100000.25"), LocalDate.now().plusDays(30));
+
+        var preview = liquidations.preview(request);
+        Liquidation created = liquidations.create(request);
+
+        assertThat(preview.baseAmount()).isEqualByComparingTo("2000.01");
+        assertThat(preview.finalAmount()).isEqualByComparingTo("2000.01");
+        assertThat(created.baseAmount).isEqualByComparingTo(preview.baseAmount());
+        assertThat(created.finalAmount).isEqualByComparingTo(preview.finalAmount());
+        assertThat(debts.findByLiquidationId(created.id).orElseThrow().outstandingBalance)
+            .isEqualByComparingTo(preview.finalAmount());
+    }
+
     private void assertEquation(Payment payment){Payment stored=paymentRepository.findById(payment.id).orElseThrow();assertThat(stored.allocatedAmount.add(stored.unallocatedAmount)).isEqualByComparingTo(stored.amount);}
     private LocalDate uniqueProcessingDate(Long debtId,int offset){return LocalDate.of(1900,1,1).plusDays(debtId*10+offset);}
     private List<OutboxEvent> overdueEvents(Debt debt){return outbox.findAll().stream().filter(x->x.eventType.equals("overdueDebt")&&x.targetModule.equals("CORE")&&x.aggregateType.equals("Debt")&&x.aggregateId.equals(debt.id.toString())).toList();}
     private void authenticate(){var authorities=List.of("RENTAS","SUPERVISOR","CASHIER").stream().map(x->new SimpleGrantedAuthority("ROLE_"+x)).toList();SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("postgres-it",null),null,authorities));}
+    private void authenticateTaxpayer(Long taxpayerId){SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("postgres-it-taxpayer-"+UUID.randomUUID(),taxpayerId),null,List.of(new SimpleGrantedAuthority("ROLE_TAXPAYER"))));}
+    private MockHttpServletResponse postElectronic(String session,String key,ApiDtos.ElectronicPaymentRequest request)throws Exception{SecurityContextHolder.clearContext();return mvc.perform(post("/api/v1/electronic-payments").header("X-Demo-Session",session).header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsBytes(request))).andReturn().getResponse();}
     private Debt debt(String suffix,Long taxpayerId){if(taxpayerId==null)taxpayerId=taxpayer(TaxpayerType.CITIZEN,"PG-"+suffix+"-"+UUID.randomUUID(),uniqueDigits(8),null).id;TaxConcept concept=concept("PG_"+suffix+"_"+UUID.randomUUID(),TaxConceptType.FEE,"M5");TaxConfiguration configuration=catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(concept.id,CalculationType.FIXED,null,new BigDecimal("100"),null,null,true,true,LocalDate.now().minusDays(1),null));catalog.submit(configuration.id);catalog.approve(configuration.id);Liquidation liquidation=liquidations.create(new ApiDtos.LiquidationRequest(taxpayerId,concept.id,YearMonth.now().plusMonths(Math.abs(suffix.hashCode()%12)).toString(),BigDecimal.ZERO,LocalDate.now().plusDays(30)));return debts.findByTaxpayerId(taxpayerId).stream().filter(x->x.liquidationId.equals(liquidation.id)).findFirst().orElseThrow();}
     private Liquidation liquidationFor(Debt debt){return jdbc.queryForObject("select id from liquidation where id=?",(rs,n)->{Liquidation l=new Liquidation();l.id=rs.getLong(1);return l;},debt.liquidationId);}
     private TaxConcept concept(String code,TaxConceptType type,String module){return concepts.findByCode(code).orElseGet(()->catalog.createConcept(new ApiDtos.CreateTaxConceptRequest(code,code,null,type,module)));}

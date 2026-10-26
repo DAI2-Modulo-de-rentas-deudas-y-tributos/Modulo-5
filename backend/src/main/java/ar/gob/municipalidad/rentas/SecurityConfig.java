@@ -12,6 +12,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.config.Customizer;
@@ -54,7 +56,8 @@ class SecurityConfig {
     }
 
     @Bean SecurityFilterChain securityFilterChain(HttpSecurity http, DevIdentityFilter filter,
-            SecurityErrorResponseWriter errors) throws Exception {
+            SecurityErrorResponseWriter errors, Environment environment) throws Exception {
+        boolean production=environment.acceptsProfiles(Profiles.of("prod"));
         return http.csrf(csrf -> csrf.disable())
             .sessionManagement(session -> session.sessionCreationPolicy(org.springframework.security.config.http.SessionCreationPolicy.STATELESS))
             .exceptionHandling(securityErrors -> securityErrors
@@ -63,12 +66,15 @@ class SecurityConfig {
                 .accessDeniedHandler((request,response,error) -> errors.write(request,response,403,
                     "ACCESS_DENIED","No tiene permisos para realizar esta operación")))
             .cors(Customizer.withDefaults())
-            .authorizeHttpRequests(auth -> auth
-                .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                .requestMatchers("/actuator/health", "/api/v1/health", "/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll()
+            .authorizeHttpRequests(auth -> {
+                auth.requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                    .requestMatchers("/actuator/health", "/api/v1/health").permitAll();
+                if (!production) auth.requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll();
+                auth
                 .requestMatchers(HttpMethod.POST, "/api/v1/dev-auth/login", "/api/v1/dev-auth/bootstrap").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/v1/**").authenticated()
-                .anyRequest().authenticated())
+                .anyRequest().authenticated();
+            })
             .addFilterBefore(filter, UsernamePasswordAuthenticationFilter.class)
             .build();
     }

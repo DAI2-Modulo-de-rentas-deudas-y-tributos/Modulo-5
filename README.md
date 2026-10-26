@@ -13,6 +13,15 @@ Monorepo del módulo de Rentas, tributos, deudas y planes de pago.
 El modo full-stack usa PostgreSQL como fuente de verdad. El frontend no contiene
 un dataset alternativo de producción: todas las operaciones pasan por la API.
 
+## Patrones, seguridad y evidencia
+
+- [Auditoría SOLID y patrones M5](docs/AUDITORIA_SOLID_M5.md)
+- [Criterios verificables de seguridad](docs/SEGURIDAD_CRITERIOS_ACEPTACION.md)
+- [Matriz de flujos frontend/backend](docs/M5_FLUJOS_FRONTEND_BACKEND_EVIDENCIA.md)
+- [Niveles y bloqueos de integración](docs/M5_NIVELES_INTEGRACION.md)
+- [Guía de exposición y demo segura](docs/GUIA_EXPOSICION_PATRONES_SEGURIDAD.md)
+- [Índice de ADR](docs/adr/README.md)
+
 ## Tecnologías acordadas
 
 - JavaScript, React y Vite para el frontend;

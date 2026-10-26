@@ -42,6 +42,7 @@ interface LiquidationRepository extends FilteredRepository<Liquidation,Long> { L
 interface LiquidationComponentRepository extends JpaRepository<LiquidationComponent,Long> { List<LiquidationComponent> findByLiquidationIdOrderById(Long liquidationId); List<LiquidationComponent> findByLiquidationIdInOrderByLiquidationIdAscIdAsc(Collection<Long> liquidationIds); }
 interface DebtRepository extends FilteredRepository<Debt,Long> {
     List<Debt> findByTaxpayerId(Long taxpayerId); Optional<Debt> findByLiquidationId(Long liquidationId); boolean existsByExternalObligationId(Long externalObligationId);
+    @Query("select d.taxpayerId from Debt d where d.id=:id") Optional<Long> findTaxpayerIdById(Long id);
     @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select d from Debt d where d.id=:id") Optional<Debt> findByIdForUpdate(Long id);
     @Query("""
         select count(d.id) as debtCount,
