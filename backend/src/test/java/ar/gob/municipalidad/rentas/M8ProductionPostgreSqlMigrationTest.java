@@ -31,9 +31,11 @@ class M8ProductionPostgreSqlMigrationTest {
     @Test void m8MigrationsKeepProductionSchemaWithoutDemoUsers(){
         assertThat(jdbc.queryForObject("select current_setting('server_version')",String.class)).startsWith("17.");
         assertThat(jdbc.queryForObject("select to_regclass('public.demo_user')::text",String.class)).isNull();
-        assertThat(jdbc.queryForList("select version from flyway_schema_history where success and version in ('18','24','25','26') order by installed_rank",String.class))
-            .containsExactly("18","24","25","26");
+        assertThat(jdbc.queryForList("select version from flyway_schema_history where success and version in ('18','24','25','26','27','28') order by installed_rank",String.class))
+            .containsExactly("18","24","25","26","27","28");
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='debt'",String.class))
+            .contains("integration_id");
+        assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name in ('payment_plan_request','payment_plan')",String.class))
             .contains("integration_id");
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='social_benefit_reference'",String.class))
             .contains("external_reason","resolution_status","source_payload_hash","received_at");

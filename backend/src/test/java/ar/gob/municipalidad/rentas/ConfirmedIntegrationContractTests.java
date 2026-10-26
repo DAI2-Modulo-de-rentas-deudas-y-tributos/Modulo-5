@@ -196,14 +196,26 @@ class ConfirmedIntegrationContractTests {
 
     @Test void simpleOutboundEconomicContractsKeepConfirmedShapes() {
         var exemption=new ConfirmedOutboundEvents.ExemptionRequestedPayload(UUID.fromString("e5dd27f4-c803-4d5c-a75e-c003d99cc5af"),UUID.fromString("2808fa6c-1e50-4f71-a46e-ca444458924b"),"TASA_SERVICIOS","Situación socioeconómica",new BigDecimal("100.00"),LocalDate.parse("2026-09-01"),LocalDate.parse("2027-08-31"));JsonNode exemptionTree=json.valueToTree(producer.exemptionRequestedEvent(exemption));assertThat(exemptionTree.path("occurredAt").isTextual()).isTrue();assertThat(exemptionTree.path("sourceModule").asText()).isEqualTo("rentas");assertThat(exemptionTree.path("data").path("requestedPercentage").decimalValue()).isEqualByComparingTo("100.00");
-        var plan=new ConfirmedOutboundEvents.PaymentPlanRequestedPayload("ppr-00800","c-00123",List.of("debt-03001","debt-03002"),new BigDecimal("200000.00"),6);JsonNode planTree=json.valueToTree(producer.paymentPlanRequestedEvent(plan));assertThat(planTree.path("data").path("debtIds")).hasSize(2);
+        var plan=new ConfirmedOutboundEvents.PaymentPlanRequestedPayload(UUID.fromString("e5dd27f4-c803-4d5c-a75e-c003d99cc5af"),UUID.fromString("2808fa6c-1e50-4f71-a46e-ca444458924b"),List.of(UUID.fromString("a2fd68c2-b186-4e78-aa2b-191e241f584d"),UUID.fromString("653d9e79-2cd1-4ec1-8ada-845374f6903d")),new BigDecimal("200000.00"),6);JsonNode planTree=json.valueToTree(producer.paymentPlanRequestedEvent(plan));assertThat(planTree.path("data").path("debtIds")).hasSize(2);
         var overdue=new ConfirmedOutboundEvents.OverdueDebtPayload(UUID.fromString("653d9e79-2cd1-4ec1-8ada-845374f6903d"),UUID.fromString("2808fa6c-1e50-4f71-a46e-ca444458924b"),"TASA_SERVICIOS",new BigDecimal("85000.00"),LocalDate.parse("2026-08-20"));assertThat(json.valueToTree(producer.overdueDebtEvent(overdue)).path("eventType").asText()).isEqualTo("overdueDebt");
         var settled=new ConfirmedOutboundEvents.DebtSettledPayload(UUID.fromString("a2fd68c2-b186-4e78-aa2b-191e241f584d"),UUID.fromString("2808fa6c-1e50-4f71-a46e-ca444458924b"),"TASA_SERVICIOS","MUNICIPAL_TAX","liq-1",null,OffsetDateTime.parse("2026-08-27T14:00:00-03:00"),BigDecimal.ZERO.setScale(2),BigDecimal.ZERO.setScale(2));assertThat(json.valueToTree(producer.debtSettledEvent(settled)).path("data").path("outstandingBalance").decimalValue()).isEqualByComparingTo("0.00");
     }
 
     @Test void unifiedStatusEventsSerializeApprovedRejectedGrantedAndRejectedShapes() {
         var approved=new ConfirmedOutboundEvents.UpdateExemptionStatusPayload(UUID.fromString("e5dd27f4-c803-4d5c-a75e-c003d99cc5af"),UUID.fromString("2808fa6c-1e50-4f71-a46e-ca444458924b"),"APPROVED",UUID.fromString("f0c9ec39-d07e-46cf-b379-eb7f57488fa5"),"TASA",new BigDecimal("100"),LocalDate.now(),LocalDate.now().plusYears(1),null);var rejected=new ConfirmedOutboundEvents.UpdateExemptionStatusPayload(UUID.fromString("71110654-776a-4342-bc6c-44408c3be39e"),UUID.fromString("2808fa6c-1e50-4f71-a46e-ca444458924b"),"REJECTED",null,"TASA",null,null,null,"No cumple");JsonNode approvedTree=json.valueToTree(producer.exemptionStatusEvent(approved));JsonNode rejectedTree=json.valueToTree(producer.exemptionStatusEvent(rejected));assertThat(approvedTree.path("eventType").asText()).isEqualTo("updateExemptionStatus");assertThat(approvedTree.path("data").path("status").asText()).isEqualTo("APPROVED");assertThat(rejectedTree.path("data").path("status").asText()).isEqualTo("REJECTED");
-        var granted=new ConfirmedOutboundEvents.UpdatePaymentPlanStatusPayload("ppr-1","c-1","GRANTED","plan-1",6,new BigDecimal("220000"),null);var planRejected=new ConfirmedOutboundEvents.UpdatePaymentPlanStatusPayload("ppr-2","c-2","REJECTED",null,null,null,"No elegible");assertThat(json.valueToTree(producer.paymentPlanStatusEvent(granted)).path("data").path("status").asText()).isEqualTo("GRANTED");assertThat(json.valueToTree(producer.paymentPlanStatusEvent(planRejected)).path("data").path("status").asText()).isEqualTo("REJECTED");
+        UUID request=UUID.fromString("e5dd27f4-c803-4d5c-a75e-c003d99cc5af"),citizen=UUID.fromString("2808fa6c-1e50-4f71-a46e-ca444458924b");var granted=new ConfirmedOutboundEvents.UpdatePaymentPlanStatusPayload(request,citizen,"GRANTED",UUID.fromString("a2fd68c2-b186-4e78-aa2b-191e241f584d"),6,new BigDecimal("220000"),null);var planRejected=new ConfirmedOutboundEvents.UpdatePaymentPlanStatusPayload(request,citizen,"REJECTED",null,null,null,"No elegible");assertThat(json.valueToTree(producer.paymentPlanStatusEvent(granted)).path("data").path("status").asText()).isEqualTo("GRANTED");assertThat(json.valueToTree(producer.paymentPlanStatusEvent(planRejected)).path("data").path("status").asText()).isEqualTo("REJECTED");
+    }
+
+    @Test void paymentPlanPayloadsRejectIncompleteOrNonPositiveValues(){
+        UUID id=UUID.randomUUID();
+        assertThatThrownBy(()->new ConfirmedOutboundEvents.PaymentPlanRequestedPayload(id,id,List.of(),BigDecimal.ONE,3))
+            .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(()->new ConfirmedOutboundEvents.PaymentPlanRequestedPayload(id,id,List.of(id),BigDecimal.ZERO,3))
+            .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(()->new ConfirmedOutboundEvents.UpdatePaymentPlanStatusPayload(id,id,"GRANTED",null,3,BigDecimal.TEN,null))
+            .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(()->new ConfirmedOutboundEvents.UpdatePaymentPlanStatusPayload(id,id,"REJECTED",id,null,null,"No corresponde"))
+            .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test void m8OutboundPayloadsRejectMissingIdentityAndIncompleteExemptionDecisions() {

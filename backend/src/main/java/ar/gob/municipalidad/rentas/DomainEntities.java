@@ -282,6 +282,7 @@ class PaymentPlanConfiguration {
 @Entity @Table(name="payment_plan_request")
 class PaymentPlanRequest {
     @Id @GeneratedValue(strategy=GenerationType.IDENTITY) public Long id;
+    @Column(name="integration_id",nullable=false,unique=true,updatable=false) public UUID integrationId;
     @Column(name="taxpayer_id",nullable=false) public Long taxpayerId;
     @Column(name="requested_installments",nullable=false) public int requestedInstallments;
     @Column(name="total_debt_at_request",nullable=false,precision=19,scale=2) public BigDecimal totalDebtAtRequest;
@@ -299,6 +300,7 @@ class PaymentPlanRequest {
     @Column(name="resolved_at") public OffsetDateTime resolvedAt;
     @Column(name="resolution_reason") public String resolutionReason;
     @Column(name="payment_plan_id") public Long paymentPlanId;
+    @PrePersist void assignIntegrationId(){if(integrationId==null)integrationId=UUID.randomUUID();}
     protected PaymentPlanRequest() {}
 }
 
@@ -421,6 +423,7 @@ class AuditEntry {
 @Entity @Table(name="payment_plan")
 class PaymentPlan {
     @Id @GeneratedValue(strategy=GenerationType.IDENTITY) public Long id;
+    @Column(name="integration_id",nullable=false,unique=true,updatable=false) public UUID integrationId;
     @Column(name="taxpayer_id",nullable=false) public Long taxpayerId;
     @Column(name="debt_id") public Long debtId;
     @Column(name="request_id") public Long requestId;
@@ -441,6 +444,7 @@ class PaymentPlan {
     @Column(name="completed_at") public OffsetDateTime completedAt;
     @Column(name="expired_at") public OffsetDateTime expiredAt;
     @Column(name="refinanced_at") public OffsetDateTime refinancedAt;
+    @PrePersist void assignIntegrationId(){if(integrationId==null)integrationId=UUID.randomUUID();}
     protected PaymentPlan() {}
 }
 

@@ -117,7 +117,7 @@ interface PaymentPlanConfigurationRepository extends FilteredRepository<PaymentP
     List<PaymentPlanConfiguration> findApplicableVersions(@Param("date") LocalDate date,Pageable pageable);
 }
 interface PaymentPlanRequestRepository extends FilteredRepository<PaymentPlanRequest,Long> { Page<PaymentPlanRequest> findByTaxpayerId(Long taxpayerId,Pageable pageable); @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select r from PaymentPlanRequest r where r.id=:id") Optional<PaymentPlanRequest> findByIdForUpdate(Long id); long countByStatus(PaymentPlanRequestStatus status); }
-interface PaymentPlanRequestDebtRepository extends JpaRepository<PaymentPlanRequestDebt,Long> { List<PaymentPlanRequestDebt> findByRequestId(Long requestId); }
+interface PaymentPlanRequestDebtRepository extends JpaRepository<PaymentPlanRequestDebt,Long> { List<PaymentPlanRequestDebt> findByRequestId(Long requestId); List<PaymentPlanRequestDebt> findByRequestIdOrderByIdAsc(Long requestId); }
 interface PaymentPlanRepository extends FilteredRepository<PaymentPlan,Long> {
     boolean existsByDebtIdAndStatus(Long debtId, PaymentPlanStatus status);
     List<PaymentPlan> findByDebtIdOrderByGrantedAtAscIdAsc(Long debtId);

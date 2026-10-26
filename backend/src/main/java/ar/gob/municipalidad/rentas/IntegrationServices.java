@@ -54,8 +54,15 @@ class OutboxPublisher {
             event.errorMessage="M8_CONTRACT_REVIEW_REQUIRED: invalid exemption UUID identifiers";
             continue;
         }
+        if(!validPaymentPlanIdentifiers(event)){
+            event.status=OutboxStatus.DEAD_LETTER;
+            event.errorMessage="M1_PLAN_CONTRACT_REVIEW_REQUIRED: invalid payment plan UUID payload";
+            continue;
+        }
         if("updateExemptionStatus".equals(event.eventType)
             &&!repository.existsByEventTypeAndAggregateTypeAndAggregateIdAndStatus("exemptionRequested",event.aggregateType,event.aggregateId,OutboxStatus.PUBLISHED))continue;
+        if("updatePaymentPlanStatus".equals(event.eventType)
+            &&!repository.existsByEventTypeAndAggregateTypeAndAggregateIdAndStatus("paymentPlanRequested",event.aggregateType,event.aggregateId,OutboxStatus.PUBLISHED))continue;
         try{event.lastAttemptAt=OffsetDateTime.now();if("PLATFORM".equals(event.targetModule))log.info("INTERNAL_OUTBOX eventType={} targetModule={}",event.eventType,event.targetModule);else publisher.publish(event.eventType,event.targetModule,event.payload);event.status=OutboxStatus.PUBLISHED;event.publishedAt=OffsetDateTime.now();event.errorMessage=null;}catch(RuntimeException ex){event.retryCount++;String message=ex.getMessage()==null?ex.getClass().getSimpleName():ex.getMessage();event.errorMessage=message.substring(0,Math.min(message.length(),255));event.status=event.retryCount>=5?OutboxStatus.DEAD_LETTER:OutboxStatus.FAILED;}
     }}
     private boolean validEconomicIdentifiers(OutboxEvent event){
@@ -79,6 +86,29 @@ class OutboxPublisher {
                 String status=data.path("status").asText();
                 if("APPROVED".equals(status))java.util.UUID.fromString(data.path("exemptionId").asText());
                 else if(!"REJECTED".equals(status))return false;
+            }
+            return true;
+        }catch(Exception ex){return false;}
+    }
+    private boolean validPaymentPlanIdentifiers(OutboxEvent event){
+        if(!"CORE".equals(event.targetModule)
+            ||!("paymentPlanRequested".equals(event.eventType)||"updatePaymentPlanStatus".equals(event.eventType)))return true;
+        try{
+            var data=payloadJson.readTree(event.payload).path("data");
+            java.util.UUID.fromString(data.path("requestId").asText());
+            java.util.UUID.fromString(data.path("citizenId").asText());
+            if("paymentPlanRequested".equals(event.eventType)){
+                var debtIds=data.path("debtIds");
+                if(!debtIds.isArray()||debtIds.isEmpty()||data.path("totalDebt").decimalValue().signum()<=0||data.path("installments").intValue()<=0)return false;
+                for(var debtId:debtIds)java.util.UUID.fromString(debtId.asText());
+            }else{
+                String status=data.path("status").asText();
+                if("GRANTED".equals(status)){
+                    java.util.UUID.fromString(data.path("planId").asText());
+                    if(data.path("installments").intValue()<=0||data.path("totalAmount").decimalValue().signum()<=0||data.hasNonNull("reason"))return false;
+                }else if("REJECTED".equals(status)){
+                    if(data.hasNonNull("planId")||data.hasNonNull("installments")||data.hasNonNull("totalAmount")||data.path("reason").asText().isBlank())return false;
+                }else return false;
             }
             return true;
         }catch(Exception ex){return false;}
