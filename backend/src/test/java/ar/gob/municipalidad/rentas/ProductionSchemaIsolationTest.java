@@ -4,20 +4,30 @@ import org.junit.jupiter.api.Test;
 import org.flywaydb.core.Flyway;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.context.ApplicationContext;
+import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 @ActiveProfiles("prod")
-@SpringBootTest
+@SpringBootTest @AutoConfigureMockMvc
 class ProductionSchemaIsolationTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired ApplicationContext context;
+    @Autowired MockMvc mvc;
+    @Autowired ObjectMapper json;
 
     @DynamicPropertySource
     static void productionDatabase(DynamicPropertyRegistry registry) {
@@ -46,6 +56,19 @@ class ProductionSchemaIsolationTest {
         assertThat(context.getBeansOfType(DemoUserRepository.class)).isEmpty();
         assertThat(context.getBeansOfType(DemoAuthSessionRepository.class)).isEmpty();
         assertThat(context.getBeansOfType(DemoBootstrapLockRepository.class)).isEmpty();
+    }
+
+    @Test
+    void productionDoesNotExposeDemoAuthHttpRoutesOrOpenApiOperations() throws Exception {
+        mvc.perform(post("/api/v1/dev-auth/login").contentType(MediaType.APPLICATION_JSON).content("{}"))
+            .andExpect(status().isNotFound());
+        mvc.perform(post("/api/v1/dev-auth/bootstrap").contentType(MediaType.APPLICATION_JSON).content("{}"))
+            .andExpect(status().isNotFound());
+        var paths=json.readTree(mvc.perform(get("/v3/api-docs")).andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsString()).path("paths");
+        assertThat(paths.has("/api/v1/dev-auth/login")).isFalse();
+        assertThat(paths.has("/api/v1/dev-auth/bootstrap")).isFalse();
+        assertThat(paths.has("/api/v1/dev-auth/users")).isFalse();
     }
 
     @Test
