@@ -79,6 +79,19 @@ class ExternalPaymentEventsTests {
         assertFields(settled,"debtId","citizenId","conceptCode","originType","originId","settledAt","remainingBalance","outstandingBalance");
     }
 
+    @Test void missingM4CorrelationDefersInsteadOfInventingOne(){
+        TaxpayerReference taxpayer=taxpayer("M4-NO-CORRELATION");
+        Debt debt=externalDebt(taxpayer,"M4",ExternalObligationType.PERMIT_FEE,"FEE-NO-CORRELATION","100",false);
+        Payment payment=payments.register(request(taxpayer.id,"20",new ApiDtos.AllocationRequest(debt.id,new BigDecimal("20"))));
+        PaymentAllocation allocation=allocations.findByPaymentId(payment.id).get(0);
+
+        assertThat(eventsForPayment("paymentRegistered","M4",payment.id)).isEmpty();
+        IntegrationEventLog deferred=economicMarker("paymentRegistered",allocation.id,debt.id);
+        assertThat(deferred.status).isEqualTo(IntegrationEventStatus.PENDING);
+        assertThat(deferred.errorMessage).isEqualTo("M4_ORIGINAL_CORRELATION_ID_UNAVAILABLE");
+        assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("80.00");
+    }
+
     @Test void localDebtDoesNotPublishTargetSpecificEvents(){
         TaxpayerReference taxpayer=taxpayer("LOCAL");Debt debt=localDebt(taxpayer,"50");Payment payment=payments.register(request(taxpayer.id,"50",new ApiDtos.AllocationRequest(debt.id,new BigDecimal("50"))));
         assertThat(eventsForPayment("paymentRegistered","M4",payment.id)).isEmpty();assertThat(eventsForPayment("paymentRegistered","M7",payment.id)).isEmpty();
@@ -124,6 +137,16 @@ class ExternalPaymentEventsTests {
         TaxpayerReference taxpayer=taxpayer("IDEMPOTENT");Debt debt=externalDebt(taxpayer,"M7",ExternalObligationType.TRAFFIC_INFRACTION,"INF-IDEMPOTENT","100");ApiDtos.RegisterPaymentRequest request=request(taxpayer.id,"100",new ApiDtos.AllocationRequest(debt.id,new BigDecimal("100")));String key="scrum-144-"+UUID.randomUUID();
         Payment first=payments.register(request,key),retry=payments.register(request,key);
         assertThat(retry.id).isEqualTo(first.id);assertThat(eventsForPayment("paymentRegistered","M7",first.id)).hasSize(1);assertThat(events("debtSettled","M7",debt.id)).hasSize(1);
+    }
+
+    @Test void idempotentM4PaymentRetryDoesNotDuplicateEconomicEvents(){
+        TaxpayerReference taxpayer=taxpayer("M4-IDEMPOTENT");Debt debt=externalDebt(taxpayer,"M4",ExternalObligationType.PERMIT_FEE,"FEE-IDEMPOTENT-"+UUID.randomUUID(),"100");
+        ApiDtos.RegisterPaymentRequest request=request(taxpayer.id,"100",new ApiDtos.AllocationRequest(debt.id,new BigDecimal("100")));
+        String key="m4-idempotency-"+UUID.randomUUID();Payment first=payments.register(request,key),retry=payments.register(request,key);
+
+        assertThat(retry.id).isEqualTo(first.id);
+        assertThat(eventsForPayment("paymentRegistered","M4",first.id)).hasSize(1);
+        assertThat(events("debtSettled","M4",debt.id)).hasSize(1);
     }
 
     @Test void authorizedReversalPublishesAffectedExternalAllocation()throws Exception{
@@ -467,7 +490,13 @@ class ExternalPaymentEventsTests {
             .filter(entry->"PLAN_PRINCIPAL_DISTRIBUTED".equals(entry.action)).forEach(auditEntries::delete);
     }
     private TaxpayerReference taxpayer(String suffix){String unique=suffix+"-"+UUID.randomUUID();return catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(TaxpayerType.CITIZEN,"EXT-PAY-"+unique,String.valueOf(Math.abs(unique.hashCode())+10000000L),null,"Contribuyente "+suffix));}
-    private Debt externalDebt(TaxpayerReference taxpayer,String source,ExternalObligationType type,String reference,String amount){TaxConcept concept=concept(source);ExternalObligation external=new ExternalObligation();external.sourceModule=source;external.externalType=type;external.externalReferenceId=reference;external.sourceEventId=UUID.randomUUID();external.externalTaxpayerType=taxpayer.taxpayerType;external.externalTaxpayerId=taxpayer.externalId;external.taxpayerId=taxpayer.id;external.taxConceptId=concept.id;external.amount=new BigDecimal(amount);external.dueDate=LocalDate.now().plusDays(10);external.status=ExternalObligationStatus.PROCESSED;external.retryCount=0;external.receivedAt=external.processedAt=OffsetDateTime.now();obligations.save(external);if(type==ExternalObligationType.TRAFFIC_INFRACTION){UUID correlation=UUID.randomUUID();IntegrationEventLog received=new IntegrationEventLog();received.eventId=external.sourceEventId;received.externalEventId=external.sourceEventId.toString();received.eventType="infractionConfirmed";received.sourceModule="M7";received.direction=EventDirection.INBOUND;received.status=IntegrationEventStatus.PROCESSED;received.payload="{\"sourceModule\":\"transito\",\"correlationId\":\""+correlation+"\",\"data\":{\"infractionId\":\""+reference+"\"}}";received.retryCount=0;received.occurredAt=received.receivedAt=OffsetDateTime.now();integrationLogs.save(received);}Debt debt=baseDebt(taxpayer,concept,amount);debt.originType=DebtOriginType.EXTERNAL_OBLIGATION;debt.externalObligationId=external.id;return debts.save(debt);}
+    private Debt externalDebt(TaxpayerReference taxpayer,String source,ExternalObligationType type,String reference,String amount){return externalDebt(taxpayer,source,type,reference,amount,true);}
+    private Debt externalDebt(TaxpayerReference taxpayer,String source,ExternalObligationType type,String reference,String amount,boolean includeCorrelation){
+        TaxConcept concept=concept(source);ExternalObligation external=new ExternalObligation();external.sourceModule=source;external.externalType=type;external.externalReferenceId=reference;external.sourceEventId=UUID.randomUUID();external.externalTaxpayerType=taxpayer.taxpayerType;external.externalTaxpayerId=taxpayer.externalId;external.taxpayerId=taxpayer.id;external.taxConceptId=concept.id;external.amount=new BigDecimal(amount);external.dueDate=LocalDate.now().plusDays(10);external.status=ExternalObligationStatus.PROCESSED;external.retryCount=0;external.receivedAt=external.processedAt=OffsetDateTime.now();obligations.save(external);
+        if(type==ExternalObligationType.TRAFFIC_INFRACTION){UUID correlation=UUID.randomUUID();IntegrationEventLog received=new IntegrationEventLog();received.eventId=external.sourceEventId;received.externalEventId=external.sourceEventId.toString();received.eventType="infractionConfirmed";received.sourceModule="M7";received.direction=EventDirection.INBOUND;received.status=IntegrationEventStatus.PROCESSED;received.payload="{\"sourceModule\":\"transito\",\"correlationId\":\""+correlation+"\",\"data\":{\"infractionId\":\""+reference+"\"}}";received.retryCount=0;received.occurredAt=received.receivedAt=OffsetDateTime.now();integrationLogs.save(received);}
+        else if(source.equalsIgnoreCase("M4")||source.equalsIgnoreCase("habilitaciones")){String eventType=type==ExternalObligationType.PERMIT_FEE?"permitFeeGenerated":"commercialFineGenerated";String correlation=includeCorrelation?"\""+UUID.randomUUID()+"\"":"null";IntegrationEventLog received=new IntegrationEventLog();received.eventId=external.sourceEventId;received.externalEventId=external.sourceEventId.toString();received.eventType=eventType;received.sourceModule="habilitaciones";received.direction=EventDirection.INBOUND;received.status=IntegrationEventStatus.PROCESSED;received.payload="{\"eventId\":\""+external.sourceEventId+"\",\"eventType\":\""+eventType+"\",\"eventVersion\":\"1.0\",\"occurredAt\":\""+OffsetDateTime.now()+"\",\"sourceModule\":\"habilitaciones\",\"correlationId\":"+correlation+",\"causationId\":null,\"data\":{\"id\":\""+reference+"\"}}";received.retryCount=0;received.occurredAt=received.receivedAt=OffsetDateTime.now();integrationLogs.save(received);}
+        Debt debt=baseDebt(taxpayer,concept,amount);debt.originType=DebtOriginType.EXTERNAL_OBLIGATION;debt.externalObligationId=external.id;return debts.save(debt);
+    }
     private String originalM7Correlation(Debt debt)throws Exception{ExternalObligation obligation=obligations.findById(debt.externalObligationId).orElseThrow();IntegrationEventLog received=integrationLogs.findFirstByEventIdOrderByIdDesc(obligation.sourceEventId).orElseThrow();return json.readTree(received.payload).path("correlationId").asText();}
     private Debt localDebt(TaxpayerReference taxpayer,String amount){Debt debt=baseDebt(taxpayer,concept("M5"),amount);debt.originType=DebtOriginType.LIQUIDATION;debt.liquidationId=Math.abs(UUID.randomUUID().getMostSignificantBits());return debts.save(debt);}
     private Debt baseDebt(TaxpayerReference taxpayer,TaxConcept concept,String amount){Debt debt=new Debt();debt.taxpayerId=taxpayer.id;debt.taxConceptId=concept.id;debt.originalAmount=debt.currentAmount=debt.outstandingBalance=new BigDecimal(amount).setScale(2);debt.dueDate=LocalDate.now().plusDays(10);debt.status=DebtStatus.PENDING;debt.createdAt=debt.updatedAt=OffsetDateTime.now();return debt;}

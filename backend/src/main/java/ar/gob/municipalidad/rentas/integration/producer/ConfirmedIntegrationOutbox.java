@@ -74,7 +74,7 @@ class ConfirmedIntegrationOutbox {
         Optional<String> correlation=economicCorrelation(origin,debt.id);
         if(correlation.isEmpty()){
             deferEconomic("paymentRegistered","PaymentAllocation",allocation.id,debt,origin,payment.id,allocation.id,key,payload,
-                "M7_ORIGINAL_CORRELATION_ID_UNAVAILABLE");
+                missingCorrelationReason(origin));
             return;
         }
         enqueue("PaymentAllocation",allocation.id.toString(),core("paymentRegistered",payload,"Debt",debt.id.toString(),correlation.get()),key);
@@ -89,7 +89,7 @@ class ConfirmedIntegrationOutbox {
         if(correlation.isEmpty()||("M7".equals(origin.targetModule())
             &&!outbox.existsByIdempotencyKey(economicKey("paymentRegistered",allocation.id,debt.id)))){
             deferEconomic("paymentReversed","PaymentAllocation",allocation.id,debt,origin,payment.id,allocation.id,key,payload,
-                correlation.isEmpty()?"M7_ORIGINAL_CORRELATION_ID_UNAVAILABLE":"PAYMENT_EVENT_NOT_PREPARED");
+                correlation.isEmpty()?missingCorrelationReason(origin):"PAYMENT_EVENT_NOT_PREPARED");
             return;
         }
         enqueue("PaymentAllocation",allocation.id.toString(),core("paymentReversed",payload,"Debt",debt.id.toString(),correlation.get()),key);
@@ -119,7 +119,7 @@ class ConfirmedIntegrationOutbox {
             economicKey("paymentRegistered",allocation.id,debt.id)))){
             deferEconomic("debtSettled","Debt",debt.id,debt,origin.orElseThrow(),allocation==null?null:allocation.paymentId,
                 allocation==null?null:allocation.id,key,payload,
-                correlation.isEmpty()?"M7_ORIGINAL_CORRELATION_ID_UNAVAILABLE":"PAYMENT_EVENT_NOT_PREPARED");
+                correlation.isEmpty()?missingCorrelationReason(origin.orElseThrow()):"PAYMENT_EVENT_NOT_PREPARED");
             return;
         }
         enqueue("Debt",debt.id.toString(),core("debtSettled",payload,"Debt",debt.id.toString(),correlation.get()),key);
@@ -192,7 +192,17 @@ class ConfirmedIntegrationOutbox {
             });
     }
     Optional<String> economicCorrelation(ExternalDebtOrigin origin,Long debtId){
-        if(!"M7".equals(origin.targetModule()))return Optional.of(correlation("Debt",debtId.toString()));
+        if("M4".equals(origin.targetModule()))return integrationLogs.findFirstByEventIdOrderByIdDesc(origin.sourceEventId())
+            .filter(log->log.direction==EventDirection.INBOUND&&Set.of("permitFeeGenerated","commercialFineGenerated").contains(log.eventType))
+            .flatMap(log->{
+                try{
+                    JsonNode received=json.readTree(log.payload);
+                    if(!"habilitaciones".equals(received.path("sourceModule").asText())
+                        ||!origin.externalReferenceId().equals(received.path("data").path("id").asText()))return Optional.empty();
+                    String value=received.path("correlationId").asText(null);
+                    return value==null?Optional.empty():Optional.of(UUID.fromString(value).toString());
+                }catch(Exception ex){return Optional.empty();}
+            });
         return integrationLogs.findFirstByEventIdOrderByIdDesc(origin.sourceEventId())
             .filter(log->log.direction==EventDirection.INBOUND&&"infractionConfirmed".equals(log.eventType))
             .flatMap(log->{
@@ -204,6 +214,9 @@ class ConfirmedIntegrationOutbox {
                     return value==null?Optional.empty():Optional.of(UUID.fromString(value).toString());
                 }catch(Exception ex){return Optional.empty();}
             });
+    }
+    private String missingCorrelationReason(ExternalDebtOrigin origin){
+        return "M7".equals(origin.targetModule())?"M7_ORIGINAL_CORRELATION_ID_UNAVAILABLE":"M4_ORIGINAL_CORRELATION_ID_UNAVAILABLE";
     }
     void deferHistoricalPlanReversal(PaymentAllocation allocation){defer("paymentReversed","PaymentAllocation",allocation.id,"LEGACY_PLAN_DISTRIBUTION_UNAVAILABLE");}
 

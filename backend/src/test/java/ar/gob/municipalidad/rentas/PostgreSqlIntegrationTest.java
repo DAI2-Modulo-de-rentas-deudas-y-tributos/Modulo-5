@@ -164,6 +164,8 @@ class PostgreSqlIntegrationTest {
     @Autowired OutboxRepository outbox;
     @Autowired ConfirmedIntegrationOutbox confirmedOutbox;
     @Autowired PreliminaryM4Consumer m4;
+    @Autowired CoreM4Consumer coreM4;
+    @Autowired IntegrationReprocessService integrationReprocess;
     @Autowired ConfirmedM7Consumer m7;
     @Autowired IntegrationEventLogRepository integrationLogs;
     @Autowired ExternalObligationRepository externalObligations;
@@ -351,6 +353,141 @@ class PostgreSqlIntegrationTest {
         assertThat(duplicate.id).isEqualTo(fee.id);assertThat(fee.errorMessage).startsWith(PreliminaryM4Consumer.TAXPAYER_BLOCKER);
         assertThat(fineLog.errorMessage).startsWith(PreliminaryM4Consumer.TAXPAYER_BLOCKER);assertThat(fineLog.payload).contains("V-001","M6","ACT-001","MULTA-2026-00123");
         assertThat(externalObligations.count()).isEqualTo(obligationCount);assertThat(debts.count()).isEqualTo(debtCount);
+    }
+
+    @Test void coreM4EventsAreIdempotentlyDeferredAndReprocessableOnPostgreSql() {
+        String cuit=uniqueDigits(11);
+        UUID feeId=UUID.randomUUID();
+        var fee=new CoreM4Events.Envelope<>(feeId,"permitFeeGenerated","1.0",OffsetDateTime.now(),
+            "habilitaciones",UUID.randomUUID(),null,
+            new CoreM4Events.PermitFeeGeneratedData("FEE-PG-"+feeId,"PA-PG-1","EST-PG-1",cuit,new BigDecimal("50"),"ARS"));
+        long logsBefore=integrationLogs.count(),obligationsBefore=externalObligations.count(),debtsBefore=debts.count();
+
+        IntegrationEventLog pending=coreM4.consumePermitFee(fee);
+        IntegrationEventLog duplicate=coreM4.consumePermitFee(fee);
+        assertThat(duplicate.id).isEqualTo(pending.id);
+        assertThat(pending.status).isEqualTo(IntegrationEventStatus.FAILED);
+        assertThat(pending.errorMessage).isEqualTo(CoreM4Consumer.TAXPAYER_PENDING);
+        assertThat(pending.errorMessage).doesNotContain(cuit);
+        assertThat(pending.payload).contains(cuit,"FEE-PG-"+feeId);
+        assertThat(integrationLogs.count()).isEqualTo(logsBefore+1);
+
+        taxpayer(TaxpayerType.ORGANIZATION,"M4-PG-"+feeId,null,cuit);
+        IntegrationEventLog retried=integrationReprocess.reprocess(feeId,"Se proyectó la organización por CUIT");
+        assertThat(retried.retryCount).isEqualTo(1);
+        assertThat(retried.status).isEqualTo(IntegrationEventStatus.FAILED);
+        assertThat(retried.errorMessage).startsWith(CoreM4Consumer.DUE_DATE_PENDING);
+        assertThat(retried.errorMessage).doesNotContain(cuit);
+
+        UUID fineId=UUID.randomUUID();
+        var fine=new CoreM4Events.Envelope<>(fineId,"commercialFineGenerated","1.0",OffsetDateTime.now(),
+            "habilitaciones",null,null,
+            new CoreM4Events.CommercialFineGeneratedData("FINE-PG-"+fineId,"EST-PG-1","ACT-PG-1",cuit,
+                new BigDecimal("75"),"ARS","Incumplimiento de prueba",OffsetDateTime.now(),"REF-PG-1","VIOLATION-PG-1","M6"));
+        IntegrationEventLog finePending=coreM4.consumeCommercialFine(fine);
+        assertThat(finePending.errorMessage).startsWith(CoreM4Consumer.DUE_DATE_PENDING);
+        assertThat(finePending.payload).contains("FINE-PG-"+fineId,"ACT-PG-1","REF-PG-1","VIOLATION-PG-1","M6");
+
+        var repeatedOrigin=new CoreM4Events.Envelope<>(UUID.randomUUID(),fine.eventType(),fine.eventVersion(),
+            fine.occurredAt(),fine.sourceModule(),fine.correlationId(),fine.causationId(),fine.data());
+        assertThat(coreM4.consumeCommercialFine(repeatedOrigin).status).isEqualTo(IntegrationEventStatus.IGNORED);
+        assertThatThrownBy(()->coreM4.consumeCommercialFine(new CoreM4Events.Envelope<>(UUID.randomUUID(),
+            "commercialFineGenerated","1.0",OffsetDateTime.now(),"habilitaciones",null,null,
+            new CoreM4Events.CommercialFineGeneratedData("FINE-BAD","EST-PG-1","ACT-PG-1",cuit,
+                BigDecimal.TEN,"ARS","Prueba",OffsetDateTime.now(),"REF", "VIOLATION", "ambiente"))))
+            .isInstanceOfSatisfying(BusinessException.class,e->assertThat(e.code).isEqualTo("INVALID_M4_VIOLATION_SOURCE"));
+        assertThatThrownBy(()->coreM4.consumePermitFee(new CoreM4Events.Envelope<>(UUID.randomUUID(),
+            "permitFeeGenerated","2.0",OffsetDateTime.now(),"habilitaciones",null,null,fee.data())))
+            .isInstanceOfSatisfying(BusinessException.class,e->assertThat(e.code).isEqualTo("UNSUPPORTED_EVENT_VERSION"));
+        assertThatThrownBy(()->coreM4.consumePermitFee(new CoreM4Events.Envelope<>(UUID.randomUUID(),
+            "permitFeeGenerated","1.0",OffsetDateTime.now(),"habilitaciones",null,null,
+            new CoreM4Events.PermitFeeGeneratedData("FEE-BAD","PA","EST","123",BigDecimal.TEN,"ARS"))))
+            .isInstanceOfSatisfying(BusinessException.class,e->assertThat(e.code).isEqualTo("INVALID_EVENT"));
+        var unsupportedCurrency=new CoreM4Events.Envelope<>(UUID.randomUUID(),"permitFeeGenerated","1.0",
+            OffsetDateTime.now(),"habilitaciones",null,null,
+            new CoreM4Events.PermitFeeGeneratedData("FEE-EUR","PA","EST",cuit,BigDecimal.TEN,"EUR"));
+        assertThat(coreM4.consumePermitFee(unsupportedCurrency).errorMessage).isEqualTo("M4_UNSUPPORTED_CURRENCY");
+        var missingAmount=new CoreM4Events.Envelope<>(UUID.randomUUID(),"permitFeeGenerated","1.0",
+            OffsetDateTime.now(),"habilitaciones",null,null,
+            new CoreM4Events.PermitFeeGeneratedData("FEE-NO-AMOUNT","PA","EST",cuit,null,"ARS"));
+        assertThatThrownBy(()->coreM4.consumePermitFee(missingAmount))
+            .isInstanceOfSatisfying(BusinessException.class,e->assertThat(e.code).isEqualTo("INVALID_EVENT"));
+        var sourceWithoutViolation=new CoreM4Events.Envelope<>(UUID.randomUUID(),"commercialFineGenerated","1.0",
+            OffsetDateTime.now(),"habilitaciones",null,null,
+            new CoreM4Events.CommercialFineGeneratedData("FINE-NO-M6","EST","ACT",cuit,BigDecimal.TEN,
+                "ARS","Prueba",OffsetDateTime.now(),"REF",null,null));
+        assertThat(coreM4.consumeCommercialFine(sourceWithoutViolation).errorMessage)
+            .startsWith(CoreM4Consumer.DUE_DATE_PENDING);
+
+        assertThat(externalObligations.count()).isEqualTo(obligationsBefore);
+        assertThat(debts.count()).isEqualTo(debtsBefore);
+    }
+
+    @Test void coreM4FeeAndFineArrivalOrderDoesNotChangeTheirIndependentHandlingOnPostgreSql() {
+        String cuit=uniqueDigits(11);taxpayer(TaxpayerType.ORGANIZATION,"M4-ORDER-"+UUID.randomUUID(),null,cuit);
+        UUID fineFirstId=UUID.randomUUID(),feeSecondId=UUID.randomUUID(),feeFirstId=UUID.randomUUID(),fineSecondId=UUID.randomUUID();
+        var fineFirst=new CoreM4Events.Envelope<>(fineFirstId,"commercialFineGenerated","1.0",OffsetDateTime.now(),
+            "habilitaciones",null,null,new CoreM4Events.CommercialFineGeneratedData("FINE-ORDER-A-"+fineFirstId,
+            "EST-A","ACT-A",cuit,BigDecimal.TEN,"ARS","Prueba",OffsetDateTime.now(),"REF-A",null,null));
+        var feeSecond=new CoreM4Events.Envelope<>(feeSecondId,"permitFeeGenerated","1.0",OffsetDateTime.now(),
+            "habilitaciones",null,null,new CoreM4Events.PermitFeeGeneratedData("FEE-ORDER-B-"+feeSecondId,
+            "PA-B","EST-B",cuit,BigDecimal.TEN,"ARS"));
+        var feeFirst=new CoreM4Events.Envelope<>(feeFirstId,"permitFeeGenerated","1.0",OffsetDateTime.now(),
+            "habilitaciones",null,null,new CoreM4Events.PermitFeeGeneratedData("FEE-ORDER-A-"+feeFirstId,
+            "PA-A","EST-A",cuit,BigDecimal.TEN,"ARS"));
+        var fineSecond=new CoreM4Events.Envelope<>(fineSecondId,"commercialFineGenerated","1.0",OffsetDateTime.now(),
+            "habilitaciones",null,null,new CoreM4Events.CommercialFineGeneratedData("FINE-ORDER-B-"+fineSecondId,
+            "EST-B","ACT-B",cuit,BigDecimal.TEN,"ARS","Prueba",OffsetDateTime.now(),"REF-B",null,null));
+        long obligationsBefore=externalObligations.count(),debtsBefore=debts.count();
+
+        assertThat(coreM4.consumeCommercialFine(fineFirst).errorMessage).startsWith(CoreM4Consumer.DUE_DATE_PENDING);
+        assertThat(coreM4.consumePermitFee(feeSecond).errorMessage).startsWith(CoreM4Consumer.DUE_DATE_PENDING);
+        assertThat(coreM4.consumePermitFee(feeFirst).errorMessage).startsWith(CoreM4Consumer.DUE_DATE_PENDING);
+        assertThat(coreM4.consumeCommercialFine(fineSecond).errorMessage).startsWith(CoreM4Consumer.DUE_DATE_PENDING);
+        assertThat(externalObligations.count()).isEqualTo(obligationsBefore);
+        assertThat(debts.count()).isEqualTo(debtsBefore);
+    }
+
+    @Test void m4PlanInstallmentPublishesOnlyThePrincipalAppliedWithOriginalCorrelation() throws Exception {
+        authenticate();
+        String cuit=uniqueDigits(11),reference="FEE-PLAN-"+UUID.randomUUID();
+        TaxpayerReference organization=taxpayer(TaxpayerType.ORGANIZATION,"M4-PLAN-"+UUID.randomUUID(),null,cuit);
+        TaxConcept taxConcept=concept("M4_PLAN_"+UUID.randomUUID(),TaxConceptType.FEE,"M4");
+        UUID sourceEventId=UUID.randomUUID(),sourceCorrelation=UUID.randomUUID();
+        var sourceEvent=new CoreM4Events.Envelope<>(sourceEventId,"permitFeeGenerated","1.0",OffsetDateTime.now(),
+            "habilitaciones",sourceCorrelation,null,
+            new CoreM4Events.PermitFeeGeneratedData(reference,"PA-PLAN","EST-PLAN",cuit,new BigDecimal("100"),"ARS"));
+        IntegrationEventLog sourceLog=new IntegrationEventLog();sourceLog.eventId=sourceEventId;sourceLog.externalEventId=sourceEventId.toString();
+        sourceLog.eventType=sourceEvent.eventType();sourceLog.sourceModule=sourceEvent.sourceModule();sourceLog.direction=EventDirection.INBOUND;
+        sourceLog.status=IntegrationEventStatus.PROCESSED;sourceLog.payload=json.writeValueAsString(sourceEvent);sourceLog.retryCount=0;
+        sourceLog.occurredAt=sourceEvent.occurredAt();sourceLog.receivedAt=sourceEvent.occurredAt();integrationLogs.save(sourceLog);
+        ExternalObligation origin=new ExternalObligation();origin.sourceModule="habilitaciones";origin.externalType=ExternalObligationType.PERMIT_FEE;
+        origin.externalReferenceId=reference;origin.sourceEventId=sourceEventId;origin.externalTaxpayerType=TaxpayerType.ORGANIZATION;
+        origin.externalTaxpayerId=cuit;origin.taxpayerId=organization.id;origin.taxConceptId=taxConcept.id;origin.amount=new BigDecimal("100");
+        origin.dueDate=LocalDate.now().plusDays(30);origin.status=ExternalObligationStatus.PROCESSED;origin.retryCount=0;
+        origin.receivedAt=origin.processedAt=OffsetDateTime.now();externalObligations.save(origin);
+        Debt debt=new Debt();debt.taxpayerId=organization.id;debt.taxConceptId=taxConcept.id;debt.originType=DebtOriginType.EXTERNAL_OBLIGATION;
+        debt.externalObligationId=origin.id;debt.originalAmount=debt.currentAmount=debt.outstandingBalance=new BigDecimal("100.00");
+        debt.dueDate=origin.dueDate;debt.status=DebtStatus.PENDING;debt.createdAt=debt.updatedAt=OffsetDateTime.now();debts.saveAndFlush(debt);
+
+        workflow.createConfiguration(new ApiDtos.CreatePaymentPlanConfigurationRequest(2,2,BigDecimal.ZERO,
+            new BigDecimal("10"),0,1,true,true,1,LocalDate.now().minusDays(1),null,true));
+        PaymentPlanRequest request=workflow.request(new ApiDtos.CreatePaymentPlanRequest(organization.id,List.of(debt.id),2));
+        PaymentPlan plan=planRepository.findById(workflow.grant(request.id,null).paymentPlanId).orElseThrow();
+        Installment installment=installments.findByPaymentPlanIdOrderByNumber(plan.id).get(0);
+        Payment payment=payments.register(new ApiDtos.RegisterPaymentRequest(organization.id,PaymentMethod.CASH,
+            installment.totalAmount,List.of(new ApiDtos.AllocationRequest(null,installment.id,installment.totalAmount))));
+        PaymentAllocation allocation=allocations.findByPaymentId(payment.id).get(0);
+        OutboxEvent event=outbox.findByIdempotencyKey("outbound:paymentRegistered:PaymentAllocation:"+allocation.id+":Debt:"+debt.id).orElseThrow();
+        var data=json.readTree(event.payload).path("data");
+
+        assertThat(data.path("originType").asText()).isEqualTo("PERMIT_FEE");
+        assertThat(data.path("originId").asText()).isEqualTo(reference);
+        assertThat(data.has("infractionId")).isFalse();
+        assertThat(data.path("amountApplied").decimalValue()).isEqualByComparingTo(allocation.principalApplied);
+        assertThat(data.path("amountApplied").decimalValue()).isLessThan(installment.totalAmount);
+        assertThat(json.readTree(event.payload).path("correlationId").asText()).isEqualTo(sourceCorrelation.toString());
+        assertThat(outbox.findByIdempotencyKey("outbound:debtSettled:Debt:"+debt.id)).isEmpty();
     }
 
     @Test void m7ContractIdempotencyResolutionRollbackAndConcurrencyRunOnPostgreSql() throws Exception {
