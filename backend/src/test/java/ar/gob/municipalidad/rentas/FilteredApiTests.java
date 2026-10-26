@@ -33,4 +33,21 @@ class FilteredApiTests {
     @Test void debtsSupportDocumentedFiltersPagingSortingAndResponseDto() throws Exception {mvc.perform(get("/api/v1/debts").header("X-Demo-Session",session).param("taxpayerId",taxpayer.id.toString()).param("status","PENDING").param("page","0").param("size","1").param("sort","createdAt,desc")).andExpect(status().isOk()).andExpect(jsonPath("$.page.totalElements").value(1)).andExpect(jsonPath("$.content[0].taxpayerId").value(taxpayer.id)).andExpect(jsonPath("$.content[0].overdue").isBoolean()).andExpect(jsonPath("$.content[0].inPaymentPlan").isBoolean());}
     @Test void liquidationResponseContainsPersistedAuditComponents() throws Exception {mvc.perform(get("/api/v1/liquidations").header("X-Demo-Session",session).param("conceptId",concept.id.toString()).param("period",YearMonth.now().toString())).andExpect(status().isOk()).andExpect(jsonPath("$.content[0].components[0].type").value("BASE")).andExpect(jsonPath("$.content[0].components[0].sourceType").value("TaxConfiguration")).andExpect(jsonPath("$.content[0].finalAmount").value(100.00));}
     @Test void unknownFilterAndSortReturnStableBadRequest() throws Exception {mvc.perform(get("/api/v1/debts").header("X-Demo-Session",session).param("madeUp","x")).andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("INVALID_FILTER"));mvc.perform(get("/api/v1/debts").header("X-Demo-Session",session).param("sort","madeUp,asc")).andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("INVALID_SORT"));}
+
+    @Test void pageableRequestsAreCappedAndInvalidPagesFallBackSafely() throws Exception {
+        mvc.perform(get("/api/v1/debts").header("X-Demo-Session",session).param("size","1000"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.page.size").value(100));
+        mvc.perform(get("/api/v1/debts").header("X-Demo-Session",session).param("page","-1"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.page.number").value(0));
+        mvc.perform(get("/api/v1/debts").header("X-Demo-Session",session).param("page","invalid"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.page.number").value(0));
+    }
+
+    @Test void malformedTypedFiltersAreRejectedInsteadOfSilentlyChanged() throws Exception {
+        mvc.perform(get("/api/v1/tax-concepts").header("X-Demo-Session",session).param("active","maybe"))
+            .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("INVALID_FILTER_VALUE"));
+        mvc.perform(get("/api/v1/debts").header("X-Demo-Session",session).param("taxpayerId","not-a-number"))
+            .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("INVALID_FILTER_VALUE"));
+    }
+
 }

@@ -86,6 +86,15 @@ class SecurityTests {
             .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("FORBIDDEN_OWNERSHIP"));
     }
 
+    @Test void taxpayerCannotPageAnotherTaxpayersDebts() throws Exception {
+        TaxpayerReference owner=taxpayer("SEC-DEBT-1");TaxpayerReference other=taxpayer("SEC-DEBT-2");
+        String session=demo.token(DemoRole.TAXPAYER,owner.id);
+        mvc.perform(get("/api/v1/taxpayers/{id}/debts",owner.id).header("X-Demo-Session",session))
+            .andExpect(status().isOk());
+        mvc.perform(get("/api/v1/taxpayers/{id}/debts",other.id).header("X-Demo-Session",session))
+            .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("FORBIDDEN_OWNERSHIP"));
+    }
+
     @Test void taxpayerCannotReadAnotherTaxpayersBill() throws Exception {
         TaxpayerReference owner=taxpayer("SEC-BILL");TaxpayerReference stranger=taxpayer("SEC-BILL-X");
         Bill bill=new Bill();bill.number="SEC-BILL-1";bill.taxpayerId=owner.id;bill.totalAmount=java.math.BigDecimal.TEN;bill.issueDate=java.time.LocalDate.now();bill.dueDate=java.time.LocalDate.now().plusDays(1);bill.status=BillStatus.ISSUED;bill.createdBy="test";bill.createdAt=OffsetDateTime.now();bills.save(bill);

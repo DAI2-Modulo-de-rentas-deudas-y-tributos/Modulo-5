@@ -1,6 +1,10 @@
 spring:
   application:
     name: rentas-m5
+  data:
+    web:
+      pageable:
+        max-page-size: 100
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/rentas}
     username: ${DB_USER:rentas}
