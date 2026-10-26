@@ -35,6 +35,7 @@ class BillingFlowTests {
     @Autowired PaymentRepository paymentRepository;
     @Autowired PaymentAllocationRepository paymentAllocations;
     @Autowired OutboxRepository outbox;
+    @Autowired IntegrationEventLogRepository integrationLogs;
     @Autowired com.fasterxml.jackson.databind.ObjectMapper json;
     @Autowired ElectronicPaymentRepository electronicPaymentAttempts;
 
@@ -111,15 +112,15 @@ class BillingFlowTests {
         assertThat(outbox.findAll()).noneMatch(event->event.eventType.equals("debtSettled")&&event.aggregateId.equals(second.id.toString()));
     }
 
-    @Test void fullyAppliedCreditPublishesTheExistingCoreDebtSettledContract() throws Exception {
+    @Test void fullyAppliedCreditPreservesSettlementWhileMunicipalEventAwaitsSharedContract() {
         Debt source=debt("CREDIT-SETTLED-SOURCE","CREDIT-SETTLED-SOURCE-CONCEPT");Debt target=anotherDebt(source,"CREDIT-SETTLED-TARGET");
         Payment payment=payments.register(new ApiDtos.RegisterPaymentRequest(source.taxpayerId,PaymentMethod.CASH,new BigDecimal("200"),List.of(new ApiDtos.AllocationRequest(source.id,new BigDecimal("200")))));
         CreditBalance credit=credits.findBySourcePaymentId(payment.id).orElseThrow();creditService.apply(credit.id,new ApiDtos.ApplyCreditBalanceRequest(target.id,new BigDecimal("100")));
-        OutboxEvent settled=outbox.findAll().stream().filter(event->event.eventType.equals("debtSettled")&&event.aggregateId.equals(target.id.toString())).findFirst().orElseThrow();
-        assertThat(settled.targetModule).isEqualTo("CORE");assertThat(settled.aggregateType).isEqualTo("Debt");var envelope=json.readTree(settled.payload);
-        assertThat(envelope.path("eventType").asText()).isEqualTo("debtSettled");assertThat(envelope.path("sourceModule").asText()).isEqualTo("rentas");
-        var data=envelope.path("data");assertThat(data.path("debtId").asText()).isEqualTo("debt-"+target.id);assertThat(data.path("citizenId").asText()).isEqualTo("CREDIT-SETTLED-SOURCE");
-        assertThat(data.path("originType").asText()).isEqualTo("MUNICIPAL_TAX");assertThat(data.path("originId").asText()).startsWith("liq-");assertThat(data.path("remainingBalance").decimalValue()).isZero();assertThat(data.path("outstandingBalance").decimalValue()).isZero();
+        assertThat(debts.findById(target.id).orElseThrow().status).isEqualTo(DebtStatus.PAID);
+        assertThat(outbox.findAll()).noneMatch(event->event.eventType.equals("debtSettled")&&event.aggregateId.equals(target.id.toString()));
+        IntegrationEventLog deferred=integrationLogs.findFirstByBusinessKeyOrderByIdDesc("outbound-deferred:debtSettled:Debt:"+target.id).orElseThrow();
+        assertThat(deferred.status).isEqualTo(IntegrationEventStatus.PENDING);
+        assertThat(deferred.errorMessage).isEqualTo("CANONICAL_CITIZEN_ID_PENDING");
     }
 
     @Test void creditApplicationsRemainTraceableAfterPartialAndFullUse() {

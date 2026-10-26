@@ -29,10 +29,9 @@ describe("gestión local de tickets", () => {
     expect(request).toHaveBeenCalledWith(`/api/v1/tickets/7/${action}`, { method: "POST", body });
   });
 
-  it("asigna primero cuando se toma un ticket antes de resolverlo", async () => {
-    await ticketService.updateStatus({ ticketId: 7, status: "COMPLETED", message: "Resuelto", takeOwnership: true });
+  it("resuelve directamente sin emitir un STARTED previo innecesario", async () => {
+    await ticketService.updateStatus({ ticketId: 7, status: "COMPLETED", message: "Resuelto" });
     expect(request.mock.calls.map(([url]) => url)).toEqual([
-      "/api/v1/tickets/7/assign",
       "/api/v1/tickets/7/complete",
     ]);
   });

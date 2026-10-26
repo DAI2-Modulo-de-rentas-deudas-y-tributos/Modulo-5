@@ -3,8 +3,8 @@
 > **Actualización 17/10/2026:** este documento conserva contratos históricos
 > de la primera entrega. Para el envelope saliente vigente de Core y el estado
 > de adaptación local de M2/M4, ver `../contracts/events/README.md` y
-> `../contracts/schemas/common-event-envelope.schema.json`. M1/M7/M8 entrantes
-> y la entrega real por RabbitMQ siguen pendientes de acuerdo/implementación.
+> `../contracts/schemas/common-event-envelope.schema.json`. M8 entrante tiene
+> validación local; la identidad canónica M1 y la entrega real por Core/RabbitMQ siguen pendientes.
 
 Este documento registra únicamente contratos externos confirmados. M5 deserializa cada contrato en su DTO de módulo, lo valida y recién después lo normaliza/mapea a su modelo interno. Las entidades JPA no se usan como payloads y el adaptador de publicación continúa desacoplado de Kafka, RabbitMQ u otro broker concreto.
 
@@ -20,8 +20,8 @@ M1 es propietario de la identidad de ciudadanos, organizaciones y representacion
 | M1 → M5 | `organizationRegistered` | `data.cuit` numérico, `taxId`, `legalName`, `type`, `status`, `holder` | crea/actualiza `TaxpayerReference(ORGANIZATION)` usando `cuit` como referencia externa, nunca como PK local | `eventId`; `(ORGANIZATION, cuit)` |
 | M1 → M5 | `representationGranted` | `representationId`, `personId`, `cuit`, `scope`, `from`, `status` | conserva una referencia válida para operaciones futuras | `eventId`; `representationId` |
 | M1 → M5 | `representationExpired` | `representationId`, `personId`, `cuit`, `until`, `status` | invalida la referencia sin borrar su historial | `eventId`; `representationId` |
-| M5 → M1 | `exemptionRequested` | solicitud, ciudadano, concepto, motivo, porcentaje y vigencia | Outbox en la misma transacción que la solicitud | `OutboxEvent.id`; `requestId` |
-| M5 → M1 | `updateExemptionStatus` | estado `APPROVED` o `REJECTED` y campos propios de cada resultado | Outbox en la misma transacción que la resolución | `OutboxEvent.id`; `requestId` |
+| M5 → M1 | `exemptionRequested` | solicitud, ciudadano, concepto, motivo, porcentaje y vigencia | Outbox en la misma transacción sólo si existe UUID canónico M1; si falta, conserva solicitud y registro de aplazamiento | `OutboxEvent.id`; `requestId` UUID persistente |
+| M5 → M1 | `updateExemptionStatus` | estado `APPROVED` o `REJECTED` y campos propios de cada resultado | Outbox en la misma transacción sólo si existe UUID canónico M1; si falta, conserva resolución y registro de aplazamiento | `OutboxEvent.id`; `requestId` UUID persistente |
 | M5 → M1 | `paymentPlanRequested` | `requestId`, `citizenId`, `debtIds`, total, cuotas | Outbox; conserva todos los `debtIds` | `OutboxEvent.id`; `requestId` |
 | M5 → M1 | `updatePaymentPlanStatus` | estado `GRANTED` o `REJECTED` y campos propios del resultado | Outbox en la misma transacción que la resolución | `OutboxEvent.id`; `requestId` |
 
@@ -33,8 +33,8 @@ M2 es propietario del estado canónico del ticket. M5 mantiene una proyección p
 
 | Direction | eventType | Main fields | Effect in M5 | Idempotency / routing |
 |---|---|---|---|---|
-| M2 → M5 | `ticketUpdated` | envelope `specVersion`; `data.ticketId`, `citizenId`, `isAnonymous`, `responsibleAreaId`, `updateType`, snapshot/detalles, adjuntos y `updatedAt` | `ROUTED` crea la proyección inicial; `INFORMATION_PROVIDED` registra el aporte; los demás updates confirmados actualizan la proyección | `eventId`; `ticketId`; sólo `responsibleAreaId == M5` |
-| M5 → M2 | `updateTicketStatus` | `ticketId`, `updateType`, mensajes, detalles, adjuntos, `updatedBy`, `statusChangedAt` | Outbox; M2 decide la transición canónica | `OutboxEvent.id`; `ticketId` |
+| M2 → M5 | `ticketUpdated` | envelope Core (`eventVersion` 1.0); `data.ticketId`, `citizenId`, `isAnonymous`, `responsibleAreaId`, `updateType`, snapshot/detalles, adjuntos y `updatedAt` | `ROUTED` crea o actualiza la proyección; los updates administrativos `RECLASSIFICATION` se ignoran; M2 conserva el estado canónico | `eventId`; `ticketId`; sólo `responsibleAreaId == M5` |
+| M5 → M2 | `updateTicketStatus` | `ticketId`, `updateType`, mensajes, detalles, adjuntos, `updatedBy`, `updateOccurredAt` | Outbox local; M2 decide la transición canónica cuando exista transporte real | `OutboxEvent.id`; `ticketId` |
 
 Updates outbound permitidos: `STARTED`, `PROGRESS`, `INFORMATION_REQUIRED`, `RETURNED`, `RESOLVED`, `REJECTED`. `RETURNED` es la respuesta normal ante una derivación incorrecta.
 
@@ -42,21 +42,31 @@ Los tickets ajenos a M5 son eventos válidos pero irrelevantes: se marcan `IGNOR
 
 El contrato confirmado de esta etapa detalla `ticketUpdated`. El adapter legado de `ticketCreated` se conserva por compatibilidad, sin inventar un nuevo payload externo.
 
+**Despliegue M2 v1.78:** `DemoUser.integrationActorId` es un UUID persistente del empleado que el backend obtiene al resolver la sesión; no se acepta del frontend. `ROUTED` conserva `requestType`, `category` y `subcategory` por separado. La migración versionada está en `src/main/resources/db/migration-postgresql/V24__m2_v1_78_identity_and_routing.sql` y se incluye en Flyway tanto en el perfil local como en el productivo. El SQL conserva exactamente el contenido probado en las bases aisladas; su encabezado de prueba se dejó intacto para preservar el checksum de Flyway. Al desplegar sobre una base anterior, respaldar y aplicar V22–V24 antes de usar este mapeo JPA. V24 asigna una sola vez los UUID de usuarios anteriores, deja la PK `BIGINT` intacta y recupera clasificación histórica únicamente de snapshots `ROUTED` oficiales cuando hay datos suficientes. El UUID `citizenId` de M2 tampoco puede vincularse automáticamente al ID numérico del contrato M1 actual: se espera una equivalencia autoritativa, nunca una identidad inventada.
+
+`PROGRESS` y `RETURNED` son variantes válidas del contrato, pero M5 todavía no tiene casos de uso ni controles de interfaz para avance operativo o devolución por tipo incorrecto. No se emitirán hasta definir esos flujos. La reasignación `ROUTED` conserva el mismo `ticketId` y restablece la asignación local.
+
+Las acciones locales marcan una intención operativa en M5, no una aceptación de M2: sin transporte y confirmación real, la proyección local puede diferir del estado canónico. La conciliación de estados tras entrega/rechazo de Core y M2 queda pendiente.
+
 ### M8 — Desarrollo Social
 
-M8 es propietario del estado del beneficio social. M5 conserva una referencia/proyección y separa el `externalStatus` confirmado del estado interno calculado usado en operaciones futuras.
+M8 es propietario del estado del beneficio social. M5 conserva una referencia/proyección y separa el `externalStatus` confirmado del estado interno calculado usado en operaciones futuras. El consumidor oficial lee el envelope de Core (`eventId`, `eventType`, `eventVersion`, `occurredAt`, `sourceModule`, `data`) y conserva los UUID de M8 (`benefitId`, `citizenId`, `applicationId`, `programId`). El adaptador anterior se mantiene separado para eventos locales legados.
 
 | Direction | eventType | Main fields | Effect in M5 | Idempotency / business key |
 |---|---|---|---|---|
-| M8 → M5 | `socialBenefitUpdated` | `timestamp`, `sourceModule`, beneficio, ciudadano, programa, array `benefits`, estado y vigencia | `APPROVED` deriva a `ACTIVE`; `REJECTED`, `SUSPENDED` y `FINALIZED` derivan a estados internos no activos; no altera liquidaciones emitidas | `eventId`; `benefitId` |
-| M5 → M8 | `overdueDebt` | deuda, ciudadano, concepto, saldo y vencimiento | contrato/outbox preparado; su disparo queda asociado al workflow que determine formalmente el vencimiento | `OutboxEvent.id`; `debtId` |
-| M5 → M8 | `debtSettled` | deuda, ciudadano, concepto, fecha y saldo cero | Outbox al cancelar económicamente una deuda | `OutboxEvent.id`; `debtId` |
-| M5 → M8 | `exemptionRequested` | mismo payload confirmado con M1 | segundo `OutboxEvent` con `targetModule=M8`, sin duplicar lógica de negocio | `OutboxEvent.id`; `requestId` |
-| M5 → M8 | `updateExemptionStatus` | mismo payload confirmado con M1 | segundo `OutboxEvent` con `targetModule=M8`, sin duplicar lógica de negocio | `OutboxEvent.id`; `requestId` |
+| M8 → M5 | `socialBenefitUpdated` | Envelope Core; `data.benefitId`, `citizenId`, `applicationId`, `programId`, `programName`, `benefits`, `status`, `reason`, fechas y `updatedAt` | Los cuatro estados se persisten con trazabilidad. Eventos repetidos o anteriores no reemplazan el estado reciente; no altera liquidaciones emitidas | `eventId`; `benefitId` |
+| M5 → M8 | `overdueDebt` | `debtId` UUID persistente M5, `citizenId` UUID canónico M1, concepto, saldo y vencimiento | El proceso de vencimientos genera outbox sólo con identidad canónica; en caso contrario registra el aplazamiento sin perder la deuda | `OutboxEvent.id`; deuda Long interna |
+| M5 → M8 | `debtSettled` | deuda, ciudadano, origen, fecha y saldo cero | Las deudas municipales saldadas quedan aplazadas hasta acordar el formato compartido con M4/M7. Las obligaciones externas conservan el contrato previo | deuda Long interna |
+| M5 → M8 / M1 | `exemptionRequested` | `requestId` UUID persistente M5 y `citizenId` UUID canónico M1 | Un único evento hacia Core sólo cuando existe identidad canónica; sin ella se conserva la solicitud y se registra el aplazamiento | solicitud Long interna |
+| M5 → M8 / M1 | `updateExemptionStatus` | `requestId` y, al aprobar, `exemptionId` UUID persistentes M5; `citizenId` UUID canónico M1 | Un único evento hacia Core sólo con identidad canónica y datos obligatorios de la variante; sin ellos se conserva la resolución y se registra el aplazamiento | solicitud Long interna |
 
-El payload M8 no informa porcentaje ni conceptos tributarios para `TAX_EXEMPTION`; por eso M5 no inventa una reducción económica automática. Esa decisión requiere un contrato/regla adicional.
+El payload M8 no informa porcentaje ni conceptos tributarios para `TAX_EXEMPTION`; por eso M5 no inventa una reducción económica automática. Una regla local propuesta por Rentas y aprobada por un Supervisor vincula `programId`, código de tributo, porcentaje y vigencia; queda versionada y auditada. Sólo un beneficio `APPROVED` con vínculo canónico M1 confiable y regla aprobada vigente puede reducir una liquidación nueva. El importe original, descuento, beneficio y versión de regla quedan en los componentes de la liquidación. Se usa el mayor porcentaje aplicable, no se suman exenciones; `FOOD_ASSISTANCE` y `UTILITY_SUBSIDY` no reducen tributos. Si el neto es cero, no se crea deuda cobrable. Los beneficios sin equivalencia canónica M1 quedan pendientes de vinculación.
 
-La documentación Core disponible muestra `citizenId` en el payload de `overdueDebt`, pero no confirma expresamente el tratamiento de organizaciones. M5 sólo genera este evento para referencias `CITIZEN` con `external_id` no vacío; organizaciones y referencias sin identificador se omiten, sin enviar `citizenId` nulo, hasta que M8 confirme ese alcance.
+V25 y V26 ya fueron validadas y aplicadas a la base local `rentas`. V25 conserva las claves primarias `BIGINT` y asigna UUID persistentes sólo a entidades de M5; `taxpayer_reference.canonical_citizen_id` permanece nulo hasta recibir una correspondencia autoritativa de M1. V26 agrega historial de eventos M8, reglas y procedencia de descuentos. No se vuelven a ejecutar estas migraciones como parte de la adaptación de eventos. Los DTOs de `overdueDebt`, `exemptionRequested` y `updateExemptionStatus` usan los UUID persistidos, pero un evento sin identidad M1 no entra al outbox. `overdueDebt` se reevalúa en la siguiente corrida de vencimientos. El contrato compartido de `debtSettled` con M4/M7 y el transporte real con Core continúan pendientes.
+
+La conciliación local de exenciones no requiere otra migración: V21 ya provee `integration_event_log.business_key` único y V22 provee `outbox_event.idempotency_key` único. El aplazamiento persistente es un registro interno `OUTBOUND/PENDING` con `phase=DEFERRED`, no un evento Core. Cuando exista una vinculación M1 confiable en `taxpayer_reference.canonical_citizen_id`, un Supervisor puede ejecutar `POST /api/v1/integrations/deferred/exemptions/{requestId}/reconcile`. El servicio bloquea la solicitud, verifica la identidad, prepara primero `exemptionRequested` y después `updateExemptionStatus` si la decisión es final. Cada evento preparado usa una clave idempotente; un outbox histórico incompatible exige revisión manual. El publicador local aparta como `DEAD_LETTER` los eventos históricos de exenciones cuyos identificadores no sean UUID válidos, sin publicarlos. Los intentos y el resultado quedan auditados. El registro de aplazamiento pasa a `PROCESSED` con `phase=OUTBOX_PREPARED` y el ID del outbox sólo después de preparar el evento. En la respuesta, `deliveryStatus=NOT_CONFIRMED_BY_CORE` aun si el adaptador local marca el outbox `PUBLISHED`: eso sólo significa procesamiento por `local-log`, no entrega ni aceptación externa. El publicador local no procesa una resolución antes de que la solicitud esté marcada `PUBLISHED` localmente. El ACK real, el orden extremo a extremo y la conciliación con M1/Core seguirán pendientes hasta implementar el transporte.
+
+La documentación Core disponible muestra `citizenId` en el payload de `overdueDebt`, pero no confirma expresamente el tratamiento de organizaciones. M5 sólo prepara este evento para referencias `CITIZEN` vinculadas a un UUID canónico de M1; organizaciones y ciudadanos sin ese vínculo quedan aplazados, sin enviar un identificador supuesto, hasta confirmar el alcance con M8/M1.
 
 ### M7 — Tránsito
 
@@ -64,24 +74,30 @@ M7 es propietario de la infracción. M5 no replica el agregado completo: conserv
 
 | Direction | eventType | Main fields | Effect in M5 | Idempotency / business key |
 |---|---|---|---|---|
-| M7 → M5 | `infractionConfirmed` | envelope `eventId`, `occurredAt`, `sourceModule=transito`; `data.infractionId`, `debtorId`, `debtorIdType`, patente, tipo, fecha/hora, importes, agravantes, inspector y ubicación | normaliza `transito` a `M7`; resuelve al contribuyente por DNI/CUIT; crea `ExternalObligation` y una única `Debt` por `finalAmount`; no crea boleta ni pago | `eventId`; `infractionId` |
+| M7 → M5 | `infractionConfirmed` Core V4 | envelope `eventId`, `correlationId`, `occurredAt`, `sourceModule=transito`; `data.infractionId`, `debtorId`, `debtorIdType`, patente, tipo, fecha/hora, importes, agravantes, inspector y ubicación | normaliza `transito` a `M7`; resuelve al contribuyente por DNI/CUIT; crea `ExternalObligation` y una única `Debt` por `finalAmount`; no crea boleta ni pago | `eventId`; `infractionId` |
 
-`baseAmount`, agravantes y demás detalle propio de la infracción se conservan sólo en `IntegrationEventLog.payload`. La fecha de la infracción se usa como fecha local de exigibilidad porque el modelo económico actual exige `dueDate`; esto es una regla interna explícita, no un campo atribuido al contrato de M7.
+`baseAmount`, agravantes, `correlationId` y demás detalle propio de la infracción se conservan en `IntegrationEventLog.payload`. `ExternalObligation.sourceEventId` enlaza la obligación con ese registro. La fecha de la infracción se usa como fecha local de exigibilidad porque el modelo económico actual exige `dueDate`; esto es una regla interna explícita, no un campo atribuido al contrato de M7.
+
+Para `paymentRegistered`, `debtSettled` y `paymentReversed` relacionados con una infracción oficial se recupera el `correlationId` original mediante ese enlace. Si el log histórico falta, no contiene un UUID válido o no coincide con el `infractionId`, se conserva la operación económica pero se aplaza el evento en `integration_event_log` con `M7_ORIGINAL_CORRELATION_ID_UNAVAILABLE`; no se sustituye por un UUID derivado de una PK. Esos casos requieren revisión de la evidencia original antes de cualquier conciliación. No se requiere una columna nueva para eventos oficiales recibidos con V4.
 
 ### M5 → M4 / M7 — application-level confirmed behavior
 
 Cuando una imputación afecta una deuda cuya `ExternalObligation` concreta proviene de M4 o M7, M5 guarda en el transactional outbox:
 
-| Target | eventType | Payload mínimo | Correlación |
+| Origen | eventType | Payload económico | Referencia conservada |
 |---|---|---|---|
-| M4 | `paymentRegistered` | `paymentId`, `debtId`, `externalReferenceId`, `externalType`, importe imputado, saldo restante y fecha del pago | `ExternalObligation.externalReferenceId` |
-| M4 | `debtSettled` | `debtId`, `externalReferenceId`, `externalType`, fecha de cancelación y saldo cero | `ExternalObligation.externalReferenceId` |
-| M7 | `paymentRegistered` | `paymentId`, `debtId`, `externalReferenceId`, `externalType`, importe imputado, saldo restante y fecha del pago | `ExternalObligation.externalReferenceId` |
-| M7 | `debtSettled` | `debtId`, `externalReferenceId`, `externalType`, fecha de cancelación y saldo cero | `ExternalObligation.externalReferenceId` |
+| M4 | `paymentRegistered` | `paymentId`, `debtId`, `originType`, `originId`, `amountApplied`, `paidAt`, `remainingBalance` | `originId = ExternalObligation.externalReferenceId` |
+| M4 | `debtSettled` | `debtId`, `citizenId`, `conceptCode`, `originType`, `originId`, `settledAt`, saldos cero | `originId = ExternalObligation.externalReferenceId` |
+| M4 | `paymentReversed` | mismos identificadores, `reversedAmount`, `reversedAt`, `remainingBalance`, `reason` | `originId = ExternalObligation.externalReferenceId` |
+| M7 | `paymentRegistered` | como M4 y `infractionId` | `originId = infractionId` original de M7 |
+| M7 | `debtSettled` | como M4 y `infractionId` | `originId = infractionId` original de M7 |
+| M7 | `paymentReversed` | como M4 y `infractionId` | `originId = infractionId` original de M7 |
 
-El routing se expresa sólo mediante `OutboxEvent.targetModule`. Cada destino recibe su propio `OutboxEvent` y `eventId`. Una imputación parcial publica `paymentRegistered`; `debtSettled` se publica únicamente cuando la deuda llega efectivamente a `PAID`. El evento genérico interno de pago y el `debtSettled` existente hacia M8 se conservan.
+Los eventos económicos externos se preparan con `targetModule=CORE`; `originType` y `originId` conservan el origen M4/M7. Una imputación parcial prepara `paymentRegistered`; `debtSettled` externo se prepara únicamente cuando la deuda llega efectivamente a `PAID`. Los identificadores `payment-<Long>` y `debt-<Long>` siguen siendo strings estables: V4 no exige que sean UUID. Para deuda municipal saldada, M5 guarda un aplazamiento y no genera un payload M8 incompatible hasta acordar identificadores y enrutamiento con los consumidores.
 
-`paymentReversed`: `PAYMENT_REVERSED_EXTERNAL_CONTRACT_PENDING`. Broker, topics/queues, ACK y DLQ: `PENDING_EXTERNAL_CONTRACT`.
+Las cuotas nuevas registran transaccionalmente en la auditoría de la imputación la distribución exacta del capital por deuda; de allí se obtienen los importes de los eventos y de una reversión posterior. Los pagos históricos de cuotas anteriores a este registro no tienen una distribución confiable por pago: se conserva la reversión económica anterior, pero la notificación externa se aplaza con `LEGACY_PLAN_DISTRIBUTION_UNAVAILABLE` para revisión; no se inventa un importe por deuda. Los nuevos eventos económicos usan claves de idempotencia por imputación y deuda en el outbox. El orden de preparación local no confirma orden de entrega por Core.
+
+El ejemplo V4 de `debtSettled` usa `conceptCode=TRAFFIC_FINE`, pero no declara un enum ni una regla que obligue a ese valor. M5 conserva `TRAFFIC_INFRACTION` hasta acordar el catálogo con M7. `citizenId` es opcional en V4; su equivalencia con una identidad canónica de M1 no está confirmada. Broker, topics/queues, ACK y DLQ: `PENDING_EXTERNAL_CONTRACT`.
 
 ## Internal normalization
 
@@ -91,7 +107,7 @@ El routing se expresa sólo mediante `OutboxEvent.targetModule`. Cada destino re
 
 ## Outbox and ownership
 
-Todo evento confirmado M5 → M1/M2/M4/M7/M8 se serializa como contrato externo y se guarda como `OutboxEvent` junto con el cambio de dominio. `targetModule` distingue consumidores cuando comparten `eventType`. `EventPublisher` sigue siendo una abstracción; esta etapa no elige ni conecta un broker.
+Todo evento preparado M5 → M1/M2/M4/M7/M8 se serializa y se guarda como `OutboxEvent` junto con el cambio de dominio. `targetModule` distingue consumidores cuando comparten `eventType`. `EventPublisher` sigue siendo una abstracción y `LocalLogEventPublisher` sólo registra el payload en logs: el estado `PUBLISHED` del outbox local **no confirma entrega ni aceptación por Core o M2**. La entrega real, suscripción, acuse y política de reintentos del broker están pendientes.
 
 M5 es propietario de `Debt`, `Payment`, `PaymentPlan`, `Exemption` y demás estado económico local. Ningún consumer accede a bases de otros módulos y no se exponen endpoints REST `/api/v1/events*`.
 
@@ -107,9 +123,9 @@ PENDING PAYLOAD CONTRACT:
 
 Se mantienen adapters genéricos existentes. No se agregaron DTOs ni schemas nuevos.
 
-### M7 outbound y otros eventos — PENDING_M7_CONTRACT
+### M7 outbound y otros eventos — Core V4 local
 
-Además del inbound `infractionConfirmed`, está confirmado a nivel aplicación el comportamiento M5 → M7 para `paymentRegistered` y `debtSettled`. Permanecen pendientes `paymentReversed`, cualquier evento de anulación, acarreo o estadía, y el contrato de transporte.
+Además de `infractionConfirmed`, los payloads locales de `paymentRegistered`, `debtSettled` y `paymentReversed` se contrastan con Core V4. La aceptación por M7, la semántica compartida de `debtSettled` con M4/M8, la identidad de M1, los casos históricos sin correlación recuperable y el transporte real siguen pendientes de acuerdos externos.
 
 ### Core / JWT / Broker — PENDING_EXTERNAL_CONTRACT
 

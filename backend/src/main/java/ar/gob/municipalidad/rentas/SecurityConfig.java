@@ -96,7 +96,8 @@ class SecurityErrorResponseWriter {
     }
 }
 
-record AuthenticatedIdentity(String userId, Long taxpayerId) {
+record AuthenticatedIdentity(String userId, Long taxpayerId, UUID integrationActorId) {
+    AuthenticatedIdentity(String userId, Long taxpayerId) { this(userId,taxpayerId,null); }
     @Override public String toString() { return userId; }
 }
 

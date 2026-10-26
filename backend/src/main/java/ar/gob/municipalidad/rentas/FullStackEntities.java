@@ -3,6 +3,7 @@ package ar.gob.municipalidad.rentas;
 import jakarta.persistence.*;
 import java.math.BigDecimal;
 import java.time.*;
+import java.util.UUID;
 
 enum DemoRole { RENTAS, SUPERVISOR, CASHIER, AUDITOR, TAXPAYER }
 enum ReconciliationStatus { CONCILIATED, OBSERVED, NOT_FOUND }
@@ -10,6 +11,7 @@ enum ReconciliationStatus { CONCILIATED, OBSERVED, NOT_FOUND }
 @Entity @Table(name="demo_user")
 class DemoUser {
     @Id @GeneratedValue(strategy=GenerationType.IDENTITY) public Long id;
+    @Column(name="integration_actor_id",nullable=false,unique=true) public UUID integrationActorId;
     @Column(nullable=false,unique=true) public String username;
     @Column(name="password_hash",nullable=false) public String passwordHash;
     @Column(name="display_name",nullable=false) public String displayName;
@@ -19,6 +21,9 @@ class DemoUser {
     @Column(name="created_at",nullable=false) public OffsetDateTime createdAt;
     @Column(name="updated_at",nullable=false) public OffsetDateTime updatedAt;
     protected DemoUser() {}
+    @PrePersist void ensureIntegrationActorId() {
+        if(integrationActorId==null) integrationActorId=UUID.randomUUID();
+    }
 }
 
 @Entity @Table(name="demo_auth_session")

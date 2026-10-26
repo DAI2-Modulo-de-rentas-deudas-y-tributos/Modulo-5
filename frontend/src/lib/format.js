@@ -79,6 +79,8 @@ export const STATUS_LABELS = {
   APPROVED: "Aprobada",
   REJECTED: "Rechazada",
   OPEN: "Abierto",
+  IN_REVIEW: "En revisión",
+  DUPLICATE: "Duplicado",
   IN_PROGRESS: "En curso",
   WAITING_FOR_INFORMATION: "Esperando información",
   COMPLETED: "Resuelto",

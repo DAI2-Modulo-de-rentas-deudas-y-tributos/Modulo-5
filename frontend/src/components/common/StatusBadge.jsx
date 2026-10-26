@@ -21,6 +21,8 @@ const STATUS_TONES = {
   ACTIVE: "success",
   ISSUED: "info",
   IN_PROGRESS: "info",
+  IN_REVIEW: "neutral",
+  DUPLICATE: "neutral",
   OPEN: "info",
   DRAFT: "neutral",
   CITIZEN: "neutral",

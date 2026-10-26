@@ -34,7 +34,7 @@ class ProductionSchemaIsolationTest {
         registry.add("spring.datasource.url", () -> "jdbc:h2:mem:production-schema;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE");
         registry.add("spring.datasource.username", () -> "sa");
         registry.add("spring.datasource.password", () -> "");
-        registry.add("spring.flyway.locations", () -> "classpath:db/migration,classpath:db/migration-production");
+        registry.add("spring.flyway.locations", () -> "classpath:db/migration,classpath:db/migration-production,classpath:db/migration-production-test-h2,classpath:db/migration-m8-test-h2");
     }
 
     @Test
@@ -48,6 +48,15 @@ class ProductionSchemaIsolationTest {
             "select count(*) from flyway_schema_history where version='18' and success", Integer.class)).isOne();
         assertThat(jdbc.queryForObject(
             "select count(*) from flyway_schema_history where version='19' and success", Integer.class)).isOne();
+        assertThat(jdbc.queryForObject(
+            "select count(*) from flyway_schema_history where version='24' and success", Integer.class)).isOne();
+        assertThat(jdbc.queryForObject(
+            "select count(*) from flyway_schema_history where version='25' and success", Integer.class)).isOne();
+        assertThat(jdbc.queryForObject(
+            "select count(*) from flyway_schema_history where version='26' and success", Integer.class)).isOne();
+        assertThat(jdbc.queryForList(
+            "select column_name from information_schema.columns where table_name='ticket_case'", String.class))
+            .contains("request_type", "subcategory");
         assertThat(jdbc.queryForList(
             "select column_name from information_schema.columns where table_name='payment_reversal_request'", String.class))
             .contains("resolution_reason");
@@ -86,7 +95,7 @@ class ProductionSchemaIsolationTest {
         assertThat(upgrade.queryForObject("select count(*) from demo_user", Integer.class)).isOne();
 
         Flyway production = Flyway.configure().dataSource(url, "sa", "")
-            .locations("classpath:db/migration", "classpath:db/migration-production").load();
+            .locations("classpath:db/migration", "classpath:db/migration-production", "classpath:db/migration-production-test-h2", "classpath:db/migration-m8-test-h2").load();
         production.migrate();
         production.validate();
 
@@ -98,5 +107,14 @@ class ProductionSchemaIsolationTest {
             "select count(*) from flyway_schema_history where version='18' and success", Integer.class)).isOne();
         assertThat(upgrade.queryForObject(
             "select count(*) from flyway_schema_history where version='19' and success", Integer.class)).isOne();
+        assertThat(upgrade.queryForObject(
+            "select count(*) from flyway_schema_history where version='24' and success", Integer.class)).isOne();
+        assertThat(upgrade.queryForObject(
+            "select count(*) from flyway_schema_history where version='25' and success", Integer.class)).isOne();
+        assertThat(upgrade.queryForObject(
+            "select count(*) from flyway_schema_history where version='26' and success", Integer.class)).isOne();
+        assertThat(upgrade.queryForList(
+            "select column_name from information_schema.columns where table_name='ticket_case'", String.class))
+            .contains("request_type", "subcategory");
     }
 }

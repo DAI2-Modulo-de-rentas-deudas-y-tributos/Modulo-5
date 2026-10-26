@@ -143,10 +143,12 @@ class PostgreSqlIntegrationTest {
         registry.add("spring.datasource.url",POSTGRES::getJdbcUrl);
         registry.add("spring.datasource.username",POSTGRES::getUsername);
         registry.add("spring.datasource.password",POSTGRES::getPassword);
+        registry.add("spring.flyway.locations",()->"classpath:db/migration,classpath:db/migration-postgresql");
     }
     @Autowired JdbcTemplate jdbc;
     @Autowired CatalogService catalog;
     @Autowired LiquidationService liquidations;
+    @Autowired LiquidationRepository liquidationRecords;
     @Autowired PlanWorkflowService workflow;
     @Autowired PaymentService payments;
     @Autowired ReversalService reversals;
@@ -160,6 +162,7 @@ class PostgreSqlIntegrationTest {
     @Autowired PaymentPlanService plans;
     @Autowired PaymentPlanRepository planRepository;
     @Autowired OutboxRepository outbox;
+    @Autowired ConfirmedIntegrationOutbox confirmedOutbox;
     @Autowired PreliminaryM4Consumer m4;
     @Autowired ConfirmedM7Consumer m7;
     @Autowired IntegrationEventLogRepository integrationLogs;
@@ -178,6 +181,9 @@ class PostgreSqlIntegrationTest {
     @Autowired DemoAuthController demoAuth;
     @Autowired DemoAuthService demoAuthService;
     @Autowired DemoUserRepository demoUsers;
+    @Autowired ConfirmedM8Consumer coreM8;
+    @Autowired SocialBenefitRepository socialBenefits;
+    @Autowired SocialBenefitEventHistoryRepository socialBenefitHistory;
     @Autowired LateChargeRuleRepository lateChargeRules;
     @Autowired LateChargeService lateCharges;
     @Autowired DueDateService dueDates;
@@ -187,11 +193,42 @@ class PostgreSqlIntegrationTest {
 
     @AfterEach void clearSecurity(){SecurityContextHolder.clearContext();}
 
+    @Test void m8OfficialEventsPersistOnPostgreSqlWithoutAssumingCitizenIdentity(){
+        UUID benefitId=UUID.randomUUID(),citizenId=UUID.randomUUID(),applicationId=UUID.randomUUID(),programId=UUID.randomUUID();
+        OffsetDateTime initial=OffsetDateTime.parse("2026-10-01T12:00:00-03:00");
+        var approved=m8Event(benefitId,citizenId,applicationId,programId,"APPROVED",initial);
+        coreM8.consume(approved);
+        coreM8.consume(approved);
+        coreM8.consume(m8Event(benefitId,citizenId,applicationId,programId,"SUSPENDED",initial.plusDays(2)));
+        coreM8.consume(m8Event(benefitId,citizenId,applicationId,programId,"REJECTED",initial.plusDays(1)));
+        SocialBenefitReference stored=socialBenefits.findByExternalBenefitId(benefitId.toString()).orElseThrow();
+        assertThat(stored.externalCitizenId).isEqualTo(citizenId.toString());
+        assertThat(stored.externalApplicationId).isEqualTo(applicationId.toString());
+        assertThat(stored.externalProgramId).isEqualTo(programId.toString());
+        assertThat(stored.externalStatus).isEqualTo("SUSPENDED");
+        assertThat(stored.validFrom).isNull();
+        assertThat(stored.taxpayerId).isNull();
+        assertThat(stored.resolutionStatus).isEqualTo("PENDING_CITIZEN");
+        assertThat(socialBenefitHistory.findByExternalBenefitIdOrderBySourceUpdatedAtAsc(benefitId.toString()))
+            .extracting(x->x.outcome).containsExactly("APPLIED","STALE","APPLIED");
+    }
+
+    private ConfirmedInboundEvents.M8SocialBenefitUpdatedEvent m8Event(UUID benefitId,UUID citizenId,
+            UUID applicationId,UUID programId,String status,OffsetDateTime updatedAt){
+        var data=new ConfirmedInboundEvents.M8SocialBenefitData(benefitId,citizenId,applicationId,programId,
+            "Programa de prueba",List.of(new ConfirmedInboundEvents.M8Benefit("TAX_EXEMPTION",null)),
+            status,"Prueba PostgreSQL",null,null,updatedAt);
+        return new ConfirmedInboundEvents.M8SocialBenefitUpdatedEvent(UUID.randomUUID(),"socialBenefitUpdated",
+            "1.0",updatedAt,"desarrollo-social",UUID.randomUUID(),null,data);
+    }
+
     @Test void contextStartsAndFlywayAppliesEveryMigration(){
-        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(23);
-        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(22);
+        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(26);
+        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(25);
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='ticket_case'",String.class))
-            .contains("public_id","correlation_id","last_source_event_id","last_external_updated_at");
+            .contains("public_id","correlation_id","last_source_event_id","last_external_updated_at","request_type","subcategory");
+        assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='demo_user'",String.class))
+            .contains("integration_actor_id");
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='integration_event_log'",String.class))
             .contains("business_key");
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='outbox_event'",String.class))
@@ -505,6 +542,7 @@ class PostgreSqlIntegrationTest {
     @Test void overdueDebtIsPublishedOnceForEligibleCitizensEvenWithoutLateChargeRule() throws Exception {
         authenticate();
         TaxpayerReference citizen=taxpayer(TaxpayerType.CITIZEN,"PG-OVERDUE-"+UUID.randomUUID(),uniqueDigits(8),null);
+        citizen.canonicalCitizenId=UUID.randomUUID();taxpayers.save(citizen);
         Debt eligible=debt("OVERDUE-"+UUID.randomUUID(),citizen.id);LocalDate processingDate=uniqueProcessingDate(eligible.id,0);eligible.dueDate=processingDate.minusDays(1);debts.save(eligible);
         Debt paid=debt("OVERDUE-PAID-"+UUID.randomUUID(),citizen.id);paid.dueDate=processingDate.minusDays(1);paid.status=DebtStatus.PAID;debts.save(paid);
         Debt cancelled=debt("OVERDUE-CANCELLED-"+UUID.randomUUID(),citizen.id);cancelled.dueDate=processingDate.minusDays(1);cancelled.status=DebtStatus.CANCELLED;debts.save(cancelled);
@@ -525,7 +563,7 @@ class PostgreSqlIntegrationTest {
         assertThat(envelope.path("sourceModule").asText()).isEqualTo("rentas");assertThat(envelope.path("correlationId").asText()).isNotBlank();
         assertThat(envelope.path("causationId").isNull()).isTrue();
         var data=envelope.path("data");assertThat(data.fieldNames()).toIterable().containsExactlyInAnyOrder("debtId","citizenId","conceptCode","outstandingAmount","dueDate");
-        assertThat(data.path("debtId").asText()).isEqualTo("debt-"+eligible.id);assertThat(data.path("citizenId").asText()).isEqualTo(citizen.externalId);
+        assertThat(data.path("debtId").asText()).isEqualTo(eligible.integrationId.toString());assertThat(data.path("citizenId").asText()).isEqualTo(citizen.canonicalCitizenId.toString());
         assertThat(data.path("conceptCode").asText()).isEqualTo(concepts.findById(eligible.taxConceptId).orElseThrow().code);
         assertThat(data.path("outstandingAmount").decimalValue()).isEqualByComparingTo(eligible.outstandingBalance);
         assertThat(data.path("dueDate").asText()).isEqualTo(eligible.dueDate.toString());
@@ -541,6 +579,7 @@ class PostgreSqlIntegrationTest {
 
     @Test void concurrentOverdueProcessingDoesNotCreateDuplicateOutboxEvents() throws Exception {
         authenticate();Debt eligible=debt("OVERDUE-CONCURRENT-"+UUID.randomUUID(),null);
+        TaxpayerReference taxpayer=taxpayers.findById(eligible.taxpayerId).orElseThrow();taxpayer.canonicalCitizenId=UUID.randomUUID();taxpayers.save(taxpayer);
         LocalDate firstDate=uniqueProcessingDate(eligible.id,2),secondDate=firstDate.plusDays(1);eligible.dueDate=firstDate.minusDays(1);debts.save(eligible);
         assertThat(runTogether(()->dueDates.process(firstDate),()->dueDates.process(secondDate))).containsOnlyNulls();
         assertThat(overdueEvents(eligible)).hasSize(1);
@@ -548,6 +587,7 @@ class PostgreSqlIntegrationTest {
 
     @Test void overdueOutboxFailureRollsBackTheDueDateProcessingTransaction() {
         authenticate();Debt eligible=debt("OVERDUE-ROLLBACK-"+UUID.randomUUID(),null);LocalDate date=uniqueProcessingDate(eligible.id,4);eligible.dueDate=date.minusDays(1);debts.save(eligible);
+        TaxpayerReference taxpayer=taxpayers.findById(eligible.taxpayerId).orElseThrow();taxpayer.canonicalCitizenId=UUID.randomUUID();taxpayers.save(taxpayer);
         String aggregateId=eligible.id.toString();
         jdbc.execute("CREATE OR REPLACE FUNCTION fail_test_overdue_outbox() RETURNS trigger AS $$ BEGIN IF NEW.event_type='overdueDebt' AND NEW.aggregate_id='"+aggregateId+"' THEN RAISE EXCEPTION 'test overdue outbox failure'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql");
         jdbc.execute("CREATE TRIGGER fail_test_overdue_outbox BEFORE INSERT ON outbox_event FOR EACH ROW EXECUTE FUNCTION fail_test_overdue_outbox()");
@@ -559,6 +599,48 @@ class PostgreSqlIntegrationTest {
             jdbc.execute("DROP TRIGGER IF EXISTS fail_test_overdue_outbox ON outbox_event");
             jdbc.execute("DROP FUNCTION IF EXISTS fail_test_overdue_outbox()");
         }
+    }
+
+    @Test void overdueDebtWithoutM1IdentityIsDeferredWithoutAnInvalidOutboxPayload(){
+        authenticate();Debt eligible=debt("OVERDUE-NO-M1-"+UUID.randomUUID(),null);
+        LocalDate date=uniqueProcessingDate(eligible.id,6);eligible.dueDate=date.minusDays(1);debts.save(eligible);
+        dueDates.process(date);
+        assertThat(overdueEvents(eligible)).isEmpty();
+        IntegrationEventLog deferred=integrationLogs.findFirstByBusinessKeyOrderByIdDesc("outbound-deferred:overdueDebt:Debt:"+eligible.id).orElseThrow();
+        assertThat(deferred.status).isEqualTo(IntegrationEventStatus.PENDING);
+        assertThat(deferred.errorMessage).isEqualTo("CANONICAL_CITIZEN_ID_PENDING");
+        assertThat(debts.findById(eligible.id).orElseThrow().isCollectible()).isTrue();
+
+        TaxpayerReference linked=taxpayers.findById(eligible.taxpayerId).orElseThrow();
+        linked.canonicalCitizenId=UUID.fromString("b25d34e2-c891-4abd-a966-4907555b0139");
+        taxpayers.save(linked);
+        dueDates.process(date.plusDays(1));
+        assertThat(overdueEvents(eligible)).hasSize(1);
+        assertThat(integrationLogs.findById(deferred.id).orElseThrow().status).isEqualTo(IntegrationEventStatus.PROCESSED);
+    }
+
+    @Test void municipalSettlementStaysDeferredUntilSharedContractAgreementButUuidCandidateIsStable(){
+        authenticate();
+        Debt created=debt("M8-SETTLED-CANDIDATE-"+UUID.randomUUID(),null);
+        TaxpayerReference linked=taxpayers.findById(created.taxpayerId).orElseThrow();
+        linked.canonicalCitizenId=UUID.fromString("1fd8a8c2-a224-493a-8cec-139b683ed882");
+        taxpayers.save(linked);
+        payments.register(new ApiDtos.RegisterPaymentRequest(created.taxpayerId,PaymentMethod.CASH,new BigDecimal("100"),
+            List.of(new ApiDtos.AllocationRequest(created.id,new BigDecimal("100")))));
+
+        Debt paid=debts.findById(created.id).orElseThrow();
+        assertThat(paid.status).isEqualTo(DebtStatus.PAID);
+        assertThat(outbox.findAll().stream().noneMatch(event -> "debtSettled".equals(event.eventType)
+            &&paid.id.toString().equals(event.aggregateId))).isTrue();
+        assertThat(integrationLogs.findFirstByBusinessKeyOrderByIdDesc("outbound-deferred:debtSettled:Debt:"+paid.id)
+            .orElseThrow().errorMessage).isEqualTo("SHARED_DEBT_SETTLED_CONTRACT_PENDING");
+
+        var candidate=confirmedOutbox.municipalDebtSettledCandidate(paid);
+        assertThat(candidate.debtId()).isEqualTo(paid.integrationId.toString());
+        assertThat(candidate.citizenId()).isEqualTo(linked.canonicalCitizenId.toString());
+        assertThat(candidate.originId()).isEqualTo(liquidationRecords.findById(paid.liquidationId).orElseThrow().integrationId.toString());
+        assertThat(candidate.remainingBalance()).isZero();
+        assertThat(candidate.outstandingBalance()).isZero();
     }
 
     @Test void bootstrapAndArbitraryUsersPersistBcryptOnPostgreSql(){
@@ -640,7 +722,7 @@ class PostgreSqlIntegrationTest {
     private TaxpayerReference taxpayer(TaxpayerType type,String external,String dni,String cuit){TaxpayerReference t=new TaxpayerReference();t.taxpayerType=type;t.externalId=external;t.dni=dni;t.cuit=cuit;t.displayName="PostgreSQL contract";t.externalStatus=TaxpayerStatus.ACTIVE;t.createdAt=t.updatedAt=java.time.OffsetDateTime.now();return taxpayers.save(t);}
     private String uniqueDigits(int length){String digits=Long.toUnsignedString(UUID.randomUUID().getMostSignificantBits());return (digits+"00000000000000000000").substring(0,length);}
     private ConfirmedInboundEvents.M7InfractionData m7Data(UUID id,String debtor,ConfirmedInboundEvents.M7DebtorIdType type,BigDecimal finalAmount){return new ConfirmedInboundEvents.M7InfractionData(id,debtor,type,"AA111AA","TEST",java.time.OffsetDateTime.now(),new BigDecimal("50"),List.of(),finalAmount,"INS-1",new ConfirmedInboundEvents.M7Location("Calle","Esquina",new BigDecimal("-34.60"),new BigDecimal("-58.40")));}
-    private ConfirmedInboundEvents.M7InfractionConfirmedEvent m7Event(UUID eventId,String source,ConfirmedInboundEvents.M7InfractionData data){return new ConfirmedInboundEvents.M7InfractionConfirmedEvent(eventId,"infractionConfirmed",java.time.OffsetDateTime.now(),source,data);}
+    private ConfirmedInboundEvents.M7InfractionConfirmedEvent m7Event(UUID eventId,String source,ConfirmedInboundEvents.M7InfractionData data){return new ConfirmedInboundEvents.M7InfractionConfirmedEvent(eventId,"infractionConfirmed","1.0",java.time.OffsetDateTime.now(),source,UUID.randomUUID(),null,data);}
     private List<Throwable> runTogether(Callable<?> first,Callable<?> second)throws Exception{ExecutorService pool=Executors.newFixedThreadPool(2);CountDownLatch ready=new CountDownLatch(2),start=new CountDownLatch(1);try{List<Future<Throwable>> futures=List.of(pool.submit(task(first,ready,start)),pool.submit(task(second,ready,start)));assertThat(ready.await(5,TimeUnit.SECONDS)).isTrue();start.countDown();List<Throwable> result=new ArrayList<>();for(Future<Throwable> future:futures)result.add(future.get(15,TimeUnit.SECONDS));return result;}finally{pool.shutdownNow();}}
     private Callable<Throwable> task(Callable<?> action,CountDownLatch ready,CountDownLatch start){return ()->{authenticate();ready.countDown();start.await();try{action.call();return null;}catch(Throwable ex){return ex;}finally{SecurityContextHolder.clearContext();}};}
 }

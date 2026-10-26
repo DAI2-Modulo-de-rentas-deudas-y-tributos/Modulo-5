@@ -56,7 +56,7 @@ class M7ContractTests {
     @Test void documentedPayloadUsesFinalAmountAndCreatesOneEconomicEffect() throws Exception {
         long before=obligations.count();TaxpayerReference taxpayer=citizen("40123456");concept();var event=read(DOCUMENTED_EVENT);
         ExternalObligation first=m7.consume(event);ExternalObligation sameEvent=m7.consume(event);
-        var functionalDuplicate=new ConfirmedInboundEvents.M7InfractionConfirmedEvent(UUID.randomUUID(),event.eventType(),event.occurredAt(),event.sourceModule(),event.data());
+        var functionalDuplicate=new ConfirmedInboundEvents.M7InfractionConfirmedEvent(UUID.randomUUID(),event.eventType(),event.eventVersion(),event.occurredAt(),event.sourceModule(),event.correlationId(),event.causationId(),event.data());
         ExternalObligation sameInfraction=m7.consume(functionalDuplicate);
 
         assertThat(first.id).isEqualTo(sameEvent.id).isEqualTo(sameInfraction.id);
@@ -88,6 +88,13 @@ class M7ContractTests {
         long obligationsBefore=obligations.count(),debtsBefore=debts.count(),logsBefore=logs.count();citizen("40123456");concept();var event=read(DOCUMENTED_EVENT.replace("\"licensePlate\": \"AB123CD\"","\"licensePlate\": \"\""));
         assertThatThrownBy(()->m7.consume(event)).isInstanceOf(BusinessException.class).hasMessageContaining("licensePlate");
         assertThat(obligations.count()).isEqualTo(obligationsBefore);assertThat(debts.count()).isEqualTo(debtsBefore);assertThat(logs.count()).isEqualTo(logsBefore);
+    }
+
+    @Test void missingRequiredCorrelationDoesNotCreateAnObligation() throws Exception {
+        long obligationsBefore=obligations.count(),debtsBefore=debts.count();
+        var event=read(DOCUMENTED_EVENT.replace("\"correlationId\": \"78cff4cc-3cd0-4f3f-b0f7-78ec2b15cf0b\"","\"correlationId\": null"));
+        assertThatThrownBy(()->m7.consume(event)).isInstanceOf(BusinessException.class).hasMessageContaining("correlationId");
+        assertThat(obligations.count()).isEqualTo(obligationsBefore);assertThat(debts.count()).isEqualTo(debtsBefore);
     }
 
     @Test void cuitResolvesOrganizationExplicitly() throws Exception {

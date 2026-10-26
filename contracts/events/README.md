@@ -18,7 +18,10 @@ contiene la variante contradictoria `occuredAt`, pendiente de confirmación.
 
 ## Consumo preparado
 
-- `ticketUpdated` de M2 usa el sobre Core y filtra `responsibleAreaId=M5`.
+- `ticketUpdated` de M2 usa el sobre Core, filtra `responsibleAreaId=M5` e
+  ignora `INFORMATION_REQUIRED`/`INFORMATION_PROVIDED` de reclasificación
+  administrativa. El `ticketId` UUID original se conserva como referencia
+  externa, sin reemplazar la PK local numérica.
 - `permitFeeGenerated` y `commercialFineGenerated` de M4 aceptan el sobre
   Core con `cuit` y `currency`. El mensaje queda registrado, pero no genera
   deuda mientras M5 no tenga una regla acordada de vencimiento; tampoco se
@@ -33,3 +36,10 @@ con el modo de desarrollo habilitado; no están disponibles en producción.
 Los registros antiguos con `targetModule=PLATFORM` son internos y no se envían
 al publicador de Core; los eventos preparados para Core usan
 `targetModule=CORE` únicamente como marca local del outbox.
+El estado `PUBLISHED` significa únicamente que el adaptador local escribió
+en el log; **no prueba entrega ni aceptación por Core o M2**. El código obtiene
+el UUID persistente del empleado desde la sesión del backend y guarda por
+separado `requestType`, `category` y `subcategory`, pero requiere el esquema
+preparado en `backend/migration-proposals/`, fuera de Flyway: no se aplica solo
+y no debe desplegarse el código contra la base anterior. La equivalencia entre
+el `citizenId` UUID de M2 y el ID numérico de M1 sigue pendiente.
