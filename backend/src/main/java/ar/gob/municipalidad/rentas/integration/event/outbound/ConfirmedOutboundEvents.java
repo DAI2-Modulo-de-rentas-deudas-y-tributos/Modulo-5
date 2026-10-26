@@ -44,11 +44,29 @@ public final class ConfirmedOutboundEvents {
             } else throw new IllegalArgumentException("Estado de exención no soportado");
         }
     }
-    public record PaymentPlanRequestedPayload(String requestId,String citizenId,List<String> debtIds,
-        BigDecimal totalDebt,int installments) {}
+    public record PaymentPlanRequestedPayload(UUID requestId,UUID citizenId,List<UUID> debtIds,
+        BigDecimal totalDebt,int installments) {
+        public PaymentPlanRequestedPayload {
+            if(requestId==null||citizenId==null||debtIds==null||debtIds.isEmpty()||debtIds.stream().anyMatch(java.util.Objects::isNull)
+                ||totalDebt==null||totalDebt.signum()<=0||installments<=0)
+                throw new IllegalArgumentException("paymentPlanRequested requiere UUID, deudas, monto y cuotas válidos");
+            debtIds=List.copyOf(debtIds);
+        }
+    }
     @JsonInclude(JsonInclude.Include.NON_NULL)
-    public record UpdatePaymentPlanStatusPayload(String requestId,String citizenId,String status,String planId,
-        Integer installments,BigDecimal totalAmount,String reason) {}
+    public record UpdatePaymentPlanStatusPayload(UUID requestId,UUID citizenId,String status,UUID planId,
+        Integer installments,BigDecimal totalAmount,String reason) {
+        public UpdatePaymentPlanStatusPayload {
+            if(requestId==null||citizenId==null)throw new IllegalArgumentException("updatePaymentPlanStatus requiere UUID de solicitud y ciudadano");
+            if("GRANTED".equals(status)){
+                if(planId==null||installments==null||installments<=0||totalAmount==null||totalAmount.signum()<=0||reason!=null)
+                    throw new IllegalArgumentException("GRANTED requiere plan, cuotas y total válidos");
+            }else if("REJECTED".equals(status)){
+                if(planId!=null||installments!=null||totalAmount!=null||reason==null||reason.isBlank())
+                    throw new IllegalArgumentException("REJECTED requiere motivo y no admite datos de un plan otorgado");
+            }else throw new IllegalArgumentException("Estado de plan no soportado");
+        }
+    }
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record OverdueDebtPayload(UUID debtId,UUID citizenId,String conceptCode,
         BigDecimal outstandingAmount,LocalDate dueDate) {

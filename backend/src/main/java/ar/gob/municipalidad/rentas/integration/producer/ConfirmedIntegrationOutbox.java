@@ -45,9 +45,33 @@ class ConfirmedIntegrationOutbox {
         prepareExemption("updateExemptionStatus",request.id,request.integrationId,taxpayer.canonicalCitizenId,"REJECTED",payload);
     }
 
-    void paymentPlanRequested(PaymentPlanRequest request){List<String> debtIds=planRequestDebts.findByRequestId(request.id).stream().map(x->"debt-"+x.debtId).toList();var payload=new ConfirmedOutboundEvents.PaymentPlanRequestedPayload("ppr-"+request.id,taxpayer(request.taxpayerId).externalId,debtIds,request.totalDebtAtRequest,request.requestedInstallments);enqueueSimple("paymentPlanRequested",payload,"PaymentPlanRequest",request.id);}
-    void paymentPlanGranted(PaymentPlanRequest request,PaymentPlan plan){var payload=new ConfirmedOutboundEvents.UpdatePaymentPlanStatusPayload("ppr-"+request.id,taxpayer(request.taxpayerId).externalId,"GRANTED","plan-"+plan.id,plan.installmentCount,plan.totalPlanAmount,null);enqueueSimple("updatePaymentPlanStatus",payload,"PaymentPlanRequest",request.id);}
-    void paymentPlanRejected(PaymentPlanRequest request){var payload=new ConfirmedOutboundEvents.UpdatePaymentPlanStatusPayload("ppr-"+request.id,taxpayer(request.taxpayerId).externalId,"REJECTED",null,null,null,request.resolutionReason);enqueueSimple("updatePaymentPlanStatus",payload,"PaymentPlanRequest",request.id);}
+    void paymentPlanRequested(PaymentPlanRequest request){
+        TaxpayerReference taxpayer=taxpayer(request.taxpayerId);
+        if(!canonicalCitizenAvailable(taxpayer)){defer("paymentPlanRequested","PaymentPlanRequest",request.id,"CANONICAL_CITIZEN_ID_PENDING");return;}
+        var payload=paymentPlanPayload(request,taxpayer);
+        if(payload==null){
+            defer("paymentPlanRequested","PaymentPlanRequest",request.id,"DEBT_UUID_OR_REQUEST_LINK_REVIEW_REQUIRED");return;
+        }
+        if(preparePlan("paymentPlanRequested",request,payload))resolveDeferral("paymentPlanRequested","PaymentPlanRequest",request.id);
+    }
+    void paymentPlanGranted(PaymentPlanRequest request,PaymentPlan plan){
+        if(request.status!=PaymentPlanRequestStatus.GRANTED||plan.requestId==null||!request.id.equals(plan.requestId)){
+            defer("updatePaymentPlanStatus","PaymentPlanRequest",request.id,"PLAN_GRANT_STATE_REVIEW_REQUIRED");return;
+        }
+        paymentPlanRequested(request);
+        if(!paymentPlanRequestPrepared(request)||!canonicalCitizenAvailable(taxpayer(request.taxpayerId))){defer("updatePaymentPlanStatus","PaymentPlanRequest",request.id,"REQUEST_EVENT_REVIEW_REQUIRED");return;}
+        var payload=new ConfirmedOutboundEvents.UpdatePaymentPlanStatusPayload(request.integrationId,taxpayer(request.taxpayerId).canonicalCitizenId,"GRANTED",plan.integrationId,plan.installmentCount,plan.totalPlanAmount,null);
+        if(preparePlan("updatePaymentPlanStatus",request,payload))resolveDeferral("updatePaymentPlanStatus","PaymentPlanRequest",request.id);
+    }
+    void paymentPlanRejected(PaymentPlanRequest request){
+        if(request.status!=PaymentPlanRequestStatus.REJECTED||request.resolutionReason==null||request.resolutionReason.isBlank()){
+            defer("updatePaymentPlanStatus","PaymentPlanRequest",request.id,"REJECTION_REASON_OR_STATE_REVIEW_REQUIRED");return;
+        }
+        paymentPlanRequested(request);
+        if(!paymentPlanRequestPrepared(request)||!canonicalCitizenAvailable(taxpayer(request.taxpayerId))){defer("updatePaymentPlanStatus","PaymentPlanRequest",request.id,"REQUEST_EVENT_REVIEW_REQUIRED");return;}
+        var payload=new ConfirmedOutboundEvents.UpdatePaymentPlanStatusPayload(request.integrationId,taxpayer(request.taxpayerId).canonicalCitizenId,"REJECTED",null,null,null,request.resolutionReason);
+        if(preparePlan("updatePaymentPlanStatus",request,payload))resolveDeferral("updatePaymentPlanStatus","PaymentPlanRequest",request.id);
+    }
 
     void overdueDebt(Debt debt,LocalDate processingDate){
         if(!debt.isCollectible()||!debt.dueDate.isBefore(processingDate))return;
@@ -268,8 +292,8 @@ class ConfirmedIntegrationOutbox {
 
     ConfirmedOutboundEvents.CoreEnvelope<ConfirmedOutboundEvents.UpdateExemptionStatusPayload> exemptionStatusEvent(ConfirmedOutboundEvents.UpdateExemptionStatusPayload payload){return core("updateExemptionStatus",payload,"ExemptionRequest",payload.requestId().toString());}
     ConfirmedOutboundEvents.CoreEnvelope<ConfirmedOutboundEvents.ExemptionRequestedPayload> exemptionRequestedEvent(ConfirmedOutboundEvents.ExemptionRequestedPayload payload){return core("exemptionRequested",payload,"ExemptionRequest",payload.requestId().toString());}
-    ConfirmedOutboundEvents.CoreEnvelope<ConfirmedOutboundEvents.PaymentPlanRequestedPayload> paymentPlanRequestedEvent(ConfirmedOutboundEvents.PaymentPlanRequestedPayload payload){return core("paymentPlanRequested",payload,"PaymentPlanRequest",payload.requestId());}
-    ConfirmedOutboundEvents.CoreEnvelope<ConfirmedOutboundEvents.UpdatePaymentPlanStatusPayload> paymentPlanStatusEvent(ConfirmedOutboundEvents.UpdatePaymentPlanStatusPayload payload){return core("updatePaymentPlanStatus",payload,"PaymentPlanRequest",payload.requestId());}
+    ConfirmedOutboundEvents.CoreEnvelope<ConfirmedOutboundEvents.PaymentPlanRequestedPayload> paymentPlanRequestedEvent(ConfirmedOutboundEvents.PaymentPlanRequestedPayload payload){return core("paymentPlanRequested",payload,"PaymentPlanRequest",payload.requestId().toString());}
+    ConfirmedOutboundEvents.CoreEnvelope<ConfirmedOutboundEvents.UpdatePaymentPlanStatusPayload> paymentPlanStatusEvent(ConfirmedOutboundEvents.UpdatePaymentPlanStatusPayload payload){return core("updatePaymentPlanStatus",payload,"PaymentPlanRequest",payload.requestId().toString());}
     ConfirmedOutboundEvents.CoreEnvelope<ConfirmedOutboundEvents.OverdueDebtPayload> overdueDebtEvent(ConfirmedOutboundEvents.OverdueDebtPayload payload){return core("overdueDebt",payload,"Debt",payload.debtId().toString());}
     ConfirmedOutboundEvents.CoreEnvelope<ConfirmedOutboundEvents.DebtSettledPayload> debtSettledEvent(ConfirmedOutboundEvents.DebtSettledPayload payload){return core("debtSettled",payload,"Debt",payload.debtId().toString());}
 
@@ -319,6 +343,56 @@ class ConfirmedIntegrationOutbox {
         outbox.save(entity);
         resolveDeferral(type,"ExemptionRequest",requestId);
         return true;
+    }
+    private boolean paymentPlanRequestPrepared(PaymentPlanRequest request){
+        TaxpayerReference taxpayer=taxpayer(request.taxpayerId);
+        ConfirmedOutboundEvents.PaymentPlanRequestedPayload payload=paymentPlanPayload(request,taxpayer);
+        if(payload==null)return false;
+        try{
+            var expected=json.readTree(write(payload));
+            return planOutbox("paymentPlanRequested",request.id)
+                .filter(event->matchesPlanPayload(event,expected)).isPresent();
+        }catch(Exception ex){return false;}
+    }
+    private ConfirmedOutboundEvents.PaymentPlanRequestedPayload paymentPlanPayload(PaymentPlanRequest request,TaxpayerReference taxpayer){
+        if(!canonicalCitizenAvailable(taxpayer))return null;
+        List<PaymentPlanRequestDebt> links=planRequestDebts.findByRequestIdOrderByIdAsc(request.id);
+        List<Debt> linkedDebts=debts.findAllById(links.stream().map(x->x.debtId).toList());
+        Map<Long,Debt> byId=new HashMap<>();linkedDebts.forEach(x->byId.put(x.id,x));
+        List<UUID> debtIds=links.stream().map(x->byId.get(x.debtId)).filter(Objects::nonNull).map(x->x.integrationId).toList();
+        if(links.isEmpty()||debtIds.size()!=links.size()||debtIds.stream().anyMatch(Objects::isNull))return null;
+        try{return new ConfirmedOutboundEvents.PaymentPlanRequestedPayload(request.integrationId,taxpayer.canonicalCitizenId,
+            debtIds,request.totalDebtAtRequest,request.requestedInstallments);}catch(IllegalArgumentException ex){return null;}
+    }
+    private Optional<OutboxEvent> planOutbox(String type,Long requestId){
+        return outbox.findFirstByEventTypeAndAggregateTypeAndAggregateIdOrderByCreatedAtAsc(type,"PaymentPlanRequest",requestId.toString());
+    }
+    private boolean preparePlan(String type,PaymentPlanRequest request,Object payload){
+        String key="outbound:"+type+":PaymentPlanRequest:"+request.integrationId;
+        JsonNode expected;
+        try{expected=json.readTree(write(payload));}catch(Exception ex){defer(type,"PaymentPlanRequest",request.id,"OUTBOX_PAYLOAD_REVIEW_REQUIRED");return false;}
+        Optional<OutboxEvent> existing=outbox.findByIdempotencyKey(key).or(()->planOutbox(type,request.id));
+        if(existing.isPresent()){
+            try{
+                if(!expected.equals(json.readTree(existing.orElseThrow().payload).path("data"))){
+                    defer(type,"PaymentPlanRequest",request.id,"EXISTING_OUTBOX_CONTRACT_REVIEW_REQUIRED");return false;
+                }
+                existing.orElseThrow().idempotencyKey=key;
+                resolveDeferral(type,"PaymentPlanRequest",request.id);
+                return true;
+            }catch(Exception ex){
+                defer(type,"PaymentPlanRequest",request.id,"EXISTING_OUTBOX_CONTRACT_REVIEW_REQUIRED");return false;
+            }
+        }
+        var event=new ConfirmedOutboundEvents.CoreEnvelope<>(UUID.randomUUID().toString(),type,"1.0",OffsetDateTime.now(),"rentas",null,null,payload);
+        OutboxEvent entity=new OutboxEvent();entity.id=UUID.fromString(event.eventId());entity.eventType=type;entity.targetModule="CORE";
+        entity.aggregateType="PaymentPlanRequest";entity.aggregateId=request.id.toString();entity.idempotencyKey=key;
+        entity.payload=write(event);entity.status=OutboxStatus.PENDING;entity.retryCount=0;entity.createdAt=OffsetDateTime.now();outbox.save(entity);
+        return true;
+    }
+    private boolean matchesPlanPayload(OutboxEvent event,JsonNode expected){
+        try{return expected.equals(json.readTree(event.payload).path("data"));}
+        catch(Exception ex){return false;}
     }
     private void defer(String type,String aggregate,Long aggregateId,String reason){
         String key=deferralKey(type,aggregate,aggregateId);

@@ -225,8 +225,8 @@ class PostgreSqlIntegrationTest {
     }
 
     @Test void contextStartsAndFlywayAppliesEveryMigration(){
-        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(27);
-        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(26);
+        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(28);
+        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(27);
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='ticket_case'",String.class))
             .contains("public_id","correlation_id","last_source_event_id","last_external_updated_at","request_type","subcategory");
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='demo_user'",String.class))

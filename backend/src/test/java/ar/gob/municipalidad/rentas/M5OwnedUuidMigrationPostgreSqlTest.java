@@ -22,7 +22,7 @@ class M5OwnedUuidMigrationPostgreSqlTest {
     static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:17.11-alpine");
 
     @Test
-    void upgradesExistingV23RowsToV27InCommonAndProductionLocations() {
+    void upgradesExistingV23RowsToV28InCommonAndProductionLocations() {
         assertUpgrade(List.of("classpath:db/migration", "classpath:db/migration-postgresql"), false);
         assertUpgrade(List.of("classpath:db/migration", "classpath:db/migration-production", "classpath:db/migration-postgresql"), true);
     }
@@ -38,21 +38,27 @@ class M5OwnedUuidMigrationPostgreSqlTest {
         List<Long> requestIds = primaryKeys(jdbc, "exemption_request");
         List<Long> exemptionIds = primaryKeys(jdbc, "exemption");
         List<Long> paymentIds = primaryKeys(jdbc, "payment");
+        List<Long> planRequestIds = primaryKeys(jdbc, "payment_plan_request");
+        List<Long> planIds = primaryKeys(jdbc, "payment_plan");
 
         Flyway after = flyway(locations).load();
         after.migrate();
-        assertThat(jdbc.queryForList("select version from flyway_schema_history where success and version in ('24','25','26','27') order by installed_rank", String.class))
-            .containsExactly("24", "25", "26", "27");
+        assertThat(jdbc.queryForList("select version from flyway_schema_history where success and version in ('24','25','26','27','28') order by installed_rank", String.class))
+            .containsExactly("24", "25", "26", "27", "28");
         assertStableUniqueIds(jdbc, "debt", debtIds);
         assertStableUniqueIds(jdbc, "liquidation", liquidationIds);
         assertStableUniqueIds(jdbc, "exemption_request", requestIds);
         assertStableUniqueIds(jdbc, "exemption", exemptionIds);
         assertStableUniqueIds(jdbc, "payment", paymentIds);
+        assertStableUniqueIds(jdbc, "payment_plan_request", planRequestIds);
+        assertStableUniqueIds(jdbc, "payment_plan", planIds);
         Map<Long, UUID> generatedDebtIds = uuidRows(jdbc, "debt");
         Map<Long, UUID> generatedLiquidationIds = uuidRows(jdbc, "liquidation");
         Map<Long, UUID> generatedRequestIds = uuidRows(jdbc, "exemption_request");
         Map<Long, UUID> generatedExemptionIds = uuidRows(jdbc, "exemption");
         Map<Long, UUID> generatedPaymentIds = uuidRows(jdbc, "payment");
+        Map<Long, UUID> generatedPlanRequestIds = uuidRows(jdbc, "payment_plan_request");
+        Map<Long, UUID> generatedPlanIds = uuidRows(jdbc, "payment_plan");
         assertThat(jdbc.queryForObject("select count(*) from taxpayer_reference where canonical_citizen_id is not null", Integer.class)).isZero();
         assertThat(jdbc.queryForObject("select count(*) from social_benefit_reference where resolution_status='LEGACY' and source_payload_hash='" + "0".repeat(64) + "'", Integer.class)).isEqualTo(1);
         if (production) assertThat(jdbc.queryForObject("select to_regclass('public.demo_user')::text", String.class)).isNull();
@@ -63,6 +69,10 @@ class M5OwnedUuidMigrationPostgreSqlTest {
         assertThat(uuidRows(jdbc, "exemption_request")).containsExactlyEntriesOf(generatedRequestIds);
         assertThat(uuidRows(jdbc, "exemption")).containsExactlyEntriesOf(generatedExemptionIds);
         assertThat(uuidRows(jdbc, "payment")).containsExactlyEntriesOf(generatedPaymentIds);
+        assertThat(uuidRows(jdbc, "payment_plan_request")).containsExactlyEntriesOf(generatedPlanRequestIds);
+        assertThat(uuidRows(jdbc, "payment_plan")).containsExactlyEntriesOf(generatedPlanIds);
+        assertThat(jdbc.queryForObject("select count(*) from payment_plan_request where integration_id is null",Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from payment_plan where integration_id is null",Integer.class)).isZero();
     }
 
     private FluentConfiguration flyway(List<String> locations) {
@@ -90,10 +100,20 @@ class M5OwnedUuidMigrationPostgreSqlTest {
                 insert into liquidation(taxpayer_id,tax_concept_id,tax_configuration_id,configuration_version,period,taxable_base,base_amount,exemption_amount,final_amount,due_date,status,created_by,issued_at)
                 values (?,?,?,1,?,100,100,0,100,current_date,'ISSUED','migration-test',now()) returning id
                 """, Long.class, taxpayer, concept, configuration, "2026-0" + (i + 1));
-            jdbc.update("""
+            long debt=jdbc.queryForObject("""
                 insert into debt(taxpayer_id,tax_concept_id,origin_type,liquidation_id,original_amount,current_amount,outstanding_balance,due_date,status,created_at,updated_at)
-                values (?,?, 'LIQUIDATION',?,100,100,100,current_date,'PENDING',now(),now())
-                """, taxpayer, concept, liquidation);
+                values (?,?, 'LIQUIDATION',?,100,100,100,current_date,'PENDING',now(),now()) returning id
+                """, Long.class,taxpayer, concept, liquidation);
+            long planRequest=jdbc.queryForObject("""
+                insert into payment_plan_request(taxpayer_id,requested_installments,total_debt_at_request,estimated_down_payment,
+                    estimated_financed_amount,estimated_interest,estimated_total_amount,exceptional,exception_approved,status,requested_by,requested_at)
+                values (?,3,100,0,100,0,100,false,false,'PENDING','migration-test',now()) returning id
+                """,Long.class,taxpayer);
+            jdbc.update("""
+                insert into payment_plan(taxpayer_id,debt_id,original_principal_amount,down_payment_amount,financed_principal_amount,
+                    financing_interest_amount,total_plan_amount,paid_amount,outstanding_plan_amount,installment_count,status,granted_by,granted_at,request_id)
+                values (?,?,100,0,100,0,100,0,100,3,'ACTIVE','migration-test',now(),?)
+                """,taxpayer,debt,planRequest);
             long request = jdbc.queryForObject("""
                 insert into exemption_request(taxpayer_id,tax_concept_id,reason,requested_percentage,requested_from,status,requested_by,requested_at)
                 values (?,?,'migration fixture',50,current_date,'APPROVED','migration-test',now()) returning id
