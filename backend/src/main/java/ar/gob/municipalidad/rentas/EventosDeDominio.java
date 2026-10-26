@@ -2,6 +2,7 @@ package ar.gob.municipalidad.rentas;
 
 interface EventosDeDominio {
     void deudaSaldada(Debt deuda);
+    default void deudaSaldada(Debt deuda, PaymentAllocation imputacion) { deudaSaldada(deuda); }
     void deudaAjustada(Debt deuda, AdjustmentRequest ajuste);
     void planCaducado(PaymentPlan plan);
     void planRefinanciado(PaymentPlan anterior, PaymentPlan nuevo);

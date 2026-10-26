@@ -171,8 +171,16 @@ class SecurityTests {
         var paths=json.readTree(openApi).path("paths");int operations=0;for(var path=paths.fields();path.hasNext();)operations+=path.next().getValue().size();
         org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/tax-concepts").path("post").path("responses")
             .path("400").path("$ref").asText()).isEqualTo("#/components/responses/ApiError");
-        org.assertj.core.api.Assertions.assertThat(operations).isEqualTo(156);
-        org.assertj.core.api.Assertions.assertThat(paths.size()).isEqualTo(141);
+        org.assertj.core.api.Assertions.assertThat(operations).isEqualTo(164);
+        org.assertj.core.api.Assertions.assertThat(paths.size()).isEqualTo(148);
+        org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/integrations/deferred/exemptions/{requestId}/reconcile").has("post")).isTrue();
+        org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/integrations/deferred/economic").has("get")).isTrue();
+        org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/integrations/deferred/economic/{deferralId}/reconcile").has("post")).isTrue();
+        org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/social-benefit-rules").has("get")).isTrue();
+        org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/social-benefit-rules").has("post")).isTrue();
+        org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/social-benefit-rules/{id}/submit").has("post")).isTrue();
+        org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/social-benefit-rules/{id}/approve").has("post")).isTrue();
+        org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/social-benefit-rules/{id}/disable").has("post")).isTrue();
         org.assertj.core.api.Assertions.assertThat(paths.has("/api/v1/payment-plan-requests/{id}/debts")).isTrue();
         org.assertj.core.api.Assertions.assertThat(paths.has("/api/v1/dashboards/supervisor")).isTrue();
         org.assertj.core.api.Assertions.assertThat(paths.has("/api/v1/dashboards/rentas")).isTrue();

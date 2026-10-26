@@ -895,10 +895,9 @@ export const ticketService = {
   },
 
   /** Usa los casos de uso reales de M5; cada operación deja su evento en el outbox local. */
-  async updateStatus({ ticketId, status, message, takeOwnership = false }) {
+  async updateStatus({ ticketId, status, message }) {
     const base = `/api/v1/tickets/${ticketId}`;
     if (status === "IN_PROGRESS") return request(`${base}/assign`, { method: "POST" });
-    if (takeOwnership) await request(`${base}/assign`, { method: "POST" });
     if (status === "WAITING_FOR_INFORMATION") {
       return request(`${base}/request-information`, { method: "POST", body: { message } });
     }

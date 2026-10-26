@@ -116,7 +116,7 @@ class DemoAuthService {
         } catch(NoSuchAlgorithmException ex) { throw new IllegalStateException("SHA-256 no disponible",ex); }
     }
 
-    static AuthenticatedIdentity identity(DemoUser user){return new AuthenticatedIdentity(user.username,user.taxpayerId);}
+    static AuthenticatedIdentity identity(DemoUser user){return new AuthenticatedIdentity(user.username,user.taxpayerId,user.integrationActorId);}
 
     DemoAuthController.UserResponse response(DemoUser user){
         List<String> authorities=user.role==DemoRole.SUPERVISOR?List.of("RENTAS","SUPERVISOR"):List.of(user.role.name());

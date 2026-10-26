@@ -1,5 +1,7 @@
 package ar.gob.municipalidad.rentas;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -18,6 +20,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -30,12 +33,17 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class ExemptionHistoryTests {
     @Autowired ExemptionService exemptions;
     @Autowired ExemptionRequestDocumentRepository documents;
+    @Autowired ExemptionRequestRepository exemptionRequests;
+    @Autowired ExemptionRepository exemptionRecords;
     @Autowired CatalogService catalog;
     @Autowired MockMvc mvc;
     @Autowired DemoUserRepository demoUsers;
     @Autowired TaxpayerRepository taxpayers;
     @Autowired PasswordEncoder encoder;
     @Autowired DemoAuthService demoAuth;
+    @Autowired OutboxRepository outbox;
+    @Autowired IntegrationEventLogRepository integrationLogs;
+    @Autowired ObjectMapper json;
 
     private TaxpayerReference taxpayer;
     private TaxConcept concept;
@@ -64,6 +72,64 @@ class ExemptionHistoryTests {
             assertThat(entry.message()).isNull();
         });
         assertThat(history.result()).isNull();
+    }
+
+    @Test void missingM1IdentityDefersExemptionEventsWithoutLosingTheDecision() {
+        ExemptionRequest request=create();
+        assertThat(request.integrationId).isNotNull();
+        assertThat(eventsFor(request.id)).isEmpty();
+        assertThat(deferred("exemptionRequested",request.id).status).isEqualTo(IntegrationEventStatus.PENDING);
+
+        exemptions.start(request.id);
+        exemptions.submit(request.id,"Revisión interna");
+        Exemption approved=exemptions.approve(request.id,null);
+
+        assertThat(approved.integrationId).isNotNull();
+        assertThat(exemptionRequests.findById(request.id).orElseThrow().status).isEqualTo(ExemptionRequestStatus.APPROVED);
+        assertThat(exemptionRecords.findById(approved.id)).isPresent();
+        assertThat(eventsFor(request.id)).isEmpty();
+        assertThat(deferred("updateExemptionStatus",request.id).status).isEqualTo(IntegrationEventStatus.PENDING);
+    }
+
+    @Test void canonicalM1IdentityUsesPersistentRequestAndExemptionUuids() throws Exception {
+        UUID m1CitizenId=UUID.fromString("0f5e8497-97c3-4e37-a85d-2e767961d949");
+        taxpayer.canonicalCitizenId=m1CitizenId;
+        taxpayers.saveAndFlush(taxpayer);
+
+        ExemptionRequest request=create();
+        JsonNode requested=eventFor(request.id,"exemptionRequested").path("data");
+        assertThat(requested.path("requestId").asText()).isEqualTo(request.integrationId.toString());
+        assertThat(requested.path("citizenId").asText()).isEqualTo(m1CitizenId.toString());
+        assertThat(requested.path("conceptCode").asText()).isEqualTo(concept.code);
+        assertThat(requested.path("requestedPercentage").decimalValue()).isEqualByComparingTo("50");
+
+        exemptions.start(request.id);
+        exemptions.submit(request.id,"Revisión interna");
+        Exemption approved=exemptions.approve(request.id,null);
+        JsonNode resolved=eventFor(request.id,"updateExemptionStatus").path("data");
+        assertThat(resolved.path("requestId").asText()).isEqualTo(request.integrationId.toString());
+        assertThat(resolved.path("citizenId").asText()).isEqualTo(m1CitizenId.toString());
+        assertThat(resolved.path("exemptionId").asText()).isEqualTo(approved.integrationId.toString());
+        assertThat(resolved.path("status").asText()).isEqualTo("APPROVED");
+        assertThat(resolved.path("percentage").decimalValue()).isEqualByComparingTo("50");
+    }
+
+    @Test void rejectionUsesPersistentRequestUuidAndOmitsApprovedOnlyFields() throws Exception {
+        UUID m1CitizenId=UUID.fromString("26cb14fd-e8e1-494b-b238-4b65ca21d0c4");
+        taxpayer.canonicalCitizenId=m1CitizenId;
+        taxpayers.saveAndFlush(taxpayer);
+        ExemptionRequest request=create();
+        exemptions.start(request.id);
+        exemptions.submit(request.id,"Revisión interna");
+        exemptions.reject(request.id,"No cumple los requisitos");
+
+        JsonNode rejected=eventFor(request.id,"updateExemptionStatus").path("data");
+        assertThat(rejected.path("requestId").asText()).isEqualTo(request.integrationId.toString());
+        assertThat(rejected.path("citizenId").asText()).isEqualTo(m1CitizenId.toString());
+        assertThat(rejected.path("status").asText()).isEqualTo("REJECTED");
+        assertThat(rejected.path("reason").asText()).isEqualTo("No cumple los requisitos");
+        assertThat(rejected.has("exemptionId")).isFalse();
+        assertThat(rejected.has("percentage")).isFalse();
     }
 
     @Test void underReviewHistoryShowsTransition() {
@@ -131,7 +197,10 @@ class ExemptionHistoryTests {
         exemptions.submit(request.id,"Análisis interno");
         LocalDate approvedFrom=LocalDate.of(2027,1,1);
         LocalDate approvedUntil=LocalDate.of(2027,6,30);
-        exemptions.approve(request.id,new ApiDtos.ApproveExemptionRequest(new BigDecimal("75"),approvedFrom,approvedUntil,"Aprobación interna"));
+        Exemption approved=exemptions.approve(request.id,new ApiDtos.ApproveExemptionRequest(new BigDecimal("75"),approvedFrom,approvedUntil,"Aprobación interna"));
+        assertThat(exemptionRequests.findById(request.id).orElseThrow().integrationId).isNotNull();
+        assertThat(exemptionRecords.findById(approved.id).orElseThrow().integrationId).isNotNull()
+            .isNotEqualTo(request.integrationId);
         String owner=demo.token(DemoRole.TAXPAYER,taxpayer.id);
         SecurityContextHolder.clearContext();
 
@@ -212,6 +281,20 @@ class ExemptionHistoryTests {
     }
 
     private ExemptionRequest create() { return exemptions.create(createRequest(null)); }
+
+    private List<OutboxEvent> eventsFor(Long requestId) {
+        return outbox.findAll().stream().filter(event -> "ExemptionRequest".equals(event.aggregateType)
+            &&requestId.toString().equals(event.aggregateId)).toList();
+    }
+
+    private JsonNode eventFor(Long requestId,String eventType) throws Exception {
+        OutboxEvent event=eventsFor(requestId).stream().filter(candidate -> eventType.equals(candidate.eventType)).findFirst().orElseThrow();
+        return json.readTree(event.payload);
+    }
+
+    private IntegrationEventLog deferred(String eventType,Long requestId) {
+        return integrationLogs.findFirstByBusinessKeyOrderByIdDesc("outbound-deferred:"+eventType+":ExemptionRequest:"+requestId).orElseThrow();
+    }
 
     private ApiDtos.CreateExemptionRequest createRequest(List<ApiDtos.SubmitDocumentationRequest> initialDocuments) {
         return new ApiDtos.CreateExemptionRequest(taxpayer.id,concept.id,"Motivo de la solicitud",new BigDecimal("50"),LocalDate.of(2026,10,1),LocalDate.of(2026,12,31),initialDocuments);

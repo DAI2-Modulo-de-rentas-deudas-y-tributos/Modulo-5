@@ -55,8 +55,8 @@ public final class ApiDtos {
     public record ExemptionRequestResult(BigDecimal percentage,LocalDate validFrom,LocalDate validUntil,OffsetDateTime approvedAt,OffsetDateTime resolvedAt,String status,String message) {}
     public record ExemptionRequestHistoryResponse(Long requestId,ExemptionRequestStatus currentStatus,String order,List<ExemptionRequestHistoryEntry> entries,ExemptionRequestResult result) {}
     public record ExemptionResponse(Long id,Long requestId,Long taxpayerId,Long taxConceptId,BigDecimal percentage,LocalDate validFrom,LocalDate validUntil,String status,boolean expired,String approvedBy,OffsetDateTime approvedAt,OffsetDateTime cancelledAt) {}
-    public record TicketResponse(Long id,String externalTicketId,String publicId,Long taxpayerId,String externalCitizenId,String category,String description,TicketPriority priority,TicketCaseStatus status,String assignedTo,OffsetDateTime createdAt,OffsetDateTime updatedAt,OffsetDateTime completedAt) {}
-    public record SocialBenefitResponse(Long id,String externalBenefitId,Long taxpayerId,String externalCitizenId,String benefitType,SocialBenefitStatus status,String externalStatus,BigDecimal discountPercentage,LocalDate validFrom,LocalDate validUntil,String sourceEventId,OffsetDateTime updatedAt,List<String> taxConceptCodes) {}
+    public record TicketResponse(Long id,String externalTicketId,String publicId,Long taxpayerId,String externalCitizenId,String requestType,String category,String subcategory,String description,TicketPriority priority,TicketCaseStatus status,String assignedTo,OffsetDateTime createdAt,OffsetDateTime updatedAt,OffsetDateTime completedAt) {}
+    public record SocialBenefitResponse(Long id,String externalBenefitId,Long taxpayerId,String externalCitizenId,String benefitType,SocialBenefitStatus status,String externalStatus,BigDecimal discountPercentage,LocalDate validFrom,LocalDate validUntil,String sourceEventId,OffsetDateTime updatedAt,List<String> taxConceptCodes,String applicationId,String programId,String programName,String reason,String resolutionStatus,OffsetDateTime receivedAt) {}
     public record ExternalObligationResponse(Long id,String sourceModule,ExternalObligationType externalType,String externalReferenceId,UUID sourceEventId,TaxpayerType externalTaxpayerType,String externalTaxpayerId,Long taxpayerId,Long taxConceptId,BigDecimal amount,LocalDate dueDate,ExternalObligationStatus status,String errorMessage,int retryCount,OffsetDateTime receivedAt,OffsetDateTime processedAt) {}
     public record AuditEntryResponse(Long id,String entityType,String entityId,String action,String userId,String userRole,String previousData,String newData,String correlationId,OffsetDateTime occurredAt) {}
     public record IntegrationEventResponse(Long id,String eventId,String eventType,String sourceModule,String targetModule,EventDirection direction,IntegrationEventStatus status,String payload,int retryCount,String errorMessage,OffsetDateTime occurredAt,OffsetDateTime receivedAt,OffsetDateTime processedAt,OffsetDateTime lastRetryAt) {}
@@ -87,8 +87,12 @@ public final class ApiDtos {
     public record LiquidationRequest(@NotNull @Positive Long taxpayerId, @NotNull @Positive Long taxConceptId,
         @NotBlank @Pattern(regexp="\\d{4}-\\d{2}") String period, @NotNull @PositiveOrZero BigDecimal taxableBase,
         @NotNull LocalDate dueDate) {}
+    @JsonInclude(JsonInclude.Include.NON_NULL)
     public record LiquidationComponentResponse(Long id, LiquidationComponentType type, String sourceType,
-        String sourceId, String description, BigDecimal amount) {}
+        String sourceId, String description, BigDecimal amount,String sourceBenefitId,Long socialRuleId,Integer socialRuleVersion) {
+        public LiquidationComponentResponse(Long id,LiquidationComponentType type,String sourceType,String sourceId,
+                String description,BigDecimal amount){this(id,type,sourceType,sourceId,description,amount,null,null,null);}
+    }
     public record LiquidationPreview(Long taxConfigurationId, int configurationVersion, BigDecimal baseAmount,
         BigDecimal discountAmount, BigDecimal exemptionAmount, BigDecimal surchargeAmount,
         BigDecimal interestAmount, BigDecimal finalAmount, List<LiquidationComponentResponse> components) {}

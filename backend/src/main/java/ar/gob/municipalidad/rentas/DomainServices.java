@@ -75,10 +75,10 @@ class LiquidationService {
     private static final BigDecimal HUNDRED=new BigDecimal("100");
     private final TaxpayerRepository taxpayers; private final TaxConceptRepository concepts; private final TaxConfigurationRepository configurations;
     private final LiquidationRepository liquidations; private final LiquidationComponentRepository components; private final DebtRepository debts; private final ExemptionRepository exemptions;
-    private final CatalogService catalog; private final AuditService audit; private final CurrentIdentity identity;private final SocialBenefitRepository benefits;private final SocialBenefitTaxConceptRepository benefitConcepts;
+    private final CatalogService catalog; private final AuditService audit; private final CurrentIdentity identity;private final SocialBenefitRepository benefits;private final SocialBenefitTaxConceptRepository benefitConcepts;private final SocialBenefitRuleRepository socialRules;
     private final DebtHistoryService debtHistory;private final AdjustmentRepository adjustments;private final AuditRepository auditEntries;private final ApiResponseService responses;
-    LiquidationService(TaxpayerRepository taxpayers, TaxConceptRepository concepts, TaxConfigurationRepository configurations, LiquidationRepository liquidations, LiquidationComponentRepository components, DebtRepository debts, ExemptionRepository exemptions, CatalogService catalog, AuditService audit, CurrentIdentity identity,SocialBenefitRepository benefits,SocialBenefitTaxConceptRepository benefitConcepts,DebtHistoryService debtHistory,AdjustmentRepository adjustments,AuditRepository auditEntries,ApiResponseService responses) {
-        this.taxpayers=taxpayers; this.concepts=concepts; this.configurations=configurations; this.liquidations=liquidations; this.components=components; this.debts=debts; this.exemptions=exemptions; this.catalog=catalog; this.audit=audit; this.identity=identity;this.benefits=benefits;this.benefitConcepts=benefitConcepts;this.debtHistory=debtHistory;this.adjustments=adjustments;this.auditEntries=auditEntries;this.responses=responses;
+    LiquidationService(TaxpayerRepository taxpayers, TaxConceptRepository concepts, TaxConfigurationRepository configurations, LiquidationRepository liquidations, LiquidationComponentRepository components, DebtRepository debts, ExemptionRepository exemptions, CatalogService catalog, AuditService audit, CurrentIdentity identity,SocialBenefitRepository benefits,SocialBenefitTaxConceptRepository benefitConcepts,SocialBenefitRuleRepository socialRules,DebtHistoryService debtHistory,AdjustmentRepository adjustments,AuditRepository auditEntries,ApiResponseService responses) {
+        this.taxpayers=taxpayers; this.concepts=concepts; this.configurations=configurations; this.liquidations=liquidations; this.components=components; this.debts=debts; this.exemptions=exemptions; this.catalog=catalog; this.audit=audit; this.identity=identity;this.benefits=benefits;this.benefitConcepts=benefitConcepts;this.socialRules=socialRules;this.debtHistory=debtHistory;this.adjustments=adjustments;this.auditEntries=auditEntries;this.responses=responses;
     }
     ApiDtos.LiquidationPreview preview(ApiDtos.LiquidationRequest r) {
         taxpayers.findById(r.taxpayerId()).orElseThrow(()->CatalogService.notFound("Contribuyente")); concepts.findById(r.taxConceptId()).orElseThrow(()->CatalogService.notFound("Concepto"));
@@ -91,15 +91,15 @@ class LiquidationService {
         BigDecimal exemption=reduction.type==LiquidationComponentType.EXEMPTION?reduction.amount:zero;
         List<ApiDtos.LiquidationComponentResponse> detail=new ArrayList<>();
         detail.add(new ApiDtos.LiquidationComponentResponse(null,LiquidationComponentType.BASE,"TaxConfiguration",c.id.toString(),"Importe base según configuración v"+c.version,base));
-        if(reduction.amount.signum()>0)detail.add(new ApiDtos.LiquidationComponentResponse(null,reduction.type,reduction.sourceType,reduction.sourceId,reduction.description,reduction.amount));
+        if(reduction.amount.signum()>0)detail.add(new ApiDtos.LiquidationComponentResponse(null,reduction.type,reduction.sourceType,reduction.sourceId,reduction.description,reduction.amount,reduction.sourceBenefitId,reduction.socialRuleId,reduction.socialRuleVersion));
         return new ApiDtos.LiquidationPreview(c.id,c.version,base,discount,exemption,zero,zero,MonetaryAmounts.normalize(base.subtract(discount).subtract(exemption)),detail);
     }
     @Transactional Liquidation create(ApiDtos.LiquidationRequest r) {
         CatalogService.require(!liquidations.existsByTaxpayerIdAndTaxConceptIdAndPeriod(r.taxpayerId(),r.taxConceptId(),r.period()),"DUPLICATE_LIQUIDATION","Ya existe una liquidación para el contribuyente, concepto y período");
         ApiDtos.LiquidationPreview p=preview(r); TaxConfiguration c=configurations.findById(p.taxConfigurationId()).orElseThrow();
         Liquidation l=new Liquidation(); l.taxpayerId=r.taxpayerId(); l.taxConceptId=r.taxConceptId(); l.taxConfigurationId=c.id; l.configurationVersion=c.version; l.period=r.period(); l.taxableBase=r.taxableBase(); l.baseAmount=p.baseAmount(); l.discountAmount=p.discountAmount(); l.exemptionAmount=p.exemptionAmount(); l.surchargeAmount=p.surchargeAmount(); l.interestAmount=p.interestAmount(); l.finalAmount=p.finalAmount(); l.dueDate=r.dueDate(); l.status="ISSUED"; l.createdBy=identity.get().userId(); l.issuedAt=OffsetDateTime.now(); liquidations.save(l);
-        for(ApiDtos.LiquidationComponentResponse source:p.components()){LiquidationComponent component=new LiquidationComponent();component.liquidationId=l.id;component.type=source.type();component.sourceType=source.sourceType();component.sourceId=source.sourceId();component.description=source.description();component.amount=source.amount();components.save(component);}
-        Debt d=new Debt(); d.taxpayerId=l.taxpayerId; d.taxConceptId=l.taxConceptId; d.originType=DebtOriginType.LIQUIDATION; d.liquidationId=l.id; d.configurationId=c.id; d.originalAmount=d.currentAmount=d.outstandingBalance=l.finalAmount; d.dueDate=l.dueDate; d.status=DebtStatus.PENDING; d.createdAt=d.updatedAt=OffsetDateTime.now(); debts.save(d);
+        for(ApiDtos.LiquidationComponentResponse source:p.components()){LiquidationComponent component=new LiquidationComponent();component.liquidationId=l.id;component.type=source.type();component.sourceType=source.sourceType();component.sourceId=source.sourceId();component.description=source.description();component.amount=source.amount();component.sourceBenefitId=source.sourceBenefitId();component.socialRuleId=source.socialRuleId();component.socialRuleVersion=source.socialRuleVersion();components.save(component);}
+        if(l.finalAmount.signum()>0){Debt d=new Debt(); d.taxpayerId=l.taxpayerId; d.taxConceptId=l.taxConceptId; d.originType=DebtOriginType.LIQUIDATION; d.liquidationId=l.id; d.configurationId=c.id; d.originalAmount=d.currentAmount=d.outstandingBalance=l.finalAmount; d.dueDate=l.dueDate; d.status=DebtStatus.PENDING; d.createdAt=d.updatedAt=OffsetDateTime.now(); debts.save(d);}
         audit.record("Liquidation",l.id,"LIQUIDATION_CREATED",l); return l;
     }
     private BigDecimal calculate(TaxConfiguration c, BigDecimal taxableBase) {
@@ -119,14 +119,38 @@ class LiquidationService {
     }
     @Transactional(readOnly=true) Page<ApiDtos.LiquidationResponse> responses(Page<Liquidation> page){if(page.isEmpty())return page.map(x->response(x,List.of()));Map<Long,List<LiquidationComponent>> grouped=components.findByLiquidationIdInOrderByLiquidationIdAscIdAsc(page.map(x->x.id).toList()).stream().collect(java.util.stream.Collectors.groupingBy(x->x.liquidationId));return page.map(x->response(x,grouped.getOrDefault(x.id,List.of())));}
     private ApiDtos.LiquidationResponse response(Liquidation l,List<LiquidationComponent> detail){return new ApiDtos.LiquidationResponse(l.id,l.taxpayerId,l.taxConceptId,l.taxConfigurationId,l.configurationVersion,l.period,l.taxableBase,l.baseAmount,l.discountAmount,l.exemptionAmount,l.surchargeAmount,l.interestAmount,l.finalAmount,l.dueDate,l.status,l.createdBy,l.issuedAt,detail.stream().map(this::response).toList());}
-    private ApiDtos.LiquidationComponentResponse response(LiquidationComponent c){return new ApiDtos.LiquidationComponentResponse(c.id,c.type,c.sourceType,c.sourceId,c.description,c.amount);}
+    private ApiDtos.LiquidationComponentResponse response(LiquidationComponent c){return new ApiDtos.LiquidationComponentResponse(c.id,c.type,c.sourceType,c.sourceId,c.description,c.amount,c.sourceBenefitId,c.socialRuleId,c.socialRuleVersion);}
     private Reduction reduction(Long taxpayerId,Long conceptId,BigDecimal base,LocalDate date) {
         Exemption exemption=exemptions.findByTaxpayerIdAndTaxConceptIdAndStatus(taxpayerId,conceptId,"ACTIVE").stream().filter(x->!x.validFrom.isAfter(date)&&(x.validUntil==null||!x.validUntil.isBefore(date))).max(Comparator.comparing(x->x.percentage)).orElse(null);
-        SocialBenefitReference benefit=benefits.findByTaxpayerId(taxpayerId).stream().filter(x->x.calculatedStatus==SocialBenefitStatus.ACTIVE&&!x.validFrom.isAfter(date)&&(x.validUntil==null||!x.validUntil.isBefore(date))&&x.discountPercentage!=null&&benefitConcepts.existsBySocialBenefitIdAndTaxConceptId(x.id,conceptId)).max(Comparator.comparing(x->x.discountPercentage)).orElse(null);
-        BigDecimal exemptionRate=exemption==null?BigDecimal.ZERO:exemption.percentage; BigDecimal benefitRate=benefit==null?BigDecimal.ZERO:benefit.discountPercentage;
-        if(exemptionRate.signum()==0&&benefitRate.signum()==0)return new Reduction(LiquidationComponentType.EXEMPTION,"None",null,"Sin reducción",MonetaryAmounts.zero());
-        if(exemptionRate.compareTo(benefitRate)>=0)return new Reduction(LiquidationComponentType.EXEMPTION,"Exemption",exemption.id.toString(),"Exención aprobada",base.multiply(exemptionRate).divide(HUNDRED,2,RoundingMode.HALF_UP));
-        return new Reduction(LiquidationComponentType.SOCIAL_BENEFIT,"SocialBenefitReference",benefit.id.toString(),"Beneficio social vigente",base.multiply(benefitRate).divide(HUNDRED,2,RoundingMode.HALF_UP));
+        BigDecimal exemptionRate=exemption==null?BigDecimal.ZERO:exemption.percentage;
+        TaxpayerReference taxpayer=taxpayers.findById(taxpayerId).orElseThrow();
+        SocialBenefitReference selected=null;SocialBenefitRule selectedRule=null;BigDecimal benefitRate=BigDecimal.ZERO;
+        for(SocialBenefitReference benefit:benefits.findByTaxpayerId(taxpayerId)){
+            if(benefit.calculatedStatus!=SocialBenefitStatus.ACTIVE||benefit.validFrom==null||
+                benefit.validFrom.isAfter(date)||(benefit.validUntil!=null&&benefit.validUntil.isBefore(date)))continue;
+            if(benefit.externalApplicationId==null){
+                // The legacy adapter has an explicit amount and concept association, kept separate from M8.
+                if(benefit.discountPercentage!=null&&benefitConcepts.existsBySocialBenefitIdAndTaxConceptId(benefit.id,conceptId)&&
+                    benefit.discountPercentage.compareTo(benefitRate)>0){selected=benefit;selectedRule=null;benefitRate=benefit.discountPercentage;}
+                continue;
+            }
+            if(!"APPROVED".equals(benefit.externalStatus)||!"TAX_EXEMPTION".equals(benefit.benefitType)||
+                taxpayer.canonicalCitizenId==null||!taxpayer.canonicalCitizenId.toString().equals(benefit.externalCitizenId))continue;
+            UUID programId;
+            try{programId=UUID.fromString(benefit.externalProgramId);}catch(IllegalArgumentException ex){continue;}
+            SocialBenefitRule rule=socialRules.findByProgramIdAndTaxConceptId(programId,conceptId).stream()
+                .filter(x->x.status==SocialBenefitRuleStatus.APPROVED&&x.enabled&&
+                    !x.validFrom.isAfter(date)&&(x.validUntil==null||!x.validUntil.isBefore(date)))
+                .max(Comparator.comparing((SocialBenefitRule x)->x.percentage).thenComparingInt(x->x.version).thenComparing(x->x.id)).orElse(null);
+            if(rule!=null&&rule.percentage.compareTo(benefitRate)>0){selected=benefit;selectedRule=rule;benefitRate=rule.percentage;}
+        }
+        if(exemptionRate.signum()==0&&benefitRate.signum()==0)return new Reduction(LiquidationComponentType.EXEMPTION,"None",null,"Sin reducción",MonetaryAmounts.zero(),null,null,null);
+        if(exemptionRate.compareTo(benefitRate)>=0)return new Reduction(LiquidationComponentType.EXEMPTION,"Exemption",exemption.id.toString(),"Exención aprobada",base.multiply(exemptionRate).divide(HUNDRED,2,RoundingMode.HALF_UP),null,null,null);
+        String benefitId=selectedRule==null?null:selected.externalBenefitId;
+        return new Reduction(LiquidationComponentType.SOCIAL_BENEFIT,selectedRule==null?"SocialBenefitReference":"M8SocialBenefit",
+            selectedRule==null?selected.id.toString():benefitId,"Beneficio social vigente",
+            base.multiply(benefitRate).divide(HUNDRED,2,RoundingMode.HALF_UP),benefitId,
+            selectedRule==null?null:selectedRule.id,selectedRule==null?null:selectedRule.version);
     }
     private LocalDate fiscalDate(String period) {
         // Se evalúa el último día del período: una vigencia que comenzó durante
@@ -135,7 +159,8 @@ class LiquidationService {
         try { return YearMonth.parse(period).atEndOfMonth(); }
         catch (DateTimeException ex) { throw new BusinessException("INVALID_FISCAL_PERIOD","El período fiscal debe tener formato AAAA-MM",400); }
     }
-    private record Reduction(LiquidationComponentType type,String sourceType,String sourceId,String description,BigDecimal amount) {}
+    private record Reduction(LiquidationComponentType type,String sourceType,String sourceId,String description,BigDecimal amount,
+        String sourceBenefitId,Long socialRuleId,Integer socialRuleVersion) {}
 }
 
 @Service
@@ -144,10 +169,10 @@ class PaymentService {
     private final CreditBalanceRepository credits; private final TaxConfigurationRepository configurations; private final PaymentPlanRepository plans;
     private final AuditService audit; private final CurrentIdentity identity; private final BillRepository bills; private final BillDebtRepository billDebts; private final ConfirmedIntegrationOutbox confirmedEvents; private final EventosDeDominio eventos;
     private final PaymentPlanDebtRepository planDebts; private final InstallmentRepository installments; private final PaymentPlanConfigurationRepository planConfigurations;
-    private final TaxpayerRepository taxpayers; private final ObjectMapper json;
-    PaymentService(TaxpayerRepository taxpayers,ObjectMapper json,PaymentRepository payments, DebtRepository debts, PaymentAllocationRepository allocations, CreditBalanceRepository credits, TaxConfigurationRepository configurations, PaymentPlanRepository plans, AuditService audit, CurrentIdentity identity, BillRepository bills, BillDebtRepository billDebts,PaymentPlanDebtRepository planDebts,InstallmentRepository installments,PaymentPlanConfigurationRepository planConfigurations,ConfirmedIntegrationOutbox confirmedEvents,EventosDeDominio eventos) {
+    private final TaxpayerRepository taxpayers; private final ObjectMapper json; private final PaymentPlanPrincipalLedger principalLedger;
+    PaymentService(TaxpayerRepository taxpayers,ObjectMapper json,PaymentRepository payments, DebtRepository debts, PaymentAllocationRepository allocations, CreditBalanceRepository credits, TaxConfigurationRepository configurations, PaymentPlanRepository plans, AuditService audit, CurrentIdentity identity, BillRepository bills, BillDebtRepository billDebts,PaymentPlanDebtRepository planDebts,InstallmentRepository installments,PaymentPlanConfigurationRepository planConfigurations,ConfirmedIntegrationOutbox confirmedEvents,EventosDeDominio eventos,PaymentPlanPrincipalLedger principalLedger) {
         this.taxpayers=taxpayers; this.json=json;
-        this.payments=payments; this.debts=debts; this.allocations=allocations; this.credits=credits; this.configurations=configurations; this.plans=plans; this.audit=audit; this.identity=identity; this.bills=bills; this.billDebts=billDebts;this.planDebts=planDebts;this.installments=installments;this.planConfigurations=planConfigurations;this.confirmedEvents=confirmedEvents;this.eventos=eventos;
+        this.payments=payments; this.debts=debts; this.allocations=allocations; this.credits=credits; this.configurations=configurations; this.plans=plans; this.audit=audit; this.identity=identity; this.bills=bills; this.billDebts=billDebts;this.planDebts=planDebts;this.installments=installments;this.planConfigurations=planConfigurations;this.confirmedEvents=confirmedEvents;this.eventos=eventos;this.principalLedger=principalLedger;
     }
     @Transactional Payment register(ApiDtos.RegisterPaymentRequest r) { return register(r,PaymentOrigin.CASHIER,null); }
     @Transactional Payment register(ApiDtos.RegisterPaymentRequest r,String clave) { return register(r,PaymentOrigin.CASHIER,clave); }
@@ -209,7 +234,7 @@ class PaymentService {
         p.allocatedAmount=p.allocatedAmount.add(applied); p.unallocatedAmount=p.amount.subtract(p.allocatedAmount); d.outstandingBalance=d.outstandingBalance.subtract(applied); d.status=d.outstandingBalance.signum()==0?DebtStatus.PAID:DebtStatus.PARTIALLY_PAID; d.updatedAt=OffsetDateTime.now();
         audit.record("PaymentAllocation",a.id,"PAYMENT_ALLOCATED",a);
         confirmedEvents.paymentRegistered(p,a,d);
-        if(d.status==DebtStatus.PAID) eventos.deudaSaldada(d);
+        if(d.status==DebtStatus.PAID) eventos.deudaSaldada(d,a);
         return a;
     }
     @Transactional PaymentAllocation allocateExisting(Long paymentId,ApiDtos.AllocationRequest request){Payment p=payments.findByIdForUpdate(paymentId).orElseThrow(()->CatalogService.notFound("Pago"));CatalogService.require(p.status==PaymentStatus.CONFIRMED,"PAYMENT_NOT_ALLOCATABLE","El pago no admite imputaciones");CatalogService.require(credits.findBySourcePaymentId(paymentId).isEmpty(),"PAYMENT_BALANCE_CONVERTED_TO_CREDIT","El saldo no imputado del pago ya fue convertido en saldo a favor");PaymentAllocation allocation=allocate(p,request);p.unallocatedAmount=p.amount.subtract(p.allocatedAmount);p.allocationStatus=p.unallocatedAmount.signum()==0?PaymentAllocationStatus.FULLY_ALLOCATED:PaymentAllocationStatus.PARTIALLY_ALLOCATED;return allocation;}
@@ -227,13 +252,33 @@ class PaymentService {
         CatalogService.require(applied.compareTo(i.outstandingAmount)>=0||config.partialInstallmentPaymentAllowed,"PARTIAL_INSTALLMENT_PAYMENT_NOT_ALLOWED","La configuración no permite pago parcial de cuota");
         BigDecimal oldPaid=i.paidAmount;BigDecimal newPaid=oldPaid.add(applied);BigDecimal principalDelta=principalRecognized(i,newPaid).subtract(principalRecognized(i,oldPaid));
         i.paidAmount=newPaid;i.outstandingAmount=i.totalAmount.subtract(newPaid);i.status=i.outstandingAmount.signum()==0?InstallmentStatus.PAID:InstallmentStatus.PARTIALLY_PAID;if(i.status==InstallmentStatus.PAID)i.paidAt=OffsetDateTime.now();
-        distributePrincipal(plan,principalDelta);plan.paidAmount=plan.paidAmount.add(applied);plan.outstandingPlanAmount=plan.totalPlanAmount.subtract(plan.paidAmount);
-        PaymentAllocation a=new PaymentAllocation();a.paymentId=p.id;a.targetType=AllocationTargetType.INSTALLMENT;a.installmentId=i.id;a.amount=applied;a.principalApplied=principalDelta;a.interestApplied=applied.subtract(principalDelta);a.status="ACTIVE";a.allocatedBy=identity.get().userId();a.allocatedAt=OffsetDateTime.now();allocations.save(a);p.allocatedAmount=p.allocatedAmount.add(applied);p.unallocatedAmount=p.amount.subtract(p.allocatedAmount);
+        PaymentAllocation a=new PaymentAllocation();a.paymentId=p.id;a.targetType=AllocationTargetType.INSTALLMENT;a.installmentId=i.id;a.amount=applied;a.principalApplied=principalDelta;a.interestApplied=applied.subtract(principalDelta);a.status="ACTIVE";a.allocatedBy=identity.get().userId();a.allocatedAt=OffsetDateTime.now();allocations.save(a);
+        List<PaymentPlanPrincipalLedger.Share> shares=distributePrincipal(plan,principalDelta);
+        principalLedger.record(a,shares);
+        for(var share:shares){Debt debt=debts.findById(share.debtId()).orElseThrow();confirmedEvents.paymentRegistered(p,a,debt,share.amount());if(debt.status==DebtStatus.PAID)eventos.deudaSaldada(debt,a);}
+        plan.paidAmount=plan.paidAmount.add(applied);plan.outstandingPlanAmount=plan.totalPlanAmount.subtract(plan.paidAmount);p.allocatedAmount=p.allocatedAmount.add(applied);p.unallocatedAmount=p.amount.subtract(p.allocatedAmount);
         if(installments.findByPaymentPlanIdOrderByNumber(plan.id).stream().allMatch(x->x.status==InstallmentStatus.PAID)){plan.status=PaymentPlanStatus.COMPLETED;plan.completedAt=OffsetDateTime.now();planDebts.findByPaymentPlanId(plan.id).forEach(x->x.status=PaymentPlanDebtStatus.SETTLED);eventos.planCompletado(plan);}
         audit.record("PaymentAllocation",a.id,"INSTALLMENT_PAYMENT_ALLOCATED",a);return a;
     }
     private BigDecimal principalRecognized(Installment i,BigDecimal paid){if(paid.signum()==0)return MonetaryAmounts.zero();if(paid.compareTo(i.totalAmount)>=0)return i.principalAmount;return i.principalAmount.multiply(paid).divide(i.totalAmount,2,RoundingMode.HALF_UP);}
-    private void distributePrincipal(PaymentPlan plan,BigDecimal principal){if(principal.signum()==0)return;List<PaymentPlanDebt> links=planDebts.findByPaymentPlanId(plan.id).stream().filter(x->x.status==PaymentPlanDebtStatus.ACTIVE).toList();BigDecimal total=links.stream().map(x->x.remainingPrincipalAmount).reduce(BigDecimal.ZERO,BigDecimal::add);BigDecimal distributed=MonetaryAmounts.zero();for(int n=0;n<links.size();n++){PaymentPlanDebt link=links.get(n);BigDecimal share=n==links.size()-1?principal.subtract(distributed):principal.multiply(link.remainingPrincipalAmount).divide(total,2,RoundingMode.DOWN);share=share.min(link.remainingPrincipalAmount);link.principalPaidAmount=link.principalPaidAmount.add(share);link.remainingPrincipalAmount=link.remainingPrincipalAmount.subtract(share);if(link.remainingPrincipalAmount.signum()==0)link.status=PaymentPlanDebtStatus.SETTLED;Debt debt=debts.findByIdForUpdate(link.debtId).orElseThrow();debt.outstandingBalance=debt.outstandingBalance.subtract(share);debt.status=debt.outstandingBalance.signum()==0?DebtStatus.PAID:DebtStatus.PARTIALLY_PAID;debt.updatedAt=OffsetDateTime.now();distributed=distributed.add(share);if(debt.status==DebtStatus.PAID)eventos.deudaSaldada(debt);}}
+    private List<PaymentPlanPrincipalLedger.Share> distributePrincipal(PaymentPlan plan,BigDecimal principal){
+        if(principal.signum()==0)return List.of();
+        List<PaymentPlanDebt> links=planDebts.findByPaymentPlanId(plan.id).stream().filter(x->x.status==PaymentPlanDebtStatus.ACTIVE).toList();
+        BigDecimal total=links.stream().map(x->x.remainingPrincipalAmount).reduce(BigDecimal.ZERO,BigDecimal::add);
+        CatalogService.require(total.signum()>0&&principal.compareTo(total)<=0,"PLAN_PRINCIPAL_INVALID","El capital a distribuir supera el saldo del plan");
+        List<PaymentPlanPrincipalLedger.Share> shares=new ArrayList<>();BigDecimal distributed=MonetaryAmounts.zero();
+        for(int n=0;n<links.size();n++){
+            PaymentPlanDebt link=links.get(n);BigDecimal share=n==links.size()-1?principal.subtract(distributed):principal.multiply(link.remainingPrincipalAmount).divide(total,2,RoundingMode.DOWN);
+            share=share.min(link.remainingPrincipalAmount);if(share.signum()==0)continue;
+            link.principalPaidAmount=link.principalPaidAmount.add(share);link.remainingPrincipalAmount=link.remainingPrincipalAmount.subtract(share);
+            if(link.remainingPrincipalAmount.signum()==0)link.status=PaymentPlanDebtStatus.SETTLED;
+            Debt debt=debts.findByIdForUpdate(link.debtId).orElseThrow();debt.outstandingBalance=debt.outstandingBalance.subtract(share);
+            debt.status=debt.outstandingBalance.signum()==0?DebtStatus.PAID:DebtStatus.PARTIALLY_PAID;debt.updatedAt=OffsetDateTime.now();
+            distributed=distributed.add(share);shares.add(new PaymentPlanPrincipalLedger.Share(debt.id,share));
+        }
+        CatalogService.require(distributed.compareTo(principal)==0,"PLAN_PRINCIPAL_INVALID","El capital de la cuota no se distribuyó por completo");
+        return shares;
+    }
     private void createCredit(Payment p,BigDecimal amount) { CreditBalance c=new CreditBalance(); c.taxpayerId=p.taxpayerId; c.sourcePaymentId=p.id; c.originalAmount=c.availableAmount=amount; c.status=CreditBalanceStatus.AVAILABLE; c.createdAt=c.updatedAt=OffsetDateTime.now(); credits.save(c); audit.record("CreditBalance",c.id,"CREDIT_BALANCE_CREATED",c); }
     static BigDecimal money(BigDecimal x) { CatalogService.require(x!=null&&x.signum()>0,"INVALID_AMOUNT","El importe debe ser mayor a cero"); return MonetaryAmounts.normalize(x); }
 }
@@ -242,13 +287,76 @@ class PaymentService {
 class ReversalService {
     private final PaymentReversalRepository reversals; private final PaymentRepository payments; private final PaymentAllocationRepository allocations; private final DebtRepository debts; private final CreditBalanceRepository credits; private final AuditService audit; private final CurrentIdentity identity;
     private final ConfirmedIntegrationOutbox events;
-    private final InstallmentRepository installments;private final PaymentPlanRepository plans;private final PaymentPlanDebtRepository planDebts;
-    ReversalService(PaymentReversalRepository reversals,PaymentRepository payments,PaymentAllocationRepository allocations,DebtRepository debts,CreditBalanceRepository credits,AuditService audit,CurrentIdentity identity,InstallmentRepository installments,PaymentPlanRepository plans,PaymentPlanDebtRepository planDebts,ConfirmedIntegrationOutbox events){this.reversals=reversals;this.payments=payments;this.allocations=allocations;this.debts=debts;this.credits=credits;this.audit=audit;this.identity=identity;this.installments=installments;this.plans=plans;this.planDebts=planDebts;this.events=events;}
+    private final InstallmentRepository installments;private final PaymentPlanRepository plans;private final PaymentPlanDebtRepository planDebts;private final PaymentPlanPrincipalLedger principalLedger;private final ReversalRejectionAudit rejectionAudit;
+    ReversalService(PaymentReversalRepository reversals,PaymentRepository payments,PaymentAllocationRepository allocations,DebtRepository debts,CreditBalanceRepository credits,AuditService audit,CurrentIdentity identity,InstallmentRepository installments,PaymentPlanRepository plans,PaymentPlanDebtRepository planDebts,ConfirmedIntegrationOutbox events,PaymentPlanPrincipalLedger principalLedger,ReversalRejectionAudit rejectionAudit){this.reversals=reversals;this.payments=payments;this.allocations=allocations;this.debts=debts;this.credits=credits;this.audit=audit;this.identity=identity;this.installments=installments;this.plans=plans;this.planDebts=planDebts;this.events=events;this.principalLedger=principalLedger;this.rejectionAudit=rejectionAudit;}
     @Transactional PaymentReversalRequest request(Long paymentId,String reason){Payment p=payments.findByIdForUpdate(paymentId).orElseThrow(()->CatalogService.notFound("Pago"));CatalogService.require(p.status==PaymentStatus.CONFIRMED,"PAYMENT_NOT_REVERSIBLE","El pago no puede revertirse");CatalogService.require(!reversals.existsByPaymentIdAndStatusIn(paymentId,List.of(PaymentReversalStatus.PENDING_APPROVAL,PaymentReversalStatus.APPROVED)),"REVERSAL_ALREADY_EXISTS","El pago ya tiene una reversión pendiente");validateGeneratedCreditIsUnused(p.id);PaymentReversalRequest r=new PaymentReversalRequest();r.paymentId=paymentId;r.reason=reason;r.status=PaymentReversalStatus.PENDING_APPROVAL;r.requestedBy=identity.get().userId();r.requestedAt=OffsetDateTime.now();reversals.save(r);audit.record("PaymentReversal",r.id,"PAYMENT_REVERSAL_REQUESTED",r);return r;}
     @Transactional PaymentReversalRequest approve(Long id){PaymentReversalRequest r=get(id);CatalogService.require(r.status==PaymentReversalStatus.PENDING_APPROVAL,"REVERSAL_NOT_PENDING","La reversión no está pendiente");r.status=PaymentReversalStatus.APPROVED;r.resolvedBy=identity.get().userId();r.resolvedAt=OffsetDateTime.now();audit.record("PaymentReversal",r.id,"PAYMENT_REVERSAL_APPROVED",r);return r;}
     @Transactional PaymentReversalRequest reject(Long id,String reason){PaymentReversalRequest r=get(id);CatalogService.require(r.status==PaymentReversalStatus.PENDING_APPROVAL,"REVERSAL_NOT_PENDING","La reversión no está pendiente");CatalogService.require(reason!=null&&!reason.isBlank(),"INVALID_REQUEST","El motivo de rechazo es obligatorio");r.status=PaymentReversalStatus.REJECTED;r.resolutionReason=reason;r.resolvedBy=identity.get().userId();r.resolvedAt=OffsetDateTime.now();audit.record("PaymentReversal",r.id,"PAYMENT_REVERSAL_REJECTED",r);return r;}
-    @Transactional PaymentReversalRequest execute(Long id){PaymentReversalRequest r=get(id);CatalogService.require(r.status==PaymentReversalStatus.APPROVED,"REVERSAL_NOT_APPROVED","La reversión debe estar aprobada");Payment p=payments.findByIdForUpdate(r.paymentId).orElseThrow();CatalogService.require(p.status==PaymentStatus.CONFIRMED,"PAYMENT_NOT_REVERSIBLE","El pago no puede revertirse");validateGeneratedCreditIsUnused(p.id).ifPresent(c->{c.availableAmount=MonetaryAmounts.zero();c.status=CreditBalanceStatus.CANCELLED;c.updatedAt=OffsetDateTime.now();});List<PaymentAllocation> active=allocations.findByPaymentId(p.id);active.stream().filter(a->a.status.equals("ACTIVE")&&a.targetType==AllocationTargetType.INSTALLMENT).map(a->installments.findPaymentPlanIdById(a.installmentId).orElseThrow()).distinct().sorted().forEach(planId->plans.findByIdForUpdate(planId).orElseThrow());for(PaymentAllocation a:active){if(!a.status.equals("ACTIVE"))continue;if(a.targetType==AllocationTargetType.INSTALLMENT)reverseInstallment(a);else{Debt d=debts.findByIdForUpdate(a.debtId).orElseThrow();d.outstandingBalance=d.outstandingBalance.add(a.amount);d.status=d.outstandingBalance.compareTo(d.currentAmount)==0?DebtStatus.PENDING:DebtStatus.PARTIALLY_PAID;d.updatedAt=OffsetDateTime.now();a.reversedAt=d.updatedAt;events.paymentReversed(p,a,d,r.reason);}a.status="REVERSED";if(a.reversedAt==null)a.reversedAt=OffsetDateTime.now();}p.status=PaymentStatus.REVERSED;r.status=PaymentReversalStatus.EXECUTED;r.executedBy=identity.get().userId();r.executedAt=OffsetDateTime.now();audit.record("Payment",p.id,"PAYMENT_REVERSED",p);return r;}
-    private void reverseInstallment(PaymentAllocation a){Long planId=installments.findPaymentPlanIdById(a.installmentId).orElseThrow();PaymentPlan plan=plans.findByIdForUpdate(planId).orElseThrow();Installment i=installments.findByIdForUpdate(a.installmentId).orElseThrow();i.paidAmount=i.paidAmount.subtract(a.amount);i.outstandingAmount=i.totalAmount.subtract(i.paidAmount);i.status=i.paidAmount.signum()==0?InstallmentStatus.PENDING:InstallmentStatus.PARTIALLY_PAID;i.paidAt=null;BigDecimal restore=a.principalApplied;List<PaymentPlanDebt> links=planDebts.findByPaymentPlanId(plan.id);if(restore.signum()>0){BigDecimal totalPaid=links.stream().map(x->x.principalPaidAmount).reduce(BigDecimal.ZERO,BigDecimal::add);BigDecimal restored=MonetaryAmounts.zero();for(int n=0;n<links.size();n++){PaymentPlanDebt link=links.get(n);BigDecimal share=n==links.size()-1?restore.subtract(restored):restore.multiply(link.principalPaidAmount).divide(totalPaid,2,RoundingMode.DOWN);link.principalPaidAmount=link.principalPaidAmount.subtract(share);link.remainingPrincipalAmount=link.remainingPrincipalAmount.add(share);link.status=PaymentPlanDebtStatus.ACTIVE;Debt debt=debts.findByIdForUpdate(link.debtId).orElseThrow();debt.outstandingBalance=debt.outstandingBalance.add(share);debt.status=debt.outstandingBalance.compareTo(debt.currentAmount)==0?DebtStatus.PENDING:DebtStatus.PARTIALLY_PAID;debt.updatedAt=OffsetDateTime.now();restored=restored.add(share);}}plan.paidAmount=plan.paidAmount.subtract(a.amount);plan.outstandingPlanAmount=plan.totalPlanAmount.subtract(plan.paidAmount);if(plan.status==PaymentPlanStatus.COMPLETED){plan.status=PaymentPlanStatus.ACTIVE;plan.completedAt=null;}}
+    @Transactional PaymentReversalRequest execute(Long id){PaymentReversalRequest r=get(id);CatalogService.require(r.status==PaymentReversalStatus.APPROVED,"REVERSAL_NOT_APPROVED","La reversión debe estar aprobada");Payment p=payments.findByIdForUpdate(r.paymentId).orElseThrow();CatalogService.require(p.status==PaymentStatus.CONFIRMED,"PAYMENT_NOT_REVERSIBLE","El pago no puede revertirse");List<PaymentAllocation> active=allocations.findByPaymentId(p.id);validateInstallmentReversals(r,active);validateGeneratedCreditIsUnused(p.id).ifPresent(c->{c.availableAmount=MonetaryAmounts.zero();c.status=CreditBalanceStatus.CANCELLED;c.updatedAt=OffsetDateTime.now();});for(PaymentAllocation a:active){if(!a.status.equals("ACTIVE"))continue;if(a.targetType==AllocationTargetType.INSTALLMENT)reverseInstallment(p,a,r.reason);else{Debt d=debts.findByIdForUpdate(a.debtId).orElseThrow();d.outstandingBalance=d.outstandingBalance.add(a.amount);d.status=d.outstandingBalance.compareTo(d.currentAmount)==0?DebtStatus.PENDING:DebtStatus.PARTIALLY_PAID;d.updatedAt=OffsetDateTime.now();a.reversedAt=d.updatedAt;events.paymentReversed(p,a,d,r.reason);}a.status="REVERSED";if(a.reversedAt==null)a.reversedAt=OffsetDateTime.now();}p.status=PaymentStatus.REVERSED;r.status=PaymentReversalStatus.EXECUTED;r.executedBy=identity.get().userId();r.executedAt=OffsetDateTime.now();audit.record("Payment",p.id,"PAYMENT_REVERSED",p);return r;}
+    private void validateInstallmentReversals(PaymentReversalRequest reversal,List<PaymentAllocation> allocationsToReverse){
+        CatalogService.require(allocationsToReverse.stream().allMatch(a->"ACTIVE".equals(a.status)),"ALLOCATION_NOT_REVERSIBLE","Una imputación del pago ya no está activa");
+        List<PaymentAllocation> installmentAllocations=allocationsToReverse.stream().filter(a->a.targetType==AllocationTargetType.INSTALLMENT).toList();
+        Map<Long,Long> planIds=new HashMap<>();
+        for(PaymentAllocation allocation:installmentAllocations){
+            CatalogService.require(allocation.installmentId!=null,"PLAN_DISTRIBUTION_INVALID","La imputación no identifica una cuota");
+            planIds.put(allocation.installmentId,installments.findPaymentPlanIdById(allocation.installmentId).orElseThrow(()->CatalogService.notFound("Cuota")));
+        }
+        Map<Long,PaymentPlan> lockedPlans=new HashMap<>();
+        planIds.values().stream().distinct().sorted().forEach(planId->lockedPlans.put(planId,plans.findByIdForUpdate(planId).orElseThrow()));
+        Map<Long,Installment> lockedInstallments=new HashMap<>();
+        planIds.keySet().stream().sorted().forEach(installmentId->lockedInstallments.put(installmentId,installments.findByIdForUpdate(installmentId).orElseThrow()));
+        Map<Long,BigDecimal> amountByInstallment=new HashMap<>();Map<Long,BigDecimal> amountByPlan=new HashMap<>();
+        for(PaymentAllocation allocation:installmentAllocations){
+            amountByInstallment.merge(allocation.installmentId,allocation.amount,BigDecimal::add);
+            amountByPlan.merge(planIds.get(allocation.installmentId),allocation.amount,BigDecimal::add);
+        }
+        for(PaymentAllocation allocation:installmentAllocations){
+            PaymentPlan plan=lockedPlans.get(planIds.get(allocation.installmentId));Installment installment=lockedInstallments.get(allocation.installmentId);
+            if(installment.status==InstallmentStatus.CANCELLED)block(reversal,allocation,"INSTALLMENT_CANCELLED","Una cuota cancelada no puede revertirse");
+            if(plan.status!=PaymentPlanStatus.ACTIVE&&plan.status!=PaymentPlanStatus.COMPLETED)block(reversal,allocation,"PLAN_NOT_REVERSIBLE","El estado del plan no admite revertir cuotas");
+            if(installment.status!=InstallmentStatus.PAID&&installment.status!=InstallmentStatus.PARTIALLY_PAID)block(reversal,allocation,"INSTALLMENT_NOT_REVERSIBLE","La cuota no registra un pago reversible");
+            if(installment.paidAmount.compareTo(amountByInstallment.get(installment.id))<0||plan.paidAmount.compareTo(amountByPlan.get(plan.id))<0)block(reversal,allocation,"PLAN_BALANCE_CHANGED","La cuota o el plan no conserva el importe imputado");
+            List<PaymentPlanDebt> links=planDebts.findByPaymentPlanId(plan.id);
+            Optional<List<PaymentPlanPrincipalLedger.Share>> recorded;
+            try{recorded=principalLedger.find(allocation);}
+            catch(BusinessException error){rejectionAudit.record(reversal.id,allocation.id,error.code);throw error;}
+            if(recorded.isEmpty()&&allocation.principalApplied.signum()>0&&links.size()!=1)block(reversal,allocation,"HISTORICAL_PLAN_DISTRIBUTION_UNVERIFIABLE","Falta la distribución exacta de capital por deuda para esta cuota histórica");
+            if(links.isEmpty())block(reversal,allocation,"PLAN_DISTRIBUTION_INVALID","El plan no conserva sus deudas vinculadas");
+            if(recorded.isPresent()&&recorded.orElseThrow().stream().anyMatch(share->links.stream().noneMatch(link->link.debtId.equals(share.debtId()))))block(reversal,allocation,"PLAN_DISTRIBUTION_INVALID","La distribución registrada no corresponde a las deudas del plan");
+            if(recorded.isPresent()&&recorded.orElseThrow().stream().anyMatch(share->links.stream().filter(link->link.debtId.equals(share.debtId())).anyMatch(link->link.principalPaidAmount.compareTo(share.amount())<0)))block(reversal,allocation,"PLAN_DISTRIBUTION_INVALID","La deuda no conserva el capital distribuido a la cuota");
+            if(recorded.isEmpty()&&links.size()==1&&links.get(0).principalPaidAmount.compareTo(allocation.principalApplied)<0)block(reversal,allocation,"PLAN_DISTRIBUTION_INVALID","La única deuda del plan no conserva el capital imputado");
+        }
+    }
+    private void block(PaymentReversalRequest reversal,PaymentAllocation allocation,String code,String message){
+        rejectionAudit.record(reversal.id,allocation.id,code);
+        throw new BusinessException(code,message,422);
+    }
+    private void reverseInstallment(Payment payment,PaymentAllocation a,String reason){
+        Long planId=installments.findPaymentPlanIdById(a.installmentId).orElseThrow();PaymentPlan plan=plans.findByIdForUpdate(planId).orElseThrow();Installment i=installments.findByIdForUpdate(a.installmentId).orElseThrow();
+        i.paidAmount=i.paidAmount.subtract(a.amount);i.outstandingAmount=i.totalAmount.subtract(i.paidAmount);i.status=i.paidAmount.signum()==0?InstallmentStatus.PENDING:InstallmentStatus.PARTIALLY_PAID;i.paidAt=null;a.reversedAt=OffsetDateTime.now();
+        List<PaymentPlanDebt> links=planDebts.findByPaymentPlanId(plan.id);
+        Optional<List<PaymentPlanPrincipalLedger.Share>> recorded=principalLedger.find(a);
+        if(recorded.isPresent()){
+            for(var share:recorded.orElseThrow()){
+                PaymentPlanDebt link=links.stream().filter(x->x.debtId.equals(share.debtId())).findFirst().orElseThrow();
+                CatalogService.require(link.principalPaidAmount.compareTo(share.amount())>=0,"PLAN_DISTRIBUTION_INVALID","La cuota no coincide con el capital reconocido");
+                link.principalPaidAmount=link.principalPaidAmount.subtract(share.amount());link.remainingPrincipalAmount=link.remainingPrincipalAmount.add(share.amount());link.status=PaymentPlanDebtStatus.ACTIVE;
+                Debt debt=debts.findByIdForUpdate(link.debtId).orElseThrow();debt.outstandingBalance=debt.outstandingBalance.add(share.amount());debt.status=debt.outstandingBalance.compareTo(debt.currentAmount)==0?DebtStatus.PENDING:DebtStatus.PARTIALLY_PAID;debt.updatedAt=a.reversedAt;
+                events.paymentReversed(payment,a,debt,reason,share.amount());
+            }
+        }else{
+            reverseLegacyPrincipal(a,links);
+            if(links.stream().map(link->debts.findById(link.debtId).orElseThrow()).anyMatch(debt->events.externalOrigin(debt).isPresent()))events.deferHistoricalPlanReversal(a);
+        }
+        plan.paidAmount=plan.paidAmount.subtract(a.amount);plan.outstandingPlanAmount=plan.totalPlanAmount.subtract(plan.paidAmount);
+        if(plan.status==PaymentPlanStatus.COMPLETED){plan.status=PaymentPlanStatus.ACTIVE;plan.completedAt=null;}
+    }
+    private void reverseLegacyPrincipal(PaymentAllocation a,List<PaymentPlanDebt> links){
+        BigDecimal restore=a.principalApplied;if(restore.signum()==0)return;
+        CatalogService.require(links.size()==1,"HISTORICAL_PLAN_DISTRIBUTION_UNVERIFIABLE","Falta la distribución exacta de capital por deuda para esta cuota histórica");
+        PaymentPlanDebt link=links.get(0);CatalogService.require(link.principalPaidAmount.compareTo(restore)>=0,"PLAN_DISTRIBUTION_INVALID","La única deuda del plan no conserva el capital imputado");
+        link.principalPaidAmount=link.principalPaidAmount.subtract(restore);link.remainingPrincipalAmount=link.remainingPrincipalAmount.add(restore);link.status=PaymentPlanDebtStatus.ACTIVE;Debt debt=debts.findByIdForUpdate(link.debtId).orElseThrow();debt.outstandingBalance=debt.outstandingBalance.add(restore);debt.status=debt.outstandingBalance.compareTo(debt.currentAmount)==0?DebtStatus.PENDING:DebtStatus.PARTIALLY_PAID;debt.updatedAt=a.reversedAt;
+    }
     private Optional<CreditBalance> validateGeneratedCreditIsUnused(Long paymentId){Optional<CreditBalance> credit=credits.findBySourcePaymentIdForUpdate(paymentId);credit.ifPresent(c->CatalogService.require(c.availableAmount.compareTo(c.originalAmount)==0,"CREDIT_BALANCE_ALREADY_USED","El saldo a favor del pago ya fue utilizado"));return credit;}
     private PaymentReversalRequest get(Long id){return reversals.findByIdForUpdate(id).orElseThrow(()->CatalogService.notFound("Reversión"));}
 }
