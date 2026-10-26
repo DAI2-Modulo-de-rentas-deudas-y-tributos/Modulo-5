@@ -12,6 +12,8 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.OffsetDateTime;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -154,6 +156,53 @@ class SecurityTests {
         assertThat(users.count()).isEqualTo(1);
     }
 
+    @Test void demoAuthHttpResponsesExposeOnlyTheDesignedLoginTokenAndNeverCredentialMaterial() throws Exception {
+        sessions.deleteAll();
+        users.deleteAll();
+        String bootstrapSecret="test-bootstrap-secret";
+        String bootstrapPassword="bootstrap-pass-ok";
+        String createdPassword="created-pass-ok";
+        JsonNode bootstrap=json.readTree(mvc.perform(post("/api/v1/dev-auth/bootstrap")
+                .header("X-Demo-Bootstrap-Secret",bootstrapSecret).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"username\":\"qa.supervisor\",\"password\":\""+bootstrapPassword+"\",\"displayName\":\"QA Supervisor\"}"))
+            .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString());
+        assertSafeDemoUserResponse(bootstrap,bootstrapSecret,bootstrapPassword);
+
+        JsonNode login=json.readTree(mvc.perform(post("/api/v1/dev-auth/login").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"username\":\"qa.supervisor\",\"password\":\""+bootstrapPassword+"\"}"))
+            .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        String token=login.path("token").asText();
+        assertThat(token).isNotBlank();
+        assertThat(login.path("user").has("token")).isFalse();
+        ObjectNode loginWithoutToken=((ObjectNode)login).deepCopy();
+        loginWithoutToken.remove("token");
+        assertNoCredentialFields(loginWithoutToken,bootstrapSecret,bootstrapPassword);
+        DemoUser supervisor=users.findByUsernameIgnoreCase("qa.supervisor").orElseThrow();
+        assertThat(supervisor.passwordHash).startsWith("$2");
+        assertThat(encoder.matches(bootstrapPassword,supervisor.passwordHash)).isTrue();
+        assertThat(supervisor.passwordHash).isNotEqualTo(bootstrapPassword);
+        DemoAuthSession storedSession=sessions.findByTokenHash(DemoAuthService.hashToken(token)).orElseThrow();
+        assertThat(storedSession.tokenHash).isNotEqualTo(token).matches("[0-9a-f]{64}");
+
+        String supervisorToken=token;
+        JsonNode created=json.readTree(mvc.perform(post("/api/v1/dev-auth/users").header("X-Demo-Session",supervisorToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"username\":\"qa.rentas\",\"password\":\""+createdPassword+"\",\"displayName\":\"QA Rentas\",\"role\":\"RENTAS\"}"))
+            .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString());
+        assertSafeDemoUserResponse(created,bootstrapSecret,createdPassword);
+        DemoUser rentas=users.findByUsernameIgnoreCase("qa.rentas").orElseThrow();
+        assertThat(rentas.passwordHash).startsWith("$2");
+        assertThat(encoder.matches(createdPassword,rentas.passwordHash)).isTrue();
+        assertThat(rentas.passwordHash).isNotEqualTo(createdPassword);
+
+        JsonNode listed=json.readTree(mvc.perform(get("/api/v1/dev-auth/users").header("X-Demo-Session",supervisorToken))
+            .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertNoCredentialFields(listed,bootstrapSecret,bootstrapPassword,createdPassword);
+        JsonNode me=json.readTree(mvc.perform(get("/api/v1/dev-auth/me").header("X-Demo-Session",supervisorToken))
+            .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertSafeDemoUserResponse(me,bootstrapSecret,bootstrapPassword);
+    }
+
     @Test void corsAllowsConfiguredOriginAndRequiredHeaders() throws Exception {
         mvc.perform(options("/api/v1/health").header("Origin","http://localhost:5173")
                 .header("Access-Control-Request-Method","GET")
@@ -203,5 +252,16 @@ class SecurityTests {
         user.passwordHash=encoder.encode(DemoAuthSessions.PASSWORD);
         user.displayName="QA";user.role=role;user.taxpayerId=taxpayerId;user.active=active;
         user.createdAt=user.updatedAt=OffsetDateTime.now();return users.save(user);
+    }
+
+    private void assertSafeDemoUserResponse(JsonNode response,String... secrets) {
+        assertNoCredentialFields(response,secrets);
+        assertThat(response.has("token")).isFalse();
+    }
+
+    private void assertNoCredentialFields(JsonNode response,String... secrets) {
+        assertThat(response.toString().toLowerCase(java.util.Locale.ROOT))
+            .doesNotContain("password","hash","secret","\"token\"");
+        for(String secret:secrets) assertThat(response.toString()).doesNotContain(secret);
     }
 }
