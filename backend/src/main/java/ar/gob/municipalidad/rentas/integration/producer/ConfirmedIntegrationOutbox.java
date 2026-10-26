@@ -70,7 +70,7 @@ class ConfirmedIntegrationOutbox {
     void paymentRegistered(Payment payment,PaymentAllocation allocation,Debt debt,BigDecimal amount){externalOrigin(debt).ifPresent(origin->{
         String key=economicKey("paymentRegistered",allocation.id,debt.id);
         if(outbox.existsByIdempotencyKey(key))return;
-        var payload=new ConfirmedOutboundEvents.ExternalPaymentRegisteredPayload("payment-"+payment.id,"debt-"+debt.id,originType(origin.externalType()),origin.externalReferenceId(),infractionId(origin),amount,payment.paidAt,debt.outstandingBalance);
+        var payload=new ConfirmedOutboundEvents.ExternalPaymentRegisteredPayload(payment.integrationId,debt.integrationId,originType(origin.externalType()),origin.externalReferenceId(),infractionId(origin),amount,payment.paidAt,debt.outstandingBalance);
         Optional<String> correlation=economicCorrelation(origin,debt.id);
         if(correlation.isEmpty()){
             deferEconomic("paymentRegistered","PaymentAllocation",allocation.id,debt,origin,payment.id,allocation.id,key,payload,
@@ -84,7 +84,7 @@ class ConfirmedIntegrationOutbox {
     void paymentReversed(Payment payment,PaymentAllocation allocation,Debt debt,String reason,BigDecimal amount){externalOrigin(debt).ifPresent(origin->{
         String key=economicKey("paymentReversed",allocation.id,debt.id);
         if(outbox.existsByIdempotencyKey(key))return;
-        var payload=new ConfirmedOutboundEvents.PaymentReversedPayload("payment-"+payment.id,"debt-"+debt.id,originType(origin.externalType()),origin.externalReferenceId(),infractionId(origin),amount,allocation.reversedAt,debt.outstandingBalance,reason);
+        var payload=new ConfirmedOutboundEvents.PaymentReversedPayload(payment.integrationId,debt.integrationId,originType(origin.externalType()),origin.externalReferenceId(),infractionId(origin),amount,allocation.reversedAt,debt.outstandingBalance,reason);
         Optional<String> correlation=economicCorrelation(origin,debt.id);
         if(correlation.isEmpty()||("M7".equals(origin.targetModule())
             &&!outbox.existsByIdempotencyKey(economicKey("paymentRegistered",allocation.id,debt.id)))){
@@ -110,7 +110,7 @@ class ConfirmedIntegrationOutbox {
         TaxpayerReference taxpayer=taxpayer(debt.taxpayerId);TaxConcept concept=concept(debt.taxConceptId);OffsetDateTime settledAt=OffsetDateTime.now();
         String originType=originType(origin.orElseThrow().externalType());
         String originId=origin.orElseThrow().externalReferenceId();
-        var payload=new ConfirmedOutboundEvents.DebtSettledPayload("debt-"+debt.id,taxpayer.taxpayerType==TaxpayerType.CITIZEN?taxpayer.externalId:null,concept.code,originType,originId,origin.flatMap(x->Optional.ofNullable(infractionId(x))).orElse(null),settledAt,BigDecimal.ZERO.setScale(2),BigDecimal.ZERO.setScale(2));
+        var payload=new ConfirmedOutboundEvents.DebtSettledPayload(debt.integrationId,canonicalCitizenAvailable(taxpayer)?taxpayer.canonicalCitizenId:null,concept.code,originType,originId,origin.flatMap(x->Optional.ofNullable(infractionId(x))).orElse(null),settledAt,BigDecimal.ZERO.setScale(2),BigDecimal.ZERO.setScale(2));
         String key=allocation==null?"outbound:debtSettled:Debt:"+debt.id:economicKey("debtSettled",allocation.id,debt.id);
         if(outbox.existsByIdempotencyKey(key))return;
         Optional<String> correlation=economicCorrelation(origin.orElseThrow(),debt.id);
@@ -134,7 +134,7 @@ class ConfirmedIntegrationOutbox {
         CatalogService.require(canonicalCitizenAvailable(taxpayer),"CANONICAL_CITIZEN_ID_PENDING","Falta vincular el ciudadano con M1");
         Liquidation liquidation=liquidations.findById(debt.liquidationId).orElseThrow(()->CatalogService.notFound("Liquidación"));
         CatalogService.require(debt.integrationId!=null&&liquidation.integrationId!=null,"INTEGRATION_ID_REQUIRED","Falta el UUID estable de la deuda o liquidación");
-        return new ConfirmedOutboundEvents.DebtSettledPayload(debt.integrationId.toString(),taxpayer.canonicalCitizenId.toString(),
+        return new ConfirmedOutboundEvents.DebtSettledPayload(debt.integrationId,taxpayer.canonicalCitizenId,
             concept(debt.taxConceptId).code,"MUNICIPAL_TAX",liquidation.integrationId.toString(),null,debt.updatedAt,
             BigDecimal.ZERO.setScale(2),BigDecimal.ZERO.setScale(2));
     }
@@ -198,6 +198,8 @@ class ConfirmedIntegrationOutbox {
                 try{
                     JsonNode received=json.readTree(log.payload);
                     if(!"habilitaciones".equals(received.path("sourceModule").asText())
+                        ||!(origin.externalType()==ExternalObligationType.PERMIT_FEE?"permitFeeGenerated":"commercialFineGenerated")
+                            .equals(log.eventType)
                         ||!origin.externalReferenceId().equals(received.path("data").path("id").asText()))return Optional.empty();
                     String value=received.path("correlationId").asText(null);
                     return value==null?Optional.empty():Optional.of(UUID.fromString(value).toString());
@@ -269,7 +271,7 @@ class ConfirmedIntegrationOutbox {
     ConfirmedOutboundEvents.CoreEnvelope<ConfirmedOutboundEvents.PaymentPlanRequestedPayload> paymentPlanRequestedEvent(ConfirmedOutboundEvents.PaymentPlanRequestedPayload payload){return core("paymentPlanRequested",payload,"PaymentPlanRequest",payload.requestId());}
     ConfirmedOutboundEvents.CoreEnvelope<ConfirmedOutboundEvents.UpdatePaymentPlanStatusPayload> paymentPlanStatusEvent(ConfirmedOutboundEvents.UpdatePaymentPlanStatusPayload payload){return core("updatePaymentPlanStatus",payload,"PaymentPlanRequest",payload.requestId());}
     ConfirmedOutboundEvents.CoreEnvelope<ConfirmedOutboundEvents.OverdueDebtPayload> overdueDebtEvent(ConfirmedOutboundEvents.OverdueDebtPayload payload){return core("overdueDebt",payload,"Debt",payload.debtId().toString());}
-    ConfirmedOutboundEvents.CoreEnvelope<ConfirmedOutboundEvents.DebtSettledPayload> debtSettledEvent(ConfirmedOutboundEvents.DebtSettledPayload payload){return core("debtSettled",payload,"Debt",payload.debtId());}
+    ConfirmedOutboundEvents.CoreEnvelope<ConfirmedOutboundEvents.DebtSettledPayload> debtSettledEvent(ConfirmedOutboundEvents.DebtSettledPayload payload){return core("debtSettled",payload,"Debt",payload.debtId().toString());}
 
     private <T> void enqueueSimple(String type,T payload,String aggregate,Object aggregateId){var event=core(type,payload,aggregate,String.valueOf(aggregateId));enqueue(aggregate,String.valueOf(aggregateId),event);}
     private <T> ConfirmedOutboundEvents.CoreEnvelope<T> core(String type,T data,String aggregate,String aggregateId){return new ConfirmedOutboundEvents.CoreEnvelope<>(UUID.randomUUID().toString(),type,"1.0",OffsetDateTime.now(),"rentas",correlation(aggregate,aggregateId),null,data);}

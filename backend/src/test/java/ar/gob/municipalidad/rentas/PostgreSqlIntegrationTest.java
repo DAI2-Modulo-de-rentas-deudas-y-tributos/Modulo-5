@@ -225,8 +225,8 @@ class PostgreSqlIntegrationTest {
     }
 
     @Test void contextStartsAndFlywayAppliesEveryMigration(){
-        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(26);
-        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(25);
+        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(27);
+        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(26);
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='ticket_case'",String.class))
             .contains("public_id","correlation_id","last_source_event_id","last_external_updated_at","request_type","subcategory");
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='demo_user'",String.class))
@@ -773,8 +773,8 @@ class PostgreSqlIntegrationTest {
             .orElseThrow().errorMessage).isEqualTo("SHARED_DEBT_SETTLED_CONTRACT_PENDING");
 
         var candidate=confirmedOutbox.municipalDebtSettledCandidate(paid);
-        assertThat(candidate.debtId()).isEqualTo(paid.integrationId.toString());
-        assertThat(candidate.citizenId()).isEqualTo(linked.canonicalCitizenId.toString());
+        assertThat(candidate.debtId()).isEqualTo(paid.integrationId);
+        assertThat(candidate.citizenId()).isEqualTo(linked.canonicalCitizenId);
         assertThat(candidate.originId()).isEqualTo(liquidationRecords.findById(paid.liquidationId).orElseThrow().integrationId.toString());
         assertThat(candidate.remainingBalance()).isZero();
         assertThat(candidate.outstandingBalance()).isZero();

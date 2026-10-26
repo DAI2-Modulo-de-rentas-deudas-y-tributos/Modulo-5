@@ -12,7 +12,15 @@ contiene la variante contradictoria `occuredAt`, pendiente de confirmación.
   `STARTED`, `INFORMATION_REQUIRED`, `RESOLVED` y `REJECTED`.
 - `paymentRegistered`, `debtSettled`, `paymentReversed`: hechos económicos
   por imputación, deuda cancelada y reversión respectivamente. Core decidirá
-  qué módulo los recibe; M7/M8 aún deben confirmar el contrato común.
+  qué módulo los recibe; M4/M7/M8 aún deben confirmar el contrato común.
+  El borrador local de IDs UUID persistentes y sus pendientes está en
+  [M5_ECONOMIC_OUTBOUND_UUID_DRAFT.md](M5_ECONOMIC_OUTBOUND_UUID_DRAFT.md).
+  La [matriz de adaptación M4/M7/M8](M5_ECONOMIC_ADAPTATION_M4_M7_M8_PROPOSAL.md),
+  el [schema propuesto](../schemas/m5-economic-outbound.proposed.schema.json)
+  y los [JSON de ejemplo](examples/m5-economic/) son material de revisión,
+  no contratos aceptados ni publicaciones reales. La prueba local de esas
+  propuestas se ejecuta con
+  `pwsh -File contracts/tests/Validate-M5EconomicProposal.ps1` desde la raíz.
 - `exemptionRequested`, `updateExemptionStatus`, `paymentPlanRequested`,
   `updatePaymentPlanStatus`, `overdueDebt`.
 

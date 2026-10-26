@@ -59,15 +59,15 @@ public final class ConfirmedOutboundEvents {
         }
     }
     @JsonInclude(JsonInclude.Include.NON_NULL)
-    public record DebtSettledPayload(String debtId,String citizenId,String conceptCode,String originType,
+    public record DebtSettledPayload(UUID debtId,UUID citizenId,String conceptCode,String originType,
         String originId,String infractionId,OffsetDateTime settledAt,BigDecimal remainingBalance,
         BigDecimal outstandingBalance) {}
     @JsonInclude(JsonInclude.Include.NON_NULL)
-    public record ExternalPaymentRegisteredPayload(String paymentId,String debtId,String originType,
+    public record ExternalPaymentRegisteredPayload(UUID paymentId,UUID debtId,String originType,
         String originId,String infractionId,BigDecimal amountApplied,OffsetDateTime paidAt,
         BigDecimal remainingBalance) {}
     @JsonInclude(JsonInclude.Include.NON_NULL)
-    public record PaymentReversedPayload(String paymentId,String debtId,String originType,String originId,
+    public record PaymentReversedPayload(UUID paymentId,UUID debtId,String originType,String originId,
         String infractionId,BigDecimal reversedAmount,OffsetDateTime reversedAt,
         BigDecimal remainingBalance,String reason) {}
 

@@ -44,6 +44,11 @@ class OutboxPublisher {
     OutboxPublisher(OutboxRepository repository,EventPublisher publisher){this.repository=repository;this.publisher=publisher;}
     @Scheduled(fixedDelayString="${rentas.outbox-delay-ms:5000}")
     @Transactional void publishPending(){for(OutboxEvent event:repository.findPublishable(org.springframework.data.domain.PageRequest.of(0,50))){
+        if(!validEconomicIdentifiers(event)){
+            event.status=OutboxStatus.DEAD_LETTER;
+            event.errorMessage="ECONOMIC_CONTRACT_REVIEW_REQUIRED: invalid M5 UUID identifiers";
+            continue;
+        }
         if(!validExemptionIdentifiers(event)){
             event.status=OutboxStatus.DEAD_LETTER;
             event.errorMessage="M8_CONTRACT_REVIEW_REQUIRED: invalid exemption UUID identifiers";
@@ -53,6 +58,17 @@ class OutboxPublisher {
             &&!repository.existsByEventTypeAndAggregateTypeAndAggregateIdAndStatus("exemptionRequested",event.aggregateType,event.aggregateId,OutboxStatus.PUBLISHED))continue;
         try{event.lastAttemptAt=OffsetDateTime.now();if("PLATFORM".equals(event.targetModule))log.info("INTERNAL_OUTBOX eventType={} targetModule={}",event.eventType,event.targetModule);else publisher.publish(event.eventType,event.targetModule,event.payload);event.status=OutboxStatus.PUBLISHED;event.publishedAt=OffsetDateTime.now();event.errorMessage=null;}catch(RuntimeException ex){event.retryCount++;String message=ex.getMessage()==null?ex.getClass().getSimpleName():ex.getMessage();event.errorMessage=message.substring(0,Math.min(message.length(),255));event.status=event.retryCount>=5?OutboxStatus.DEAD_LETTER:OutboxStatus.FAILED;}
     }}
+    private boolean validEconomicIdentifiers(OutboxEvent event){
+        if(!"CORE".equals(event.targetModule)
+            ||!java.util.Set.of("paymentRegistered","paymentReversed","debtSettled").contains(event.eventType))return true;
+        try{
+            var data=payloadJson.readTree(event.payload).path("data");
+            java.util.UUID.fromString(data.path("debtId").asText());
+            if(!"debtSettled".equals(event.eventType))java.util.UUID.fromString(data.path("paymentId").asText());
+            if(data.hasNonNull("citizenId"))java.util.UUID.fromString(data.path("citizenId").asText());
+            return true;
+        }catch(Exception ex){return false;}
+    }
     private boolean validExemptionIdentifiers(OutboxEvent event){
         if(!"exemptionRequested".equals(event.eventType)&&!"updateExemptionStatus".equals(event.eventType))return true;
         try{

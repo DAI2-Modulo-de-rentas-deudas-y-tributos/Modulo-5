@@ -22,6 +22,7 @@ import static org.assertj.core.api.Assertions.*;
     "rentas.outbox-delay-ms=3600000"})
 class ExternalPaymentEventsTests {
     @Autowired PaymentService payments;@Autowired CatalogService catalog;@Autowired DebtRepository debts;
+    @Autowired TaxpayerRepository taxpayerRepository;
     @Autowired ReversalService reversals;
     @Autowired ExternalObligationRepository obligations;@Autowired PaymentAllocationRepository allocations;
     @Autowired PaymentRepository paymentRepository;@Autowired OutboxRepository outbox;@Autowired ObjectMapper json;
@@ -41,8 +42,8 @@ class ExternalPaymentEventsTests {
 
         OutboxEvent registered=event("paymentRegistered","M7",payment.id,debt.id);JsonNode payload=payload(registered);
         assertEnvelope(registered,payload,"paymentRegistered","PaymentAllocation");
-        assertThat(payload.path("data").path("paymentId").asText()).isEqualTo("payment-"+payment.id);
-        assertThat(payload.path("data").path("debtId").asText()).isEqualTo("debt-"+debt.id);
+        assertThat(payload.path("data").path("paymentId").asText()).isEqualTo(payment.integrationId.toString());
+        assertThat(payload.path("data").path("debtId").asText()).isEqualTo(debt.integrationId.toString());
         assertThat(payload.path("data").path("originId").asText()).isEqualTo("INF-EXACT-001");
         assertThat(payload.path("data").path("originType").asText()).isEqualTo("TRAFFIC_FINE");
         assertThat(payload.path("data").path("infractionId").asText()).isEqualTo(payload.path("data").path("originId").asText());
@@ -76,7 +77,21 @@ class ExternalPaymentEventsTests {
         assertThat(registered.path("originId").asText()).isEqualTo("FEE-EXACT-001");assertThat(registered.has("infractionId")).isFalse();
         assertThat(settled.path("originId").asText()).isEqualTo("FEE-EXACT-001");assertThat(settled.has("infractionId")).isFalse();
         assertFields(registered,"paymentId","debtId","originType","originId","amountApplied","paidAt","remainingBalance");
-        assertFields(settled,"debtId","citizenId","conceptCode","originType","originId","settledAt","remainingBalance","outstandingBalance");
+        assertThat(settled.has("citizenId")).isFalse();
+        assertFields(settled,"debtId","conceptCode","originType","originId","settledAt","remainingBalance","outstandingBalance");
+    }
+
+    @Test void settledDebtUsesOnlyVerifiedCanonicalCitizenId()throws Exception{
+        TaxpayerReference taxpayer=taxpayer("CANONICAL-SETTLED");
+        UUID canonicalCitizenId=UUID.randomUUID();
+        taxpayer.canonicalCitizenId=canonicalCitizenId;
+        taxpayerRepository.save(taxpayer);
+        Debt debt=externalDebt(taxpayer,"M7",ExternalObligationType.TRAFFIC_INFRACTION,UUID.randomUUID().toString(),"100");
+        payments.register(request(taxpayer.id,"100",new ApiDtos.AllocationRequest(debt.id,new BigDecimal("100"))));
+
+        JsonNode data=payload(events("debtSettled","M7",debt.id).get(0)).path("data");
+        assertThat(data.path("citizenId").asText()).isEqualTo(canonicalCitizenId.toString());
+        assertThat(data.path("debtId").asText()).isEqualTo(debt.integrationId.toString());
     }
 
     @Test void missingM4CorrelationDefersInsteadOfInventingOne(){
@@ -90,6 +105,37 @@ class ExternalPaymentEventsTests {
         assertThat(deferred.status).isEqualTo(IntegrationEventStatus.PENDING);
         assertThat(deferred.errorMessage).isEqualTo("M4_ORIGINAL_CORRELATION_ID_UNAVAILABLE");
         assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("80.00");
+    }
+
+    @Test void deferredM4PaymentAndSettlementUseVerifiedOriginalCorrelation()throws Exception{
+        TaxpayerReference taxpayer=taxpayer("M4-RECONCILE");
+        Debt debt=externalDebt(taxpayer,"M4",ExternalObligationType.COMMERCIAL_FINE,"FINE-RECONCILE-"+UUID.randomUUID(),"100",false);
+        Payment payment=payments.register(request(taxpayer.id,"100",new ApiDtos.AllocationRequest(debt.id,new BigDecimal("100"))));
+        PaymentAllocation allocation=allocations.findByPaymentId(payment.id).get(0);
+        IntegrationEventLog registered=economicMarker("paymentRegistered",allocation.id,debt.id);
+        IntegrationEventLog settled=economicMarker("debtSettled",debt.id,debt.id);
+        assertThat(economicReconciliation.reconcile(registered.id).outcome()).isEqualTo("STILL_DEFERRED");
+        assertThat(economicReconciliation.reconcile(settled.id).reason()).isEqualTo("PAYMENT_EVENT_NOT_PREPARED");
+
+        UUID correlation=UUID.randomUUID();
+        IntegrationEventLog source=inbound(debt);
+        ObjectNode original=(ObjectNode)json.readTree(source.payload);
+        original.put("correlationId",correlation.toString());
+        source.payload=json.writeValueAsString(original);
+        integrationLogs.save(source);
+
+        DeferredEconomicReconciliation.Result paymentResult=economicReconciliation.reconcile(registered.id);
+        DeferredEconomicReconciliation.Result settlementResult=economicReconciliation.reconcile(settled.id);
+        assertThat(paymentResult.outcome()).isEqualTo("PREPARED_IN_OUTBOX");
+        assertThat(settlementResult.outcome()).isEqualTo("PREPARED_IN_OUTBOX");
+        JsonNode paymentEvent=payload(outbox.findById(paymentResult.outboxEventId()).orElseThrow());
+        JsonNode settlementEvent=payload(outbox.findById(settlementResult.outboxEventId()).orElseThrow());
+        assertThat(paymentEvent.path("correlationId").asText()).isEqualTo(correlation.toString());
+        assertThat(settlementEvent.path("correlationId").asText()).isEqualTo(correlation.toString());
+        assertThat(paymentEvent.path("data").path("originId").asText())
+            .isEqualTo(obligations.findById(debt.externalObligationId).orElseThrow().externalReferenceId);
+        assertThat(paymentEvent.path("data").has("infractionId")).isFalse();
+        assertThat(economicReconciliation.reconcile(registered.id).outboxEventId()).isEqualTo(paymentResult.outboxEventId());
     }
 
     @Test void localDebtDoesNotPublishTargetSpecificEvents(){
@@ -136,7 +182,8 @@ class ExternalPaymentEventsTests {
     @Test void idempotentRetryDoesNotDuplicateExternalEvents(){
         TaxpayerReference taxpayer=taxpayer("IDEMPOTENT");Debt debt=externalDebt(taxpayer,"M7",ExternalObligationType.TRAFFIC_INFRACTION,"INF-IDEMPOTENT","100");ApiDtos.RegisterPaymentRequest request=request(taxpayer.id,"100",new ApiDtos.AllocationRequest(debt.id,new BigDecimal("100")));String key="scrum-144-"+UUID.randomUUID();
         Payment first=payments.register(request,key),retry=payments.register(request,key);
-        assertThat(retry.id).isEqualTo(first.id);assertThat(eventsForPayment("paymentRegistered","M7",first.id)).hasSize(1);assertThat(events("debtSettled","M7",debt.id)).hasSize(1);
+        assertThat(retry.id).isEqualTo(first.id);assertThat(retry.integrationId).isEqualTo(first.integrationId);
+        assertThat(eventsForPayment("paymentRegistered","M7",first.id)).hasSize(1);assertThat(events("debtSettled","M7",debt.id)).hasSize(1);
     }
 
     @Test void idempotentM4PaymentRetryDoesNotDuplicateEconomicEvents(){
@@ -145,6 +192,7 @@ class ExternalPaymentEventsTests {
         String key="m4-idempotency-"+UUID.randomUUID();Payment first=payments.register(request,key),retry=payments.register(request,key);
 
         assertThat(retry.id).isEqualTo(first.id);
+        assertThat(retry.integrationId).isEqualTo(first.integrationId);
         assertThat(eventsForPayment("paymentRegistered","M4",first.id)).hasSize(1);
         assertThat(events("debtSettled","M4",debt.id)).hasSize(1);
     }
@@ -159,6 +207,8 @@ class ExternalPaymentEventsTests {
         assertEnvelope(event,payload(event),"paymentReversed","PaymentAllocation");
         assertThat(data.path("originType").asText()).isEqualTo("COMMERCIAL_FINE");
         assertThat(data.path("originId").asText()).isEqualTo("FINE-REVERSAL");
+        assertThat(data.path("paymentId").asText()).isEqualTo(payment.integrationId.toString());
+        assertThat(data.path("debtId").asText()).isEqualTo(debt.integrationId.toString());
         assertThat(data.has("infractionId")).isFalse();
         assertThat(data.path("reversedAmount").decimalValue()).isEqualByComparingTo("40.00");
         assertThat(data.path("remainingBalance").decimalValue()).isEqualByComparingTo("100.00");
@@ -462,6 +512,27 @@ class ExternalPaymentEventsTests {
         assertThat(outbox.count()).isEqualTo(before);
     }
 
+    @Test void legacyDeferredEconomicIdsRequireReviewBeforeAnyPublication()throws Exception{
+        TaxpayerReference taxpayer=taxpayer("LEGACY-ECONOMIC-IDS");
+        Debt debt=externalDebt(taxpayer,"M7",ExternalObligationType.TRAFFIC_INFRACTION,UUID.randomUUID().toString(),"100");
+        String original=hideCorrelation(debt);
+        Payment payment=payments.register(request(taxpayer.id,"25",new ApiDtos.AllocationRequest(debt.id,new BigDecimal("25"))));
+        PaymentAllocation allocation=allocations.findByPaymentId(payment.id).get(0);
+        IntegrationEventLog marker=economicMarker("paymentRegistered",allocation.id,debt.id);
+        ObjectNode deferred=(ObjectNode)json.readTree(marker.payload);
+        ObjectNode data=(ObjectNode)deferred.path("snapshot").path("data");
+        data.put("paymentId","payment-"+payment.id);
+        data.put("debtId","debt-"+debt.id);
+        marker.payload=json.writeValueAsString(deferred);
+        integrationLogs.save(marker);
+        restoreCorrelation(debt,original);
+
+        DeferredEconomicReconciliation.Result result=economicReconciliation.reconcile(marker.id);
+        assertThat(result.outcome()).isEqualTo("REVIEW_REQUIRED");
+        assertThat(result.reason()).isEqualTo("LEGACY_ECONOMIC_IDS_REVIEW_REQUIRED");
+        assertThat(eventsForPayment("paymentRegistered","M7",payment.id)).isEmpty();
+    }
+
     @Test void rollbackLeavesNoPaymentAllocationOrOutboxEvent(){
         TaxpayerReference taxpayer=taxpayer("ROLLBACK");Debt debt=externalDebt(taxpayer,"M7",ExternalObligationType.TRAFFIC_INFRACTION,"INF-ROLLBACK","100");long paymentsBefore=paymentRepository.count(),allocationsBefore=allocations.count(),outboxBefore=outbox.count();
         var request=new ApiDtos.RegisterPaymentRequest(taxpayer.id,PaymentMethod.CASH,new BigDecimal("100"),List.of(new ApiDtos.AllocationRequest(debt.id,new BigDecimal("40")),new ApiDtos.AllocationRequest(Long.MAX_VALUE,new BigDecimal("60"))));
@@ -501,9 +572,9 @@ class ExternalPaymentEventsTests {
     private Debt localDebt(TaxpayerReference taxpayer,String amount){Debt debt=baseDebt(taxpayer,concept("M5"),amount);debt.originType=DebtOriginType.LIQUIDATION;debt.liquidationId=Math.abs(UUID.randomUUID().getMostSignificantBits());return debts.save(debt);}
     private Debt baseDebt(TaxpayerReference taxpayer,TaxConcept concept,String amount){Debt debt=new Debt();debt.taxpayerId=taxpayer.id;debt.taxConceptId=concept.id;debt.originalAmount=debt.currentAmount=debt.outstandingBalance=new BigDecimal(amount).setScale(2);debt.dueDate=LocalDate.now().plusDays(10);debt.status=DebtStatus.PENDING;debt.createdAt=debt.updatedAt=OffsetDateTime.now();return debt;}
     private TaxConcept concept(String origin){String unique="EXT_"+UUID.randomUUID();return catalog.createConcept(new ApiDtos.CreateTaxConceptRequest(unique,"Concepto "+unique,null,TaxConceptType.FEE,origin));}
-    private OutboxEvent event(String type,String target,Long paymentId,Long debtId){return eventsForPayment(type,target,paymentId).stream().filter(x->payloadUnchecked(x).path("data").path("debtId").asText().equals("debt-"+debtId)).findFirst().orElseThrow();}
-    private List<OutboxEvent> eventsForPayment(String type,String target,Long paymentId){return outbox.findAll().stream().filter(x->type.equals(x.eventType)&&"CORE".equals(x.targetModule)).filter(x->payloadUnchecked(x).path("data").path("paymentId").asText().equals("payment-"+paymentId)).toList();}
-    private List<OutboxEvent> events(String type,String target,Long debtId){return outbox.findAll().stream().filter(x->type.equals(x.eventType)&&"CORE".equals(x.targetModule)).filter(x->payloadUnchecked(x).path("data").path("debtId").asText().equals("debt-"+debtId)).toList();}
+    private OutboxEvent event(String type,String target,Long paymentId,Long debtId){String debtUuid=debts.findById(debtId).orElseThrow().integrationId.toString();return eventsForPayment(type,target,paymentId).stream().filter(x->payloadUnchecked(x).path("data").path("debtId").asText().equals(debtUuid)).findFirst().orElseThrow();}
+    private List<OutboxEvent> eventsForPayment(String type,String target,Long paymentId){String paymentUuid=paymentRepository.findById(paymentId).orElseThrow().integrationId.toString();return outbox.findAll().stream().filter(x->type.equals(x.eventType)&&"CORE".equals(x.targetModule)).filter(x->payloadUnchecked(x).path("data").path("paymentId").asText().equals(paymentUuid)).toList();}
+    private List<OutboxEvent> events(String type,String target,Long debtId){String debtUuid=debts.findById(debtId).orElseThrow().integrationId.toString();return outbox.findAll().stream().filter(x->type.equals(x.eventType)&&"CORE".equals(x.targetModule)).filter(x->payloadUnchecked(x).path("data").path("debtId").asText().equals(debtUuid)).toList();}
     private JsonNode payload(OutboxEvent event)throws Exception{return json.readTree(event.payload);}
     private JsonNode payloadUnchecked(OutboxEvent event){try{return payload(event);}catch(Exception ex){throw new AssertionError(ex);}}
     private JsonNode payloadUnchecked(IntegrationEventLog event){try{return json.readTree(event.payload);}catch(Exception ex){throw new AssertionError(ex);}}

@@ -108,7 +108,11 @@ class BillUpdatedPricingTests {
     }
 
     @Test void appliedLateChargeIsExplainedButNotQuotedAgainForSameDate() {
-        Debt debt=debt("APPLIED-LATE");debt.dueDate=LocalDate.now().minusDays(5);debts.saveAndFlush(debt);Bill bill=bill(debt);rule("APPLIED-RULE","10","1");
+        Debt debt=debt("APPLIED-LATE");debt.dueDate=LocalDate.now().minusDays(5);debts.saveAndFlush(debt);
+        Bill bill=bill(debt);
+        // Keep issuance and adjustment distinct even when the database rounds timestamps.
+        bill.createdAt=bill.createdAt.minusMinutes(1);bills.saveAndFlush(bill);
+        rule("APPLIED-RULE","10","1");
         lateCharges.apply(debt.id,LocalDate.now());
 
         ApiDtos.BillDebtPricingResponse price=billing.pricingDetail(bill.id).pricingDetails().get(0);

@@ -19,8 +19,8 @@ class MigrationValidationTest {
         registry.add("spring.flyway.locations",()->"classpath:db/migration,classpath:db/migration-test-h2,classpath:db/migration-m8-test-h2");
     }
     @Test void flywaySchemaMatchesJpaModel() {
-        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(26);
-        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(25);
+        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(27);
+        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(26);
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='bill'",String.class))
             .contains("idempotency_key","idempotency_fingerprint");
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='ticket_case'",String.class))
@@ -28,6 +28,8 @@ class MigrationValidationTest {
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='demo_user'",String.class))
             .contains("integration_actor_id");
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='debt'",String.class))
+            .contains("integration_id");
+        assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='payment'",String.class))
             .contains("integration_id");
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='taxpayer_reference'",String.class))
             .contains("canonical_citizen_id");

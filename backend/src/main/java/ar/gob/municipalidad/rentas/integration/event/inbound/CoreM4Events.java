@@ -10,7 +10,7 @@ import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
-/** Formato de trabajo de M4 sobre el envelope de Core; los tipos de CUIT y moneda siguen sujetos a confirmación. */
+/** Formato de trabajo de M4 sobre el envelope de Core; CUIT de 11 dígitos confirmado. */
 public final class CoreM4Events {
     private CoreM4Events() {}
 

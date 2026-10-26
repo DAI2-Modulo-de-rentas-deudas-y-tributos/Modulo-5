@@ -182,6 +182,8 @@ class Payment {
     @Column(name="idempotency_key",length=128) public String idempotencyKey;
     @Column(name="idempotency_fingerprint",length=64) public String idempotencyFingerprint;
     @Id @GeneratedValue(strategy=GenerationType.IDENTITY) public Long id;
+    @Column(name="integration_id",nullable=false,unique=true) public UUID integrationId;
+    @PrePersist void assignIntegrationId(){if(integrationId==null)integrationId=UUID.randomUUID();}
     @Column(name="taxpayer_id",nullable=false) public Long taxpayerId;
     @Column(name="bill_id") public Long billId;
     @Enumerated(EnumType.STRING) @Column(name="payment_method",nullable=false) public PaymentMethod paymentMethod;

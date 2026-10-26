@@ -22,7 +22,7 @@ class M5OwnedUuidMigrationPostgreSqlTest {
     static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:17.11-alpine");
 
     @Test
-    void upgradesExistingV23RowsToV26InCommonAndProductionLocations() {
+    void upgradesExistingV23RowsToV27InCommonAndProductionLocations() {
         assertUpgrade(List.of("classpath:db/migration", "classpath:db/migration-postgresql"), false);
         assertUpgrade(List.of("classpath:db/migration", "classpath:db/migration-production", "classpath:db/migration-postgresql"), true);
     }
@@ -37,19 +37,22 @@ class M5OwnedUuidMigrationPostgreSqlTest {
         List<Long> liquidationIds = primaryKeys(jdbc, "liquidation");
         List<Long> requestIds = primaryKeys(jdbc, "exemption_request");
         List<Long> exemptionIds = primaryKeys(jdbc, "exemption");
+        List<Long> paymentIds = primaryKeys(jdbc, "payment");
 
         Flyway after = flyway(locations).load();
         after.migrate();
-        assertThat(jdbc.queryForList("select version from flyway_schema_history where success and version in ('24','25','26') order by installed_rank", String.class))
-            .containsExactly("24", "25", "26");
+        assertThat(jdbc.queryForList("select version from flyway_schema_history where success and version in ('24','25','26','27') order by installed_rank", String.class))
+            .containsExactly("24", "25", "26", "27");
         assertStableUniqueIds(jdbc, "debt", debtIds);
         assertStableUniqueIds(jdbc, "liquidation", liquidationIds);
         assertStableUniqueIds(jdbc, "exemption_request", requestIds);
         assertStableUniqueIds(jdbc, "exemption", exemptionIds);
+        assertStableUniqueIds(jdbc, "payment", paymentIds);
         Map<Long, UUID> generatedDebtIds = uuidRows(jdbc, "debt");
         Map<Long, UUID> generatedLiquidationIds = uuidRows(jdbc, "liquidation");
         Map<Long, UUID> generatedRequestIds = uuidRows(jdbc, "exemption_request");
         Map<Long, UUID> generatedExemptionIds = uuidRows(jdbc, "exemption");
+        Map<Long, UUID> generatedPaymentIds = uuidRows(jdbc, "payment");
         assertThat(jdbc.queryForObject("select count(*) from taxpayer_reference where canonical_citizen_id is not null", Integer.class)).isZero();
         assertThat(jdbc.queryForObject("select count(*) from social_benefit_reference where resolution_status='LEGACY' and source_payload_hash='" + "0".repeat(64) + "'", Integer.class)).isEqualTo(1);
         if (production) assertThat(jdbc.queryForObject("select to_regclass('public.demo_user')::text", String.class)).isNull();
@@ -59,6 +62,7 @@ class M5OwnedUuidMigrationPostgreSqlTest {
         assertThat(uuidRows(jdbc, "liquidation")).containsExactlyEntriesOf(generatedLiquidationIds);
         assertThat(uuidRows(jdbc, "exemption_request")).containsExactlyEntriesOf(generatedRequestIds);
         assertThat(uuidRows(jdbc, "exemption")).containsExactlyEntriesOf(generatedExemptionIds);
+        assertThat(uuidRows(jdbc, "payment")).containsExactlyEntriesOf(generatedPaymentIds);
     }
 
     private FluentConfiguration flyway(List<String> locations) {
@@ -98,6 +102,11 @@ class M5OwnedUuidMigrationPostgreSqlTest {
                 insert into exemption(request_id,taxpayer_id,tax_concept_id,percentage,valid_from,status,approved_by,approved_at)
                 values (?,?,?,50,current_date,'ACTIVE','migration-test',now())
                 """, request, taxpayer, concept);
+            jdbc.update("""
+                insert into payment(taxpayer_id,payment_method,amount,allocated_amount,unallocated_amount,status,allocation_status,
+                    origin,receipt_number,registered_by,paid_at,created_at)
+                values (?,'CASH',100,0,100,'CONFIRMED','UNALLOCATED','CASHIER',?,'migration-test',now(),now())
+                """, taxpayer, "MIGRATION-REC-" + i);
         }
         jdbc.update("""
             insert into social_benefit_reference(external_benefit_id,taxpayer_id,external_citizen_id,benefit_type,external_status,discount_percentage,valid_from,source_event_id,updated_at,calculated_status,benefits_payload,external_source_event_id)

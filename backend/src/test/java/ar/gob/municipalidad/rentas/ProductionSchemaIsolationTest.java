@@ -54,6 +54,8 @@ class ProductionSchemaIsolationTest {
             "select count(*) from flyway_schema_history where version='25' and success", Integer.class)).isOne();
         assertThat(jdbc.queryForObject(
             "select count(*) from flyway_schema_history where version='26' and success", Integer.class)).isOne();
+        assertThat(jdbc.queryForObject(
+            "select count(*) from flyway_schema_history where version='27' and success", Integer.class)).isOne();
         assertThat(jdbc.queryForList(
             "select column_name from information_schema.columns where table_name='ticket_case'", String.class))
             .contains("request_type", "subcategory");
@@ -113,6 +115,8 @@ class ProductionSchemaIsolationTest {
             "select count(*) from flyway_schema_history where version='25' and success", Integer.class)).isOne();
         assertThat(upgrade.queryForObject(
             "select count(*) from flyway_schema_history where version='26' and success", Integer.class)).isOne();
+        assertThat(upgrade.queryForObject(
+            "select count(*) from flyway_schema_history where version='27' and success", Integer.class)).isOne();
         assertThat(upgrade.queryForList(
             "select column_name from information_schema.columns where table_name='ticket_case'", String.class))
             .contains("request_type", "subcategory");
