@@ -24,8 +24,9 @@ import java.util.TreeMap;
 import java.util.UUID;
 
 class BusinessException extends RuntimeException {
-    final String code; final int status;
-    BusinessException(String code, String message, int status) { super(message); this.code=code; this.status=status; }
+    final String code; final int status; final Integer retryAfterSeconds;
+    BusinessException(String code, String message, int status) { this(code,message,status,null); }
+    BusinessException(String code, String message, int status,Integer retryAfterSeconds) { super(message); this.code=code; this.status=status; this.retryAfterSeconds=retryAfterSeconds; }
 }
 
 @RestControllerAdvice
@@ -33,7 +34,10 @@ class GlobalExceptionHandler {
     private static final Logger log=LoggerFactory.getLogger(GlobalExceptionHandler.class);
     @ExceptionHandler(BusinessException.class)
     ResponseEntity<ApiDtos.ErrorResponse> business(BusinessException ex, HttpServletRequest request) {
-        return response(ex.status, ex.code, ex.getMessage(), request);
+        ResponseEntity<ApiDtos.ErrorResponse> error=response(ex.status, ex.code, ex.getMessage(), request);
+        if(ex.retryAfterSeconds==null) return error;
+        HttpHeaders headers=new HttpHeaders();headers.set(HttpHeaders.RETRY_AFTER,Integer.toString(ex.retryAfterSeconds));
+        return new ResponseEntity<>(error.getBody(),headers,HttpStatus.valueOf(ex.status));
     }
     @ExceptionHandler(MethodArgumentNotValidException.class)
     ResponseEntity<ApiDtos.ErrorResponse> validation(MethodArgumentNotValidException ex, HttpServletRequest request) {

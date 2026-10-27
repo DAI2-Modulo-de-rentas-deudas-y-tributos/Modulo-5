@@ -2,6 +2,7 @@ package ar.gob.municipalidad.rentas;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
@@ -28,7 +29,9 @@ class DemoAuthController {
     DemoAuthController(DemoAuthService auth){this.auth=auth;}
 
     @PostMapping("/login")
-    LoginResponse login(@Valid @RequestBody LoginRequest request){return auth.login(request);}
+    LoginResponse login(@Valid @RequestBody LoginRequest request,HttpServletRequest servletRequest){return auth.login(request,servletRequest.getRemoteAddr());}
+
+    LoginResponse login(LoginRequest request){return auth.login(request,"local-test");}
 
     @PostMapping("/logout")
     @ResponseStatus(HttpStatus.NO_CONTENT)
@@ -39,7 +42,7 @@ class DemoAuthController {
 
     @PostMapping("/bootstrap") @ResponseStatus(HttpStatus.CREATED)
     UserResponse bootstrap(@RequestHeader(value=DemoAuthService.BOOTSTRAP_HEADER,required=false) String secret,
-            @Valid @RequestBody BootstrapRequest request){return auth.bootstrap(secret,request);}
+            @Valid @RequestBody BootstrapRequest request,HttpServletRequest servletRequest){return auth.bootstrap(secret,request,servletRequest.getRemoteAddr());}
 
     @PostMapping("/users") @ResponseStatus(HttpStatus.CREATED) @PreAuthorize("hasRole('SUPERVISOR')")
     @Transactional UserResponse create(@Valid @RequestBody CreateUserRequest request){return auth.create(request);}

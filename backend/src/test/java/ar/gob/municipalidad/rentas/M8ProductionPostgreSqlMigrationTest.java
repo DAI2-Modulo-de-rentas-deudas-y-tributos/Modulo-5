@@ -23,7 +23,6 @@ class M8ProductionPostgreSqlMigrationTest {
         registry.add("spring.datasource.url",POSTGRES::getJdbcUrl);
         registry.add("spring.datasource.username",POSTGRES::getUsername);
         registry.add("spring.datasource.password",POSTGRES::getPassword);
-        registry.add("spring.flyway.locations",()->"classpath:db/migration,classpath:db/migration-production,classpath:db/migration-postgresql");
     }
 
     @Autowired JdbcTemplate jdbc;
@@ -31,8 +30,10 @@ class M8ProductionPostgreSqlMigrationTest {
     @Test void m8MigrationsKeepProductionSchemaWithoutDemoUsers(){
         assertThat(jdbc.queryForObject("select current_setting('server_version')",String.class)).startsWith("17.");
         assertThat(jdbc.queryForObject("select to_regclass('public.demo_user')::text",String.class)).isNull();
+        assertThat(jdbc.queryForObject("select to_regclass('public.demo_login_attempt')::text",String.class)).isNull();
         assertThat(jdbc.queryForList("select version from flyway_schema_history where success and version in ('18','24','25','26','27','28') order by installed_rank",String.class))
             .containsExactly("18","24","25","26","27","28");
+        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version='29'",Integer.class)).isZero();
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='debt'",String.class))
             .contains("integration_id");
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name in ('payment_plan_request','payment_plan')",String.class))

@@ -29,23 +29,34 @@ class DemoAuthService {
     private final TaxpayerRepository taxpayers;
     private final PasswordEncoder passwords;
     private final AuditService audit;
+    private final DemoLoginAttemptLimiter loginAttempts;
     private final String bootstrapSecret;
     private final Duration sessionTtl;
     private final SecureRandom random=new SecureRandom();
 
     DemoAuthService(DemoUserRepository users,DemoBootstrapLockRepository bootstrapLock,DemoAuthSessionRepository sessions,TaxpayerRepository taxpayers,
-            PasswordEncoder passwords,AuditService audit,
+            PasswordEncoder passwords,AuditService audit,DemoLoginAttemptLimiter loginAttempts,
             @Value("${rentas.security.demo-bootstrap-password:}") String bootstrapSecret,
             @Value("${rentas.security.demo-session-ttl:PT8H}") Duration sessionTtl) {
-        this.users=users;this.bootstrapLock=bootstrapLock;this.sessions=sessions;this.taxpayers=taxpayers;this.passwords=passwords;this.audit=audit;
+        this.users=users;this.bootstrapLock=bootstrapLock;this.sessions=sessions;this.taxpayers=taxpayers;this.passwords=passwords;this.audit=audit;this.loginAttempts=loginAttempts;
         this.bootstrapSecret=bootstrapSecret==null?"":bootstrapSecret;
         this.sessionTtl=sessionTtl;
     }
 
     @Transactional DemoAuthController.LoginResponse login(DemoAuthController.LoginRequest request) {
+        return login(request, "local-test");
+    }
+
+    @Transactional DemoAuthController.LoginResponse login(DemoAuthController.LoginRequest request, String remoteAddress) {
+        String key=attemptKey("login:"+normalize(request.username())+":"+remoteAddress);
         DemoUser user=users.findByUsernameIgnoreCase(normalize(request.username()))
             .filter(x->x.active&&passwords.matches(request.password(),x.passwordHash))
-            .orElseThrow(()->new BusinessException("INVALID_CREDENTIALS","Usuario o contraseña incorrectos",401));
+            .orElse(null);
+        if(user==null) {
+            if(!loginAttempts.recordFailure(key)) throw new BusinessException("DEMO_LOGIN_RATE_LIMITED","Demasiados intentos. Reintentá en 15 minutos",429,900);
+            throw new BusinessException("INVALID_CREDENTIALS","Usuario o contraseña incorrectos",401);
+        }
+        loginAttempts.reset(key);
         String token=newToken();
         DemoAuthSession session=new DemoAuthSession();
         session.demoUserId=user.id;
@@ -79,8 +90,17 @@ class DemoAuthService {
     }
 
     @Transactional DemoAuthController.UserResponse bootstrap(String secret,DemoAuthController.BootstrapRequest request) {
+        return bootstrap(secret,request,"local-test");
+    }
+
+    @Transactional DemoAuthController.UserResponse bootstrap(String secret,DemoAuthController.BootstrapRequest request,String remoteAddress) {
         if(bootstrapSecret.isBlank()) throw new BusinessException("DEMO_BOOTSTRAP_DISABLED","El bootstrap DEMO no está configurado",403);
-        if(secret==null||!constantEquals(secret,bootstrapSecret)) throw new BusinessException("INVALID_BOOTSTRAP_SECRET","Secreto de bootstrap inválido",401);
+        String key=attemptKey("bootstrap:"+remoteAddress);
+        if(secret==null||!constantEquals(secret,bootstrapSecret)) {
+            if(!loginAttempts.recordFailure(key)) throw new BusinessException("DEMO_LOGIN_RATE_LIMITED","Demasiados intentos. Reintentá en 15 minutos",429,900);
+            throw new BusinessException("INVALID_BOOTSTRAP_SECRET","Secreto de bootstrap inválido",401);
+        }
+        loginAttempts.reset(key);
         if(bootstrapLock.lockBootstrap()==null) throw new IllegalStateException("Falta la fila de control del bootstrap DEMO");
         if(users.count()>0) throw new BusinessException("DEMO_BOOTSTRAP_ALREADY_COMPLETED","Ya existe un usuario DEMO",409);
         DemoUser user=new DemoUser();
@@ -144,6 +164,12 @@ class DemoAuthService {
     }
 
     private String normalize(String username){return username.trim().toLowerCase(java.util.Locale.ROOT);}
+
+    private static String attemptKey(String value) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch(NoSuchAlgorithmException ex) { throw new IllegalStateException("SHA-256 no disponible",ex); }
+    }
 
     private static boolean constantEquals(String left,String right) {
         return MessageDigest.isEqual(left.getBytes(StandardCharsets.UTF_8),right.getBytes(StandardCharsets.UTF_8));
