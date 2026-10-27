@@ -21,5 +21,11 @@ export default defineConfig({
     // Las pruebas E2E de UI escriben formularios completos con user-event. En hosts
     // Windows con carga de Docker pueden superar el default de 5 s sin estar colgadas.
     testTimeout: 15000,
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "html", "lcov"],
+      include: ["src/**/*.{js,jsx}"],
+      exclude: ["src/**/*.{test,spec}.{js,jsx}", "src/**/__tests__/**", "src/test/**"],
+    },
   },
 });

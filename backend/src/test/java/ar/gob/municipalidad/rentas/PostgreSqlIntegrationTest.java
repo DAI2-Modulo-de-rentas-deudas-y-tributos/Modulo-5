@@ -257,7 +257,7 @@ class PostgreSqlIntegrationTest {
         registry.add("spring.datasource.url",POSTGRES::getJdbcUrl);
         registry.add("spring.datasource.username",POSTGRES::getUsername);
         registry.add("spring.datasource.password",POSTGRES::getPassword);
-        registry.add("spring.flyway.locations",()->"classpath:db/migration,classpath:db/migration-postgresql");
+        registry.add("spring.flyway.locations",()->"classpath:db/migration,classpath:db/migration-postgresql,classpath:db/migration-demo");
     }
     @Autowired JdbcTemplate jdbc;
     @Autowired CatalogService catalog;
@@ -297,6 +297,7 @@ class PostgreSqlIntegrationTest {
     @Autowired PlatformTransactionManager transactionManager;
     @Autowired DemoAuthController demoAuth;
     @Autowired DemoAuthService demoAuthService;
+    @Autowired DemoLoginAttemptLimiter demoLoginAttempts;
     @Autowired DemoUserRepository demoUsers;
     @Autowired org.springframework.security.crypto.password.PasswordEncoder passwordEncoder;
     @Autowired MockMvc mvc;
@@ -311,6 +312,61 @@ class PostgreSqlIntegrationTest {
     @Autowired LiquidationRunService bulkRuns;
 
     @AfterEach void clearSecurity(){SecurityContextHolder.clearContext();}
+
+    @Test void demoLoginRateLimitAllowsFiveFailuresThenReturnsRetryAfter() throws Exception {
+        String username="rate-limit-"+UUID.randomUUID();
+        String request="{\"username\":\""+username+"\",\"password\":\"incorrecta\"}";
+        for(int attempt=0;attempt<5;attempt++)
+            mvc.perform(post("/api/v1/dev-auth/login").contentType(MediaType.APPLICATION_JSON).content(request))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isUnauthorized());
+        mvc.perform(post("/api/v1/dev-auth/login").contentType(MediaType.APPLICATION_JSON).content(request))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isTooManyRequests())
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Retry-After","900"))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.code").value("DEMO_LOGIN_RATE_LIMITED"))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.message").value("Demasiados intentos. Reintentá en 15 minutos"));
+    }
+
+    @Test void successfulDemoLoginResetsTheFailureWindow() {
+        authenticate();
+        String username="rate-reset-"+UUID.randomUUID();
+        demoAuth.create(new DemoAuthController.CreateUserRequest(username,"clave-segura","Rate reset",DemoRole.RENTAS,null));
+        var request=new DemoAuthController.LoginRequest(username,"clave-segura");
+        for(int attempt=0;attempt<5;attempt++)
+            assertThatThrownBy(()->demoAuthService.login(new DemoAuthController.LoginRequest(username,"incorrecta"),"127.0.0.1"))
+                .isInstanceOf(BusinessException.class);
+        assertThat(demoAuthService.login(request,"127.0.0.1").user().username()).isEqualTo(username);
+        for(int attempt=0;attempt<5;attempt++)
+            assertThatThrownBy(()->demoAuthService.login(new DemoAuthController.LoginRequest(username,"incorrecta"),"127.0.0.1"))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("code","INVALID_CREDENTIALS");
+        assertThatThrownBy(()->demoAuthService.login(new DemoAuthController.LoginRequest(username,"incorrecta"),"127.0.0.1"))
+            .isInstanceOf(BusinessException.class)
+            .hasFieldOrPropertyWithValue("code","DEMO_LOGIN_RATE_LIMITED");
+    }
+
+    @Test void demoLoginRateLimitIsAtomicUnderConcurrentFailures() throws Exception {
+        String key=DemoAuthService.hashToken("concurrent-rate-limit:"+UUID.randomUUID());
+        ExecutorService pool=Executors.newFixedThreadPool(12);
+        try {
+            List<Callable<Boolean>> attempts=java.util.stream.IntStream.range(0,24)
+                .<Callable<Boolean>>mapToObj(ignored->()->demoLoginAttempts.recordFailure(key)).toList();
+            long allowed=pool.invokeAll(attempts).stream().filter(future->{try{return future.get();}catch(Exception ex){throw new RuntimeException(ex);}}).count();
+            assertThat(allowed).isEqualTo(5);
+        } finally {pool.shutdownNow();}
+        demoLoginAttempts.reset(key);
+        assertThat(demoLoginAttempts.recordFailure(key)).isTrue();
+    }
+
+    @Test void demoLoginRateLimitExpiresAfterFifteenMinutesAndIsSharedAcrossInstances() {
+        String key=DemoAuthService.hashToken("expiring-rate-limit:"+UUID.randomUUID());
+        DemoLoginAttemptLimiter secondInstance=new PostgreSqlDemoLoginAttemptLimiter(jdbc);
+        assertThat(demoLoginAttempts.recordFailure(key)).isTrue();
+        assertThat(secondInstance.recordFailure(key)).isTrue();
+        jdbc.update("UPDATE demo_login_attempt SET window_started_at=CURRENT_TIMESTAMP - INTERVAL '16 minutes' WHERE attempt_key_hash=?",key);
+        for(int attempt=0;attempt<5;attempt++) assertThat(secondInstance.recordFailure(key)).isTrue();
+        assertThat(demoLoginAttempts.recordFailure(key)).isFalse();
+        secondInstance.reset(key);
+    }
 
     @Test void m8OfficialEventsPersistOnPostgreSqlWithoutAssumingCitizenIdentity(){
         UUID benefitId=UUID.randomUUID(),citizenId=UUID.randomUUID(),applicationId=UUID.randomUUID(),programId=UUID.randomUUID();
@@ -342,8 +398,8 @@ class PostgreSqlIntegrationTest {
     }
 
     @Test void contextStartsAndFlywayAppliesEveryMigration(){
-        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(28);
-        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(27);
+        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(29);
+        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(28);
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='ticket_case'",String.class))
             .contains("public_id","correlation_id","last_source_event_id","last_external_updated_at","request_type","subcategory");
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='demo_user'",String.class))

@@ -47,6 +47,19 @@ describe("navegación por los módulos funcionales", () => {
     },
   );
 
+  it("muestra nombres de origen y conceptos comprensibles en Deudas", async () => {
+    await loginAs(user, "jlopez");
+    await user.click(screen.getByRole("link", { name: /^deudas$/i }));
+
+    const rows = await screen.findAllByRole("row");
+    const debtRow = rows.find((row) =>
+      row.textContent.includes("Tasa de servicios generales") &&
+      row.textContent.includes("Obligación externa"),
+    );
+    expect(debtRow).toBeDefined();
+    expect(debtRow.textContent).not.toContain("EXTERNAL_OBLIGATION:1");
+  });
+
   it("registra un pago y lo imputa a la deuda seleccionada", async () => {
     await loginAs(user, "mrivas");
     await user.click(screen.getByRole("link", { name: /pagos/i }));

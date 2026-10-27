@@ -59,7 +59,7 @@ export default function ExencionesPage() {
     },
     {
       key: "hasSocialBenefit",
-      header: "Beneficio M8",
+      header: "Beneficio social",
       render: (row) =>
         row.hasSocialBenefit ? (
           <StatusBadge tone="success" label="Activo" />
@@ -144,7 +144,7 @@ export default function ExencionesPage() {
 
       <Card
         title="Solicitudes de exención"
-        description="Un beneficio social activo en M8 respalda la solicitud, pero no la aprueba automáticamente."
+        description="Un beneficio social activo puede respaldar la solicitud, pero no la aprueba automáticamente."
         actions={null}
       >
         <FilterBar
@@ -635,7 +635,7 @@ function ResolveExemptionModal({ exemption, citizenName, onClose, onDone }) {
 
       {(detail?.hasSocialBenefit ?? exemption.hasSocialBenefit) && (
         <Alert variant="info" title="El ciudadano tiene un beneficio social activo">
-          M8 informó un beneficio vigente mediante socialBenefitUpdated. Verificá que el
+          El padrón de beneficios sociales informa una vigencia. Verificá que el
           porcentaje aprobado no se superponga con el descuento ya aplicado en la liquidación.
         </Alert>
       )}

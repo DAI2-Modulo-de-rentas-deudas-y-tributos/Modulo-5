@@ -8,7 +8,7 @@ import StatusBadge from "../../components/common/StatusBadge.jsx";
 import Alert from "../../components/ui/Alert.jsx";
 import useResource from "../../hooks/useResource.js";
 import { auditService } from "../../services/rentasService.js";
-import { MODULE_LABELS } from "../../config/etiquetasModulos.js";
+import { EVENT_LABELS, MODULE_LABELS } from "../../config/etiquetasModulos.js";
 import { formatDateTime } from "../../lib/format.js";
 
 const MODULE_OPTIONS = Object.entries(MODULE_LABELS).map(([value, label]) => ({ value, label }));
@@ -36,10 +36,7 @@ export default function IntegracionesPage() {
       header: "Evento",
       render: (row) => (
         <div className="flex flex-col">
-          <span className="font-medium text-neutral-800">{row.eventType}</span>
-          <span className="text-[12px] tabular-nums text-neutral-400">
-            {row.eventId.slice(0, 8)}…
-          </span>
+          <span className="font-medium text-neutral-800">{EVENT_LABELS[row.eventType] ?? "Evento de integración"}</span>
         </div>
       ),
     },
@@ -52,7 +49,7 @@ export default function IntegracionesPage() {
       key: "direction",
       header: "Sentido",
       render: (row) => (
-        <StatusBadge tone="neutral" label={row.direction === "IN" ? "Entrante" : "Saliente"} />
+        <StatusBadge tone="neutral" label={row.direction === "IN" || row.direction === "INBOUND" ? "Entrante" : "Saliente"} />
       ),
     },
     { key: "occurredAt", header: "Fecha", render: (row) => formatDateTime(row.occurredAt) },
@@ -65,7 +62,7 @@ export default function IntegracionesPage() {
       label="Auditoría"
       title="Integraciones"
       highlight="entre módulos"
-      description="Cada evento recibido o publicado, con su payload y lo que generó en Rentas."
+      description="Qué operación se recibió o registró, cuándo ocurrió y cuál fue su resultado."
       breadcrumb={[{ id: "integraciones", label: "Integraciones" }]}
       homePath="/auditor"
       homeLabel="Dashboard"
@@ -77,11 +74,12 @@ export default function IntegracionesPage() {
       )}
 
       <Alert variant="info" title="Idempotencia y reintentos">
-        Cada evento trae un <code>eventId</code> único: si llega dos veces, la segunda se
-        ignora. Los que fallan se reintentan tres veces y después van a la DLQ.
+        La recepción usa el <code>eventId</code> para evitar reprocesar duplicados. La
+        política de reintentos y la cola de errores pendientes de entrega todavía debe
+        acordarse con los equipos de integración.
       </Alert>
 
-      <Card title="Resultados" description="Hacé clic en un evento para ver su payload completo.">
+      <Card title="Resultados" description="Hacé clic en un evento para consultar el resumen y, si hace falta, sus datos técnicos.">
         <FilterBar
           searchValue={filters.eventType}
           searchPlaceholder="Tipo de evento…"

@@ -37,7 +37,7 @@ public class PhysicalRestartWorker {
         System.setProperty("spring.datasource.url", jdbcUrl);
         System.setProperty("spring.datasource.username", required("P4_DB_USER"));
         System.setProperty("spring.datasource.password", required("P4_DB_PASSWORD"));
-        System.setProperty("spring.flyway.locations", "classpath:db/migration,classpath:db/migration-postgresql");
+        System.setProperty("spring.flyway.locations", "classpath:db/migration,classpath:db/migration-postgresql,classpath:db/migration-demo");
         System.setProperty("server.address", "127.0.0.1");
         System.setProperty("server.port", "0");
         System.setProperty("rentas.broker-adapter", "local-log");

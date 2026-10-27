@@ -18,6 +18,7 @@ spring:
     locations:
       - classpath:db/migration
       - classpath:db/migration-postgresql
+      - classpath:db/migration-demo
   rabbitmq:
     host: ${CORE_RABBITMQ_HOST:localhost}
     port: ${CORE_RABBITMQ_PORT:5672}

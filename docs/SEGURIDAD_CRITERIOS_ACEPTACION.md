@@ -1,58 +1,136 @@
-# M5 Rentas — criterios de aceptación de seguridad
+# M5 Rentas — criterios verificables de seguridad
 
-Alcance: controles web/API y autenticación DEMO existentes, más límites aún pendientes de integración. `PASS` significa que la prueba citada se ejecutó efectivamente en esta rama. Backend compilado con `--release 17` usando JDK 21.0.12.1. La verificación completa ejecutó 434 tests, incluyendo PostgreSQL 17.11/Testcontainers; JaCoCo: líneas 91,61%, instrucciones 90,32%, ramas 65,51%.
+`PASS` significa que hay una prueba local que ejercita el criterio. `BLOCKED`
+significa que el contrato o entorno requerido pertenece a otro equipo y no se
+simuló como si fuese real. Las pruebas locales no equivalen a interoperabilidad
+externa.
 
 ## Web/API
 
-1. **Documentación OpenAPI cerrada en producción — PASS.**
-   - Dado el perfil `prod` y una solicitud sin identidad autenticada, cuando se consultan `/v3/api-docs`, `/swagger-ui/index.html` o `/swagger-ui.html`, entonces se responde `401`; `/actuator/health` y `/api/v1/health` permanecen públicos (`200`).
-   - Evidencia: `backend/src/main/java/ar/gob/municipalidad/rentas/SecurityConfig.java`; `backend/src/test/java/ar/gob/municipalidad/rentas/ProductionSecurityDocumentationTests.java` (1 test ejecutado y aprobado).
-
-2. **OpenAPI accesible en TEST — PASS.**
-   - Dado el perfil `test`, cuando se consulta `/v3/api-docs` sin sesión, entonces responde `200` y conserva el esquema OpenAPI esperado.
-   - Evidencia: `backend/src/test/java/ar/gob/municipalidad/rentas/SecurityTests.java`, `healthAndOpenApiArePublic` (ejecutado y aprobado).
-
-3. **Autenticación no falsificable con cabeceras de desarrollo — PASS.**
-   - Dado un cliente sin sesión válida, cuando envía cabeceras `X-Dev-User`, `X-Dev-Roles` o `X-Dev-Taxpayer-Id`, entonces no obtiene identidad privilegiada y la API protegida responde `401`.
-   - Evidencia: `backend/src/test/java/ar/gob/municipalidad/rentas/SecurityTests.java`, `missingSessionDoesNotGrantPrivilegedIdentity` (ejecutado y aprobado).
-
-4. **Separación de permisos de escritura — PASS.**
-   - Dado un usuario `AUDITOR`, cuando intenta crear un concepto tributario, entonces recibe `403` y la escritura no se autoriza.
-   - Evidencia: `backend/src/main/java/ar/gob/municipalidad/rentas/ApiController.java`; `backend/src/test/java/ar/gob/municipalidad/rentas/SecurityTests.java`, `auditorCannotWrite` (ejecutado y aprobado).
-
-5. **Aislamiento BOLA/IDOR de recursos del contribuyente — PASS en rutas cubiertas.**
-   - Dado un `TAXPAYER` autenticado, cuando consulta resumen, deudas o boletas de otro contribuyente, entonces recibe `403`; sus recursos propios siguen disponibles.
-   - Evidencia: `SecurityConfig.java` (`CurrentIdentity.requireOwnership`), `QueryServices.java`, `BillingServices.java`, `DebtHistoryService.java`, `PlanWorkflowService.java` y `ApiController.java`; tests `taxpayerCannotReadAnotherTaxpayer`, `taxpayerCannotPageAnotherTaxpayersDebts` y `taxpayerCannotReadAnotherTaxpayersBill` en `SecurityTests.java` (ejecutados y aprobados). La auditoría de código además verificó ownership en pagos/recibos/imputaciones, saldos/aplicaciones, planes/cuotas/solicitudes, exenciones/documentos/historial y beneficios.
-
-6. **CORS limitado a orígenes configurados — PASS.**
-   - Dado un origen local permitido, cuando realiza preflight con las cabeceras de sesión e idempotencia, entonces recibe los encabezados CORS configurados; un origen externo no recibe permiso.
-   - Evidencia: `SecurityConfig.java`; `SecurityTests.corsAllowsConfiguredOriginAndRequiredHeaders` (ejecutado y aprobado).
+1. **OpenAPI limitado en producción — PASS.**
+   - **Dado** el perfil `prod` y una solicitud anónima.
+   - **Cuando** consulta la especificación OpenAPI o su interfaz.
+   - **Entonces** recibe `401`, mientras las rutas de health permanecen públicas.
+   - Evidencia: `ProductionSecurityDocumentationTests`.
+   Referencia: OWASP ASVS V4/V13.
+2. **Login DEMO con límites distribuidos — PASS local.**
+   - **Dado** el mismo usuario y dirección de origen.
+   - **Cuando** se realizan cinco intentos fallidos dentro de quince minutos, y luego un sexto.
+   - **Entonces** los cinco primeros reciben `INVALID_CREDENTIALS` y el sexto `429` con
+     `Retry-After: 900`; un login válido reinicia la ventana.
+   - El contador
+   usa una escritura atómica PostgreSQL y sobrevive a instancias que comparten
+   esa base. Evidencia: `PostgreSqlIntegrationTest.demoLoginRateLimitAllowsFiveFailuresThenReturnsRetryAfter`,
+   `demoLoginRateLimitIsAtomicUnderConcurrentFailures` y
+   `demoLoginRateLimitExpiresAfterFifteenMinutesAndIsSharedAcrossInstances`;
+   `successfulDemoLoginResetsTheFailureWindow` comprueba el reinicio tras login válido.
+   Aplica sólo a login/bootstrap DEMO; no se presenta como limitador general de
+   API ni como protección de autenticación Core. Referencia: OWASP ASVS V2/V6.
+3. **Sin identidad falsificada por cabeceras — PASS.**
+   - **Dado** un cliente sin sesión válida.
+   - **Cuando** envía cabeceras `X-Dev-*` a una ruta protegida.
+   - **Entonces** la API no le asigna identidad privilegiada.
+   - Evidencia: `SecurityTests.missingSessionDoesNotGrantPrivilegedIdentity`.
+   Referencia: OWASP API Security — Broken Authentication.
+4. **Separación de roles de escritura — PASS.**
+   - **Dado** un usuario autenticado con rol `AUDITOR`.
+   - **Cuando** intenta ejecutar una operación de escritura.
+   - **Entonces** la API la rechaza y no concede el permiso.
+   - Evidencia: `SecurityTests.auditorCannotWrite`.
+   Referencia: OWASP ASVS V8.
+5. **Ownership BOLA/IDOR — PASS en rutas probadas.**
+   - **Dado** un usuario `TAXPAYER` autenticado.
+   - **Cuando** consulta deudas, boletas o resumen pertenecientes a otra persona.
+   - **Entonces** la API deniega el acceso; los tests específicos también cubren pagos,
+     planes y exenciones.
+   - Evidencia: `SecurityTests` y tests de servicios/controllers por recurso.
+   Referencia: OWASP API Security — Broken Object Level Authorization.
+6. **CORS y correlación — PASS.**
+   - **Dado** un origen permitido y otro no configurado.
+   - **Cuando** ambos realizan una solicitud CORS y se genera una respuesta de error.
+   - **Entonces** sólo el origen permitido recibe CORS y el error conserva el identificador
+     de correlación.
+   - Evidencia: `SecurityTests.corsAllowsConfiguredOriginAndRequiredHeaders` y
+     `SecurityErrorContractTests`. Referencia: OWASP ASVS V13.
 
 ## Integración entre módulos
 
-7. **Autenticación entrante Core/M1 — PENDIENTE_EXTERNO.**
-   - Dado un token o identidad de servicio de Core/M1, cuando una llamada entre módulos llega a M5, entonces debe validarse contra el contrato y las credenciales oficialmente acordados, sin confiar en cabeceras de identidad arbitrarias.
-   - Evidencia actual: `SecurityConfig.java` sólo configura autenticación DEMO por sesión; no hay validación de JWT/Core en el alcance auditado. Falta contrato, material de confianza y prueba conjunta con el equipo externo; no se simuló ni se declara implementado.
-
-8. **Entrega saliente y ACK de Core — PENDIENTE_EXTERNO.**
-   - Dado un evento económico pendiente, cuando M5 lo publica hacia Core, entonces la autenticación del transporte, confirmación/ACK y estado de entrega deben reflejar el resultado real de Core, no sólo el registro local.
-   - Evidencia: la suite de estas pruebas de seguridad no ejercita una conexión Core/RabbitMQ; la aceptación depende del contrato y entorno de Core. No habilitado ni verificado aquí.
+7. **Autenticación entrante Core/M1 — BLOCKED externo.**
+   - **Dado** que aún no se entregaron el contrato de JWT, claves confiables ni reglas
+     de expiración/renovación.
+   - **Cuando** se solicita probar una identidad de servicio entrante.
+   - **Entonces** la interoperabilidad queda bloqueada y no se acepta una cabecera de
+     identidad arbitraria como sustituto.
+   - Evidencia: configuración actual de `SecurityConfig`; contrato y claves externas
+     no disponibles para la prueba.
+   Referencia: OWASP ASVS V2/V6.
+8. **Entrega saliente/ACK Core — BLOCKED externo.**
+   - **Dado** el Outbox y el RabbitMQ local aislado.
+   - **Cuando** el broker local confirma la publicación.
+   - **Entonces** sólo se registra `BROKER_CONFIRMED`; la aceptación de Core y el ACK
+     del consumidor siguen sin probarse hasta recibir routing, TLS/AMQPS, DLQ y entorno
+     del equipo M9.
+   - Evidencia: pruebas locales del Outbox; no hay sesión externa de Core.
+   - Referencia: OWASP ASVS V13/V14.
 
 ## Datos sensibles
 
-9. **Credenciales DEMO y sesiones protegidas — PASS.**
-   - Dado el bootstrap/login DEMO, cuando se almacena la contraseña o se persiste la sesión, entonces la contraseña queda con BCrypt, el token opaco aleatorio no se almacena en claro (se guarda SHA-256), y la respuesta no revela hashes ni secretos; las sesiones expiran y pueden revocarse.
-   - Evidencia: `backend/src/main/java/ar/gob/municipalidad/rentas/DemoAuthService.java`, `FullStackEntities.java`; `SecurityTests.loginIssuesRandomOpaqueTokenAndRejectsInactiveUser`, `expiredAndRevokedSessionsAreRejected` y `demoAuthHttpResponsesExposeOnlyTheDesignedLoginTokenAndNeverCredentialMaterial` (ejecutados y aprobados).
+9. **Contraseña/sesión DEMO — PASS local.**
+   - **Dado** un usuario DEMO que inicia sesión.
+   - **Cuando** se almacena su credencial y se crea una sesión.
+   - **Entonces** la contraseña queda protegida con BCrypt, el token opaco no se almacena
+     en claro y la sesión expira o puede revocarse.
+   - Evidencia:
+   `DemoAuthService`, `SecurityTests.loginIssuesRandomOpaqueTokenAndRejectsInactiveUser`,
+   `expiredAndRevokedSessionsAreRejected` y
+   `demoAuthHttpResponsesExposeOnlyTheDesignedLoginTokenAndNeverCredentialMaterial`.
+   Referencia: OWASP ASVS V6/V7.
+10. **Errores y logs sin datos sensibles — PASS local.**
+    - **Dado** un error inesperado durante una solicitud que contiene datos sensibles.
+    - **Cuando** la API devuelve el error y registra el diagnóstico.
+    - **Entonces** la respuesta no expone SQL, detalles internos ni stacktrace; el log usa
+      correlación y tipo de excepción sin DNI/CUIT/tarjeta.
+    - Evidencia: `BoundaryHardeningTests` y
+    `OperationalLogPrivacyTests`. Referencia: OWASP ASVS V7/V16.
 
-10. **Exclusión de autenticación y esquema DEMO en producción — PASS.**
-    - Dado el perfil `prod`, cuando inicia la aplicación aun si se intenta habilitar el modo DEMO, entonces el arranque debe rechazar esa configuración y los beans/tablas DEMO no deben existir.
-   - Evidencia: `ProductionSecurityBoundary` en `ProductionSchemaFilterProvider.java`, `application-prod.yml` y perfiles `@Profile("!prod")`; `ProductionSecurityBoundaryTest` y `ProductionSchemaIsolationTest` ejecutados y aprobados dentro de `clean verify`.
+## Límites y riesgos residuales
 
-## Evidencia de prueba de esta revisión
+- El limitador V29 sólo existe en `db/migration-demo`; `M8ProductionPostgreSqlMigrationTest`
+  ejecuta las ubicaciones reales de `application-prod.yml` y comprueba que V29 y
+  su tabla no estén presentes.
+- La ventana de bloqueo expira automáticamente; no es un bloqueo permanente de
+  cuenta. El origen usa `HttpServletRequest.remoteAddr`; no confía en
+  `X-Forwarded-For` sin un proxy confiable configurado.
+- Este límite protege login/bootstrap DEMO, no APIs costosas ni autenticación
+  Core/JWT.
+- El token DEMO permanece en `sessionStorage`; una vulnerabilidad XSS podría
+  leerlo. No se cambia a cookies/JWT sin diseño y pruebas de autenticación
+  acordados.
+- No se configuró CSP en el backend porque el HTML/JS puede servirse por Vite o
+  por hosting separado. Definir CSP en el proxy/hosting que entrega el frontend.
+- No se probó TLS/AMQPS contra Core; el entorno local no representa el firewall,
+  truststore ni credenciales de M9.
 
-- Comando: `./mvnw.cmd clean verify` desde `backend`; BUILD SUCCESS, 434 tests, 0 fallos, 0 errores, 0 omitidos. Testcontainers ejecutó PostgreSQL 17.11 y Flyway alcanzó V28.
-- `SecurityTests`: 15 tests; `ProductionSecurityDocumentationTests`: 1; pruebas de aislamiento y boundary de producción incluidas en la suite completa; todas aprobadas.
-- Cobertura JaCoCo final: líneas 91,61%; instrucciones 90,32%; ramas 65,51%; gate del proyecto aprobado.
-- Intentos fallidos de login DEMO: no se añadió un limitador en memoria. En una aplicación con varias instancias, ese control sería evadible y una política por cuenta improvisada puede bloquear usuarios o revelar existencia. Para cumplir el umbral de 5 en 15 minutos con garantía, hace falta un contador compartido/atómico, expiración y respuesta uniforme; se recomienda acordar backend compartido antes de implementarlo.
+## Evidencia de validación de esta rama
 
-Referencias: OWASP ASVS 5.0.0, especialmente V2 (validación/reglas de negocio), V4 (API y servicios web), V6 (autenticación), V7 (sesiones), V8 (autorización), V13 (configuración) y V16 (logs y errores). [Versión estable y descargas ASVS](https://asvs.owasp.org/downloads/).
+Validación local de esta rama, 27/10/2026:
+
+- Backend `./mvnw clean verify`: BUILD SUCCESS, 450 tests, 0 failures, 0 errors,
+  0 skipped; Testcontainers PostgreSQL 17.11 y RabbitMQ 4.3 PASS. JaCoCo: 90,80%
+  líneas, 90,01% instrucciones, 65,27% ramas; gate de líneas >=85% PASS.
+- Frontend `npm test`: 367/367 tests en 47 archivos PASS. `npm run test:coverage`:
+  líneas 85,75%, statements 83,90%, funciones 81,12%, branches 73,51%.
+- `npm run build`: PASS. `npm audit --audit-level=low`: 0 vulnerabilidades.
+- Playwright local: 31/31 aserciones PASS; véase el manifiesto y capturas en
+  `docs/integrations/evidence/m5-final-security-ux-core-20261027/`. La ejecución
+  usó PostgreSQL y RabbitMQ efímeros. No se conectó Core; la aceptación del broker
+  local no demuestra entrega ni ACK externo.
+
+El manifiesto Playwright identifica HEAD
+`9719007643e39c7b18266ae9c6c35426da1b8265`, pero no registra hash ni limpieza del
+árbol de trabajo. Por eso no se puede demostrar si la ejecución incluyó todos los
+cambios locales de UI que ahora contiene el PR; no se repitió tras la última ronda.
+Estos resultados son evidencia local histórica y no reutilizan métricas de PR #73.
+
+Referencias: OWASP ASVS 5.0.0, categorías V2, V4, V6, V7, V8, V13 y V16;
+[OWASP API Security Top 10](https://owasp.org/API-Security/).
