@@ -62,7 +62,7 @@ Resultados registrados para el código de esta etapa:
 - Flyway: V28 común; V29 sólo en los perfiles DEMO/test. El perfil productivo valida con V28 y excluye la migración DEMO.
 - Frontend: 367/367 tests en 47 archivos; build exitoso; `npm audit --audit-level=low` informó 0 vulnerabilidades.
 - Cobertura frontend local: líneas 85,75% (3.124/3.643), statements 83,90% (3.520/4.195), funciones 81,12% (1.350/1.664) y branches 73,51% (2.884/3.923). La meta académica de líneas >=85% se alcanza en esta ejecución.
-- E2E Playwright local: 31/31 aserciones PASS, con PostgreSQL y RabbitMQ efímeros; la evidencia de esta etapa está en `docs/integrations/evidence/m5-final-security-ux-core-20261027/`. Esta ejecución precede a las últimas adiciones de pruebas y documentación; la aplicación no cambió después. El broker confirmó publicación local; Core no fue conectado.
+- E2E Playwright local: 31/31 aserciones PASS, con PostgreSQL y RabbitMQ efímeros; la evidencia de esta etapa está en `docs/integrations/evidence/m5-final-security-ux-core-20261027/`. El manifiesto identifica HEAD `9719007643e39c7b18266ae9c6c35426da1b8265`, pero no registra hash/limpieza del árbol de trabajo; no puede probarse si incluyó todos los cambios locales de UI de este PR. No se repitió después de la última ronda. El broker confirmó publicación local; Core no fue conectado.
 - El bundle de frontend continúa sobre el umbral de advertencia de Vite (~1,12 MB sin comprimir).
 
 Las cifras son evidencia de ejecución local y no equivalen a interoperabilidad externa, despliegue ni aprobación académica.

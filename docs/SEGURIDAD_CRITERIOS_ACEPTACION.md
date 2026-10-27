@@ -126,9 +126,11 @@ Validación local de esta rama, 27/10/2026:
   usó PostgreSQL y RabbitMQ efímeros. No se conectó Core; la aceptación del broker
   local no demuestra entrega ni ACK externo.
 
-Las pruebas Playwright preceden a la última ampliación de tests y documentación;
-la aplicación no cambió después de esa ejecución. Estos resultados son locales y
-no reutilizan métricas históricas de PR #73.
+El manifiesto Playwright identifica HEAD
+`9719007643e39c7b18266ae9c6c35426da1b8265`, pero no registra hash ni limpieza del
+árbol de trabajo. Por eso no se puede demostrar si la ejecución incluyó todos los
+cambios locales de UI que ahora contiene el PR; no se repitió tras la última ronda.
+Estos resultados son evidencia local histórica y no reutilizan métricas de PR #73.
 
 Referencias: OWASP ASVS 5.0.0, categorías V2, V4, V6, V7, V8, V13 y V16;
 [OWASP API Security Top 10](https://owasp.org/API-Security/).
