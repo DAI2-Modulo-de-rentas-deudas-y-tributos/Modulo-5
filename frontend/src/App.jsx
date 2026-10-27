@@ -149,8 +149,10 @@ export default function App() {
               <Route path="planes/:requestId" element={<PlanDetallePage />} />
               <Route path="exenciones" element={<ExencionesAuditorPage />} />
               <Route path="exenciones/:requestId" element={<ExencionDetallePage />} />
-              <Route path="tickets" element={<TicketsAuditorPage />} />
-              <Route path="tickets/:ticketId" element={<TicketDetallePage />} />
+              <Route element={<ProtectedRoute permission="ticket.read" />}>
+                <Route path="tickets" element={<TicketsAuditorPage />} />
+                <Route path="tickets/:ticketId" element={<TicketDetallePage />} />
+              </Route>
               <Route path="integraciones" element={<IntegracionesPage />} />
               <Route path="integraciones/:eventId" element={<IntegracionDetallePage />} />
               <Route path="obligaciones-externas" element={<ObligacionesExternasPage />} />

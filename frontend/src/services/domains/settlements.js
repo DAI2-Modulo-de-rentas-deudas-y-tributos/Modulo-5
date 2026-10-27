@@ -95,4 +95,3 @@ export const liquidationRunService = {
     return request(`/api/v1/liquidation-runs/${id}/execute`, { method: "POST" });
   },
 };
-

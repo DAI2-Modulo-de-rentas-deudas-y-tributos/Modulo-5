@@ -193,4 +193,3 @@ export const cashierService = {
     return request(`/api/v1/cashier/daily-summary?${params}`);
   },
 };
-

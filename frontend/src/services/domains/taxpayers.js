@@ -10,4 +10,3 @@ export const taxpayerService = {
     return request(`/api/v1/taxpayers/${id}`);
   },
 };
-

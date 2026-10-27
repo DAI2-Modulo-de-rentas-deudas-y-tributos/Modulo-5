@@ -246,4 +246,3 @@ export const auditService = {
     throw new ApiError("El backend no expone el breakdown genérico de indicadores.", 501, null, "INDICATOR_BREAKDOWN_UNSUPPORTED");
   },
 };
-

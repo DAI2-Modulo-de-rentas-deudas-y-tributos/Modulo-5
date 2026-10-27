@@ -10,9 +10,11 @@ import Button from "../../components/common/Button.jsx";
 import Alert from "../../components/ui/Alert.jsx";
 import FormField from "../../components/ui/FormField.jsx";
 import useResource from "../../hooks/useResource.js";
+import useAsyncAction from "../../hooks/useAsyncAction.js";
 import { taxConfigService } from "../../services/rentasService.js";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { formatCurrency, formatDate, formatPercentage, labelFor } from "../../lib/format.js";
+import { validAmount, validDate } from "../../lib/validation.js";
 
 const CALCULATION_OPTIONS = [
   { value: "PORCENTAJE", label: "Porcentaje sobre la base" },
@@ -28,8 +30,7 @@ const CONCEPT_STATUS_OPTIONS = [
 /**
  * Configuración de tributos y su aprobación.
  *
- * Una versión nueva no rige hasta que el Supervisor la aprueba, y cuando rige la
- * anterior queda inactiva sin borrarse. Las liquidaciones ya emitidas conservan la
+ * Una versión nueva requiere aprobación y vigencia. Las liquidaciones ya emitidas conservan la
  * versión con la que se calcularon: un cambio de alícuota vale de acá en adelante.
  */
 export default function ConfiguracionTributosPage() {
@@ -170,8 +171,8 @@ export default function ConfiguracionTributosPage() {
 
 
       <Alert variant="info" title="Los cambios rigen hacia adelante">
-        Una versión nueva se aplica a las liquidaciones que se generen desde su
-        aprobación. Las ya emitidas conservan el cálculo con el que se hicieron; para
+        Una versión aprobada se aplica dentro de su período de vigencia. Las ya
+        emitidas conservan el cálculo con el que se hicieron; para
         corregirlas hay que usar un ajuste, no cambiar la configuración.
       </Alert>
 
@@ -254,7 +255,7 @@ export default function ConfiguracionTributosPage() {
                 ? {
                     variant: "success",
                     title: "Configuración aprobada",
-                    message: `La v${resultado.version} de ${resolviendo.code} rige desde ahora. La anterior quedó inactiva pero se conserva.`,
+                    message: `La v${resultado.version} de ${resolviendo.code} fue aprobada. Se aplicará dentro de su vigencia; las liquidaciones ya emitidas conservan su configuración.`,
                   }
                 : { variant: "success", title: "Configuración rechazada", message: resultado.reason },
             );
@@ -270,50 +271,64 @@ export default function ConfiguracionTributosPage() {
 
 /** Formulario de configuración: reglas y parámetros de cálculo de una versión nueva. */
 function ProposeVersionModal({ concept, requestedBy, onClose, onDone }) {
+  const current = concept.activeVersion ?? concept;
   const [form, setForm] = useState({
-    calculationType: concept.calculationType,
-    rate: concept.rate ?? "",
-    minimumAmount: concept.minimumAmount ?? "",
-    maximumAmount: concept.maximumAmount ?? "",
+    calculationType: current.calculationType ?? "PORCENTAJE",
+    rate: current.rate ?? "",
+    fixedAmount: current.fixedAmount ?? "",
+    minimumAmount: current.minimumAmount ?? "",
+    maximumAmount: current.maximumAmount ?? "",
     validFrom: "",
     validUntil: "",
     conceptStatus: concept.status,
     note: "",
   });
   const [error, setError] = useState(null);
-  const [submitting, setSubmitting] = useState(false);
+  const { run, pending: submitting } = useAsyncAction();
 
   const onChange = (event) => {
     const { name, value } = event.target;
     setForm((previous) => ({ ...previous, [name]: value }));
+    setError(null);
   };
 
   const guardar = async (enviar) => {
     setError(null);
-    // La vigencia se valida acá: mandar un rango imposible sólo gasta un viaje al backend.
-    if (!form.validFrom || !form.validUntil || form.validUntil <= form.validFrom) {
-      setError("La vigencia tiene que terminar después de empezar.");
+    if (!validDate(form.validFrom) || (form.validUntil && (!validDate(form.validUntil) || form.validUntil < form.validFrom))) {
+      setError("Indicá una fecha inicial válida. La vigencia tiene que terminar después de empezar o en la misma fecha; el final es opcional.");
       return;
     }
-    setSubmitting(true);
+    const amountField = form.calculationType === "FIJO" ? "fixedAmount" : form.calculationType === "PORCENTAJE" ? "rate" : null;
+    if (amountField && !validAmount(form[amountField], { allowZero: true })) {
+      setError("Ingresá un importe fijo o una alícuota mayor o igual a cero.");
+      return;
+    }
+    if (["minimumAmount", "maximumAmount"].some((field) => form[field] !== "" && !validAmount(form[field], { allowZero: true }))) {
+      setError("Los límites tienen que ser importes mayores o iguales a cero.");
+      return;
+    }
+    if (form.maximumAmount !== "" && Number(form.maximumAmount) < Number(form.minimumAmount || 0)) {
+      setError("El máximo no puede ser menor que el mínimo.");
+      return;
+    }
     try {
-      const version = await taxConfigService.proposeVersion({
-        code: concept.code,
-        ...form,
-        requestedBy,
-      });
-      if (enviar) {
-        await taxConfigService.submitForApproval({
+      await run(async () => {
+        const version = await taxConfigService.proposeVersion({
           code: concept.code,
-          version: version.version,
+          ...form,
           requestedBy,
         });
-      }
-      onDone(version, enviar);
+        if (enviar) {
+          await taxConfigService.submitForApproval({
+            code: concept.code,
+            version: version.version,
+            requestedBy,
+          });
+        }
+        onDone(version, enviar);
+      });
     } catch (caught) {
       setError(caught.message);
-    } finally {
-      setSubmitting(false);
     }
   };
 
@@ -363,6 +378,9 @@ function ProposeVersionModal({ concept, requestedBy, onClose, onDone }) {
             required
           />
         )}
+        {form.calculationType === "FIJO" && (
+          <FormField label="Importe fijo" name="fixedAmount" type="number" value={form.fixedAmount} onChange={onChange} min={0} step="0.01" required />
+        )}
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <FormField
@@ -396,9 +414,9 @@ function ProposeVersionModal({ concept, requestedBy, onClose, onDone }) {
             type="date"
             value={form.validUntil}
             onChange={onChange}
-            required
           />
         </div>
+        <p className="text-[12px] text-neutral-400">Vigente hasta es opcional. Dejá vacío si no tiene fecha final.</p>
 
         <FormField
           label="Estado del concepto"
@@ -511,6 +529,11 @@ function ResolveVersionModal({ propuesta, user, onClose, onDone }) {
               despues={propuesta.rate != null ? formatPercentage(propuesta.rate) : "—"}
             />
             <Comparacion
+              label="Importe fijo"
+              antes={anterior?.calculationType === "FIJO" ? formatCurrency(anterior.fixedAmount) : "—"}
+              despues={propuesta.calculationType === "FIJO" ? formatCurrency(propuesta.fixedAmount) : "—"}
+            />
+            <Comparacion
               label="Mínimo"
               antes={anterior?.minimumAmount != null ? formatCurrency(anterior.minimumAmount) : "—"}
               despues={
@@ -554,8 +577,8 @@ function ResolveVersionModal({ propuesta, user, onClose, onDone }) {
 
         {decision === "APPROVED" ? (
           <Alert variant="info" title="Qué pasa al aprobar">
-            La v{propuesta.version} pasa a regir y la anterior queda inactiva, sin borrarse.
-            Las liquidaciones ya emitidas no cambian.
+            La v{propuesta.version} queda aprobada para su período de vigencia.
+            El historial se conserva y las liquidaciones ya emitidas no cambian.
           </Alert>
         ) : (
           <FormField

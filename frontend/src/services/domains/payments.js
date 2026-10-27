@@ -141,8 +141,14 @@ export const paymentReversalService = {
 
 export const creditBalanceService = {
   async list({ taxpayerId = "", status = "" } = {}) {
-    const params = new URLSearchParams({ taxpayerId, status });
-    return request(`/api/v1/credit-balances?${params}`);
+    const params = new URLSearchParams({ size: "100" });
+    if (taxpayerId) params.set("taxpayerId", taxpayerId);
+    // ACTIVE es el filtro de la pantalla: el contrato distingue créditos nuevos y usados parcialmente.
+    if (status && status !== "ACTIVE") params.set("status", status);
+    const credits = await allPages(`/api/v1/credit-balances?${params}`);
+    return status === "ACTIVE"
+      ? credits.filter((credit) => ["AVAILABLE", "PARTIALLY_USED"].includes(credit.status) && Number(credit.remainingAmount) > 0)
+      : credits;
   },
 
   /** Deudas del contribuyente a las que se le puede aplicar el saldo. */
@@ -183,4 +189,3 @@ export const reconciliationService = {
     return request(`/api/v1/payment-reconciliations/items/${itemId}/resolve`, { method: "POST", body: { paymentId, reason } });
   },
 };
-

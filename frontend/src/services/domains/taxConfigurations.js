@@ -1,16 +1,19 @@
 import { ApiError, request } from "../apiClient.js";
+import { allPages } from "./shared.js";
+import { toDateInput } from "../../lib/format.js";
 
 export async function apiTaxConfigModel() {
   const [concepts, configurations] = await Promise.all([
-    request("/api/v1/tax-concepts?size=100"),
-    request("/api/v1/tax-configurations?size=100"),
+    allPages("/api/v1/tax-concepts"),
+    allPages("/api/v1/tax-configurations"),
   ]);
   return concepts.map((concept) => {
     const versions = configurations.filter((item) => item.taxConceptId === concept.id);
+    const today = toDateInput();
     return {
       ...concept,
       versions,
-      activeVersion: versions.find((item) => item.status === "ACTIVE") ?? null,
+      activeVersion: [...versions].sort((a, b) => b.version - a.version).find((item) => item.status === "ACTIVE" && (!item.validFrom || item.validFrom <= today) && (!item.validUntil || item.validUntil >= today)) ?? null,
       pendingVersion: versions.find((item) => item.status === "PENDING_APPROVAL") ?? null,
       draftVersion: versions.find((item) => item.status === "DRAFT") ?? null,
     };
@@ -58,6 +61,7 @@ export const taxConfigService = {
     code,
     calculationType,
     rate,
+    fixedAmount,
     minimumAmount,
     maximumAmount,
     validFrom,
@@ -75,9 +79,7 @@ export const taxConfigService = {
         taxConceptId: concept.id,
         calculationType,
         rate,
-        // El formulario no pide alícuota cuando el cálculo es fijo: el importe de
-        // esa forma de cálculo es el mínimo cargado, no cero.
-        fixedAmount: calculationType === "FIJO" ? rate || minimumAmount : 0,
+        fixedAmount: calculationType === "FIJO" ? fixedAmount ?? (rate || minimumAmount) : 0,
         minimumAmount,
         maximumAmount,
         partialPaymentAllowed: true,
@@ -92,7 +94,7 @@ export const taxConfigService = {
   async submitForApproval({ code, version, requestedBy }) {
     const concept = await apiConceptByCode(code);
     const versions = await request(`/api/v1/tax-configurations?conceptId=${concept.id}&size=100`);
-    const target = versions.find((item) => item.version === Number(version));
+    const target = versions.find((item) => item.taxConceptId === concept.id && item.version === Number(version));
     if (!target) throw new ApiError("Versión inexistente.", 404);
     return request(`/api/v1/tax-configurations/${target.id}/submit`, { method: "POST" });
   },
@@ -105,16 +107,15 @@ export const taxConfigService = {
   },
 
   /**
-   * ResolveTaxConfigVersionRequest. Al aprobar, la versión pasa a regir y la anterior
-   * queda inactiva: se conserva el historial completo, nunca se borra una versión.
+   * ResolveTaxConfigVersionRequest. La API aprueba la nueva versión y conserva las
+   * anteriores; el cálculo elige la última versión activa dentro de su vigencia.
    */
   async resolveVersion({ code, version, status, resolvedBy, resolverRole, reason }) {
     const concept = await apiConceptByCode(code);
     const versions = await request(`/api/v1/tax-configurations?conceptId=${concept.id}&size=100`);
-    const target = versions.find((item) => item.version === Number(version));
+    const target = versions.find((item) => item.taxConceptId === concept.id && item.version === Number(version));
     if (!target) throw new ApiError("Versión inexistente.", 404);
     const action = status === "REJECTED" ? "reject" : "approve";
     return request(`/api/v1/tax-configurations/${target.id}/${action}`, { method: "POST", body: action === "reject" ? { reason } : { observation: reason ?? null } });
   },
 };
-

@@ -59,4 +59,3 @@ export const ticketService = {
     throw new Error("Estado de ticket no soportado.");
   },
 };
-

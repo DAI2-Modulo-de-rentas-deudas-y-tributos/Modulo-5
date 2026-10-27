@@ -66,14 +66,21 @@ describe("configuración de tributos", () => {
   });
 
   it("el analista propone y queda esperando al Supervisor", async () => {
-    // El borrador recién creado tiene que aparecer en el listado para poder enviarlo.
+    let creada;
+    // El borrador aparece después del alta; antes no debe ocultar Nueva versión.
     instalarBackendFalso({
-      "POST /api/v1/tax-configurations": { id: 20, taxConceptId: 1, version: 4, status: "DRAFT" },
-      "GET /api/v1/tax-configurations": pagina([
+      "POST /api/v1/tax-configurations": ({ cuerpo }) => {
+        creada = { ...cuerpo, id: 20, version: 4, status: "DRAFT" };
+        return creada;
+      },
+      "GET /api/v1/tax-configurations": () => pagina([
         ...CONFIGURACIONES,
-        { id: 20, taxConceptId: 1, version: 4, status: "DRAFT", calculationType: "PERCENTAGE", rate: 2, validFrom: "2029-01-01", validUntil: "2029-12-31" },
+        ...(creada ? [creada] : []),
       ]),
-      "POST /api/v1/tax-configurations/{id}/submit": { id: 20, version: 4, status: "PENDING_APPROVAL" },
+      "POST /api/v1/tax-configurations/20/submit": () => {
+        creada = { ...creada, status: "PENDING_APPROVAL" };
+        return creada;
+      },
     });
     await entrar(user, "mrivas");
     await user.click((await screen.findAllByRole("button", { name: /nueva versión/i }))[0]);
@@ -91,10 +98,15 @@ describe("configuración de tributos", () => {
     // Figura como título de la bandeja y como estado de la fila.
     expect((await screen.findAllByText(/esperando aprobación/i)).length).toBeGreaterThan(1);
     // El analista no puede aprobarla.
-    expect(await screen.findByText(/espera al supervisor/i)).toBeDefined();
+    const pendiente = (await screen.findByText("v3 → 4")).closest("tr");
+    expect(within(pendiente).getByText(/espera al supervisor/i)).toBeDefined();
   });
 
-  it("el Supervisor ve la comparación y aprueba", async () => {
+  it("el Supervisor aprueba dentro de la vigencia sin prometer desactivar versiones anteriores", async () => {
+    const propuesta = CONFIGURACIONES.find((configuracion) => configuracion.id === 13);
+    const backend = instalarBackendFalso({
+      "POST /api/v1/tax-configurations/13/approve": { ...propuesta, status: "ACTIVE" },
+    });
     await entrar(user, "jlopez");
 
     await user.click(await screen.findByRole("button", { name: /evaluar/i }));
@@ -108,6 +120,11 @@ describe("configuración de tributos", () => {
     await user.click(within(dialog).getByRole("button", { name: /confirmar/i }));
 
     expect(await screen.findByText(/configuración aprobada/i)).toBeDefined();
-    expect(screen.getByText(/la anterior quedó inactiva pero se conserva/i)).toBeDefined();
+    expect(screen.getByText(/la v2 de ABL fue aprobada/i)).toBeDefined();
+    expect(screen.getByText(/se aplicará dentro de su vigencia/i)).toBeDefined();
+    expect(screen.getByText(/las liquidaciones ya emitidas conservan su configuración/i)).toBeDefined();
+    expect(screen.queryByText(/la anterior quedó inactiva/i)).toBeNull();
+    expect(backend.llamadas.filter((llamada) => llamada.metodo === "POST").map((llamada) => llamada.ruta))
+      .toEqual(["/api/v1/dev-auth/login", "/api/v1/tax-configurations/13/approve"]);
   });
 });

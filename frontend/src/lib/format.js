@@ -72,7 +72,7 @@ export const formatCompactCurrency = (value) =>
   validNumber(value) ? `$${compactFormatter.format(Number(value))}` : "—";
 
 export const formatPercentage = (value) =>
-  validNumber(value) ? `${Number(value).toFixed(0)}%` : "—";
+  validNumber(value) ? `${new Intl.NumberFormat("es-AR", { maximumFractionDigits: 8 }).format(Number(value))}%` : "—";
 
 /** Etiquetas en español de los estados que viajan en los eventos. */
 export const STATUS_LABELS = {

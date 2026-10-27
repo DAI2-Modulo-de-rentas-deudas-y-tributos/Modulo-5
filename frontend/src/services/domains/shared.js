@@ -39,4 +39,3 @@ export const paymentReceipt = (payment, taxpayer) => ({
   remainingBalance: null,
   settled: false,
 });
-

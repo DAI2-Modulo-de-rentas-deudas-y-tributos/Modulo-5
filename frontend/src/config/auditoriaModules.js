@@ -3,7 +3,7 @@
  *
  * El orden sigue el circuito que audita: primero el padrón y las reglas (contribuyentes
  * y conceptos), después la cadena económica (liquidación → deuda → pago → plan →
- * exención), y al final la trazabilidad (tickets, integraciones, auditoría e indicadores).
+ * exención), y al final la trazabilidad (integraciones, auditoría e indicadores).
  *
  * Todos los módulos son de consulta: el auditor observa y no modifica ninguna entidad.
  */
@@ -65,14 +65,6 @@ export const AUDITORIA_MODULES = [
     iconName: "ShieldCheck",
     description:
       "Solicitudes, porcentaje aprobado frente al solicitado y quién resolvió cada una.",
-  },
-  {
-    id: "tickets",
-    path: "/auditor/tickets",
-    label: "Tickets",
-    iconName: "MessageSquare",
-    description:
-      "Reclamos derivados por M2, su estado en Rentas y la entidad a la que refieren.",
   },
   {
     id: "integraciones",

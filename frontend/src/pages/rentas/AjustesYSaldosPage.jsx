@@ -38,7 +38,7 @@ export default function AjustesYSaldosPage() {
   const { data: ajustes, loading, error, reload } = useResource(adjLoader, []);
 
   const creditLoader = useCallback(() => creditBalanceService.list({ status: "ACTIVE" }), []);
-  const { data: saldos, reload: reloadSaldos } = useResource(creditLoader, []);
+  const { data: saldos, loading: loadingSaldos, error: errorSaldos, reload: reloadSaldos } = useResource(creditLoader, []);
 
   const refrescar = () => {
     reload();
@@ -166,6 +166,9 @@ export default function AjustesYSaldosPage() {
         description="Aplicar un saldo no genera un pago: usa un crédito que ya se registró."
       >
         <DataTable
+          loading={loadingSaldos}
+          error={errorSaldos}
+          onRetry={reloadSaldos}
           columns={creditColumns}
           rows={saldos ?? []}
           rowKey={(row) => row.id}

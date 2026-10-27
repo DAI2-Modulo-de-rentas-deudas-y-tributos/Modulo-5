@@ -3,11 +3,13 @@ import Spinner from "../components/ui/Spinner.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
 import { homePathForRole } from "../config/workspaces.js";
 import Alert from "../components/ui/Alert.jsx";
+import usePermission from "../hooks/usePermission.js";
 
 /** Bloquea el área de trabajo y, opcionalmente, restringe por rol. */
-export default function ProtectedRoute({ roles }) {
+export default function ProtectedRoute({ roles, permission }) {
   const { isAuthenticated, initializing, user, hasRole } = useAuth();
   const location = useLocation();
+  const { can } = usePermission();
 
   if (initializing) {
     return (
@@ -25,6 +27,10 @@ export default function ProtectedRoute({ roles }) {
   if (roles && !hasRole(...roles)) {
     if (roles.includes(user.role)) return <Alert variant="error" title="Sin permisos">Tu cuenta no tiene permisos para acceder a esta sección.</Alert>;
     return <Navigate to={homePathForRole(user.role)} replace />;
+  }
+
+  if (permission && !can(permission)) {
+    return <Alert variant="info" title="Consulta no habilitada">Tu perfil no tiene acceso a esta consulta.</Alert>;
   }
 
   return <Outlet />;

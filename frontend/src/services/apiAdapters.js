@@ -254,7 +254,7 @@ function adaptRow(path, row) {
   if (path.includes("/allocations")) return row;
   if (path.includes("/electronic-payments")) return row;
   if (path.includes("/payments") && !path.includes("payment-plans")) return { ...row, taxpayerName: row.taxpayerName ?? `Contribuyente #${row.taxpayerId}`, amountPaid: row.amount, method: row.paymentMethod, remainingBalance: row.unallocatedAmount, status: row.status === "REVERSED" ? "REVERSED" : Number(row.unallocatedAmount) > 0 ? "UNALLOCATED" : "REGISTERED", channel: PAYMENT_ORIGIN_FROM_API[row.origin] ?? row.origin };
-  if (path.includes("/credit-balances")) return { ...row, amount: row.availableAmount };
+  if (path.includes("/credit-balances")) return { ...row, amount: row.originalAmount, remainingAmount: row.availableAmount, generatedAt: row.createdAt };
   if (path.includes("/payment-plan-requests")) return { ...requestWorkflow(row), requestId: row.id, debtIds: row.debtIds ?? [], debts: row.debts ?? [], installments: row.requestedInstallments, totalDebt: row.totalDebt ?? row.totalDebtAtRequest, downPayment: row.downPayment ?? row.estimatedDownPayment ?? 0, totalAmount: row.estimatedTotalAmount, planId: row.paymentPlanId };
   if (path.includes("/refinancing-requests")) return { ...requestWorkflow(row), requestId: row.id, planId: row.originalPlanId, installments: row.requestedInstallments, outstandingAmount: row.outstandingPrincipalAtRequest, totalAmount: row.estimatedTotalAmount };
   if (pathname.endsWith("/payment-plans/simulations") || pathname.endsWith("/refinancing/simulations")) return row;

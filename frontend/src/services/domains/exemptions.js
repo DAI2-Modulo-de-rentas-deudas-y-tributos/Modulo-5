@@ -105,4 +105,3 @@ export const exemptionService = {
       : result;
   },
 };
-

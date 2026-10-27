@@ -142,9 +142,10 @@ function ExecutionModal({ reversal, onClose, onDone }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const loader = useCallback(() => paymentReversalService.detail(reversal.id), [reversal.id]);
-  const { data: detail, loading } = useResource(loader);
+  const { data: detail, loading, error: detailError, reload } = useResource(loader);
 
   const execute = async () => {
+    if (loading || detailError || detail?.status !== "APPROVED") return;
     setSubmitting(true);
     setError(null);
     try {
@@ -165,11 +166,18 @@ function ExecutionModal({ reversal, onClose, onDone }) {
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>Cancelar</Button>
-          <Button variant="danger" loading={submitting} disabled={loading} onClick={execute}>Confirmar ejecución</Button>
+          <Button variant="danger" loading={submitting} disabled={loading || Boolean(detailError) || detail?.status !== "APPROVED"} onClick={execute}>Confirmar ejecución</Button>
         </>
       }
     >
       {error && <Alert variant="error" title="No se pudo ejecutar">{error}</Alert>}
+      {loading && <p role="status">Cargando evidencia de la reversión…</p>}
+      {detailError && (
+        <Alert variant="error" title="No pudimos abrir la solicitud">
+          <p>{detailError}</p>
+          <Button variant="secondary" onClick={reload}>Reintentar</Button>
+        </Alert>
+      )}
       {detail && (
         <div className="flex flex-col gap-4">
           <Alert variant="error" title="Operación sensible">
