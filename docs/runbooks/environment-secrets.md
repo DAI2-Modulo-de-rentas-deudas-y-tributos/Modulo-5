@@ -19,7 +19,7 @@ Los secretos adicionales del backend se declaran como un mapa `NOMBRE=ARN` en
 
 ```hcl
 backend_secret_variables = {
-  RENTAS_DEMO_BOOTSTRAP_PASSWORD = "arn:aws:secretsmanager:sa-east-1:000000000000:secret:ejemplo"
+  RENTAS_DEMO_BOOTSTRAP_PASSWORD = "arn:aws:secretsmanager:us-east-2:000000000000:secret:ejemplo"
 }
 ```
 
@@ -59,7 +59,7 @@ no contienen credenciales:
 
 | Variable | DEV | TEST |
 | --- | --- | --- |
-| `AWS_REGION` | `sa-east-1` | `sa-east-1` |
+| `AWS_REGION` | `us-east-2` | `us-east-2` |
 | `AWS_ROLE_ARN` | rol OIDC de despliegue DEV | rol OIDC de despliegue TEST |
 | `TF_STATE_BUCKET` | bucket de estado compartido | bucket de estado compartido |
 | `TF_STATE_KEY` | `environments/dev/terraform.tfstate` | `environments/test/terraform.tfstate` |

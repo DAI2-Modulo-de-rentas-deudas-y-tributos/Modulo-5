@@ -12,13 +12,13 @@ variable "project_name" {
 variable "aws_region" {
   description = "Region AWS donde se desplegara el ambiente."
   type        = string
-  default     = "sa-east-1"
+  default     = "us-east-2"
 }
 
 variable "aws_account_id" {
   description = "Cuenta AWS autorizada para recibir el despliegue."
   type        = string
-  default     = "060712744495"
+  default     = "756663253996"
 
   validation {
     condition     = can(regex("^[0-9]{12}$", var.aws_account_id))

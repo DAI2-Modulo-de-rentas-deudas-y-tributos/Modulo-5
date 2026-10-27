@@ -50,7 +50,7 @@ jobs:
 
     env:
       AWS_REGION: ${{ vars.AWS_REGION }}
-      AWS_ACCOUNT_ID: "060712744495"
+      AWS_ACCOUNT_ID: "756663253996"
       ECR_REPOSITORY: "modulo-5-rentas-dev-backend"
       ECS_CLUSTER: "modulo-5-rentas-dev-cluster"
       ECS_SERVICE: "modulo-5-rentas-dev-backend"
@@ -70,7 +70,7 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
-          allowed-account-ids: "060712744495"
+          allowed-account-ids: "756663253996"
           mask-aws-account-id: true
           role-session-name: backend-dev-${{ github.run_id }}
 
