@@ -167,7 +167,7 @@ export const AUDIT_ACTION_LABELS = {
   EXEMPTION_REJECTED: "Exención rechazada",
   TICKET_STATUS_UPDATED: "Estado de ticket actualizado",
   EVENT_MOVED_TO_DLQ: "Evento enviado a DLQ",
-  DEBT_REPORTED_OVERDUE: "Deuda vencida informada a M8",
+  DEBT_REPORTED_OVERDUE: "Aviso de deuda vencida registrado",
   INSTALLMENT_PAYMENT_ALLOCATED: "Pago aplicado a cuota",
   LIQUIDATION_CREATED: "Liquidación creada",
   PAYMENT_ALLOCATED: "Pago imputado",

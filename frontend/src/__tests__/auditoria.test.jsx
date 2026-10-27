@@ -41,6 +41,8 @@ describe("área de auditoría", () => {
     expect(screen.getByRole("link", { name: /^indicadores$/i })).toBeDefined();
     // El aviso está en el panel y también en el pie del menú lateral.
     expect((await screen.findAllByText(/acceso de sólo lectura/i)).length).toBeGreaterThan(0);
+    expect(document.querySelector('footer a[href="#"]')).toBeNull();
+    expect(screen.getByText(/otros trámites municipales no están disponibles/i)).toBeDefined();
   });
 
   it.each(AUDITORIA_MODULES.map((module) => [module.label, module]))(
@@ -81,12 +83,13 @@ describe("área de auditoría", () => {
   it("sigue la cadena del evento en DLQ hasta su payload", async () => {
     await loginAsAuditor(user);
     await user.click(screen.getByRole("link", { name: /^integraciones$/i }));
+    expect(await screen.findByText(/política de reintentos y la cola de errores pendientes de entrega todavía debe acordarse/i)).toBeDefined();
 
-    await user.click(await screen.findByText("permitUpdate"));
+    await user.click(await screen.findByText("Habilitación actualizada"));
 
     expect(await screen.findByText(/el evento quedó en dlq/i)).toBeDefined();
-    // El payload se muestra tal como viajó en el envelope común.
-    // El payload se muestra formateado: se busca por contenido, no por texto exacto.
+    await user.click(screen.getByText("Detalles técnicos"));
+    // El payload queda disponible para auditoría, detrás del detalle técnico.
     expect(screen.getAllByText((_, node) => node?.textContent?.includes('"permitId": 250')).length).toBeGreaterThan(0);
   });
 

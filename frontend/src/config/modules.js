@@ -13,7 +13,7 @@ export const MODULES = [
     label: "Contribuyentes",
     iconName: "Users",
     description:
-      "Padrón local de ciudadanos y organizaciones replicado desde M1. Sólo lectura.",
+      "Padrón local de ciudadanos y organizaciones de sólo lectura, actualizado desde el sistema de identidad.",
     roles: ["PERSONAL", "SUPERVISOR"],
     countLabel: "registrados",
   },
@@ -63,7 +63,7 @@ export const MODULES = [
     label: "Pagos",
     iconName: "Banknote",
     description:
-      "Registrar, imputar y reversar pagos. Publica paymentRegistered / paymentReversed.",
+      "Registrar, imputar y reversar pagos con trazabilidad de su origen.",
     roles: ["PERSONAL", "SUPERVISOR"],
     countLabel: "del día",
   },
@@ -83,7 +83,7 @@ export const MODULES = [
     label: "Planes de pago",
     iconName: "CalendarClock",
     description:
-      "Solicitudes de plan, simulación de cuotas y resolución (GRANTED / REJECTED).",
+      "Solicitudes de financiación, simulación de cuotas y resolución del área responsable.",
     roles: ["PERSONAL", "SUPERVISOR"],
     countLabel: "pendientes",
   },
@@ -150,7 +150,7 @@ export const MODULES = [
     label: "Exenciones",
     iconName: "ShieldCheck",
     description:
-      "Solicitudes de exención, documentación respaldatoria y resolución hacia M8.",
+      "Solicitudes de exención, documentación respaldatoria y resolución del beneficio.",
     roles: ["PERSONAL", "SUPERVISOR"],
     countLabel: "pendientes",
   },
@@ -160,7 +160,7 @@ export const MODULES = [
     label: "Tickets",
     iconName: "MessageSquare",
     description:
-      "Reclamos derivados por M2. Cambio de estado vía updateTicketStatus.",
+      "Reclamos recibidos desde Atención Ciudadana y seguimiento de su resolución en Rentas.",
     roles: ["PERSONAL", "SUPERVISOR"],
     countLabel: "abiertos",
   },

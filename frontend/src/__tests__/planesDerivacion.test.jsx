@@ -35,7 +35,7 @@ describe("derivación de planes al supervisor", () => {
   it("aclara que la derivación no sale del módulo", async () => {
     await entrarAPlanes(user, "mrivas");
 
-    expect(await screen.findByText(/la derivación no sale de rentas/i)).toBeDefined();
+    expect(await screen.findByText(/la derivación es interna/i)).toBeDefined();
   });
 
   it("el analista ve el botón de derivar", async () => {

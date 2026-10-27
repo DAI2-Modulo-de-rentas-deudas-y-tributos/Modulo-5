@@ -37,8 +37,10 @@ contiene la variante contradictoria `occuredAt`, pendiente de confirmación.
 - Los adaptadores previos de M1, M7 y M8 siguen disponibles como referencia
   hasta que esos equipos confirmen sus formatos finales.
 
-La primera entrega **no conecta RabbitMQ**: el outbox todavía usa
-`local-log`. Los endpoints `/api/v1/dev/integrations/m2/core-events` y
+El adaptador `local-log` sigue siendo el predeterminado y no conecta con Core.
+Existe un adaptador RabbitMQ opt-in para brokers aislados/autorizados; sus
+publisher confirms sólo prueban aceptación del broker, no entrega a consumidores.
+Los endpoints `/api/v1/dev/integrations/m2/core-events` y
 `/api/v1/dev/integrations/m4/core-events` permiten simular recepción local
 con el modo de desarrollo habilitado; no están disponibles en producción.
 Los registros antiguos con `targetModule=PLATFORM` son internos y no se envían

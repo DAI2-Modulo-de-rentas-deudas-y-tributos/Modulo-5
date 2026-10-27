@@ -70,7 +70,7 @@ export default function ContribuyentesCajaPage() {
 
       <Alert variant="info" title="Consulta de sólo lectura">
         Desde caja se consultan los datos del contribuyente, pero no se editan: el padrón lo
-        administra el Módulo 1 y llega a Rentas por eventos.
+        administra el sistema de Ciudadanos y llega a Rentas mediante actualizaciones.
       </Alert>
 
       <Card title="Buscar contribuyente" description="Por DNI, CUIT o nombre.">

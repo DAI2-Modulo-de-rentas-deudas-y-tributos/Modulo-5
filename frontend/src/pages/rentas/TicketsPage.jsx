@@ -100,10 +100,8 @@ export default function TicketsPage() {
       )}
       {error && <Alert variant="error" title="No pudimos cargar los tickets">{error}</Alert>}
 
-      <Alert variant="info" title="El ticket es propiedad del Módulo 2">
-        Rentas no edita el reclamo: sólo informa el avance publicando{" "}
-        <code className="font-semibold">updateTicketStatus</code>. Los estados deben coincidir con
-        los que M2 tiene definidos.
+      <Alert variant="info" title="Atención Ciudadana administra el reclamo">
+        Rentas registra el avance localmente sin modificar el reclamo original. El envío de la actualización depende de la integración externa.
       </Alert>
 
       <Card title="Bandeja de reclamos" description="Priorizá los de prioridad alta y los que esperan respuesta.">
@@ -152,7 +150,7 @@ export default function TicketsPage() {
             setFeedback({
               variant: "success",
               title: "Estado actualizado",
-              message: `El ticket ${ticket.publicId ?? `#${ticket.ticketId}`} quedó en "${labelFor(ticket.status)}". La actualización se registró localmente; el envío a M2 sigue pendiente de integración.`,
+              message: `El ticket ${ticket.publicId ?? `#${ticket.ticketId}`} quedó en "${labelFor(ticket.status)}". La actualización se registró localmente; el envío al área de Atención Ciudadana sigue pendiente de integración.`,
             });
             reload();
           }}
@@ -208,7 +206,7 @@ function UpdateTicketModal({ ticket, citizenName, onClose, onDone }) {
             Cancelar
           </Button>
           <Button variant="primary" loading={submitting} onClick={onSubmit}>
-            Informar a M2
+            Informar a Atención Ciudadana
           </Button>
         </>
       }

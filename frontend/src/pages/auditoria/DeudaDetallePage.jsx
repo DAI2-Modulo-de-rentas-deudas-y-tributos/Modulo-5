@@ -68,7 +68,7 @@ export default function DeudaDetallePage() {
               { label: "Contribuyente", value: debt.taxpayerName },
               { label: "Concepto", value: debt.conceptName },
               { label: "Estado", value: <StatusBadge status={debt.status} /> },
-              { label: "Informada a M8", value: debt.reportedToM8 ? "Sí" : "No" },
+              { label: "Aviso a Desarrollo Social", value: debt.reportedToM8 ? "Registrado" : "Pendiente" },
               { label: "Fecha de generación", value: formatDate(debt.generatedAt) },
               { label: "Vencimiento", value: formatDate(debt.dueDate) },
               {

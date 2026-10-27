@@ -101,7 +101,7 @@ class ConfirmedIntegrationOutbox {
                 missingCorrelationReason(origin));
             return;
         }
-        enqueue("PaymentAllocation",allocation.id.toString(),core("paymentRegistered",payload,"Debt",debt.id.toString(),correlation.get()),key);
+        enqueue("PaymentAllocation",allocation.id.toString(),core("paymentRegistered",payload,"Debt",debt.id.toString(),correlation.get(),origin.sourceEventId().toString()),key);
         resolveEconomicDeferral("paymentRegistered","PaymentAllocation",allocation.id,debt.id);
     });}
     void paymentReversed(Payment payment,PaymentAllocation allocation,Debt debt,String reason){paymentReversed(payment,allocation,debt,reason,allocation.amount);}
@@ -116,7 +116,7 @@ class ConfirmedIntegrationOutbox {
                 correlation.isEmpty()?missingCorrelationReason(origin):"PAYMENT_EVENT_NOT_PREPARED");
             return;
         }
-        enqueue("PaymentAllocation",allocation.id.toString(),core("paymentReversed",payload,"Debt",debt.id.toString(),correlation.get()),key);
+        enqueue("PaymentAllocation",allocation.id.toString(),core("paymentReversed",payload,"Debt",debt.id.toString(),correlation.get(),origin.sourceEventId().toString()),key);
         resolveEconomicDeferral("paymentReversed","PaymentAllocation",allocation.id,debt.id);
     });}
     void debtSettled(Debt debt){debtSettled(debt,null);}
@@ -146,7 +146,7 @@ class ConfirmedIntegrationOutbox {
                 correlation.isEmpty()?missingCorrelationReason(origin.orElseThrow()):"PAYMENT_EVENT_NOT_PREPARED");
             return;
         }
-        enqueue("Debt",debt.id.toString(),core("debtSettled",payload,"Debt",debt.id.toString(),correlation.get()),key);
+        enqueue("Debt",debt.id.toString(),core("debtSettled",payload,"Debt",debt.id.toString(),correlation.get(),origin.orElseThrow().sourceEventId().toString()),key);
         resolveEconomicDeferral("debtSettled","Debt",debt.id,debt.id);
     }
 
@@ -195,7 +195,7 @@ class ConfirmedIntegrationOutbox {
     }
     OutboxEvent prepareDeferredEconomic(EconomicMovementSnapshot snapshot,String correlationId){
         var event=new ConfirmedOutboundEvents.CoreEnvelope<>(snapshot.eventId().toString(),snapshot.eventType(),"1.0",
-            snapshot.occurredAt(),"rentas",correlationId,null,snapshot.data());
+            snapshot.occurredAt(),"rentas",correlationId,snapshot.sourceEventId().toString(),snapshot.data());
         OutboxEvent entity=new OutboxEvent();entity.id=snapshot.eventId();entity.eventType=snapshot.eventType();entity.targetModule="CORE";
         entity.aggregateType=snapshot.aggregateType();entity.aggregateId=snapshot.aggregateId().toString();
         entity.idempotencyKey=snapshot.idempotencyKey();entity.payload=write(event);entity.status=OutboxStatus.PENDING;
@@ -259,7 +259,7 @@ class ConfirmedIntegrationOutbox {
         validateTicketStatus(updateType,publicMessage,internalMessage,details);
         OffsetDateTime at=OffsetDateTime.now();var data=new ConfirmedOutboundEvents.M2UpdateTicketStatusData(ticketId,updateType,publicMessage,internalMessage,null,details,List.of(),actor,at);
         var initial=core("updateTicketStatus",data,"TicketCase",ticketId);
-        return new ConfirmedOutboundEvents.CoreEnvelope<>(initial.eventId(),initial.eventType(),initial.eventVersion(),initial.occurredAt(),initial.sourceModule(),correlationId==null?UUID.randomUUID().toString():correlationId,causationId,data);
+        return new ConfirmedOutboundEvents.CoreEnvelope<>(initial.eventId(),initial.eventType(),initial.eventVersion(),initial.occurredAt(),initial.sourceModule(),correlationId==null?initial.correlationId():correlationId,causationId,data);
     }
     void ticketStatus(String ticketId,String aggregateId,String updateType,String publicMessage,String internalMessage,JsonNode details,UUID actorId,String correlationId,String causationId){
         var event=ticketStatus(ticketId,updateType,publicMessage,internalMessage,details,actorId,correlationId,causationId);
@@ -298,9 +298,9 @@ class ConfirmedIntegrationOutbox {
     ConfirmedOutboundEvents.CoreEnvelope<ConfirmedOutboundEvents.DebtSettledPayload> debtSettledEvent(ConfirmedOutboundEvents.DebtSettledPayload payload){return core("debtSettled",payload,"Debt",payload.debtId().toString());}
 
     private <T> void enqueueSimple(String type,T payload,String aggregate,Object aggregateId){var event=core(type,payload,aggregate,String.valueOf(aggregateId));enqueue(aggregate,String.valueOf(aggregateId),event);}
-    private <T> ConfirmedOutboundEvents.CoreEnvelope<T> core(String type,T data,String aggregate,String aggregateId){return new ConfirmedOutboundEvents.CoreEnvelope<>(UUID.randomUUID().toString(),type,"1.0",OffsetDateTime.now(),"rentas",correlation(aggregate,aggregateId),null,data);}
+    private <T> ConfirmedOutboundEvents.CoreEnvelope<T> core(String type,T data,String aggregate,String aggregateId){return new ConfirmedOutboundEvents.CoreEnvelope<>(UUID.randomUUID().toString(),type,"1.0",OffsetDateTime.now(),"rentas",UUID.randomUUID().toString(),null,data);}
     private <T> ConfirmedOutboundEvents.CoreEnvelope<T> core(String type,T data,String aggregate,String aggregateId,String correlationId){return new ConfirmedOutboundEvents.CoreEnvelope<>(UUID.randomUUID().toString(),type,"1.0",OffsetDateTime.now(),"rentas",correlationId,null,data);}
-    private String correlation(String aggregate,String id){return UUID.nameUUIDFromBytes((aggregate+":"+id).getBytes(StandardCharsets.UTF_8)).toString();}
+    private <T> ConfirmedOutboundEvents.CoreEnvelope<T> core(String type,T data,String aggregate,String aggregateId,String correlationId,String causationId){return new ConfirmedOutboundEvents.CoreEnvelope<>(UUID.randomUUID().toString(),type,"1.0",OffsetDateTime.now(),"rentas",correlationId,causationId,data);}
     private void enqueue(String aggregate,String aggregateId,ConfirmedOutboundEvents.CoreEnvelope<?> event){enqueue("CORE",aggregate,aggregateId,event);}
     private void enqueue(String target,String aggregate,String aggregateId,ConfirmedOutboundEvents.CoreEnvelope<?> event){enqueue(target,aggregate,aggregateId,event,null);}
     private void enqueue(String aggregate,String aggregateId,ConfirmedOutboundEvents.CoreEnvelope<?> event,String idempotencyKey){enqueue("CORE",aggregate,aggregateId,event,idempotencyKey);}
@@ -384,11 +384,20 @@ class ConfirmedIntegrationOutbox {
                 defer(type,"PaymentPlanRequest",request.id,"EXISTING_OUTBOX_CONTRACT_REVIEW_REQUIRED");return false;
             }
         }
-        var event=new ConfirmedOutboundEvents.CoreEnvelope<>(UUID.randomUUID().toString(),type,"1.0",OffsetDateTime.now(),"rentas",null,null,payload);
+        var previous=outbox.findFirstByEventTypeAndAggregateTypeAndAggregateIdOrderByCreatedAtAsc("paymentPlanRequested","PaymentPlanRequest",request.id.toString());
+        var event=previous.map(source->derivedPlanEvent(type,payload,source)).orElseGet(()->core(type,payload,"PaymentPlanRequest",request.id.toString()));
         OutboxEvent entity=new OutboxEvent();entity.id=UUID.fromString(event.eventId());entity.eventType=type;entity.targetModule="CORE";
         entity.aggregateType="PaymentPlanRequest";entity.aggregateId=request.id.toString();entity.idempotencyKey=key;
         entity.payload=write(event);entity.status=OutboxStatus.PENDING;entity.retryCount=0;entity.createdAt=OffsetDateTime.now();outbox.save(entity);
         return true;
+    }
+    private <T> ConfirmedOutboundEvents.CoreEnvelope<T> derivedPlanEvent(String type,T data,OutboxEvent source){
+        try{
+            String correlationId=json.readTree(source.payload).path("correlationId").asText(null);
+            if(correlationId==null)correlationId=UUID.randomUUID().toString();
+            CatalogService.require(isUuid(correlationId),"INVALID_OUTBOUND_CORRELATION","La solicitud de plan no tiene correlación válida");
+            return new ConfirmedOutboundEvents.CoreEnvelope<>(UUID.randomUUID().toString(),type,"1.0",OffsetDateTime.now(),"rentas",correlationId,source.id.toString(),data);
+        }catch(java.io.IOException ex){throw new IllegalStateException("No se pudo leer la correlación del evento de solicitud",ex);}
     }
     private boolean matchesPlanPayload(OutboxEvent event,JsonNode expected){
         try{return expected.equals(json.readTree(event.payload).path("data"));}

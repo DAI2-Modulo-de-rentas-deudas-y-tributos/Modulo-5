@@ -70,7 +70,7 @@ export const AUDITORIA_MODULES = [
     label: "Tickets",
     iconName: "MessageSquare",
     description:
-      "Reclamos derivados por M2, su estado en Rentas y la entidad a la que refieren.",
+      "Reclamos derivados por Atención Ciudadana, su estado en Rentas y la entidad relacionada.",
   },
   {
     id: "integraciones",
@@ -78,7 +78,7 @@ export const AUDITORIA_MODULES = [
     label: "Integraciones",
     iconName: "Webhook",
     description:
-      "Eventos intercambiados con los demás módulos, su payload y qué generaron en Rentas.",
+      "Operaciones recibidas o registradas entre áreas, sus resultados y los datos técnicos disponibles.",
   },
   {
     id: "obligaciones-externas",
