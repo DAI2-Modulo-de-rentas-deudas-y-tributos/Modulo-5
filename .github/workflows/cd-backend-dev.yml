@@ -1,49 +1,17 @@
 name: Deploy backend AWS DEV
 
+# DEV es efímero: este workflow solo se ejecuta como etapa de cd-dev.yml,
+# que levanta el ambiente, lo verifica y lo destruye.
 on:
-  push:
-    branches:
-      - develop
-    paths:
-      - backend/**
-      - .github/workflows/cd-backend-dev.yml
-  workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
   id-token: write
 
-concurrency:
-  group: backend-dev
-  cancel-in-progress: false
-
 jobs:
-  detect:
-    name: detect-backend
-    runs-on: ubuntu-latest
-    outputs:
-      ready: ${{ steps.backend.outputs.ready }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Detect backend application
-        id: backend
-        shell: bash
-        run: |
-          if [[ -f backend/pom.xml ]]; then
-            echo "ready=true" >> "${GITHUB_OUTPUT}"
-          else
-            echo "ready=false" >> "${GITHUB_OUTPUT}"
-            echo "Backend application is not present; deployment is skipped."
-          fi
-
   deploy:
     name: deploy-backend
-    needs: detect
-    if: needs.detect.outputs.ready == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     environment: dev

@@ -62,6 +62,9 @@ cd infra/environments/test && terraform init -backend=false && terraform validat
 
 - Ramas: desarrollo en `feature/*` → PR a `develop` (ambiente `dev`) → promoción del **mismo
   artefacto inmutable** a `test`. `main` es la versión estable.
+- `dev` es **efímero**: cada merge a `develop` lo levanta, corre un smoke test y lo destruye
+  (`cd-dev.yml`); solo se conserva su repositorio ECR, desde donde se promueve a `test`.
+  `test` es el único ambiente accesible de forma continua.
 - CI (`.github/workflows/ci.yml`): job `repository-structure` verifica que existan
   `frontend`, `backend`, `contracts`, `infra/environments/{dev,test}` y `docs/adr`; job
   `terraform` corre fmt/validate; `ci-required` es el check final obligatorio — si se agregan

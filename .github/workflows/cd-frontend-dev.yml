@@ -1,50 +1,17 @@
 name: Deploy frontend AWS DEV
 
+# DEV es efímero: este workflow solo se ejecuta como etapa de cd-dev.yml,
+# que levanta el ambiente, lo verifica y lo destruye.
 on:
-  push:
-    branches:
-      - develop
-    paths:
-      - frontend/**
-      - .github/workflows/cd-frontend-dev.yml
-      - amplify.yml
-  workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
   id-token: write
 
-concurrency:
-  group: frontend-dev
-  cancel-in-progress: false
-
 jobs:
-  detect:
-    name: detect-frontend
-    runs-on: ubuntu-latest
-    outputs:
-      ready: ${{ steps.frontend.outputs.ready }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Detect frontend application
-        id: frontend
-        shell: bash
-        run: |
-          if [[ -f frontend/package.json && -f frontend/package-lock.json ]]; then
-            echo "ready=true" >> "${GITHUB_OUTPUT}"
-          else
-            echo "ready=false" >> "${GITHUB_OUTPUT}"
-            echo "Frontend application is not present; deployment is skipped."
-          fi
-
   deploy:
     name: deploy-frontend
-    needs: detect
-    if: needs.detect.outputs.ready == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     environment: dev

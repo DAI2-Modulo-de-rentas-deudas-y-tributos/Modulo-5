@@ -46,35 +46,29 @@ los roles, no aplicar y revisar la inicializacion del backend.
 
 ## 4. Pull Request y despliegue
 
-Publicar la rama y crear un Pull Request hacia `develop`. Luego del merge, el
-workflow `Deploy AWS DEV infrastructure` crea los recursos. RDS y CloudFront
-pueden tardar varios minutos.
+Publicar la rama y crear un Pull Request hacia `develop`. DEV es **efímero**:
+luego del merge, el workflow `Deploy AWS DEV (efímero)` ejecuta en orden:
 
-Los outputs `api_base_url` y `frontend_url` se muestran en el resumen del job.
-La API respondera temporalmente con error de origen porque el servicio ECS
-permanece en cero hasta el primer despliegue real del backend.
+1. `terraform-apply-dev`: crea la infraestructura. RDS y CloudFront pueden
+   tardar varios minutos.
+2. `backend` y `frontend`: publican la imagen en ECR y el `dist` en Amplify.
+3. `smoke-test-dev`: health del backend a través de CloudFront (incluye la
+   conexión a PostgreSQL), frontend servido por Amplify y CORS entre ambos.
+4. `terraform-destroy-dev`: destruye todo, aunque una etapa anterior falle o
+   se cancele, para que DEV no quede generando costos.
 
-## 5. Verificaciones
+El ciclo completo tarda alrededor de 30 a 40 minutos. Las URLs y el resultado
+quedan en el resumen del run. Si se fusionan varios cambios seguidos, GitHub
+encola solo el último.
 
-```powershell
-aws ecs describe-services `
-  --cluster modulo-5-rentas-dev-cluster `
-  --services modulo-5-rentas-dev-backend `
-  --profile rentas-admin `
-  --region us-east-2 `
-  --query "services[0].[status,desiredCount,runningCount]"
+El repositorio ECR `modulo-5-rentas-dev-backend` no se destruye: sale del
+estado antes del destroy y el siguiente apply lo reimporta, porque
+`cd-backend-test` promueve a TEST las imágenes publicadas ahí.
 
-aws rds describe-db-instances `
-  --db-instance-identifier modulo-5-rentas-dev-postgres `
-  --profile rentas-admin `
-  --region us-east-2 `
-  --query "DBInstances[0].[DBInstanceStatus,PubliclyAccessible,EngineVersion]"
+## 5. Investigar una falla
 
-aws amplify list-apps `
-  --profile rentas-admin `
-  --region us-east-2 `
-  --query "apps[?name=='modulo-5-rentas-dev-frontend'].[appId,defaultDomain]"
-```
-
-El resultado esperado de ECS antes de recibir codigo es `ACTIVE, 0, 0`; RDS
-debe estar `available` y con `PubliclyAccessible` igual a `false`.
+Como el ambiente ya no existe cuando termina el run, la evidencia está en
+GitHub Actions: el resumen del smoke test y, si falla el backend, los eventos
+del servicio ECS que imprime `cd-backend-dev`. Para reproducir, volver a
+ejecutar `Deploy AWS DEV (efímero)` con `workflow_dispatch` o usar TEST, que es
+el ambiente accesible de forma continua.
