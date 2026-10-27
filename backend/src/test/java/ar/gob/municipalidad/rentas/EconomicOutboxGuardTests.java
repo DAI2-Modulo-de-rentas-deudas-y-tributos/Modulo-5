@@ -33,7 +33,7 @@ class EconomicOutboxGuardTests {
 
         new OutboxPublisher(repository,publisher).publishPending();
 
-        assertThat(event.status).isEqualTo(OutboxStatus.PUBLISHED);
+        assertThat(event.status).isEqualTo(OutboxStatus.LOCAL_ONLY);
         verify(publisher).publish(event.eventType,event.targetModule,event.payload);
     }
 
@@ -46,7 +46,7 @@ class EconomicOutboxGuardTests {
 
         new OutboxPublisher(repository,publisher).publishPending();
 
-        assertThat(event.status).isEqualTo(OutboxStatus.PUBLISHED);
+        assertThat(event.status).isEqualTo(OutboxStatus.LOCAL_ONLY);
         verifyNoInteractions(publisher);
     }
 
@@ -68,12 +68,12 @@ class EconomicOutboxGuardTests {
         OutboxEvent event=event("updatePaymentPlanStatus","1","1");
         event.payload="{\"data\":{\"requestId\":\"7d6a54b0-5e58-4ed2-a1d1-94bde2fc1d41\",\"citizenId\":\"1bc4530b-27da-4f48-b7b6-03d27a7f0be4\",\"status\":\"REJECTED\",\"reason\":\"No corresponde\"}}";
         when(repository.findPublishable(any(Pageable.class))).thenReturn(List.of(event));
-        when(repository.existsByEventTypeAndAggregateTypeAndAggregateIdAndStatus("paymentPlanRequested",event.aggregateType,event.aggregateId,OutboxStatus.PUBLISHED)).thenReturn(false,true);
+        when(repository.existsByEventTypeAndAggregateTypeAndAggregateIdAndStatusIn("paymentPlanRequested",event.aggregateType,event.aggregateId,List.of(OutboxStatus.PUBLISHED,OutboxStatus.LOCAL_ONLY,OutboxStatus.BROKER_CONFIRMED))).thenReturn(false,true);
 
         OutboxPublisher outboxPublisher=new OutboxPublisher(repository,publisher);outboxPublisher.publishPending();
         assertThat(event.status).isEqualTo(OutboxStatus.PENDING);
         outboxPublisher.publishPending();
-        assertThat(event.status).isEqualTo(OutboxStatus.PUBLISHED);
+        assertThat(event.status).isEqualTo(OutboxStatus.LOCAL_ONLY);
         verify(publisher).publish(event.eventType,event.targetModule,event.payload);
     }
 

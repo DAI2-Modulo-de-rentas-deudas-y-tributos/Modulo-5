@@ -163,10 +163,10 @@ class DeferredExemptionReconciliationTests {
 
         OutboxEvent request=fakeOutbox("exemptionRequested",aggregateId);
         publisher.publishPending();
-        assertThat(outbox.findById(request.id).orElseThrow().status).isEqualTo(OutboxStatus.PUBLISHED);
+        assertThat(outbox.findById(request.id).orElseThrow().status).isEqualTo(OutboxStatus.LOCAL_ONLY);
         assertThat(outbox.findById(resolution.id).orElseThrow().status).isEqualTo(OutboxStatus.PENDING);
         publisher.publishPending();
-        assertThat(outbox.findById(resolution.id).orElseThrow().status).isEqualTo(OutboxStatus.PUBLISHED);
+        assertThat(outbox.findById(resolution.id).orElseThrow().status).isEqualTo(OutboxStatus.LOCAL_ONLY);
     }
 
     @Test void controlledEndpointRejectsAnonymousAndOrdinaryStaff() throws Exception {

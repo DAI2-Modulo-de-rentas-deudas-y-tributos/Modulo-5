@@ -50,7 +50,7 @@ class OperationalLogPrivacyTests {
 
             assertSafeLogs(localLogs, "eventType=paymentRegistered", "targetModule=M4");
             assertSafeLogs(outboxLogs, "eventType=paymentRegistered", "targetModule=PLATFORM");
-            assertThat(event.status).isEqualTo(OutboxStatus.PUBLISHED);
+            assertThat(event.status).isEqualTo(OutboxStatus.LOCAL_ONLY);
             verifyNoInteractions(publisher);
             assertThat(event.payload).isEqualTo(PAYLOAD);
         } finally {
