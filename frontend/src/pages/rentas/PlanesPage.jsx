@@ -124,7 +124,7 @@ export default function PlanesPage() {
       label="Resoluciones"
       title="Planes de pago"
       highlight="solicitados"
-      description="Consolidación de deudas en cuotas. La resolución se comunica con updatePaymentPlanStatus."
+      description="Consolidación de deudas en cuotas. La resolución final informa si el plan fue otorgado o rechazado."
       breadcrumb={[{ id: "planes", label: "Planes de pago" }]}
     >
       {feedback && (
@@ -134,10 +134,8 @@ export default function PlanesPage() {
       )}
       {error && <Alert variant="error" title="No pudimos cargar las solicitudes">{error}</Alert>}
 
-      <Alert variant="info" title="La derivación no sale de Rentas">
-        Derivar al Supervisor es un estado interno del módulo. Hacia los demás módulos
-        sólo viaja la resolución final —otorgado o rechazado— en{" "}
-        <code className="font-semibold">updatePaymentPlanStatus</code>.
+      <Alert variant="info" title="La derivación es interna">
+        Derivar al Supervisor es un estado interno de Rentas. La decisión final se registra como otorgada o rechazada.
       </Alert>
 
       <Card

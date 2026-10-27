@@ -120,7 +120,7 @@ export default function PagosPage() {
 
       <Card
         title="Movimientos"
-        description="Cada pago imputado publica paymentRegistered hacia el módulo de origen."
+        description="Cada pago imputado queda registrado para informar al módulo de origen cuando la integración esté disponible."
         actions={
           <Button size="sm" variant="primary" onClick={() => setModal({ type: "register" })}>
             Registrar pago
@@ -187,8 +187,8 @@ export default function PagosPage() {
           onClose={closeModal}
           onDone={(payment) =>
             afterAction(
-              "Pago reversado",
-              `Se publicó paymentReversed por ${formatCurrency(payment.amountPaid)}.`,
+              "Solicitud de reversión registrada",
+              "La solicitud quedó registrada. Un Supervisor debe aprobarla antes de ejecutar la reversión.",
             )
           }
         />
@@ -470,7 +470,7 @@ function ReversePaymentModal({ payment, onClose, onDone }) {
     event.preventDefault();
     setError(null);
     if (!reason.trim()) {
-      setError("El motivo de la reversión es obligatorio: viaja en el evento paymentReversed.");
+      setError("El motivo de la solicitud de reversión es obligatorio.");
       return;
     }
     setSubmitting(true);
@@ -500,12 +500,10 @@ function ReversePaymentModal({ payment, onClose, onDone }) {
         </>
       }
     >
-      {error && <Alert variant="error" title="No se pudo reversar">{error}</Alert>}
+      {error && <Alert variant="error" title="No se pudo registrar la solicitud">{error}</Alert>}
 
-      <Alert variant="info" title="La operación notifica al módulo de origen">
-        Se publicará <code className="font-semibold">paymentReversed</code> con originType{" "}
-        <code className="font-semibold">{payment.originType}</code>
-        {payment.originId ? ` y originId ${payment.originId}` : ""}.
+      <Alert variant="info" title="La reversión requiere aprobación">
+        El origen de la operación y el motivo quedarán registrados en la solicitud.
       </Alert>
 
       <form onSubmit={onSubmit} noValidate>

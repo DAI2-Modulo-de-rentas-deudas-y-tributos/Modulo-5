@@ -350,7 +350,7 @@ export function ChargeStep({ context, cashier, onCharged, onCancel }) {
       )}
 
       {taxpayer.status === "BLOCKED" && (
-        <Alert variant="info" title="Contribuyente bloqueado en M1">
+        <Alert variant="info" title="Contribuyente con bloqueo informado">
           El bloqueo no impide cobrar: la deuda se puede cancelar igual en ventanilla.
         </Alert>
       )}

@@ -202,7 +202,7 @@ export default function GeneracionMasivaModal({ conceptOptions = [], onClose, on
           />
           <p className="-mt-3 text-[12px] text-neutral-400">
             Se aplica a todos los contribuyentes alcanzados. El descuento por beneficio
-            social de M8 se calcula después, uno por uno.
+            social se calcula después para cada contribuyente.
           </p>
           <FormField
             label="Alcance"

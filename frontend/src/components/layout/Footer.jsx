@@ -32,24 +32,9 @@ function Footer({ areaName, areaEmail }) {
             </div>
           </div>
 
-          {/* Link columns */}
-          <div className="flex gap-14">
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-neutral-400 mb-3">
-                Trámites
-              </p>
-              <ul className="flex flex-col gap-2">
-                {["Iniciar Reclamo", "Consultar Ticket", "Habilitaciones", "Turnos Online"].map(
-                  (label) => (
-                    <li key={label}>
-                      <a href="#" className="link-hover text-[12px] text-neutral-500 hover:text-[#0F2C59] transition-colors">
-                        {label}
-                      </a>
-                    </li>
-                  )
-                )}
-              </ul>
-            </div>
+          <div className="max-w-xs text-[12px] text-neutral-400">
+            <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.15em]">Otros trámites</p>
+            <p>Los accesos a otros trámites municipales no están disponibles desde este portal.</p>
           </div>
         </div>
 
@@ -60,7 +45,7 @@ function Footer({ areaName, areaEmail }) {
           </p>
           <div className="flex items-center gap-1">
             <div className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-            <span className="text-[10px] text-neutral-300">Todos los servicios operativos</span>
+            <span className="text-[10px] text-neutral-300">Portal de gestión municipal</span>
           </div>
         </div>
       </div>

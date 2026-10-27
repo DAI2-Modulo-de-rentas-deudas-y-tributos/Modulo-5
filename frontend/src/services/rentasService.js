@@ -1183,9 +1183,10 @@ export const cashierService = {
  * puede modificar ninguna entidad. No hay una sola operación de escritura acá.
  */
 export const auditService = {
-  /** Panel del auditor: volumen de la jornada, desvíos y actividad reciente. */
+  /** Actividad reciente para el panel de sólo lectura del auditor. */
   async dashboard() {
-    return request("/api/v1/audit/dashboard");
+    const page = await request("/api/v1/audit?page=0&size=10&sort=occurredAt,desc");
+    return page.content ?? [];
   },
 
   // ------------------------------------------------------------ Contribuyentes
@@ -1668,7 +1669,7 @@ export const dashboardService = {
       planes: specific.pendingPlanRequests ?? 0,
       exenciones: specific.pendingExemptions ?? 0,
       tickets: specific.openTickets ?? 0,
-      unallocatedPayments: specific.unallocatedPaymentAmount ?? 0,
+      unallocatedPaymentAmount: specific.unallocatedPaymentAmount ?? 0,
       recentActivity: specific.recentOperations ?? [],
     } : {};
     return {
