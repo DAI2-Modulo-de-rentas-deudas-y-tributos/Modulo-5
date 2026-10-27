@@ -1,11 +1,19 @@
-name: Deploy AWS DEV infrastructure
+name: Deploy AWS DEV (efímero)
 
+# DEV no queda prendido: cada merge a develop levanta el ambiente, despliega
+# backend y frontend, corre un smoke test y destruye todo, falle o no.
+# El ambiente accesible de forma continua es TEST.
 on:
   push:
     branches:
       - develop
     paths:
       - .github/workflows/cd-dev.yml
+      - .github/workflows/cd-backend-dev.yml
+      - .github/workflows/cd-frontend-dev.yml
+      - amplify.yml
+      - backend/**
+      - frontend/**
       - infra/environments/dev/**
       - infra/modules/network/**
       - infra/modules/security/**
@@ -20,11 +28,16 @@ permissions:
   id-token: write
 
 concurrency:
-  group: terraform-dev
+  group: dev-ephemeral
   cancel-in-progress: false
 
+env:
+  # cd-backend-test promueve las imágenes desde este repositorio, así que no se
+  # destruye: sale del estado antes del destroy y el siguiente apply lo reimporta.
+  DEV_ECR_REPOSITORY: modulo-5-rentas-dev-backend
+
 jobs:
-  deploy:
+  infra:
     name: terraform-apply-dev
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -82,18 +95,216 @@ jobs:
       - name: Validate
         run: terraform validate -no-color
 
+      - name: Re-import preserved ECR repository
+        run: |
+          set -euo pipefail
+          state=$(terraform state list)
+          if grep -qx 'module.ecs.aws_ecr_repository.backend' <<< "${state}"; then
+            echo "El repositorio ECR ya está en el estado."
+          elif aws ecr describe-repositories --repository-names "${DEV_ECR_REPOSITORY}" > /dev/null 2>&1; then
+            terraform import -input=false -lock-timeout=5m \
+              module.ecs.aws_ecr_repository.backend "${DEV_ECR_REPOSITORY}"
+            terraform import -input=false -lock-timeout=5m \
+              module.ecs.aws_ecr_lifecycle_policy.backend "${DEV_ECR_REPOSITORY}"
+          else
+            echo "El repositorio ECR no existe todavía; Terraform lo crea."
+          fi
+
       - name: Plan
         run: terraform plan -input=false -lock-timeout=5m -no-color -out=dev.tfplan
 
       - name: Apply
         run: terraform apply -input=false -lock-timeout=5m -auto-approve dev.tfplan
 
-      - name: Publish deployment summary
+  backend:
+    name: backend
+    needs: infra
+    uses: ./.github/workflows/cd-backend-dev.yml
+
+  frontend:
+    name: frontend
+    needs: infra
+    uses: ./.github/workflows/cd-frontend-dev.yml
+
+  verify:
+    name: smoke-test-dev
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: dev
+
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AMPLIFY_APP_NAME: "modulo-5-rentas-dev-frontend"
+      AMPLIFY_BRANCH: "develop"
+
+    steps:
+      - name: Configure temporary AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: "756663253996"
+          mask-aws-account-id: true
+          role-session-name: smoke-dev-${{ github.run_id }}
+
+      - name: Resolve DEV URLs
+        id: urls
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_id=$(aws amplify list-apps \
+            --query "apps[?name=='${AMPLIFY_APP_NAME}'].appId | [0]" \
+            --output text)
+          if [[ -z "${app_id}" || "${app_id}" == "None" ]]; then
+            echo "Amplify app ${AMPLIFY_APP_NAME} was not found."
+            exit 1
+          fi
+          read -r default_domain api_base_url <<< "$(aws amplify get-app \
+            --app-id "${app_id}" \
+            --query '[app.defaultDomain, app.environmentVariables.VITE_API_BASE_URL]' \
+            --output text)"
+          echo "frontend=https://${AMPLIFY_BRANCH}.${default_domain}" >> "${GITHUB_OUTPUT}"
+          echo "api=${api_base_url%/}" >> "${GITHUB_OUTPUT}"
+
+      - name: Backend health through CloudFront
+        shell: bash
+        env:
+          API_BASE_URL: ${{ steps.urls.outputs.api }}
+        run: |
+          set -euo pipefail
+          # El estado agregado de /actuator/health incluye la conexión a PostgreSQL.
+          for attempt in {1..20}; do
+            status=$(curl --silent --max-time 10 "${API_BASE_URL}/actuator/health" | jq -r '.status // empty' || true)
+            if [[ "${status}" == "UP" ]]; then
+              echo "Backend UP (intento ${attempt})."
+              exit 0
+            fi
+            echo "Intento ${attempt}: estado '${status:-sin respuesta}'."
+            sleep 15
+          done
+          echo "El backend no respondió UP a través de CloudFront."
+          exit 1
+
+      - name: Frontend is served by Amplify
+        shell: bash
+        env:
+          FRONTEND_URL: ${{ steps.urls.outputs.frontend }}
+        run: |
+          set -euo pipefail
+          html=$(curl --fail --silent --show-error --max-time 15 "${FRONTEND_URL}")
+          grep -q 'id="root"' <<< "${html}" || {
+            echo "Amplify respondió, pero no con la aplicación React."
+            exit 1
+          }
+
+      - name: Frontend origin is allowed by the API (CORS)
+        shell: bash
+        env:
+          API_BASE_URL: ${{ steps.urls.outputs.api }}
+          FRONTEND_URL: ${{ steps.urls.outputs.frontend }}
+        run: |
+          set -euo pipefail
+          headers=$(curl --silent --show-error --max-time 10 --output /dev/null --dump-header - \
+            --request OPTIONS "${API_BASE_URL}/api/v1/dev-auth/login" \
+            --header "Origin: ${FRONTEND_URL}" \
+            --header "Access-Control-Request-Method: POST" \
+            --header "Access-Control-Request-Headers: content-type")
+          grep -qix "access-control-allow-origin: ${FRONTEND_URL}" <<< "${headers//$'\r'/}" || {
+            echo "La API no habilita CORS para ${FRONTEND_URL}."
+            exit 1
+          }
+
+      - name: Publish verification summary
+        if: always()
+        shell: bash
         run: |
           {
-            echo "### AWS DEV actualizado"
+            echo "### Smoke test DEV"
             echo
+            echo "- Frontend: ${{ steps.urls.outputs.frontend }}"
+            echo "- API: ${{ steps.urls.outputs.api }}"
+            echo "- Resultado: ${{ job.status }}"
+            echo
+            echo "El ambiente se destruye a continuación."
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  destroy:
+    name: terraform-destroy-dev
+    needs: [infra, backend, frontend, verify]
+    # Se destruye siempre, aunque falle o se cancele una etapa anterior,
+    # para que DEV nunca quede generando costos.
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: dev
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: infra/environments/dev
+
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      TF_STATE_KEY: ${{ vars.TF_STATE_KEY }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.15.8"
+          terraform_wrapper: false
+
+      - name: Configure temporary AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: "756663253996"
+          mask-aws-account-id: true
+          role-session-name: terraform-destroy-dev-${{ github.run_id }}
+
+      - name: Initialize remote state
+        run: |
+          terraform init -input=false -reconfigure \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${TF_STATE_KEY}" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="encrypt=true" \
+            -backend-config="use_lockfile=true"
+
+      - name: Preserve ECR repository for TEST promotion
+        run: |
+          set -euo pipefail
+          state=$(terraform state list)
+          for address in \
+            module.ecs.aws_ecr_lifecycle_policy.backend \
+            module.ecs.aws_ecr_repository.backend; do
+            if grep -qx "${address}" <<< "${state}"; then
+              terraform state rm -lock-timeout=5m "${address}"
+            fi
+          done
+
+      - name: Destroy
+        run: terraform destroy -input=false -lock-timeout=5m -auto-approve -no-color
+
+      - name: Publish destroy summary
+        if: always()
+        run: |
+          {
+            echo "### AWS DEV destruido"
+            echo
+            echo "Se conserva el repositorio ECR \`${DEV_ECR_REPOSITORY}\` para promover imágenes a TEST."
+            echo "Recursos que quedan en el estado:"
             echo '```text'
-            terraform output -no-color
+            terraform state list || true
             echo '```'
           } >> "${GITHUB_STEP_SUMMARY}"

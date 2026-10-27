@@ -33,11 +33,12 @@ seguridad solo permite entrada desde el ALB. RDS nunca es publico.
 
 1. Un Pull Request ejecuta CI y valida Terraform sin conectarse a AWS.
 2. Si cambia IAM, el bootstrap se aplica localmente con `rentas-admin`.
-3. Al fusionar infraestructura en `develop`, `cd-dev.yml` ejecuta Terraform.
-4. Cuando exista backend, `cd-backend-dev.yml` publica una imagen inmutable en
-   ECR y actualiza el servicio ECS.
-5. Cuando exista frontend, `cd-frontend-dev.yml` construye `dist` y lo publica
-   mediante la API de despliegue manual de Amplify.
+3. Al fusionar en `develop`, `cd-dev.yml` levanta un DEV **efímero**: aplica
+   Terraform, despliega backend (`cd-backend-dev.yml`, imagen inmutable en ECR)
+   y frontend (`cd-frontend-dev.yml`, `dist` en Amplify), corre un smoke test y
+   destruye el ambiente, falle o no la verificación.
+4. Solo sobrevive el repositorio ECR de DEV, porque TEST promueve las imágenes
+   desde ahí. El ambiente accesible de forma continua es TEST.
 
 Los workflows DEV asumen el rol DEV y las promociones manuales asumen el rol TEST mediante OIDC. No existen access keys de AWS, tokens personales de GitHub ni claves de base de datos en GitHub.
 
