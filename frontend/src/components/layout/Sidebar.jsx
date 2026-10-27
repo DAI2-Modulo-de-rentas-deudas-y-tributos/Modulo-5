@@ -60,7 +60,7 @@ export default function Sidebar({
           </button>
         </div>
 
-        <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 pb-6">
+        <nav className="sidebar-nav flex flex-1 flex-col gap-1 overflow-y-auto px-3 pb-6">
           <NavLink to={homePath} end className={linkClasses} onClick={onClose}>
             {/* El inicio del área se distingue por su rótulo, no por un glifo. El hueco
                 deja los rótulos alineados con los de los módulos, que sí llevan icono. */}
