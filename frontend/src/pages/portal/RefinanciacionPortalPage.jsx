@@ -40,12 +40,12 @@ function RefinancingList() {
       homePath="/portal"
       homeLabel="Inicio"
     >
-      {error && <Alert variant="error" title="No pudimos cargar tus planes">{error}</Alert>}
+
       <Alert variant="info" title="El plan actual sigue vigente">
         Enviar la solicitud no reemplaza el plan. La refinanciación recién entra en vigencia cuando Rentas la aprueba.
       </Alert>
       <Card title="Planes elegibles">
-        <DataTable
+        <DataTable error={error}
           columns={[
             { key: "id", header: "Plan", render: (row) => `#${row.id}` },
             { key: "installments", header: "Cuotas", align: "right" },

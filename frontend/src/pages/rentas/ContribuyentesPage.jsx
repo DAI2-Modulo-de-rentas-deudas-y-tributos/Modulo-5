@@ -1,3 +1,4 @@
+import { formatCuit } from "../../lib/format.js";
 import { useCallback, useState } from "react";
 import { Link } from "react-router-dom";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
@@ -47,7 +48,7 @@ export default function ContribuyentesPage() {
         </span>
       ),
     },
-    { key: "cuit", header: "CUIT/CUIL", render: (row) => <span className="tabular-nums">{row.cuit}</span> },
+    { key: "cuit", header: "CUIT/CUIL", render: (row) => <span className="tabular-nums">{formatCuit(row.cuit)}</span> },
     { key: "status", header: "Situación", render: (row) => <StatusBadge status={row.status} /> },
     {
       key: "benefit",
@@ -69,7 +70,7 @@ export default function ContribuyentesPage() {
       description="Ciudadanos y organizaciones replicados desde el Módulo 1. Consulta de sólo lectura."
       breadcrumb={[{ id: "contribuyentes", label: "Contribuyentes" }]}
     >
-      {error && <Alert variant="error" title="No pudimos cargar el padrón">{error}</Alert>}
+
 
       <Alert variant="info" title="Datos administrados por el Módulo 1">
         Altas, bajas y modificaciones se resuelven en Ciudadanos. Rentas mantiene una réplica
@@ -98,7 +99,7 @@ export default function ContribuyentesPage() {
           onFilterChange={(_, value) => setType(value)}
         />
 
-        <DataTable
+        <DataTable error={error}
           columns={columns}
           rows={taxpayers ?? []}
           rowKey={(row) => row.id}
@@ -143,7 +144,7 @@ function TaxpayerDetailModal({ taxpayer, onClose }) {
       }
     >
       <dl className="grid grid-cols-2 gap-3">
-        <Field label="CUIT/CUIL" value={taxpayer.cuit} />
+        <Field label="CUIT/CUIL" value={formatCuit(taxpayer.cuit)} />
         <Field label="Situación" value={labelFor(taxpayer.status)} />
         <Field label="Referencia externa" value={taxpayer.externalRef} />
         <Field

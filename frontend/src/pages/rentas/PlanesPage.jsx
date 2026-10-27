@@ -1,3 +1,4 @@
+import { hasWorkspaceRole } from "../../config/permissions.js";
 import { useCallback, useState } from "react";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
 import Card from "../../components/common/Card.jsx";
@@ -95,7 +96,7 @@ export default function PlanesPage() {
 
         const derivada = row.internalStatus === "PENDING_SUPERVISOR";
         // Derivada sólo la resuelve el Supervisor: el resto ve por qué no puede.
-        if (derivada && user.role !== "SUPERVISOR") {
+        if (derivada && !hasWorkspaceRole(user, "SUPERVISOR")) {
           return (
             <span className="text-[12px] text-neutral-400">
               Esperando al Supervisor
@@ -105,7 +106,7 @@ export default function PlanesPage() {
 
         return (
           <div className="flex justify-end gap-2">
-            {!derivada && user.role !== "SUPERVISOR" && (
+            {!derivada && !hasWorkspaceRole(user, "SUPERVISOR") && (
               <Button size="sm" variant="secondary" onClick={() => setEscalating(row)}>
                 Derivar
               </Button>
@@ -132,7 +133,7 @@ export default function PlanesPage() {
           {feedback.message}
         </Alert>
       )}
-      {error && <Alert variant="error" title="No pudimos cargar las solicitudes">{error}</Alert>}
+
 
       <Alert variant="info" title="La derivación no sale de Rentas">
         Derivar al Supervisor es un estado interno del módulo. Hacia los demás módulos
@@ -170,7 +171,7 @@ export default function PlanesPage() {
           }
         />
 
-        <DataTable
+        <DataTable error={error} onRetry={reload}
           columns={columns}
           rows={plans ?? []}
           rowKey={(row) => row.requestId}
@@ -312,7 +313,7 @@ function ResolvePlanModal({ plan, taxpayerName, onClose, onDone }) {
   const configurationLoader = useCallback(() => paymentPlanConfigurationService.list(), []);
   const { data: configurations } = useResource(configurationLoader, []);
   const standard = (configurations ?? []).find((item) => item.active) ?? configurations?.[0];
-  const exceptional = user.role === "SUPERVISOR" && plan.internalStatus === "PENDING_SUPERVISOR";
+  const exceptional = hasWorkspaceRole(user, "SUPERVISOR") && plan.internalStatus === "PENDING_SUPERVISOR";
 
   const financedAmount = Number(plan.estimatedFinancedAmount ?? plan.totalDebt - plan.downPayment);
   const interestAmount = Number(plan.estimatedInterest ?? 0);

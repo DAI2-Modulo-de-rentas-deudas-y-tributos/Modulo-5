@@ -1,3 +1,4 @@
+import { serverFieldErrors } from "../../lib/validation.js";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
 import Card from "../../components/common/Card.jsx";
@@ -91,11 +92,7 @@ export default function PlanesPortalPage() {
           {feedback.message}
         </Alert>
       )}
-      {error && (
-        <Alert variant="error" title="No pudimos cargar tus planes">
-          {error}
-        </Alert>
-      )}
+
 
       <Card
         title="Mis solicitudes"
@@ -106,7 +103,7 @@ export default function PlanesPortalPage() {
           </Button>
         }
       >
-        <DataTable
+        <DataTable error={error} onRetry={reload}
           columns={columns}
           rows={plans ?? []}
           rowKey={(row) => row.requestId}
@@ -234,6 +231,7 @@ function RequestPlanModal({ taxpayerId, onClose, onDone }) {
         }),
       );
     } catch (caught) {
+      setErrors((previous) => ({ ...previous, ...serverFieldErrors(caught, {}, undefined) }));
       setSubmitError(caught.message);
     } finally {
       setSubmitting(false);

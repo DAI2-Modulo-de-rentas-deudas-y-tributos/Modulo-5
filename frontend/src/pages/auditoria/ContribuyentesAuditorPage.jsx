@@ -1,3 +1,4 @@
+import { formatCuit } from "../../lib/format.js";
 import { useCallback, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
@@ -5,7 +6,7 @@ import Card from "../../components/common/Card.jsx";
 import DataTable from "../../components/common/DataTable.jsx";
 import FilterBar from "../../components/common/FilterBar.jsx";
 import StatusBadge from "../../components/common/StatusBadge.jsx";
-import Alert from "../../components/ui/Alert.jsx";
+
 import useResource from "../../hooks/useResource.js";
 import { auditService } from "../../services/rentasService.js";
 import { formatCurrency, labelFor } from "../../lib/format.js";
@@ -37,7 +38,7 @@ export default function ContribuyentesAuditorPage() {
           <span>
             {row.documentType} {row.document}
           </span>
-          <span className="text-[12px] text-neutral-400">{row.cuit}</span>
+          <span className="text-[12px] text-neutral-400">{formatCuit(row.cuit)}</span>
         </div>
       ),
     },
@@ -70,11 +71,7 @@ export default function ContribuyentesAuditorPage() {
       homePath="/auditor"
       homeLabel="Dashboard"
     >
-      {error && (
-        <Alert variant="error" title="No pudimos cargar el padrón">
-          {error}
-        </Alert>
-      )}
+
 
       <Card title="Buscar contribuyente" description="Por DNI, CUIT, nombre o identificador local.">
         <FilterBar
@@ -82,7 +79,7 @@ export default function ContribuyentesAuditorPage() {
           searchPlaceholder="DNI / CUIT / Nombre…"
           onSearchChange={setQuery}
         />
-        <DataTable
+        <DataTable error={error}
           columns={columns}
           rows={taxpayers ?? []}
           rowKey={(row) => row.id}

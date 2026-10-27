@@ -1,3 +1,4 @@
+import { serverFieldErrors, validAmount, validPeriod } from "../../lib/validation.js";
 import { useState } from "react";
 import { CircleCheckBig } from "lucide-react";
 import Modal from "../../components/common/Modal.jsx";
@@ -48,8 +49,8 @@ export default function GeneracionMasivaModal({ conceptOptions = [], onClose, on
   const validate = () => {
     const found = {};
     if (!form.conceptCode) found.conceptCode = "Elegí el concepto a liquidar.";
-    if (!/^\d{4}-\d{2}$/.test(form.period)) found.period = "Usá el formato AAAA-MM (por ejemplo 2026-09).";
-    if (!(Number(form.baseAmount) > 0)) found.baseAmount = "La base imponible tiene que ser mayor a cero.";
+    if (!validPeriod(form.period)) found.period = "Usá el formato AAAA-MM (por ejemplo 2026-09).";
+    if (!(validAmount(form.baseAmount, { allowZero: true }))) found.baseAmount = "La base imponible tiene que ser mayor a cero.";
     if (!form.dueDate) found.dueDate = "Indicá el vencimiento.";
     setErrors(found);
     return Object.keys(found).length === 0;
@@ -63,6 +64,7 @@ export default function GeneracionMasivaModal({ conceptOptions = [], onClose, on
     try {
       setPreview(await settlementService.previewBatch(form));
     } catch (caught) {
+      setErrors((previous) => ({ ...previous, ...serverFieldErrors(caught, {}, Object.keys(form)) }));
       setSubmitError(caught.message);
     } finally {
       setWorking(false);
@@ -75,6 +77,7 @@ export default function GeneracionMasivaModal({ conceptOptions = [], onClose, on
     try {
       setResult(await settlementService.submitBatch(preview));
     } catch (caught) {
+      setErrors((previous) => ({ ...previous, ...serverFieldErrors(caught, {}, Object.keys(form)) }));
       setSubmitError(caught.message);
     } finally {
       setWorking(false);

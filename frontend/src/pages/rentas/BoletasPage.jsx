@@ -1,3 +1,4 @@
+import Can from "../../components/common/Can.jsx";
 import { useCallback, useState } from "react";
 import BillPdfDownload from "../../components/documentos/BillPdfDownload.jsx";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
@@ -69,15 +70,15 @@ export default function BoletasPage() {
           {feedback.message}
         </Alert>
       )}
-      {error && <Alert variant="error" title="No pudimos cargar las boletas">{error}</Alert>}
+
 
       <Card
         title="Boletas emitidas"
         description="Consultá y descargá las boletas emitidas."
         actions={
-          <Button size="sm" variant="primary" onClick={() => setIssuing(true)}>
+          <Can permission="bill.issue"><Button size="sm" variant="primary" onClick={() => setIssuing(true)}>
             Emitir boleta
-          </Button>
+          </Button></Can>
         }
       >
         <FilterBar
@@ -95,7 +96,7 @@ export default function BoletasPage() {
           onFilterChange={(_, value) => setStatus(value)}
         />
 
-        <DataTable
+        <DataTable error={error} onRetry={reload}
           columns={columns}
           rows={bills ?? []}
           rowKey={(row) => row.id}

@@ -1,3 +1,4 @@
+import { formatCuit } from "../../lib/format.js";
 import { useCallback, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
@@ -184,7 +185,7 @@ export default function ContribuyenteDetallePage() {
     <ModuleShell
       label="Ventanilla"
       title={taxpayer.name}
-      description={`${labelFor(taxpayer.type)} · ${taxpayer.documentType} ${taxpayer.document} · CUIT ${taxpayer.cuit}`}
+      description={`${labelFor(taxpayer.type)} · ${taxpayer.documentType} ${taxpayer.document} · CUIT ${formatCuit(taxpayer.cuit)}`}
       breadcrumb={[
         { id: "contribuyentes", label: "Contribuyentes", path: "/caja/contribuyentes" },
         { id: "detalle", label: taxpayer.name },

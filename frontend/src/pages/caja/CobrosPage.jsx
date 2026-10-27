@@ -1,3 +1,5 @@
+import { serverFieldErrors } from "../../lib/validation.js";
+import { formatCuit } from "../../lib/format.js";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { ArrowLeft, CircleCheckBig, Printer, Search } from "lucide-react";
@@ -131,11 +133,7 @@ export default function CobrosPage() {
     >
       {step === 0 && (
         <>
-          {searchError && (
-            <Alert variant="error" title="No pudimos buscar">
-              {searchError}
-            </Alert>
-          )}
+
 
           <Card
             title="Buscar contribuyente o boleta"
@@ -168,7 +166,7 @@ export default function CobrosPage() {
             </form>
 
             {submitted.trim() ? (
-              <DataTable
+              <DataTable error={searchError}
                 columns={columns}
                 rows={results ?? []}
                 rowKey={(row) => `${row.kind}-${row.id}`}
@@ -314,6 +312,7 @@ export function ChargeStep({ context, cashier, onCharged, onCancel }) {
       intentKey.current = null;
       onCharged(payment);
     } catch (caught) {
+      setErrors((previous) => ({ ...previous, ...serverFieldErrors(caught, {}, undefined) }));
       setSubmitError(caught.message);
     } finally {
       requestInFlight.current = false;
@@ -323,7 +322,7 @@ export function ChargeStep({ context, cashier, onCharged, onCancel }) {
 
   return (
     <>
-      <Card title={taxpayer.name} description={`${taxpayer.documentType} ${taxpayer.document} · CUIT ${taxpayer.cuit}`}>
+      <Card title={taxpayer.name} description={`${taxpayer.documentType} ${taxpayer.document} · CUIT ${formatCuit(taxpayer.cuit)}`}>
         <div className="grid grid-cols-2 gap-4 px-5 py-4 sm:grid-cols-4">
           <Metric label="Situación" value={<StatusBadge status={taxpayer.status} />} />
           <Metric label={isInstallment ? "Cuotas a cobrar" : "Deudas pendientes"} value={totals.pendingCount} />

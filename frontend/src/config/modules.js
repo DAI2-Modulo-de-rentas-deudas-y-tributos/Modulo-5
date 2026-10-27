@@ -7,6 +7,8 @@
  * "SUPERVISOR" suma las resoluciones (planes, exenciones) y la bitácora de eventos.
  */
 export const MODULES = [
+  { id: "seguridad", path: "/rentas/seguridad", label: "Auditoría de seguridad", iconName: "ShieldCheck", roles: ["SUPERVISOR"], description: "Consulta de acciones registradas sobre las cuentas." },
+  { id: "eventos-salientes", path: "/rentas/eventos-salientes", label: "Eventos salientes", iconName: "Send", roles: ["SUPERVISOR"], description: "Estado de los envíos a otros módulos." },
   {
     id: "contribuyentes",
     path: "/rentas/contribuyentes",

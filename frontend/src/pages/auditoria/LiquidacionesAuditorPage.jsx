@@ -5,7 +5,7 @@ import Card from "../../components/common/Card.jsx";
 import DataTable from "../../components/common/DataTable.jsx";
 import FilterBar from "../../components/common/FilterBar.jsx";
 import StatusBadge from "../../components/common/StatusBadge.jsx";
-import Alert from "../../components/ui/Alert.jsx";
+
 import useResource from "../../hooks/useResource.js";
 import { auditService } from "../../services/rentasService.js";
 import useTaxConcepts from "../../hooks/useTaxConcepts.js";
@@ -64,11 +64,7 @@ export default function LiquidacionesAuditorPage() {
       homePath="/auditor"
       homeLabel="Dashboard"
     >
-      {error && (
-        <Alert variant="error" title="No pudimos cargar las liquidaciones">
-          {error}
-        </Alert>
-      )}
+
 
       <Card title="Resultados" description="Hacé clic en una liquidación para ver su cálculo y origen.">
         <FilterBar
@@ -92,7 +88,7 @@ export default function LiquidacionesAuditorPage() {
           values={filters}
           onFilterChange={onFilterChange}
         />
-        <DataTable
+        <DataTable error={error}
           columns={columns}
           rows={settlements ?? []}
           rowKey={(row) => row.id}

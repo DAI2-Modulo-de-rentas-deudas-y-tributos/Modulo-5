@@ -7,6 +7,9 @@ import AuditoriaLayout from "./components/layout/AuditoriaLayout.jsx";
 import PortalLayout from "./components/layout/PortalLayout.jsx";
 import { homePathForRole } from "./config/workspaces.js";
 import LoginPage from "./pages/LoginPage.jsx";
+import SessionTimeoutWarning from "./components/common/SessionTimeoutWarning.jsx";
+import SeguridadPage from "./pages/auditoria/SeguridadPage.jsx";
+import OutboxPage from "./pages/auditoria/OutboxPage.jsx";
 import DashboardPage from "./pages/DashboardPage.jsx";
 import NotFoundPage from "./pages/NotFoundPage.jsx";
 import ContribuyentesPage from "./pages/rentas/ContribuyentesPage.jsx";
@@ -79,6 +82,7 @@ export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
+        <SessionTimeoutWarning />
         <Routes>
           <Route path="/login" element={<LoginPage />} />
 
@@ -104,6 +108,8 @@ export default function App() {
 
               <Route element={<ProtectedRoute roles={["SUPERVISOR"]} />}>
                 <Route path="eventos" element={<EventosPage />} />
+                <Route path="seguridad" element={<SeguridadPage />} />
+                <Route path="eventos-salientes" element={<OutboxPage />} />
               </Route>
 
               <Route path="*" element={<NotFoundPage />} />
@@ -126,6 +132,8 @@ export default function App() {
           <Route element={<ProtectedRoute roles={["AUDITOR"]} />}>
             <Route path="/auditor" element={<AuditoriaLayout />}>
               <Route index element={<AuditorDashboardPage />} />
+              <Route path="seguridad" element={<SeguridadPage />} />
+              <Route path="eventos-salientes" element={<OutboxPage />} />
               <Route path="contribuyentes" element={<ContribuyentesAuditorPage />} />
               <Route path="contribuyentes/:taxpayerId" element={<ContribuyenteAuditorDetallePage />} />
               <Route path="conceptos" element={<ConceptosPage />} />

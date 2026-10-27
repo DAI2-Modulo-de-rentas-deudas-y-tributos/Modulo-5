@@ -1,5 +1,5 @@
-import Spinner from "../ui/Spinner.jsx";
 import EmptyState from "./EmptyState.jsx";
+import { ErrorState, LoadingState } from "./ResourceState.jsx";
 
 /**
  * Tabla de listados del back-office.
@@ -12,21 +12,20 @@ export default function DataTable({
   rows,
   rowKey,
   loading = false,
+  error = null,
+  onRetry,
   emptyTitle = "Sin resultados",
   emptyDescription,
   emptyIconName,
   onRowClick,
 }) {
   if (loading) {
-    return (
-      <div className="flex items-center justify-center gap-3 px-5 py-16">
-        <Spinner />
-        <span className="text-[13px] text-neutral-400">Cargando información…</span>
-      </div>
-    );
+    return <LoadingState />;
   }
 
-  if (rows.length === 0) {
+  if (error) return <ErrorState error={error} onRetry={onRetry} />;
+
+  if (!rows?.length) {
     return (
       <EmptyState
         iconName={emptyIconName}
@@ -57,7 +56,9 @@ export default function DataTable({
           {rows.map((row) => (
             <tr
               key={rowKey(row)}
-              onClick={onRowClick ? () => onRowClick(row) : undefined}
+              onClick={onRowClick ? (event) => {
+                if (!event.target.closest("button, a, input, select, textarea")) onRowClick(row);
+              } : undefined}
               className={`border-b border-neutral-100 last:border-0 transition-colors hover:bg-neutral-50/70 ${
                 onRowClick ? "cursor-pointer" : ""
               }`}

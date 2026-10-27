@@ -1,3 +1,4 @@
+import { hasWorkspaceRole } from "../../config/permissions.js";
 import { useCallback, useEffect, useState } from "react";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
 import Card from "../../components/common/Card.jsx";
@@ -128,7 +129,7 @@ export default function RefinanciacionPage() {
         if (row.status === "REJECTED") {
           return <span className="text-[12px] text-neutral-400">Por {row.resolvedBy}</span>;
         }
-        if (row.status === "UNDER_REVIEW" && user.role !== "SUPERVISOR") {
+        if (row.status === "UNDER_REVIEW" && !hasWorkspaceRole(user, "SUPERVISOR")) {
           return <span className="text-[12px] text-neutral-400">Esperando al Supervisor</span>;
         }
         return (
@@ -153,11 +154,7 @@ export default function RefinanciacionPage() {
           {feedback.message}
         </Alert>
       )}
-      {error && (
-        <Alert variant="error" title="No pudimos cargar los planes">
-          {error}
-        </Alert>
-      )}
+
 
       <Alert variant="info" title="El plan original no se elimina">
         Al aprobarse, el plan viejo pasa a <strong>Refinanciado</strong> y conserva sus
@@ -178,7 +175,7 @@ export default function RefinanciacionPage() {
           </Button>
         }
       >
-        <DataTable
+        <DataTable error={error} onRetry={reload}
           columns={planColumns}
           rows={plans ?? []}
           rowKey={(row) => row.planId}
@@ -397,7 +394,7 @@ function ResolveModal({ solicitud, taxpayerName, user, onClose, onDone }) {
   const [submitting, setSubmitting] = useState(false);
 
   const derivada = solicitud.status === "UNDER_REVIEW";
-  const puedeDerivar = !derivada && user.role !== "SUPERVISOR";
+  const puedeDerivar = !derivada && !hasWorkspaceRole(user, "SUPERVISOR");
 
   const onSubmit = async (event) => {
     event.preventDefault();

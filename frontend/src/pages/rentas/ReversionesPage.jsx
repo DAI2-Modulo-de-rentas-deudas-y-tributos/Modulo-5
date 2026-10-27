@@ -1,3 +1,4 @@
+import { hasWorkspaceRole } from "../../config/permissions.js";
 import { useCallback, useState } from "react";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
 import Card from "../../components/common/Card.jsx";
@@ -18,7 +19,7 @@ import { formatCurrency, formatDateTime, labelFor } from "../../lib/format.js";
 /** Bandeja del Supervisor: aprobar o rechazar una solicitud no ejecuta la reversión. */
 export default function ReversionesPage() {
   const { user } = useAuth();
-  const isSupervisor = user.role === "SUPERVISOR";
+  const isSupervisor = hasWorkspaceRole(user, "SUPERVISOR");
   const [filters, setFilters] = useState({ status: isSupervisor ? "PENDING_APPROVAL" : "APPROVED", from: "", to: "" });
   const [selected, setSelected] = useState(null);
   const [executing, setExecuting] = useState(null);
@@ -68,7 +69,7 @@ export default function ReversionesPage() {
       breadcrumb={[{ id: "reversiones", label: "Reversiones de pago" }]}
     >
       {feedback && <Alert variant="success" title="Solicitud resuelta" onDismiss={() => setFeedback(null)}>{feedback}</Alert>}
-      {error && <Alert variant="error" title="No pudimos cargar las solicitudes">{error}</Alert>}
+
 
       <Alert variant="info" title={isSupervisor ? "La aprobación no modifica el pago" : "La ejecución sí modifica el pago"}>
         {isSupervisor
@@ -95,7 +96,7 @@ export default function ReversionesPage() {
           values={filters}
           onFilterChange={(name, value) => setFilters((previous) => ({ ...previous, [name]: value }))}
         />
-        <DataTable
+        <DataTable error={error} onRetry={reload}
           columns={columns}
           rows={reversals ?? []}
           rowKey={(row) => row.id}

@@ -1,3 +1,5 @@
+import { finiteNumber, serverFieldErrors } from "../../lib/validation.js";
+import { hasWorkspaceRole } from "../../config/permissions.js";
 import { useCallback, useState } from "react";
 import { Paperclip } from "lucide-react";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
@@ -105,20 +107,20 @@ export default function ExencionesPage() {
         }
         return (
           <div className="flex justify-end gap-2">
-            {user.role === "PERSONAL" && row.backendStatus !== "DOCUMENTATION_REQUIRED" && (
+            {hasWorkspaceRole(user, "PERSONAL") && row.backendStatus !== "DOCUMENTATION_REQUIRED" && (
               <Button size="sm" variant="secondary" onClick={() => setWorkflow(row)}>
                 Trámite
               </Button>
             )}
-            {user.role === "PERSONAL" && row.backendStatus === "DOCUMENTATION_REQUIRED" && (
+            {hasWorkspaceRole(user, "PERSONAL") && row.backendStatus === "DOCUMENTATION_REQUIRED" && (
               <span className="text-[12px] text-neutral-400">Espera documentación del ciudadano</span>
             )}
-            {user.role === "SUPERVISOR" && row.internalStatus === "PENDING_RESOLUTION" && (
+            {hasWorkspaceRole(user, "SUPERVISOR") && row.internalStatus === "PENDING_RESOLUTION" && (
               <Button size="sm" variant="primary" onClick={() => setSelected(row)}>
                 Resolver
               </Button>
             )}
-            {user.role === "SUPERVISOR" && row.internalStatus !== "PENDING_RESOLUTION" && (
+            {hasWorkspaceRole(user, "SUPERVISOR") && row.internalStatus !== "PENDING_RESOLUTION" && (
               <span className="text-[12px] text-neutral-400">En trámite</span>
             )}
           </div>
@@ -140,7 +142,7 @@ export default function ExencionesPage() {
           {feedback.message}
         </Alert>
       )}
-      {error && <Alert variant="error" title="No pudimos cargar las solicitudes">{error}</Alert>}
+
 
       <Card
         title="Solicitudes de exención"
@@ -163,7 +165,7 @@ export default function ExencionesPage() {
           onFilterChange={(_, value) => setStatus(value)}
         />
 
-        <DataTable
+        <DataTable error={error} onRetry={reload}
           columns={columns}
           rows={exemptions ?? []}
           rowKey={(row) => row.requestId}
@@ -254,7 +256,7 @@ function NewExemptionModal({ taxpayerOptions, conceptOptions, onClose, onDone })
 
   const validate = () => {
     const found = {};
-    const percentage = Number(form.requestedPercentage);
+    const percentage = finiteNumber(form.requestedPercentage);
     if (!form.citizenId) found.citizenId = "Seleccioná el ciudadano.";
     if (!form.conceptCode) found.conceptCode = "Seleccioná el concepto alcanzado.";
     if (!form.reason.trim()) found.reason = "Describí el motivo de la solicitud.";
@@ -282,6 +284,7 @@ function NewExemptionModal({ taxpayerOptions, conceptOptions, onClose, onDone })
     try {
       onDone(await exemptionService.requestExemption(form));
     } catch (caught) {
+      setErrors((previous) => ({ ...previous, ...serverFieldErrors(caught, {}, Object.keys(form)) }));
       setSubmitError(caught.message);
     } finally {
       setSubmitting(false);

@@ -68,11 +68,7 @@ export default function PlanesAuditorPage() {
       homePath="/auditor"
       homeLabel="Dashboard"
     >
-      {error && (
-        <Alert variant="error" title="No pudimos cargar los planes">
-          {error}
-        </Alert>
-      )}
+
 
       <Alert variant="info" title="Resolución y situación son cosas distintas">
         La <strong>resolución</strong> es lo que viajó en <code>updatePaymentPlanStatus</code>{" "}
@@ -110,7 +106,7 @@ export default function PlanesAuditorPage() {
           values={filters}
           onFilterChange={onFilterChange}
         />
-        <DataTable
+        <DataTable error={error}
           columns={columns}
           rows={plans ?? []}
           rowKey={(row) => row.requestId}

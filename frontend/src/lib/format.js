@@ -1,3 +1,5 @@
+import { validDate } from "./validation.js";
+
 const currencyFormatter = new Intl.NumberFormat("es-AR", {
   style: "currency",
   currency: "ARS",
@@ -23,24 +25,39 @@ const dateTimeFormatter = new Intl.DateTimeFormat("es-AR", {
   minute: "2-digit",
 });
 
-export const formatCurrency = (value) =>
-  value === null || value === undefined ? "—" : currencyFormatter.format(value);
+const validNumber = (value) => (typeof value === "number" || typeof value === "string" && value.trim() !== "") && Number.isFinite(Number(value));
+export const formatCurrency = (value) => validNumber(value) ? currencyFormatter.format(Number(value)) : "—";
+
+/** CUIT/CUIL de once dígitos, sin modificar el identificador que se envía a la API. */
+export const formatCuit = (value) => {
+  if (value === null || value === undefined || value === "") return "—";
+  const text = String(value);
+  const digits = text.replace(/[-\s]/g, "");
+  return /^\d{11}$/.test(digits) ? `${digits.slice(0, 2)}-${digits.slice(2, 10)}-${digits.slice(10)}` : text;
+};
 
 const dateValue = (value) =>
   typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)
     ? new Date(`${value}T00:00:00`)
     : new Date(value);
 
-export const formatDate = (value) => (value ? dateFormatter.format(dateValue(value)) : "—");
+export const formatDate = (value) => {
+  if (!value) return "—";
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) && !validDate(value)) return "—";
+  const date = dateValue(value);
+  return Number.isFinite(date.getTime()) ? dateFormatter.format(date) : "—";
+};
 
 export const formatDateTime = (value) =>
-  value ? dateTimeFormatter.format(new Date(value)) : "—";
+  value && Number.isFinite(new Date(value).getTime()) ? dateTimeFormatter.format(new Date(value)) : "—";
 
-export const formatTime = (value) => (value ? timeFormatter.format(new Date(value)) : "—");
+export const formatTime = (value) => value && Number.isFinite(new Date(value).getTime()) ? timeFormatter.format(new Date(value)) : "—";
 
 /** `YYYY-MM-DD` de una fecha, para comparar jornadas sin arrastrar la hora. */
 export const toDateInput = (value) => {
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) return validDate(value) ? value : "";
   const date = value ? new Date(value) : new Date();
+  if (!Number.isFinite(date.getTime())) return "";
   const offset = date.getTimezoneOffset() * 60000;
   return new Date(date.getTime() - offset).toISOString().slice(0, 10);
 };
@@ -52,10 +69,10 @@ const compactFormatter = new Intl.NumberFormat("es-AR", {
 
 /** Importe abreviado para ejes y etiquetas de gráficos: $12,5 M. */
 export const formatCompactCurrency = (value) =>
-  value === null || value === undefined ? "—" : `$${compactFormatter.format(value)}`;
+  validNumber(value) ? `$${compactFormatter.format(Number(value))}` : "—";
 
 export const formatPercentage = (value) =>
-  value === null || value === undefined ? "—" : `${Number(value).toFixed(0)}%`;
+  validNumber(value) ? `${Number(value).toFixed(0)}%` : "—";
 
 /** Etiquetas en español de los estados que viajan en los eventos. */
 export const STATUS_LABELS = {
@@ -147,6 +164,7 @@ export const STATUS_LABELS = {
   AUDITOR: "Auditor",
   SISTEMA: "Sistema",
   ROLE_RENTAS: "Rentas",
+  ROLE_SUPERVISOR: "Supervisor",
   ROLE_CASHIER: "Caja",
   ROLE_AUDITOR: "Auditor",
   ROLE_TAXPAYER: "Contribuyente",

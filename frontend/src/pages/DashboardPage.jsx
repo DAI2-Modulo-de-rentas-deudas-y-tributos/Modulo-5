@@ -1,3 +1,4 @@
+import { hasWorkspaceRole } from "../config/permissions.js";
 import { useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import FeatureCard from "../components/ui/FeatureCard.jsx";
@@ -79,7 +80,7 @@ export default function DashboardPage() {
                 />
               </section>
 
-              {user.role === "SUPERVISOR" && (
+              {hasWorkspaceRole(user, "SUPERVISOR") && (
                 <section className="flex flex-col gap-4">
                   <div>
                     <h2 className="text-[15px] font-semibold text-[#0F2C59]">Pendientes de supervisión</h2>

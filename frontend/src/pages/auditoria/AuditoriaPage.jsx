@@ -5,7 +5,7 @@ import Card from "../../components/common/Card.jsx";
 import DataTable from "../../components/common/DataTable.jsx";
 import FilterBar from "../../components/common/FilterBar.jsx";
 import StatusBadge from "../../components/common/StatusBadge.jsx";
-import Alert from "../../components/ui/Alert.jsx";
+
 import useResource from "../../hooks/useResource.js";
 import { auditService } from "../../services/rentasService.js";
 import {
@@ -79,11 +79,7 @@ export default function AuditoriaPage() {
       homePath="/auditor"
       homeLabel="Dashboard"
     >
-      {error && (
-        <Alert variant="error" title="No pudimos cargar el registro">
-          {error}
-        </Alert>
-      )}
+
 
       <Card
         title="Resultados"
@@ -112,7 +108,7 @@ export default function AuditoriaPage() {
           values={filters}
           onFilterChange={onFilterChange}
         />
-        <DataTable
+        <DataTable error={error}
           columns={columns}
           rows={entries ?? []}
           rowKey={(row) => row.id}

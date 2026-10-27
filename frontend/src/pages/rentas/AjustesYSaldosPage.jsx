@@ -1,3 +1,4 @@
+import { hasWorkspaceRole } from "../../config/permissions.js";
 import { useCallback, useState } from "react";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
 import Card from "../../components/common/Card.jsx";
@@ -83,7 +84,7 @@ export default function AjustesYSaldosPage() {
       align: "right",
       render: (row) => {
         if (row.status === "PENDING_APPROVAL") {
-          return user.role === "SUPERVISOR" ? (
+          return hasWorkspaceRole(user, "SUPERVISOR") ? (
             <Button size="sm" variant="primary" onClick={() => setResolviendo(row)}>
               Autorizar
             </Button>
@@ -158,11 +159,7 @@ export default function AjustesYSaldosPage() {
           {feedback.message}
         </Alert>
       )}
-      {error && (
-        <Alert variant="error" title="No pudimos cargar los ajustes">
-          {error}
-        </Alert>
-      )}
+
 
       <Card
         title="Saldos a favor"
@@ -192,7 +189,7 @@ export default function AjustesYSaldosPage() {
           </Button>
         }
       >
-        <DataTable
+        <DataTable error={error} onRetry={reload}
           columns={adjColumns}
           rows={ajustes ?? []}
           rowKey={(row) => row.id}

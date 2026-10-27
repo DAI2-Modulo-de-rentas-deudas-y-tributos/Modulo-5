@@ -1,3 +1,5 @@
+import { FIELD_CONSTRAINTS } from "../../lib/validation.js";
+
 export default function FormField({
   label,
   name,
@@ -12,7 +14,9 @@ export default function FormField({
   prefix,
   suffix,
   autoComplete,
+  ...inputProps
 }) {
+  const constraints = { ...FIELD_CONSTRAINTS[name], ...inputProps };
   const baseClasses =
     "w-full rounded-lg border bg-neutral-50 px-3.5 py-2.5 text-[14px] text-neutral-900 placeholder-neutral-400 outline-none transition-colors " +
     "focus:border-[#D63031]/40 focus:bg-white focus:ring-2 focus:ring-[#D63031]/10 " +
@@ -28,6 +32,7 @@ export default function FormField({
           {required && <span className="text-[#D63031] ml-0.5">*</span>}
         </label>
         <textarea
+          {...constraints}
           id={name}
           name={name}
           aria-invalid={error ? true : undefined}
@@ -53,6 +58,7 @@ export default function FormField({
           {required && <span className="text-[#D63031] ml-0.5">*</span>}
         </label>
         <select
+          {...inputProps}
           id={name}
           name={name}
           aria-invalid={error ? true : undefined}
@@ -89,6 +95,7 @@ export default function FormField({
         >
           {prefix}
           <input
+            {...constraints}
             id={name}
             name={name}
             aria-invalid={error ? true : undefined}
@@ -117,6 +124,7 @@ export default function FormField({
         {required && <span className="text-[#D63031] ml-0.5">*</span>}
       </label>
       <input
+        {...constraints}
         id={name}
         name={name}
         aria-invalid={error ? true : undefined}

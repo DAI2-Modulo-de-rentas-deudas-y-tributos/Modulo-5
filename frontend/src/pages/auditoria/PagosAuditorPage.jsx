@@ -5,7 +5,7 @@ import Card from "../../components/common/Card.jsx";
 import DataTable from "../../components/common/DataTable.jsx";
 import FilterBar from "../../components/common/FilterBar.jsx";
 import StatusBadge from "../../components/common/StatusBadge.jsx";
-import Alert from "../../components/ui/Alert.jsx";
+
 import useResource from "../../hooks/useResource.js";
 import { auditService } from "../../services/rentasService.js";
 import { PAYMENT_METHODS } from "../../config/catalogosDominio.js";
@@ -97,11 +97,7 @@ export default function PagosAuditorPage() {
       homePath="/auditor"
       homeLabel="Dashboard"
     >
-      {error && (
-        <Alert variant="error" title="No pudimos cargar los pagos">
-          {error}
-        </Alert>
-      )}
+
 
       <Card
         title="Resultados"
@@ -143,7 +139,7 @@ export default function PagosAuditorPage() {
           values={filters}
           onFilterChange={onFilterChange}
         />
-        <DataTable
+        <DataTable error={error}
           columns={isReversals ? reversalColumns : paymentColumns}
           rows={rows ?? []}
           rowKey={(row) => row.id}

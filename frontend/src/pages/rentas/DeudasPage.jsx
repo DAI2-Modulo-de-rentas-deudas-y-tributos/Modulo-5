@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import DebtDetailModal from "../../components/common/DebtDetailModal.jsx";
 import { useSearchParams } from "react-router-dom";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
 import Card from "../../components/common/Card.jsx";
@@ -27,6 +28,7 @@ export default function DeudasPage() {
   const taxpayerId = searchParams.get("taxpayerId") ?? "";
   const [filters, setFilters] = useState({ status: "", originType: "" });
   const [feedback, setFeedback] = useState(null);
+  const [detailId, setDetailId] = useState(null);
   const [reporting, setReporting] = useState(null);
   const [lateCharge, setLateCharge] = useState(null);
   const [processing, setProcessing] = useState(false);
@@ -157,7 +159,7 @@ export default function DeudasPage() {
           {feedback.message}
         </Alert>
       )}
-      {error && <Alert variant="error" title="No pudimos cargar las deudas">{error}</Alert>}
+
 
       {taxpayerId && (
         <Alert variant="info" title={`Filtrando por ${index[taxpayerId]?.name ?? `contribuyente #${taxpayerId}`}`}>
@@ -208,9 +210,10 @@ export default function DeudasPage() {
           onFilterChange={onFilterChange}
         />
 
-        <DataTable
+        <DataTable error={error} onRetry={reload}
           columns={columns}
           rows={rows}
+          onRowClick={(debt) => setDetailId(debt.id)}
           rowKey={(row) => row.id}
           loading={loading}
           emptyIconName="FileWarning"
@@ -232,6 +235,7 @@ export default function DeudasPage() {
           <div><dt>{lateCharge.preview.applicationId != null ? "Total tras la aplicación" : "Total actualizado"}</dt><dd className="font-semibold">{formatCurrency(lateCharge.preview.updatedTotal)}</dd></div>
         </dl>
       </Modal>}
+      {detailId && <DebtDetailModal id={detailId} onClose={() => setDetailId(null)} />}
     </ModuleShell>
   );
 }

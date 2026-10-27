@@ -102,11 +102,7 @@ export default function MisBoletasPage() {
       homePath="/portal"
       homeLabel="Inicio"
     >
-      {error && (
-        <Alert variant="error" title="No pudimos cargar tus boletas">
-          {error}
-        </Alert>
-      )}
+
 
       <Card
         title="Boletas emitidas"
@@ -127,7 +123,7 @@ export default function MisBoletasPage() {
           values={{ status }}
           onFilterChange={(_, value) => setStatus(value)}
         />
-        <DataTable
+        <DataTable error={error}
           columns={columns}
           rows={bills ?? []}
           rowKey={(row) => row.id}

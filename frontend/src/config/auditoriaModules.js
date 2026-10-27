@@ -8,6 +8,8 @@
  * Todos los módulos son de consulta: el auditor observa y no modifica ninguna entidad.
  */
 export const AUDITORIA_MODULES = [
+  { id: "seguridad", path: "/auditor/seguridad", label: "Auditoría de seguridad", iconName: "ShieldCheck", description: "Consulta de acciones registradas sobre las cuentas." },
+  { id: "eventos-salientes", path: "/auditor/eventos-salientes", label: "Eventos salientes", iconName: "Send", description: "Estado de los envíos a otros módulos." },
   {
     id: "contribuyentes",
     path: "/auditor/contribuyentes",

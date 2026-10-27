@@ -1,3 +1,4 @@
+import Can from "../../components/common/Can.jsx";
 import { useCallback, useState } from "react";
 import { ArrowDownLeft, ArrowUpRight } from "lucide-react";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
@@ -93,14 +94,14 @@ export default function EventosPage() {
       align: "right",
       render: (row) =>
         row.status === "DLQ" ? (
-          <Button
+          <Can permission="event.reprocess"><Button
             size="sm"
             variant="secondary"
             loading={retrying === row.eventId}
             onClick={() => onRetry(row)}
           >
             Reprocesar
-          </Button>
+          </Button></Can>
         ) : null,
     },
   ];
@@ -118,7 +119,7 @@ export default function EventosPage() {
           {feedback.message}
         </Alert>
       )}
-      {error && <Alert variant="error" title="No pudimos cargar la bitácora">{error}</Alert>}
+
 
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <StatTile label="Eventos listados" value={rows.length} iconName="Activity" />
@@ -169,7 +170,7 @@ export default function EventosPage() {
           onFilterChange={onFilterChange}
         />
 
-        <DataTable
+        <DataTable error={error} onRetry={reload}
           columns={columns}
           rows={rows}
           rowKey={(row) => row.eventId}

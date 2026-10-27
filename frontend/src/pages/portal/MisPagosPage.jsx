@@ -80,11 +80,7 @@ export default function MisPagosPage() {
       homePath="/portal"
       homeLabel="Inicio"
     >
-      {error && (
-        <Alert variant="error" title="No pudimos cargar tus pagos">
-          {error}
-        </Alert>
-      )}
+
 
       {sinImputar.length > 0 && (
         <Alert variant="info" title="Tenés un pago sin imputar">
@@ -101,7 +97,7 @@ export default function MisPagosPage() {
       )}
 
       <Card title="Historial de pagos" description="De los más recientes a los más antiguos.">
-        <DataTable
+        <DataTable error={error}
           columns={columns}
           rows={payments ?? []}
           rowKey={(row) => row.id}
@@ -113,9 +109,9 @@ export default function MisPagosPage() {
         />
       </Card>
 
-      {creditsError && <Alert variant="error" title="No pudimos cargar tu saldo a favor">{creditsError}</Alert>}
+
       <Card title="Saldo a favor" description="Importe original, total utilizado y saldo disponible. Sólo consulta.">
-        <DataTable
+        <DataTable error={creditsError}
           columns={[
             { key: "id", header: "Saldo", render: (row) => `#${row.id}` },
             { key: "sourcePaymentId", header: "Pago de origen", render: (row) => `#${row.sourcePaymentId}` },

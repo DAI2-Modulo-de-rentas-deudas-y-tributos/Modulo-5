@@ -86,7 +86,7 @@ export default function PagoElectronicoPage() {
       homePath="/portal"
       homeLabel="Inicio"
     >
-      {error && <Alert variant="error" title="No pudimos cargar tus deudas">{error}</Alert>}
+
       {submitError && <Alert variant="error" title="No se pudo completar">{submitError}</Alert>}
       {result ? (
         <Card title="Resultado del pago" description="El comprobante proviene del backend y queda asociado a tu cuenta.">
@@ -108,7 +108,7 @@ export default function PagoElectronicoPage() {
       ) : (
         <>
           <Card title="1. Elegí la deuda">
-            <DataTable
+            <DataTable error={error} onRetry={reload}
               columns={[
                 { key: "conceptName", header: "Concepto" },
                 { key: "id", header: "Deuda", render: (row) => `#${row.id}` },

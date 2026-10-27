@@ -206,7 +206,6 @@ export function adaptApiResponse(original, actual, payload) {
   if (original === "/api/v1/audit/dashboard") return auditDashboard(data);
   if (original.startsWith("/api/v1/audit/indicators")) return auditIndicators(data);
   if (original.endsWith("/account-summary")) return { ...data, totalDebt: data.outstandingDebt, overdueDebt: 0, creditBalance: 0, nextDueDate: null, obligations: [], counts: { debts: data.openDebts, overdue: 0, bills: 0, openRequests: data.activePlans } };
-  if (original === "/api/v1/cashier/agents") return [];
   return adaptRow(actual, data);
 }
 

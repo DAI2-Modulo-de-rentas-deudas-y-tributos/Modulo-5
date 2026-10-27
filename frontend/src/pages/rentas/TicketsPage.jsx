@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import { safeExternalUrl } from "../../lib/safeUrl.js";
 import { Paperclip } from "lucide-react";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
 import Card from "../../components/common/Card.jsx";
@@ -98,7 +99,7 @@ export default function TicketsPage() {
           {feedback.message}
         </Alert>
       )}
-      {error && <Alert variant="error" title="No pudimos cargar los tickets">{error}</Alert>}
+
 
       <Alert variant="info" title="El ticket es propiedad del Módulo 2">
         Rentas no edita el reclamo: sólo informa el avance publicando{" "}
@@ -131,7 +132,7 @@ export default function TicketsPage() {
           onFilterChange={onFilterChange}
         />
 
-        <DataTable
+        <DataTable error={error} onRetry={reload}
           columns={columns}
           rows={tickets ?? []}
           rowKey={(row) => row.ticketId}
@@ -239,14 +240,16 @@ function UpdateTicketModal({ ticket, citizenName, onClose, onDone }) {
             <ul className="mt-3 flex flex-col gap-1.5">
               {ticket.attachments.map((url) => (
                 <li key={url}>
-                  <a
-                    href={url}
+                  {safeExternalUrl(url) ? <a
+                    href={safeExternalUrl(url)}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     title={url}
                     className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#0F2C59] transition-colors hover:text-[#D63031]"
                   >
                     <Paperclip className="h-3.5 w-3.5" strokeWidth={2} />
                     {url.split("/").pop()}
-                  </a>
+                  </a> : <span className="text-[12px] text-neutral-500">Adjunto con enlace no válido</span>}
                 </li>
               ))}
             </ul>

@@ -1,3 +1,4 @@
+import { hasWorkspaceRole } from "../../config/permissions.js";
 import { useCallback, useState } from "react";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
 import Card from "../../components/common/Card.jsx";
@@ -16,7 +17,7 @@ import { formatCurrency, formatDate, formatDateTime, labelFor } from "../../lib/
 
 export default function ObligacionesExternasPage() {
   const { user } = useAuth();
-  const auditor = user.role === "AUDITOR";
+  const auditor = hasWorkspaceRole(user, "AUDITOR");
   const [filters, setFilters] = useState({ externalReferenceId: "", status: auditor ? "" : "ERROR", sourceModule: "" });
   const [selected, setSelected] = useState(null);
   const [feedback, setFeedback] = useState(null);
@@ -51,7 +52,7 @@ export default function ObligacionesExternasPage() {
       homeLabel={auditor ? "Dashboard" : "Inicio"}
     >
       {feedback && <Alert variant="success" title="Reintento solicitado" onDismiss={() => setFeedback(null)}>{feedback}</Alert>}
-      {error && <Alert variant="error" title="No pudimos cargar las obligaciones">{error}</Alert>}
+
       <Card title="Resultados" description="Cada fila conserva la referencia del sistema de origen.">
         <FilterBar
           searchValue={filters.externalReferenceId}
@@ -64,7 +65,7 @@ export default function ObligacionesExternasPage() {
           values={filters}
           onFilterChange={(name, value) => setFilters((previous) => ({ ...previous, [name]: value }))}
         />
-        <DataTable columns={columns} rows={obligations ?? []} rowKey={(row) => row.id} loading={loading} emptyIconName="Webhook" emptyTitle="Sin obligaciones" emptyDescription="No hay resultados que coincidan con los filtros." />
+        <DataTable error={error} onRetry={reload} columns={columns} rows={obligations ?? []} rowKey={(row) => row.id} loading={loading} emptyIconName="Webhook" emptyTitle="Sin obligaciones" emptyDescription="No hay resultados que coincidan con los filtros." />
       </Card>
       {selected && (
         <ObligationModal

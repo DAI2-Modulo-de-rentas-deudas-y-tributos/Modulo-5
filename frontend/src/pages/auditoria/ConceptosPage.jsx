@@ -5,7 +5,7 @@ import Card from "../../components/common/Card.jsx";
 import DataTable from "../../components/common/DataTable.jsx";
 import FilterBar from "../../components/common/FilterBar.jsx";
 import StatusBadge from "../../components/common/StatusBadge.jsx";
-import Alert from "../../components/ui/Alert.jsx";
+
 import useResource from "../../hooks/useResource.js";
 import { auditService } from "../../services/rentasService.js";
 import { formatDate, labelFor } from "../../lib/format.js";
@@ -62,11 +62,7 @@ export default function ConceptosPage() {
       homePath="/auditor"
       homeLabel="Dashboard"
     >
-      {error && (
-        <Alert variant="error" title="No pudimos cargar los conceptos">
-          {error}
-        </Alert>
-      )}
+
 
       <Card title="Buscar concepto" description="Por código o nombre, filtrando por tipo y estado.">
         <FilterBar
@@ -95,7 +91,7 @@ export default function ConceptosPage() {
           values={filters}
           onFilterChange={onFilterChange}
         />
-        <DataTable
+        <DataTable error={error}
           columns={columns}
           rows={concepts ?? []}
           rowKey={(row) => row.code}

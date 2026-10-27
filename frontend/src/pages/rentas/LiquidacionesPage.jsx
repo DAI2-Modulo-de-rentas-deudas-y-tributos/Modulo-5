@@ -1,3 +1,6 @@
+import Can from "../../components/common/Can.jsx";
+import useSettlementForm from "../../hooks/useSettlementForm.js";
+import LiquidationPreview from "../../components/common/LiquidationPreview.jsx";
 import { useCallback, useState } from "react";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
 import Card from "../../components/common/Card.jsx";
@@ -81,19 +84,19 @@ export default function LiquidacionesPage() {
           {feedback.message}
         </Alert>
       )}
-      {error && <Alert variant="error" title="No pudimos cargar las liquidaciones">{error}</Alert>}
+
 
       <Card
         title="Liquidaciones registradas"
         description="Cada liquidación individual registrada ya tiene una deuda asociada."
         actions={
           <>
-            <Button size="sm" variant="secondary" onClick={() => setBatchOpen(true)}>
+            <Can permission="settlement.generate"><Button size="sm" variant="secondary" onClick={() => setBatchOpen(true)}>
               Generación masiva
-            </Button>
-            <Button size="sm" variant="primary" onClick={() => setCreating(true)}>
+            </Button></Can>
+            <Can permission="settlement.generate"><Button size="sm" variant="primary" onClick={() => setCreating(true)}>
               Nueva liquidación
-            </Button>
+            </Button></Can>
           </>
         }
       >
@@ -112,18 +115,15 @@ export default function LiquidacionesPage() {
             {
               name: "period",
               label: "Período",
-              options: [
-                { value: "2026-07", label: "2026-07" },
-                { value: "2026-08", label: "2026-08" },
-                { value: "2026-09", label: "2026-09" },
-              ],
+              options: [...new Set([filters.period, ...(settlements ?? []).map((item) => item.period)].filter(Boolean))]
+                .sort().reverse().map((period) => ({ value: period, label: period })),
             },
           ]}
           values={filters}
           onFilterChange={onFilterChange}
         />
 
-        <DataTable
+        <DataTable error={error} onRetry={reload}
           columns={columns}
           rows={settlements ?? []}
           rowKey={(row) => row.id}
@@ -171,50 +171,7 @@ export default function LiquidacionesPage() {
 
 /** GenerateSettlementRequest: contribuyente + concepto + período + base imponible. */
 function NewSettlementModal({ open, taxpayerOptions, conceptOptions, onClose, onCreated }) {
-  const empty = {
-    taxpayerId: "",
-    conceptCode: "",
-    period: "",
-    baseAmount: "",
-    dueDate: "",
-  };
-  const [form, setForm] = useState(empty);
-  const [errors, setErrors] = useState({});
-  const [submitError, setSubmitError] = useState(null);
-  const [submitting, setSubmitting] = useState(false);
-
-  const onChange = (event) => {
-    const { name, value } = event.target;
-    setForm((previous) => ({ ...previous, [name]: value }));
-    setErrors((previous) => ({ ...previous, [name]: undefined }));
-  };
-
-  const validate = () => {
-    const found = {};
-    if (!form.taxpayerId) found.taxpayerId = "Seleccioná el contribuyente.";
-    if (!form.conceptCode) found.conceptCode = "Seleccioná el concepto.";
-    if (!/^\d{4}-\d{2}$/.test(form.period)) found.period = "Usá el formato AAAA-MM.";
-    if (!(Number(form.baseAmount) > 0)) found.baseAmount = "Ingresá un importe mayor a cero.";
-    if (!form.dueDate) found.dueDate = "Indicá el vencimiento.";
-    setErrors(found);
-    return Object.keys(found).length === 0;
-  };
-
-  const onSubmit = async (event) => {
-    event.preventDefault();
-    setSubmitError(null);
-    if (!validate()) return;
-    setSubmitting(true);
-    try {
-      const settlement = await settlementService.generate(form);
-      setForm(empty);
-      onCreated(settlement);
-    } catch (caught) {
-      setSubmitError(caught.message);
-    } finally {
-      setSubmitting(false);
-    }
-  };
+  const { form, errors, preview, onChange, submitting, submitError, onSubmit, onPreview } = useSettlementForm(onCreated);
 
   return (
     <Modal
@@ -224,18 +181,21 @@ function NewSettlementModal({ open, taxpayerOptions, conceptOptions, onClose, on
       onClose={onClose}
       footer={
         <>
-          <Button variant="secondary" onClick={onClose}>
+          <Button variant="secondary" disabled={submitting} onClick={onClose}>
             Cancelar
           </Button>
-          <Button variant="primary" loading={submitting} onClick={onSubmit}>
+          <Button variant="secondary" disabled={submitting} onClick={onPreview}>Previsualizar</Button>
+          <Can permission="settlement.generate"><Button variant="primary" loading={submitting} onClick={onSubmit}>
           Generar liquidación y deuda
-          </Button>
+          </Button></Can>
         </>
       }
     >
       {submitError && <Alert variant="error" title="No se pudo generar">{submitError}</Alert>}
+      {preview && <LiquidationPreview preview={preview} taxableBase={form.baseAmount} />}
 
       <form onSubmit={onSubmit} noValidate className="flex flex-col gap-4">
+        <fieldset disabled={submitting} className="contents">
         <FormField
           label="Contribuyente"
           name="taxpayerId"
@@ -286,6 +246,7 @@ function NewSettlementModal({ open, taxpayerOptions, conceptOptions, onClose, on
           error={errors.baseAmount}
           required
         />
+        </fieldset>
       </form>
     </Modal>
   );

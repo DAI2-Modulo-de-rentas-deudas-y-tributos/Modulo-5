@@ -109,11 +109,7 @@ export default function MisDeudasPage() {
       homePath="/portal"
       homeLabel="Inicio"
     >
-      {error && (
-        <Alert variant="error" title="No pudimos cargar tus deudas">
-          {error}
-        </Alert>
-      )}
+
 
       <Card
         title="Detalle"
@@ -141,7 +137,7 @@ export default function MisDeudasPage() {
           values={{ status }}
           onFilterChange={(_, value) => setStatus(value)}
         />
-        <DataTable
+        <DataTable error={error}
           columns={columns}
           rows={debts ?? []}
           rowKey={(row) => row.id}

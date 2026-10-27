@@ -1,3 +1,4 @@
+import { serverFieldErrors } from "../lib/validation.js";
 import { useState } from "react";
 import { ArrowRight, Eye, EyeOff, LockKeyhole, Mail, UserRound } from "lucide-react";
 import "./LoginPage.css";
@@ -48,6 +49,7 @@ export default function LoginPage() {
       const { profile } = await login(form);
       navigate(location.state?.from ?? homePathForRole(profile.role), { replace: true });
     } catch (caught) {
+      setErrors((previous) => ({ ...previous, ...serverFieldErrors(caught, {}, Object.keys(form)) }));
       setSubmitError(caught.message);
     } finally {
       setSubmitting(false);

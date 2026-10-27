@@ -127,11 +127,7 @@ export default function PagosCajaPage() {
           {feedback}
         </Alert>
       )}
-      {error && (
-        <Alert variant="error" title="No pudimos cargar los pagos">
-          {error}
-        </Alert>
-      )}
+
       {agentsError && <Alert variant="error" title="No pudimos cargar los responsables">{agentsError}</Alert>}
 
       <Card
@@ -159,7 +155,7 @@ export default function PagosCajaPage() {
           onFilterChange={onFilterChange}
         />
 
-        <DataTable
+        <DataTable error={error} onRetry={reload}
           columns={columns}
           rows={visiblePayments}
           rowKey={(row) => row.id}

@@ -1,3 +1,4 @@
+import { formatCuit } from "../../lib/format.js";
 import { useCallback, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
@@ -47,7 +48,7 @@ export default function ContribuyentesCajaPage() {
     {
       key: "cuit",
       header: "CUIT/CUIL",
-      render: (row) => <span className="tabular-nums">{row.cuit}</span>,
+      render: (row) => <span className="tabular-nums">{formatCuit(row.cuit)}</span>,
     },
     { key: "status", header: "Situación", render: (row) => <StatusBadge status={row.status} /> },
   ];
@@ -62,11 +63,7 @@ export default function ContribuyentesCajaPage() {
       homePath="/caja"
       homeLabel="Panel de caja"
     >
-      {error && (
-        <Alert variant="error" title="No pudimos cargar el padrón">
-          {error}
-        </Alert>
-      )}
+
 
       <Alert variant="info" title="Consulta de sólo lectura">
         Desde caja se consultan los datos del contribuyente, pero no se editan: el padrón lo
@@ -80,7 +77,7 @@ export default function ContribuyentesCajaPage() {
           onSearchChange={setQuery}
         />
 
-        <DataTable
+        <DataTable error={error}
           columns={columns}
           rows={taxpayers ?? []}
           rowKey={(row) => row.id}
@@ -129,7 +126,7 @@ function TaxpayerSummaryModal({ taxpayer, onClose }) {
       <dl className="grid grid-cols-2 gap-3">
         <Field label="Nombre" value={taxpayer.name} />
         <Field label="Documento" value={`${taxpayer.documentType} ${taxpayer.document}`} />
-        <Field label="CUIT/CUIL" value={taxpayer.cuit} />
+        <Field label="CUIT/CUIL" value={formatCuit(taxpayer.cuit)} />
         <Field label="Situación" value={labelFor(taxpayer.status)} />
       </dl>
 

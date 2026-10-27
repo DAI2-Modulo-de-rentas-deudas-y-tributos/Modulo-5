@@ -1,3 +1,4 @@
+import { formatCuit } from "../../lib/format.js";
 import { useCallback, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
@@ -70,7 +71,7 @@ export default function ContribuyenteAuditorDetallePage() {
     <ModuleShell
       label="Auditoría"
       title={taxpayer.name}
-      description={`${labelFor(taxpayer.type)} · ${taxpayer.documentType} ${taxpayer.document} · CUIT ${taxpayer.cuit}`}
+      description={`${labelFor(taxpayer.type)} · ${taxpayer.documentType} ${taxpayer.document} · CUIT ${formatCuit(taxpayer.cuit)}`}
       breadcrumb={[
         { id: "contribuyentes", label: "Contribuyentes", path: "/auditor/contribuyentes" },
         { id: "detalle", label: taxpayer.name },
@@ -86,7 +87,7 @@ export default function ContribuyenteAuditorDetallePage() {
               { label: "Nombre", value: taxpayer.name },
               { label: "Tipo", value: labelFor(taxpayer.type) },
               { label: "Documento", value: `${taxpayer.documentType} ${taxpayer.document}` },
-              { label: "CUIT/CUIL", value: taxpayer.cuit },
+              { label: "CUIT/CUIL", value: formatCuit(taxpayer.cuit) },
               { label: "Situación", value: <StatusBadge status={taxpayer.status} /> },
               { label: "Referencia externa", value: taxpayer.externalRef },
               {

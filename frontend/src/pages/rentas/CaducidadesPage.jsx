@@ -1,3 +1,4 @@
+import { hasWorkspaceRole } from "../../config/permissions.js";
 import { useCallback, useState } from "react";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
 import Card from "../../components/common/Card.jsx";
@@ -16,7 +17,7 @@ import { formatCurrency, formatDate, formatDateTime } from "../../lib/format.js"
 
 export default function CaducidadesPage() {
   const { user } = useAuth();
-  const supervisor = user.role === "SUPERVISOR";
+  const supervisor = hasWorkspaceRole(user, "SUPERVISOR");
   const [selected, setSelected] = useState(null);
   const [feedback, setFeedback] = useState(null);
   const loader = useCallback(
@@ -59,9 +60,9 @@ export default function CaducidadesPage() {
       breadcrumb={[{ id: "caducidades", label: "Caducidad de planes" }]}
     >
       {feedback && <Alert variant="success" title="Operación registrada" onDismiss={() => setFeedback(null)}>{feedback}</Alert>}
-      {error && <Alert variant="error" title="No pudimos cargar la bandeja">{error}</Alert>}
+
       <Card title={supervisor ? "Solicitudes pendientes" : "Planes incumplidos"}>
-        <DataTable
+        <DataTable error={error} onRetry={reload}
           columns={columns}
           rows={rows ?? []}
           rowKey={(row) => row.id}

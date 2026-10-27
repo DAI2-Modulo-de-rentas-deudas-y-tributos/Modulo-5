@@ -1,3 +1,4 @@
+import { hasWorkspaceRole } from "../../config/permissions.js";
 import { useCallback, useState } from "react";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
 import Card from "../../components/common/Card.jsx";
@@ -17,7 +18,7 @@ import { formatCurrency, formatDate, formatDateTime } from "../../lib/format.js"
 
 export default function CorridasMasivasPage() {
   const { user } = useAuth();
-  const supervisor = user.role === "SUPERVISOR";
+  const supervisor = hasWorkspaceRole(user, "SUPERVISOR");
   const [selected, setSelected] = useState(null);
   const [feedback, setFeedback] = useState(null);
   const loader = useCallback(
@@ -49,9 +50,9 @@ export default function CorridasMasivasPage() {
       breadcrumb={[{ id: "corridas", label: "Corridas masivas" }]}
     >
       {feedback && <Alert variant="success" title="Corrida actualizada" onDismiss={() => setFeedback(null)}>{feedback}</Alert>}
-      {error && <Alert variant="error" title="No pudimos cargar las corridas">{error}</Alert>}
+
       <Card title={supervisor ? "Pendientes de aprobación" : "Historial de corridas"}>
-        <DataTable columns={columns} rows={runs ?? []} rowKey={(row) => row.id} loading={loading} emptyIconName="Layers" emptyTitle="Sin corridas" emptyDescription="No hay corridas con ese estado." />
+        <DataTable error={error} onRetry={reload} columns={columns} rows={runs ?? []} rowKey={(row) => row.id} loading={loading} emptyIconName="Layers" emptyTitle="Sin corridas" emptyDescription="No hay corridas con ese estado." />
       </Card>
       {selected && (
         <RunModal

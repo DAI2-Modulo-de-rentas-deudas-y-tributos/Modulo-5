@@ -60,7 +60,22 @@ export function authHeaders() {
   return { "X-Demo-Session": token };
 }
 
-export async function request(path, { method = "GET", body, signal, responseType, headers, requiresAuth = true } = {}) {
+const pendingWrites = new Map();
+
+/** Colapsa sólo escrituras idénticas en curso; una clave de idempotencia distinta conserva su intención. */
+export function request(path, options = {}) {
+  const method = (options.method ?? "GET").toUpperCase();
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(method) || options.signal || path.startsWith("/api/v1/dev-auth/")) {
+    return performRequest(path, options);
+  }
+  const key = JSON.stringify([method, path, options.body, authHeaders(), options.headers]);
+  if (pendingWrites.has(key)) return pendingWrites.get(key);
+  const operation = performRequest(path, options).finally(() => pendingWrites.delete(key));
+  pendingWrites.set(key, operation);
+  return operation;
+}
+
+async function performRequest(path, { method = "GET", body, signal, responseType, headers, requiresAuth = true } = {}) {
   const adapted = adaptApiRequest(path, { method, body, signal });
   const requestHeaders = {
     ...(responseType === "blob" ? { Accept: "application/pdf" } : {}),

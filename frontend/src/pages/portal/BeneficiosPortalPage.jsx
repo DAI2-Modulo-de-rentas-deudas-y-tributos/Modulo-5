@@ -29,12 +29,12 @@ export default function BeneficiosPortalPage() {
       homePath="/portal"
       homeLabel="Inicio"
     >
-      {error && <Alert variant="error" title="No pudimos cargar tus beneficios">{error}</Alert>}
+
       <Alert variant="info" title="Aplicación automática">
         Cuando un beneficio está vigente, Rentas lo considera al calcular las liquidaciones alcanzadas. No necesitás solicitarlo otra vez desde este portal.
       </Alert>
       <Card title={`Beneficios vigentes (${active.length})`} description="Tipo, porcentaje, vigencia, conceptos alcanzados y referencia del sistema que lo otorgó.">
-        <DataTable
+        <DataTable error={error}
           columns={[
             { key: "benefitType", header: "Tipo", render: (row) => labelFor(row.benefitType) },
             { key: "externalBenefitId", header: "Referencia", render: (row) => row.externalBenefitId },

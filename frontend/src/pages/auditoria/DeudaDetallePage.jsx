@@ -1,4 +1,5 @@
 import { useCallback } from "react";
+import DebtOriginDetails from "../../components/common/DebtOriginDetails.jsx";
 import { useNavigate, useParams } from "react-router-dom";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
 import Card from "../../components/common/Card.jsx";
@@ -61,6 +62,7 @@ export default function DeudaDetallePage() {
       homeLabel="Dashboard"
     >
       <Card title="Datos generales">
+        <div className="p-5"><DebtOriginDetails debt={debt} /></div>
         <div className="px-5 py-4">
           <FieldGrid
             columns={4}

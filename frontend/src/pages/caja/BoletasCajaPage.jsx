@@ -7,7 +7,7 @@ import DataTable from "../../components/common/DataTable.jsx";
 import StatusBadge from "../../components/common/StatusBadge.jsx";
 import Button from "../../components/common/Button.jsx";
 import BillPdfDownload from "../../components/documentos/BillPdfDownload.jsx";
-import Alert from "../../components/ui/Alert.jsx";
+
 import useResource from "../../hooks/useResource.js";
 import useTaxpayerIndex from "../../hooks/useTaxpayerIndex.js";
 import { billService } from "../../services/rentasService.js";
@@ -86,11 +86,7 @@ export default function BoletasCajaPage() {
       homePath="/caja"
       homeLabel="Panel de caja"
     >
-      {error && (
-        <Alert variant="error" title="No pudimos buscar la boleta">
-          {error}
-        </Alert>
-      )}
+
 
       <Card
         title="Buscar boleta"
@@ -123,7 +119,7 @@ export default function BoletasCajaPage() {
         </form>
 
         {submitted.trim() ? (
-          <DataTable
+          <DataTable error={error}
             columns={columns}
             rows={bills ?? []}
             rowKey={(row) => row.id}

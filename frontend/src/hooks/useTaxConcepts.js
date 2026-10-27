@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
 import { taxConfigService } from "../services/rentasService.js";
+import { createSessionLookup } from "../services/lookupCache.js";
+import useLookupResource from "./useLookupResource.js";
 
 /**
  * Conceptos tributarios que el módulo tiene dados de alta.
@@ -11,37 +12,17 @@ import { taxConfigService } from "../services/rentasService.js";
  * Se cachea a nivel de módulo, igual que el padrón: el catálogo cambia poco y no
  * justifica una consulta por pantalla.
  */
-let cache = null;
+const lookup = createSessionLookup(() => taxConfigService.concepts());
 
 export default function useTaxConcepts() {
-  const [concepts, setConcepts] = useState(cache ?? []);
-  const [loading, setLoading] = useState(!cache);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    if (cache) return undefined;
-    let active = true;
-    taxConfigService
-      .concepts()
-      .then((rows) => {
-        cache = rows;
-        if (active) setConcepts(rows);
-      })
-      .catch((caught) => {
-        if (active) setError(caught.message ?? "No se pudieron cargar los conceptos.");
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
+  const { data, loading, error, reload } = useLookupResource(lookup, []);
+  const concepts = data ?? [];
 
   return {
     concepts,
     loading,
     error,
+    reload,
     /** Nombre del concepto, o su código si todavía no llegó el catálogo. */
     labelOf: (code) => concepts.find((c) => c.code === code)?.name ?? code,
     options: concepts.map((c) => ({ value: c.code, label: c.name })),
@@ -50,5 +31,5 @@ export default function useTaxConcepts() {
 
 /** Sólo para las pruebas: evita que el catálogo de un caso se filtre al siguiente. */
 export function resetTaxConceptsCache() {
-  cache = null;
+  lookup.clear();
 }

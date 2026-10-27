@@ -1,3 +1,5 @@
+import { finiteNumber, serverFieldErrors } from "../../lib/validation.js";
+import Can from "../../components/common/Can.jsx";
 import { useCallback, useRef, useState } from "react";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
 import Card from "../../components/common/Card.jsx";
@@ -116,15 +118,15 @@ export default function PagosPage() {
           {feedback.message}
         </Alert>
       )}
-      {error && <Alert variant="error" title="No pudimos cargar los pagos">{error}</Alert>}
+
 
       <Card
         title="Movimientos"
         description="Cada pago imputado publica paymentRegistered hacia el módulo de origen."
         actions={
-          <Button size="sm" variant="primary" onClick={() => setModal({ type: "register" })}>
+          <Can permission="payment.register"><Button size="sm" variant="primary" onClick={() => setModal({ type: "register" })}>
             Registrar pago
-          </Button>
+          </Button></Can>
         }
       >
         <FilterBar
@@ -143,7 +145,7 @@ export default function PagosPage() {
           onFilterChange={(_, value) => setStatus(value)}
         />
 
-        <DataTable
+        <DataTable error={error} onRetry={reload}
           columns={columns}
           rows={payments ?? []}
           rowKey={(row) => row.id}
@@ -270,9 +272,9 @@ export function RegisterPaymentModal({ taxpayerOptions, onClose, onDone }) {
   const validate = () => {
     const found = {};
     if (!form.taxpayerId) found.taxpayerId = "Seleccioná el contribuyente.";
-    if (!(Number(form.amountPaid) > 0)) found.amountPaid = "Ingresá un importe mayor a cero.";
+    if (!(finiteNumber(form.amountPaid) > 0)) found.amountPaid = "Ingresá un importe mayor a cero.";
     if (!form.method) found.method = "Indicá el medio de pago.";
-    if (selectedDebt && Number(form.amountPaid) > selectedDebt.outstandingAmount) {
+    if (selectedDebt && finiteNumber(form.amountPaid) > selectedDebt.outstandingAmount) {
       found.amountPaid = "El importe supera el saldo de la deuda.";
     }
     setErrors(found);
@@ -292,6 +294,7 @@ export function RegisterPaymentModal({ taxpayerOptions, onClose, onDone }) {
       intentKey.current = null;
       onDone(payment);
     } catch (caught) {
+      setErrors((previous) => ({ ...previous, ...serverFieldErrors(caught, {}, Object.keys(form)) }));
       setSubmitError(caught.message);
     } finally {
       requestInFlight.current = false;

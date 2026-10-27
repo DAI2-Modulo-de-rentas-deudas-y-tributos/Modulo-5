@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { authService } from "../services/rentasService.js";
 import { ApiError, AUTH_MODE } from "../services/apiClient.js";
 import { onSessionExpired } from "../services/sessionEvents.js";
+import { hasAuthority, hasWorkspaceRole } from "../config/permissions.js";
 
 const AuthContext = createContext(null);
 
@@ -89,7 +90,7 @@ export function AuthProvider({ children }) {
     return { profile, accepted: true };
   }, []);
 
-  const logout = useCallback(async () => {
+  const logout = useCallback(async ({ reason } = {}) => {
     ++sessionGeneration.current;
     const token = sessionStorage.getItem(TOKEN_KEY);
     // Cerrar localmente antes de esperar la red evita restauraciones tardías.
@@ -97,7 +98,7 @@ export function AuthProvider({ children }) {
     sessionStorage.removeItem(SESSION_KEY);
     setUser(null);
     setInitializing(false);
-    setSessionNotice(null);
+    setSessionNotice(reason === "inactivity" ? "Tu sesión se cerró por inactividad. Ingresá nuevamente para continuar." : null);
     if (token) await authService.logout(token);
   }, []);
 
@@ -110,8 +111,8 @@ export function AuthProvider({ children }) {
       login,
       logout,
       isAuthenticated: Boolean(user),
-      hasRole: (...roles) => Boolean(user) && roles.includes(user.role),
-      isSupervisor: user?.role === "SUPERVISOR",
+      hasRole: (...roles) => roles.some((role) => hasWorkspaceRole(user, role)),
+      isSupervisor: hasAuthority(user, "SUPERVISOR"),
     }),
     [user, initializing, sessionNotice, dismissSessionNotice, login, logout],
   );
@@ -119,8 +120,12 @@ export function AuthProvider({ children }) {
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
+export function useOptionalAuth() {
+  return useContext(AuthContext);
+}
+
 export function useAuth() {
-  const context = useContext(AuthContext);
+  const context = useOptionalAuth();
   if (!context) {
     throw new Error("useAuth debe usarse dentro de <AuthProvider>.");
   }

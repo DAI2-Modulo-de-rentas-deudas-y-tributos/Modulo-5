@@ -1,3 +1,4 @@
+import { hasWorkspaceRole } from "../../config/permissions.js";
 import { useCallback, useState } from "react";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
 import Card from "../../components/common/Card.jsx";
@@ -33,7 +34,7 @@ const CONCEPT_STATUS_OPTIONS = [
  */
 export default function ConfiguracionTributosPage() {
   const { user } = useAuth();
-  const esSupervisor = user.role === "SUPERVISOR";
+  const esSupervisor = hasWorkspaceRole(user, "SUPERVISOR");
 
   const [filters, setFilters] = useState({ type: "", status: "" });
   const [detalle, setDetalle] = useState(null);
@@ -166,11 +167,7 @@ export default function ConfiguracionTributosPage() {
           {feedback.message}
         </Alert>
       )}
-      {error && (
-        <Alert variant="error" title="No pudimos cargar la configuración">
-          {error}
-        </Alert>
-      )}
+
 
       <Alert variant="info" title="Los cambios rigen hacia adelante">
         Una versión nueva se aplica a las liquidaciones que se generen desde su
@@ -215,7 +212,7 @@ export default function ConfiguracionTributosPage() {
             setFilters((previous) => ({ ...previous, [name]: value }))
           }
         />
-        <DataTable
+        <DataTable error={error} onRetry={reload}
           columns={conceptColumns}
           rows={concepts ?? []}
           rowKey={(row) => row.code}

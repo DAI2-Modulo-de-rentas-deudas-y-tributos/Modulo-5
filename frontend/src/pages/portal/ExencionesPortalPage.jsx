@@ -1,3 +1,4 @@
+import { finiteNumber, serverFieldErrors } from "../../lib/validation.js";
 import { useCallback, useState } from "react";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
 import Card from "../../components/common/Card.jsx";
@@ -72,11 +73,7 @@ export default function ExencionesPortalPage() {
           {feedback.message}
         </Alert>
       )}
-      {error && (
-        <Alert variant="error" title="No pudimos cargar tus exenciones">
-          {error}
-        </Alert>
-      )}
+
 
       <Card
         title="Mis solicitudes"
@@ -87,7 +84,7 @@ export default function ExencionesPortalPage() {
           </Button>
         }
       >
-        <DataTable
+        <DataTable error={error} onRetry={reload}
           columns={columns}
           rows={exemptions ?? []}
           rowKey={(row) => row.requestId}
@@ -150,7 +147,7 @@ function RequestExemptionModal({ taxpayerId, onClose, onDone }) {
     const found = {};
     if (!form.conceptCode) found.conceptCode = "Elegí el concepto que querés eximir.";
     if (!form.reason.trim()) found.reason = "Contanos por qué solicitás la exención.";
-    const pct = Number(form.requestedPercentage);
+    const pct = finiteNumber(form.requestedPercentage);
     if (!(pct > 0 && pct <= 100)) found.requestedPercentage = "Ingresá un porcentaje entre 1 y 100.";
     if (!form.requestedFrom) found.requestedFrom = "Indicá desde cuándo la necesitás.";
     if (!form.requestedUntil) found.requestedUntil = "Indicá hasta cuándo la necesitás.";
@@ -169,6 +166,7 @@ function RequestExemptionModal({ taxpayerId, onClose, onDone }) {
     try {
       onDone(await portalService.requestExemption({ taxpayerId, ...form }));
     } catch (caught) {
+      setErrors((previous) => ({ ...previous, ...serverFieldErrors(caught, {}, Object.keys(form)) }));
       setSubmitError(caught.message);
     } finally {
       setSubmitting(false);

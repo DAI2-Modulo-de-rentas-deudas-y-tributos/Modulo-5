@@ -70,11 +70,7 @@ export default function IntegracionesPage() {
       homePath="/auditor"
       homeLabel="Dashboard"
     >
-      {error && (
-        <Alert variant="error" title="No pudimos cargar los eventos">
-          {error}
-        </Alert>
-      )}
+
 
       <Alert variant="info" title="Idempotencia y reintentos">
         Cada evento trae un <code>eventId</code> único: si llega dos veces, la segunda se
@@ -104,7 +100,7 @@ export default function IntegracionesPage() {
           values={filters}
           onFilterChange={onFilterChange}
         />
-        <DataTable
+        <DataTable error={error}
           columns={columns}
           rows={events ?? []}
           rowKey={(row) => row.eventId}

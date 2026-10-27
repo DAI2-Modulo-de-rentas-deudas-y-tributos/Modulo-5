@@ -64,7 +64,7 @@ export default function ParametrosFinanciacionPage() {
       breadcrumb={[{ id: "financiacion", label: "Parámetros de financiación" }]}
     >
       {feedback && <Alert variant="success" title="Configuración creada" onDismiss={() => setFeedback(null)}>{feedback}</Alert>}
-      {error && <Alert variant="error" title="No pudimos cargar los parámetros">{error}</Alert>}
+
 
       {current && (
         <Card title={`Configuración vigente · v${current.version}`} description={`Rige desde ${formatDate(current.validFrom)}. Creada por ${current.createdBy ?? "Rentas"} el ${formatDateTime(current.createdAt)}.`}>
@@ -86,7 +86,7 @@ export default function ParametrosFinanciacionPage() {
         description="Los planes ya otorgados conservan la versión con la que fueron calculados."
         actions={<Button size="sm" variant="primary" onClick={() => setCreating(true)}>Nueva versión</Button>}
       >
-        <DataTable
+        <DataTable error={error} onRetry={reload}
           columns={columns}
           rows={configurations ?? []}
           rowKey={(row) => row.id}
