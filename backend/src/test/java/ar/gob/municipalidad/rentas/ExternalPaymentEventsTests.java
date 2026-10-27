@@ -51,6 +51,7 @@ class ExternalPaymentEventsTests {
         assertThat(payload.path("data").path("amountApplied").decimalValue()).isEqualByComparingTo("60.00");
         assertThat(payload.path("data").path("remainingBalance").decimalValue()).isEqualByComparingTo("40.00");
         assertThat(payload.path("correlationId").asText()).isEqualTo(originalM7Correlation(debt));
+        assertThat(payload.path("causationId").asText()).isEqualTo(obligations.findById(debt.externalObligationId).orElseThrow().sourceEventId.toString());
         assertThat(registered.idempotencyKey).isEqualTo("outbound:paymentRegistered:PaymentAllocation:"+allocations.findByPaymentId(payment.id).get(0).id+":Debt:"+debt.id);
         assertThat(events("debtSettled","M7",debt.id)).isEmpty();
     }

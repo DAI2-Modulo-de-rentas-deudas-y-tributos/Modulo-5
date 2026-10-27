@@ -6,15 +6,18 @@ import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.*;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Optional;
 
-interface EventPublisher { void publish(String eventType, String targetModule, String payload); }
+interface EventPublisher { OutboxStatus publish(String eventType, String targetModule, String payload); }
 
 @Component
+@ConditionalOnProperty(prefix="rentas",name="broker-adapter",havingValue="local-log",matchIfMissing=true)
 class LocalLogEventPublisher implements EventPublisher {
     private static final Logger log=LoggerFactory.getLogger(LocalLogEventPublisher.class);
-    public void publish(String eventType,String targetModule,String payload){log.info("BROKER_ADAPTER local-log eventType={} targetModule={}",eventType,targetModule);}
+    public OutboxStatus publish(String eventType,String targetModule,String payload){log.info("BROKER_ADAPTER local-log eventType={} targetModule={}",eventType,targetModule);return OutboxStatus.LOCAL_ONLY;}
 }
 
 @Service
@@ -41,7 +44,13 @@ class OutboxPublisher {
     private static final Logger log=LoggerFactory.getLogger(OutboxPublisher.class);
     private static final ObjectMapper payloadJson=new ObjectMapper();
     private final OutboxRepository repository; private final EventPublisher publisher;
-    OutboxPublisher(OutboxRepository repository,EventPublisher publisher){this.repository=repository;this.publisher=publisher;}
+    private final boolean rabbitMode;
+    @org.springframework.beans.factory.annotation.Autowired
+    OutboxPublisher(OutboxRepository repository,EventPublisher publisher,
+        @org.springframework.beans.factory.annotation.Value("${rentas.broker-adapter:local-log}") String brokerAdapter){
+        this.repository=repository;this.publisher=publisher;this.rabbitMode="rabbitmq".equalsIgnoreCase(brokerAdapter);
+    }
+    OutboxPublisher(OutboxRepository repository,EventPublisher publisher){this(repository,publisher,"local-log");}
     @Scheduled(fixedDelayString="${rentas.outbox-delay-ms:5000}")
     @Transactional void publishPending(){for(OutboxEvent event:repository.findPublishable(org.springframework.data.domain.PageRequest.of(0,50))){
         if(!validEconomicIdentifiers(event)){
@@ -59,11 +68,27 @@ class OutboxPublisher {
             event.errorMessage="M1_PLAN_CONTRACT_REVIEW_REQUIRED: invalid payment plan UUID payload";
             continue;
         }
+        List<OutboxStatus> accepted=rabbitMode?List.of(OutboxStatus.BROKER_CONFIRMED):List.of(OutboxStatus.PUBLISHED,OutboxStatus.LOCAL_ONLY,OutboxStatus.BROKER_CONFIRMED);
         if("updateExemptionStatus".equals(event.eventType)
-            &&!repository.existsByEventTypeAndAggregateTypeAndAggregateIdAndStatus("exemptionRequested",event.aggregateType,event.aggregateId,OutboxStatus.PUBLISHED))continue;
+            &&!repository.existsByEventTypeAndAggregateTypeAndAggregateIdAndStatusIn("exemptionRequested",event.aggregateType,event.aggregateId,accepted))continue;
         if("updatePaymentPlanStatus".equals(event.eventType)
-            &&!repository.existsByEventTypeAndAggregateTypeAndAggregateIdAndStatus("paymentPlanRequested",event.aggregateType,event.aggregateId,OutboxStatus.PUBLISHED))continue;
-        try{event.lastAttemptAt=OffsetDateTime.now();if("PLATFORM".equals(event.targetModule))log.info("INTERNAL_OUTBOX eventType={} targetModule={}",event.eventType,event.targetModule);else publisher.publish(event.eventType,event.targetModule,event.payload);event.status=OutboxStatus.PUBLISHED;event.publishedAt=OffsetDateTime.now();event.errorMessage=null;}catch(RuntimeException ex){event.retryCount++;String message=ex.getMessage()==null?ex.getClass().getSimpleName():ex.getMessage();event.errorMessage=message.substring(0,Math.min(message.length(),255));event.status=event.retryCount>=5?OutboxStatus.DEAD_LETTER:OutboxStatus.FAILED;}
+            &&!repository.existsByEventTypeAndAggregateTypeAndAggregateIdAndStatusIn("paymentPlanRequested",event.aggregateType,event.aggregateId,accepted))continue;
+        try{
+            event.lastAttemptAt=OffsetDateTime.now();
+            OutboxStatus result;
+            if("PLATFORM".equals(event.targetModule)){
+                log.info("INTERNAL_OUTBOX eventType={} targetModule={}",event.eventType,event.targetModule);
+                result=OutboxStatus.LOCAL_ONLY;
+            }else result=publisher.publish(event.eventType,event.targetModule,event.payload);
+            event.status=result==OutboxStatus.BROKER_CONFIRMED?result:OutboxStatus.LOCAL_ONLY;
+            event.publishedAt=event.status==OutboxStatus.BROKER_CONFIRMED?OffsetDateTime.now():null;
+            event.errorMessage=null;
+        }catch(RuntimeException ex){
+            event.retryCount++;
+            event.errorMessage="CORE_BROKER_PUBLISH_FAILED";
+            event.status=event.retryCount>=5?OutboxStatus.DEAD_LETTER:OutboxStatus.FAILED;
+            log.warn("OUTBOX publish failed eventType={} targetModule={} code={}",event.eventType,event.targetModule,event.errorMessage);
+        }
     }}
     private boolean validEconomicIdentifiers(OutboxEvent event){
         if(!"CORE".equals(event.targetModule)

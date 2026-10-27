@@ -108,6 +108,7 @@ interface OutboxRepository extends JpaRepository<OutboxEvent,UUID> {
     Optional<OutboxEvent> findByIdempotencyKey(String idempotencyKey);
     Optional<OutboxEvent> findFirstByEventTypeAndAggregateTypeAndAggregateIdOrderByCreatedAtAsc(String eventType,String aggregateType,String aggregateId);
     boolean existsByEventTypeAndAggregateTypeAndAggregateIdAndStatus(String eventType,String aggregateType,String aggregateId,OutboxStatus status);
+    boolean existsByEventTypeAndAggregateTypeAndAggregateIdAndStatusIn(String eventType,String aggregateType,String aggregateId,Collection<OutboxStatus> statuses);
 }
 interface AuditRepository extends FilteredRepository<AuditEntry,Long> { List<AuditEntry> findByEntityTypeAndEntityIdOrderByOccurredAt(String entityType,String entityId); List<AuditEntry> findByEntityTypeAndEntityIdOrderByOccurredAtAscIdAsc(String entityType,String entityId); List<AuditEntry> findTop10ByEntityTypeInOrderByOccurredAtDescIdDesc(Collection<String> entityTypes); }
 interface PaymentPlanConfigurationRepository extends FilteredRepository<PaymentPlanConfiguration,Long> {

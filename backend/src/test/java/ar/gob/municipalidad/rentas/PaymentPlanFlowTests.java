@@ -207,7 +207,7 @@ class PaymentPlanFlowTests {
         List<String> envelopeFields=new java.util.ArrayList<>();envelope.fieldNames().forEachRemaining(envelopeFields::add);
         assertThat(envelopeFields).containsExactlyInAnyOrder("eventId","eventType","eventVersion","occurredAt","sourceModule","correlationId","causationId","data");
         assertThat(envelope.path("sourceModule").asText()).isEqualTo("rentas");
-        assertThat(envelope.path("correlationId").isNull()).isTrue();assertThat(envelope.path("causationId").isNull()).isTrue();
+        assertThat(UUID.fromString(envelope.path("correlationId").asText())).isNotNull();assertThat(envelope.path("causationId").isNull()).isTrue();
         assertThat(data.path("requestId").asText()).isEqualTo(request.integrationId.toString());
         assertThat(data.path("citizenId").asText()).isEqualTo(canonical.toString());
         assertThat(List.of(data.path("debtIds").get(0).asText(),data.path("debtIds").get(1).asText()))
@@ -219,7 +219,9 @@ class PaymentPlanFlowTests {
 
         workflow.grant(request.id,null);PaymentPlan plan=plans.findById(request.paymentPlanId).orElseThrow();
         OutboxEvent status=outbox.findAll().stream().filter(e->e.eventType.equals("updatePaymentPlanStatus")).findFirst().orElseThrow();
-        JsonNode statusData=json.readTree(status.payload).path("data");
+        JsonNode statusEnvelope=json.readTree(status.payload),statusData=statusEnvelope.path("data");
+        assertThat(statusEnvelope.path("correlationId").asText()).isEqualTo(envelope.path("correlationId").asText());
+        assertThat(statusEnvelope.path("causationId").asText()).isEqualTo(requested.id.toString());
         assertThat(statusData.path("requestId").asText()).isEqualTo(request.integrationId.toString());
         assertThat(statusData.path("citizenId").asText()).isEqualTo(canonical.toString());
         assertThat(statusData.path("planId").asText()).isEqualTo(plan.integrationId.toString());
