@@ -17,7 +17,7 @@ export default function ProtectedRoute({ roles }) {
   }
 
   if (!isAuthenticated) {
-    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+    return <Navigate to="/login" replace state={{ from: `${location.pathname}${location.search}${location.hash}` }} />;
   }
 
   // Quien entra a un área que no le corresponde vuelve al panel de la suya.

@@ -5,10 +5,30 @@
  * nunca hardcodeada. Toda la información proviene del backend: no hay dataset local.
  */
 import { adaptApiRequest, adaptApiResponse } from "./apiAdapters.js";
+import { notifySessionExpired } from "./sessionEvents.js";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").trim().replace(/\/+$/, "");
 
 export const AUTH_MODE = import.meta.env.VITE_AUTH_MODE ?? "mock";
+
+const CODE_MESSAGES = {
+  DEBT_NOT_PAYABLE: "La deuda no admite pagos",
+  DEBT_NOT_ADJUSTABLE: "La deuda no admite ajustes",
+  DEBT_NOT_CHARGEABLE: "La deuda no admite recargos",
+  INVALID_CREDENTIALS: "Usuario o contraseña incorrectos.",
+};
+
+const STATUS_MESSAGES = {
+  400: "Revisá los datos enviados e intentá nuevamente.",
+  401: "Tu sesión venció. Ingresá nuevamente para continuar.",
+  403: "No tenés permisos para realizar esta operación.",
+  404: "No se encontró la información solicitada.",
+  409: "La operación entra en conflicto con el estado actual. Actualizá la información antes de reintentar.",
+  422: "Revisá los datos: la operación no cumple las condiciones requeridas.",
+  429: "Se realizaron demasiadas solicitudes. Esperá un momento antes de reintentar.",
+};
+
+const nonEmptyText = (value) => typeof value === "string" && value.trim() ? value.trim() : null;
 
 export class ApiError extends Error {
   constructor(message, status, details, code, traceId) {
@@ -16,9 +36,21 @@ export class ApiError extends Error {
     this.name = "ApiError";
     this.status = status;
     this.details = details;
-    this.code = code ?? details?.code ?? null;
-    this.traceId = traceId ?? details?.traceId ?? null;
+    this.code = nonEmptyText(code) ?? nonEmptyText(details?.code);
+    this.traceId = nonEmptyText(traceId) ?? nonEmptyText(details?.traceId);
   }
+}
+
+function responseError(response, payload, requiresAuth) {
+  const code = nonEmptyText(payload?.code);
+  const codeMessage = Object.hasOwn(CODE_MESSAGES, code) ? CODE_MESSAGES[code] : null;
+  const message = nonEmptyText(payload?.message) ?? nonEmptyText(payload?.detail) ?? codeMessage
+    ?? (response.status === 401 && !requiresAuth ? "No se pudo autenticar la solicitud." : STATUS_MESSAGES[response.status])
+    ?? (response.status >= 500 ? "El servidor no pudo completar la operación. Intentá nuevamente más tarde."
+      : "No se pudo completar la operación.");
+
+  return new ApiError(message, response.status, payload && typeof payload === "object" ? payload : null, code,
+    nonEmptyText(payload?.traceId) ?? response.headers.get("x-correlation-id"));
 }
 
 export function authHeaders() {
@@ -28,19 +60,24 @@ export function authHeaders() {
   return { "X-Demo-Session": token };
 }
 
-export async function request(path, { method = "GET", body, signal, responseType, headers } = {}) {
+export async function request(path, { method = "GET", body, signal, responseType, headers, requiresAuth = true } = {}) {
   const adapted = adaptApiRequest(path, { method, body, signal });
+  const requestHeaders = {
+    ...(responseType === "blob" ? { Accept: "application/pdf" } : {}),
+    ...(adapted.options.body === undefined ? {} : { "Content-Type": "application/json" }),
+    ...(requiresAuth ? authHeaders() : {}),
+    ...headers,
+  };
+  const sessionToken = new Headers(requestHeaders).get("X-Demo-Session");
   const response = await fetch(`${API_BASE_URL}${adapted.path}`, {
     method: adapted.options.method,
     signal: adapted.options.signal,
-    headers: {
-      ...(responseType === "blob" ? { Accept: "application/pdf" } : {}),
-      ...(adapted.options.body === undefined ? {} : { "Content-Type": "application/json" }),
-      ...authHeaders(),
-      ...headers,
-    },
+    headers: requestHeaders,
     body: adapted.options.body === undefined ? undefined : JSON.stringify(adapted.options.body),
   });
+
+  // Se procesa antes del cuerpo: un 401 también puede llegar sin JSON o al descargar un PDF.
+  if (response.status === 401 && requiresAuth && sessionToken) notifySessionExpired(sessionToken);
 
   const contentType = response.headers.get("content-type") ?? "";
   if (response.ok && responseType === "blob") {
@@ -67,7 +104,8 @@ export async function request(path, { method = "GET", body, signal, responseType
     }
     try {
       payload = isJson ? await response.json() : await response.text();
-    } catch {
+    } catch (caught) {
+      if (caught.name === "AbortError") throw caught;
       if (response.ok) {
         throw new ApiError("La API devolvió un JSON inválido.", response.status, null, "INVALID_API_RESPONSE",
           response.headers.get("x-correlation-id"));
@@ -76,13 +114,7 @@ export async function request(path, { method = "GET", body, signal, responseType
   }
 
   if (!response.ok) {
-    throw new ApiError(
-      payload?.message ?? "No se pudo completar la operación.",
-      response.status,
-      payload,
-      payload?.code,
-      payload?.traceId ?? response.headers.get("x-correlation-id"),
-    );
+    throw responseError(response, payload, requiresAuth);
   }
 
   return adaptApiResponse(path, adapted.path, payload);
