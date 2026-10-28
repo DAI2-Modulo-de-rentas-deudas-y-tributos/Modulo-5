@@ -475,6 +475,101 @@ class PostgreSqlIntegrationTest {
         }
     }
 
+    @Test void openApiDocumentsIdempotencyForEveryMutatingPostAndExcludesOnlyPreviewsAndSimulations() throws Exception {
+        var document=json.readTree(mvc.perform(get("/v3/api-docs")).andReturn().getResponse().getContentAsString());
+        var excluded=java.util.Set.of(
+            "/api/v1/liquidations/preview",
+            "/api/v1/electronic-payments/preview",
+            "/api/v1/debts/{id}/late-charge-preview",
+            "/api/v1/payment-plans/simulations",
+            "/api/v1/payment-plans/{planId}/refinancing/simulations");
+        int postCount=0,covered=0;
+        var paths=document.path("paths");
+        var names=paths.fieldNames();
+        while(names.hasNext()) {
+            String path=names.next();
+            var operation=paths.path(path).path("post");
+            if(operation.isMissingNode()) continue;
+            postCount++;
+            boolean hasKey=false;
+            for(var parameter:operation.path("parameters")) {
+                if("Idempotency-Key".equalsIgnoreCase(parameter.path("name").asText())) {
+                    assertThat(parameter.path("in").asText()).isEqualTo("header");
+                    assertThat(parameter.path("required").asBoolean()).isFalse();
+                    hasKey=true;
+                }
+            }
+            boolean excludedFromIdempotency=excluded.contains(path)||path.startsWith("/api/v1/dev-auth/");
+            assertThat(hasKey).as("Idempotency-Key en POST %s",path).isEqualTo(!excludedFromIdempotency);
+            if(hasKey) covered++;
+        }
+        assertThat(postCount).isEqualTo(75);
+        assertThat(covered).isEqualTo(66);
+    }
+
+    @Test void taxConceptCreationEndpointReplaysConcurrentRequestAndConflictsOnDifferentBody() throws Exception {
+        String code="HTTP_IDEMP_"+UUID.randomUUID().toString().replace("-","").substring(0,16);
+        String key="tax-concept-"+UUID.randomUUID();
+        String actor="tax-concept-http-"+UUID.randomUUID();
+        var auth=new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity(actor,null),null,List.of(new SimpleGrantedAuthority("ROLE_RENTAS")));
+        var request=new ApiDtos.CreateTaxConceptRequest(code,"Concepto idempotente",null,TaxConceptType.FEE,"M5");
+        String body=json.writeValueAsString(request);
+        var responses=new java.util.concurrent.CopyOnWriteArrayList<String>();
+        assertThat(runTogether(
+            ()->{responses.add(mvc.perform(post("/api/v1/tax-concepts").with(authentication(auth)).header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON).content(body)).andReturn().getResponse().getContentAsString());return null;},
+            ()->{responses.add(mvc.perform(post("/api/v1/tax-concepts").with(authentication(auth)).header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON).content(body)).andReturn().getResponse().getContentAsString());return null;})).containsOnlyNulls();
+        assertThat(responses).hasSize(2);
+        long id=json.readTree(responses.get(0)).path("id").asLong();
+        assertThat(json.readTree(responses.get(1)).path("id").asLong()).isEqualTo(id);
+        assertThat(concepts.findByCode(code)).isPresent();
+        var changed=new ApiDtos.CreateTaxConceptRequest(code,"Otro nombre",null,TaxConceptType.FEE,"M5");
+        mvc.perform(post("/api/v1/tax-concepts").with(authentication(auth)).header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsBytes(changed)))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isConflict())
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"));
+        assertThat(concepts.findByCode(code)).hasValueSatisfying(saved->assertThat(saved.id).isEqualTo(id));
+    }
+
+    @Test void configurationTransitionEndpointReplaysCompletedAction() throws Exception {
+        authenticate();
+        TaxConcept concept=concept("HTTP_CONFIG_ACTION_"+UUID.randomUUID(),TaxConceptType.FEE,"M5");
+        TaxConfiguration configuration=catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(
+            concept.id,CalculationType.FIXED,null,new BigDecimal("25"),null,null,true,true,LocalDate.now().minusDays(1),null));
+        String key="configuration-submit-"+UUID.randomUUID(),actor="configuration-submit-http-"+UUID.randomUUID();
+        var auth=new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity(actor,null),null,List.of(new SimpleGrantedAuthority("ROLE_RENTAS")));
+        var first=mvc.perform(post("/api/v1/tax-configurations/"+configuration.id+"/submit").with(authentication(auth)).header("Idempotency-Key",key))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk()).andReturn().getResponse().getContentAsString();
+        var replay=mvc.perform(post("/api/v1/tax-configurations/"+configuration.id+"/submit").with(authentication(auth)).header("Idempotency-Key",key))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk()).andReturn().getResponse().getContentAsString();
+        assertThat(json.readTree(replay).path("id").asLong()).isEqualTo(json.readTree(first).path("id").asLong());
+        assertThat(json.readTree(replay).path("status").asText()).isEqualTo("PENDING_APPROVAL");
+        assertThat(jdbc.queryForObject("select count(*) from idempotency_request where actor_id=? and operation=? and idempotency_key=?",Long.class,
+            actor,"POST:/tax-configurations/{id}/submit:"+configuration.id,key)).isOne();
+    }
+
+    @Test void creditApplicationEndpointReplaysEconomicEffectAndRejectsChangedAmount() throws Exception {
+        authenticate();
+        Debt source=debt("HTTP-CREDIT-SOURCE-"+UUID.randomUUID(),null);
+        Debt target=debt("HTTP-CREDIT-TARGET-"+UUID.randomUUID(),source.taxpayerId);
+        Payment payment=payments.register(new ApiDtos.RegisterPaymentRequest(source.taxpayerId,PaymentMethod.CASH,new BigDecimal("120"),List.of(new ApiDtos.AllocationRequest(source.id,new BigDecimal("100")))));
+        CreditBalance credit=creditRepository.findBySourcePaymentId(payment.id).orElseThrow();
+        String key="credit-apply-"+UUID.randomUUID(),actor="credit-apply-http-"+UUID.randomUUID();
+        var auth=new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity(actor,null),null,List.of(new SimpleGrantedAuthority("ROLE_RENTAS")));
+        var request=new ApiDtos.ApplyCreditBalanceRequest(target.id,new BigDecimal("10"));
+        String body=json.writeValueAsString(request);
+        var first=mvc.perform(post("/api/v1/credit-balances/"+credit.id+"/apply").with(authentication(auth)).header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk()).andReturn().getResponse().getContentAsString();
+        var replay=mvc.perform(post("/api/v1/credit-balances/"+credit.id+"/apply").with(authentication(auth)).header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk()).andReturn().getResponse().getContentAsString();
+        assertThat(json.readTree(replay).path("id").asLong()).isEqualTo(json.readTree(first).path("id").asLong());
+        assertThat(creditApplications.findAll().stream().filter(application->credit.id.equals(application.creditBalanceId))).hasSize(1);
+        assertThat(creditRepository.findById(credit.id).orElseThrow().availableAmount).isEqualByComparingTo("10.00");
+        var changed=new ApiDtos.ApplyCreditBalanceRequest(target.id,new BigDecimal("5"));
+        mvc.perform(post("/api/v1/credit-balances/"+credit.id+"/apply").with(authentication(auth)).header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsBytes(changed)))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isConflict())
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"));
+        assertThat(creditApplications.findAll().stream().filter(application->credit.id.equals(application.creditBalanceId))).hasSize(1);
+    }
+
     @Test void idempotencyForEconomicCreationIsTransactionalAndSerializesConcurrentRetries() throws Exception {
         authenticate();
         Debt debt=debt("POST-IDEMPOTENCY-"+UUID.randomUUID(),null);

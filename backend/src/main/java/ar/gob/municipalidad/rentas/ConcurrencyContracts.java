@@ -46,7 +46,7 @@ final class EntityTags {
 
 /** Persistencia transaccional compartida de respuestas idempotentes para operaciones nuevas. */
 @Service
-class IdempotencyService {
+class IdempotencyService implements IdempotencyExecutor {
     private final JdbcTemplate jdbc;
     private final ObjectMapper json;
     private final CurrentIdentity identity;
@@ -59,8 +59,9 @@ class IdempotencyService {
         this.dataSource = dataSource;
     }
 
+    @Override
     @Transactional
-    <T> T execute(String operation, String key, Object request, Class<T> responseType, Supplier<T> action) {
+    public <T> T execute(String operation, String key, Object request, Class<T> responseType, Supplier<T> action) {
         if (key == null) return action.get();
         String normalized = key.trim();
         if (!normalized.matches("[A-Za-z0-9._:-]{1,128}"))

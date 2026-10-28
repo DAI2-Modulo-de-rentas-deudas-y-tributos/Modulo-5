@@ -100,18 +100,19 @@ class SocialBenefitRuleService {
 @RequestMapping("/api/v1/social-benefit-rules")
 class SocialBenefitRuleController {
     private final SocialBenefitRuleService rules;
-    SocialBenefitRuleController(SocialBenefitRuleService rules){this.rules=rules;}
+    private final IdempotencyService idempotency;
+    SocialBenefitRuleController(SocialBenefitRuleService rules,IdempotencyService idempotency){this.rules=rules;this.idempotency=idempotency;}
     @GetMapping @PreAuthorize("hasAnyRole('RENTAS','SUPERVISOR','AUDITOR')")
     List<ApiDtos.SocialBenefitRuleResponse> list(){return rules.list().stream().map(ApiResponses::of).toList();}
     @PostMapping @ResponseStatus(HttpStatus.CREATED) @PreAuthorize("hasRole('RENTAS')")
-    ApiDtos.SocialBenefitRuleResponse propose(@jakarta.validation.Valid @RequestBody ApiDtos.CreateSocialBenefitRuleRequest input){
-        return ApiResponses.of(rules.propose(new SocialBenefitRuleService.RuleProposal(
-            input.programId(),input.conceptCode(),input.percentage(),input.validFrom(),input.validUntil())));
+    ApiDtos.SocialBenefitRuleResponse propose(@jakarta.validation.Valid @RequestBody ApiDtos.CreateSocialBenefitRuleRequest input,@RequestHeader(name="Idempotency-Key",required=false) String key){
+        return idempotency.execute("POST:/social-benefit-rules",key,input,ApiDtos.SocialBenefitRuleResponse.class,()->ApiResponses.of(rules.propose(new SocialBenefitRuleService.RuleProposal(
+            input.programId(),input.conceptCode(),input.percentage(),input.validFrom(),input.validUntil()))));
     }
     @PostMapping("/{id}/submit") @PreAuthorize("hasRole('RENTAS')")
-    ApiDtos.SocialBenefitRuleResponse submit(@PathVariable Long id){return ApiResponses.of(rules.submit(id));}
+    ApiDtos.SocialBenefitRuleResponse submit(@PathVariable Long id,@RequestHeader(name="Idempotency-Key",required=false) String key){return idempotency.execute("POST:/social-benefit-rules/{id}/submit:"+id,key,null,ApiDtos.SocialBenefitRuleResponse.class,()->ApiResponses.of(rules.submit(id)));}
     @PostMapping("/{id}/approve") @PreAuthorize("hasRole('SUPERVISOR')")
-    ApiDtos.SocialBenefitRuleResponse approve(@PathVariable Long id){return ApiResponses.of(rules.approve(id));}
+    ApiDtos.SocialBenefitRuleResponse approve(@PathVariable Long id,@RequestHeader(name="Idempotency-Key",required=false) String key){return idempotency.execute("POST:/social-benefit-rules/{id}/approve:"+id,key,null,ApiDtos.SocialBenefitRuleResponse.class,()->ApiResponses.of(rules.approve(id)));}
     @PostMapping("/{id}/disable") @PreAuthorize("hasRole('SUPERVISOR')")
-    ApiDtos.SocialBenefitRuleResponse disable(@PathVariable Long id){return ApiResponses.of(rules.disable(id));}
+    ApiDtos.SocialBenefitRuleResponse disable(@PathVariable Long id,@RequestHeader(name="Idempotency-Key",required=false) String key){return idempotency.execute("POST:/social-benefit-rules/{id}/disable:"+id,key,null,ApiDtos.SocialBenefitRuleResponse.class,()->ApiResponses.of(rules.disable(id)));}
 }

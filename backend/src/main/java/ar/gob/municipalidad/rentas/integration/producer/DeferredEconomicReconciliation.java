@@ -249,11 +249,12 @@ class DeferredEconomicReconciliation {
 @RequestMapping("/api/v1/integrations/deferred/economic")
 class DeferredEconomicReconciliationController {
     private final DeferredEconomicReconciliation reconciliation;
-    DeferredEconomicReconciliationController(DeferredEconomicReconciliation reconciliation){this.reconciliation=reconciliation;}
+    private final ar.gob.municipalidad.rentas.IdempotencyExecutor idempotency;
+    DeferredEconomicReconciliationController(DeferredEconomicReconciliation reconciliation,ar.gob.municipalidad.rentas.IdempotencyExecutor idempotency){this.reconciliation=reconciliation;this.idempotency=idempotency;}
 
     @GetMapping @PreAuthorize("hasAnyRole('SUPERVISOR','TECHNICAL')")
     Page<DeferredEconomicReconciliation.Result> pending(Pageable pageable){return reconciliation.pending(pageable);}
 
     @PostMapping("/{deferralId}/reconcile") @PreAuthorize("hasAnyRole('SUPERVISOR','TECHNICAL')")
-    DeferredEconomicReconciliation.Result reconcile(@PathVariable Long deferralId){return reconciliation.reconcile(deferralId);}
+    DeferredEconomicReconciliation.Result reconcile(@PathVariable Long deferralId,@org.springframework.web.bind.annotation.RequestHeader(name="Idempotency-Key",required=false) String key){return idempotency.execute("POST:/integrations/deferred/economic/{deferralId}/reconcile:"+deferralId,key,null,DeferredEconomicReconciliation.Result.class,()->reconciliation.reconcile(deferralId));}
 }

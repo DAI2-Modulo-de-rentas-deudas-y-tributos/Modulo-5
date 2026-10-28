@@ -104,11 +104,12 @@ class DeferredExemptionReconciliation {
 @RequestMapping("/api/v1/integrations/deferred/exemptions")
 class DeferredExemptionReconciliationController {
     private final DeferredExemptionReconciliation reconciliation;
-    DeferredExemptionReconciliationController(DeferredExemptionReconciliation reconciliation){this.reconciliation=reconciliation;}
+    private final ar.gob.municipalidad.rentas.IdempotencyExecutor idempotency;
+    DeferredExemptionReconciliationController(DeferredExemptionReconciliation reconciliation,ar.gob.municipalidad.rentas.IdempotencyExecutor idempotency){this.reconciliation=reconciliation;this.idempotency=idempotency;}
 
     @PostMapping("/{requestId}/reconcile")
     @PreAuthorize("hasAnyRole('SUPERVISOR','TECHNICAL')")
-    DeferredExemptionReconciliation.ReconciliationResult reconcile(@PathVariable Long requestId){
-        return reconciliation.reconcile(requestId);
+    DeferredExemptionReconciliation.ReconciliationResult reconcile(@PathVariable Long requestId,@org.springframework.web.bind.annotation.RequestHeader(name="Idempotency-Key",required=false) String key){
+        return idempotency.execute("POST:/integrations/deferred/exemptions/{requestId}/reconcile:"+requestId,key,null,DeferredExemptionReconciliation.ReconciliationResult.class,()->reconciliation.reconcile(requestId));
     }
 }

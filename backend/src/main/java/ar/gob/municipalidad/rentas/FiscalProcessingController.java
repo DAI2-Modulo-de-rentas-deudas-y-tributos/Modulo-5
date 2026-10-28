@@ -33,23 +33,23 @@ class FiscalProcessingController {
         int notFoundItems,String importedBy,OffsetDateTime importedAt,List<ReconciliationItemResponse> items) {}
     record ResolveReconciliationRequest(@NotNull Long paymentId,@NotBlank String reason) {}
 
-    private final LateChargeService lateCharges;private final DueDateService dueDates;private final ReconciliationService reconciliations;private final FiscalProcessingDatePolicy dates;
-    FiscalProcessingController(LateChargeService lateCharges,DueDateService dueDates,ReconciliationService reconciliations,FiscalProcessingDatePolicy dates){this.lateCharges=lateCharges;this.dueDates=dueDates;this.reconciliations=reconciliations;this.dates=dates;}
+    private final LateChargeService lateCharges;private final DueDateService dueDates;private final ReconciliationService reconciliations;private final FiscalProcessingDatePolicy dates;private final IdempotencyExecutor idempotency;
+    FiscalProcessingController(LateChargeService lateCharges,DueDateService dueDates,ReconciliationService reconciliations,FiscalProcessingDatePolicy dates,IdempotencyExecutor idempotency){this.lateCharges=lateCharges;this.dueDates=dueDates;this.reconciliations=reconciliations;this.dates=dates;this.idempotency=idempotency;}
 
     @PostMapping("/debts/{id}/late-charge-preview") @PreAuthorize("hasAnyRole('RENTAS','SUPERVISOR','AUDITOR')")
     LateChargeResponse preview(@PathVariable Long id,@RequestBody(required=false) CalculationDateRequest body){LocalDate date=date(body);dates.requireNotFuture(date);return lateCharges.preview(id,date);}
     @PostMapping("/debts/{id}/late-charges") @PreAuthorize("hasAnyRole('RENTAS','SUPERVISOR')")
-    LateChargeResponse apply(@PathVariable Long id,@RequestBody(required=false) CalculationDateRequest body){LocalDate date=date(body);dates.requireNotFuture(date);return lateCharges.apply(id,date);}
+    LateChargeResponse apply(@PathVariable Long id,@RequestBody(required=false) CalculationDateRequest body,@RequestHeader(name="Idempotency-Key",required=false) String key){return idempotency.execute("POST:/debts/{id}/late-charges:"+id,key,body,LateChargeResponse.class,()->{LocalDate date=date(body);dates.requireNotFuture(date);return lateCharges.apply(id,date);});}
     @PostMapping("/administration/process-due-dates") @PreAuthorize("hasAnyRole('RENTAS','SUPERVISOR')")
-    DueDateResponse process(@RequestBody(required=false) DueDateRequest body){LocalDate date=dates.todayIfMissing(body==null?null:body.processingDate());dates.requireNotFuture(date);return dueDates.process(date);}
+    DueDateResponse process(@RequestBody(required=false) DueDateRequest body,@RequestHeader(name="Idempotency-Key",required=false) String key){return idempotency.execute("POST:/administration/process-due-dates",key,body,DueDateResponse.class,()->{LocalDate date=dates.todayIfMissing(body==null?null:body.processingDate());dates.requireNotFuture(date);return dueDates.process(date);});}
     @PostMapping("/payment-reconciliations/batches") @PreAuthorize("hasAnyRole('RENTAS','SUPERVISOR','CASHIER')")
-    ReconciliationBatchResponse importBatch(@Valid @RequestBody ImportReconciliationRequest body){return reconciliations.importBatch(body);}
+    ReconciliationBatchResponse importBatch(@Valid @RequestBody ImportReconciliationRequest body,@RequestHeader(name="Idempotency-Key",required=false) String key){return idempotency.execute("POST:/payment-reconciliations/batches",key,body,ReconciliationBatchResponse.class,()->reconciliations.importBatch(body));}
     @GetMapping("/payment-reconciliations/batches/{id}") @PreAuthorize("hasAnyRole('RENTAS','SUPERVISOR','CASHIER','AUDITOR')")
     ReconciliationBatchResponse batch(@PathVariable Long id){return reconciliations.get(id);}
     @GetMapping("/payment-reconciliations/observed") @PreAuthorize("hasAnyRole('RENTAS','SUPERVISOR','CASHIER','AUDITOR')")
     Page<ReconciliationItemResponse> observed(Pageable pageable){return reconciliations.observed(pageable);}
     @PostMapping("/payment-reconciliations/items/{id}/resolve") @PreAuthorize("hasAnyRole('RENTAS','SUPERVISOR')")
-    ReconciliationItemResponse resolve(@PathVariable Long id,@Valid @RequestBody ResolveReconciliationRequest body){return reconciliations.resolve(id,body);}
+    ReconciliationItemResponse resolve(@PathVariable Long id,@Valid @RequestBody ResolveReconciliationRequest body,@RequestHeader(name="Idempotency-Key",required=false) String key){return idempotency.execute("POST:/payment-reconciliations/items/{id}/resolve:"+id,key,body,ReconciliationItemResponse.class,()->reconciliations.resolve(id,body));}
     private LocalDate date(CalculationDateRequest body){return dates.todayIfMissing(body==null?null:body.calculationDate());}
 }
 

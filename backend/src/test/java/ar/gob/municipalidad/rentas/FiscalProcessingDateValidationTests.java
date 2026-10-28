@@ -31,7 +31,8 @@ class FiscalProcessingDateValidationTests {
         LateChargeService lateCharges=mock(LateChargeService.class);
         DueDateService dueDates=mock(DueDateService.class);
         ReconciliationService reconciliations=mock(ReconciliationService.class);
-        FiscalProcessingController controller=new FiscalProcessingController(lateCharges,dueDates,reconciliations,dates);
+        IdempotencyExecutor idempotency=new IdempotencyExecutor(){@Override public <T> T execute(String operation,String key,Object request,Class<T> responseType,java.util.function.Supplier<T> action){return action.get();}};
+        FiscalProcessingController controller=new FiscalProcessingController(lateCharges,dueDates,reconciliations,dates,idempotency);
         MockMvc mvc=MockMvcBuilders.standaloneSetup(controller).setControllerAdvice(new GlobalExceptionHandler()).build();
         String tomorrow=dates.today().plusDays(1).toString();
 
