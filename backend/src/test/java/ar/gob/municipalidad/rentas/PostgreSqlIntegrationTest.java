@@ -600,6 +600,33 @@ class PostgreSqlIntegrationTest {
         } finally { pool.shutdownNow(); }
     }
 
+    @Test void failedOutboxEventsUseProgressiveBackoffWithoutDelayingPendingEvents() {
+        OffsetDateTime now=OffsetDateTime.now();
+        java.util.function.BiFunction<Integer,OffsetDateTime,OutboxEvent> failed=(attempts,lastAttempt)->{
+            OutboxEvent event=new OutboxEvent();event.id=UUID.randomUUID();event.eventType="validation";event.targetModule="TEST";
+            event.aggregateType="Validation";event.aggregateId=event.id.toString();event.payload="{}";event.status=OutboxStatus.FAILED;
+            event.retryCount=attempts;event.lastAttemptAt=lastAttempt;event.createdAt=now;return event;
+        };
+        OutboxEvent pending=failed.apply(0,null);pending.status=OutboxStatus.PENDING;
+        OutboxEvent legacyFailure=failed.apply(1,null);
+        OutboxEvent retryOneDue=failed.apply(1,now.minusSeconds(15));
+        OutboxEvent retryOneEarly=failed.apply(1,now.minusSeconds(1));
+        OutboxEvent retryTwoDue=failed.apply(2,now.minusSeconds(25));
+        OutboxEvent retryTwoEarly=failed.apply(2,now.minusSeconds(1));
+        OutboxEvent retryThreeDue=failed.apply(3,now.minusSeconds(45));
+        OutboxEvent retryThreeEarly=failed.apply(3,now.minusSeconds(1));
+        OutboxEvent retryFourDue=failed.apply(4,now.minusSeconds(60));
+        OutboxEvent retryFourEarly=failed.apply(4,now.minusSeconds(1));
+        List<OutboxEvent> fixtures=List.of(pending,legacyFailure,retryOneDue,retryOneEarly,retryTwoDue,retryTwoEarly,
+            retryThreeDue,retryThreeEarly,retryFourDue,retryFourEarly);
+        outbox.saveAllAndFlush(fixtures);
+
+        List<UUID> returned=outbox.findPublishable(PageRequest.of(0,200)).stream().map(event->event.id).toList();
+
+        assertThat(returned).contains(pending.id,legacyFailure.id,retryOneDue.id,retryTwoDue.id,retryThreeDue.id,retryFourDue.id)
+            .doesNotContain(retryOneEarly.id,retryTwoEarly.id,retryThreeEarly.id,retryFourEarly.id);
+    }
+
     @Test void preliminaryM4ContractsRunOnPostgreSqlWithoutEconomicEffects() throws Exception {
         String permit="{\"module\":\"M4\",\"event\":\"permitFeeGenerated\",\"data\":{\"id\":\"FEE-001\",\"permitApplicationId\":\"PA-001\",\"establishmentId\":\"EST-001\",\"amount\":50000}}";
         String fine="{\"module\":\"M4\",\"event\":\"commercialFineGenerated\",\"data\":{\"id\":\"FINE-001\",\"sourceViolationId\":\"V-001\",\"sourceModule\":\"M6\",\"establishmentId\":\"EST-001\",\"actId\":\"ACT-001\",\"amount\":100000,\"reason\":\"Incumplimiento comercial\",\"decidedAt\":\"2026-08-24T15:00:00-03:00\",\"externalRef\":\"MULTA-2026-00123\"}}";
