@@ -8,6 +8,6 @@ import org.springframework.stereotype.Service;
 @Profile("test")
 @ConditionalOnProperty(name="rentas.security.dev-mode", havingValue="true")
 class NoopDemoLoginAttemptLimiter implements DemoLoginAttemptLimiter {
-    @Override public boolean recordFailure(String hashedKey) { return true; }
+    @Override public boolean allowAttempt(String hashedKey) { return true; }
     @Override public void reset(String hashedKey) { }
 }

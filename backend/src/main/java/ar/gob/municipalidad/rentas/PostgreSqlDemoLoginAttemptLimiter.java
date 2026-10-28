@@ -11,7 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Profile("!prod & !test")
 @ConditionalOnProperty(name="rentas.security.dev-mode", havingValue="true")
 class PostgreSqlDemoLoginAttemptLimiter implements DemoLoginAttemptLimiter {
-    private static final String RECORD_FAILURE = """
+    private static final String ADMIT_ATTEMPT = """
         INSERT INTO demo_login_attempt (attempt_key_hash, window_started_at, attempts)
         VALUES (?, CURRENT_TIMESTAMP, 1)
         ON CONFLICT (attempt_key_hash) DO UPDATE SET
@@ -32,8 +32,8 @@ class PostgreSqlDemoLoginAttemptLimiter implements DemoLoginAttemptLimiter {
 
     @Override
     @Transactional(propagation=Propagation.REQUIRES_NEW)
-    public boolean recordFailure(String hashedKey) {
-        var attempts = jdbc.query(RECORD_FAILURE, (rs, row) -> rs.getInt(1), hashedKey);
+    public boolean allowAttempt(String hashedKey) {
+        var attempts = jdbc.query(ADMIT_ATTEMPT, (rs, row) -> rs.getInt(1), hashedKey);
         jdbc.update("DELETE FROM demo_login_attempt WHERE window_started_at <= CURRENT_TIMESTAMP - INTERVAL '15 minutes'");
         return !attempts.isEmpty() && attempts.get(0) <= 5;
     }

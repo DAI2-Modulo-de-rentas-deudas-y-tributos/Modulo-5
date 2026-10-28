@@ -49,13 +49,11 @@ class DemoAuthService {
 
     @Transactional DemoAuthController.LoginResponse login(DemoAuthController.LoginRequest request, String remoteAddress) {
         String key=attemptKey("login:"+normalize(request.username())+":"+remoteAddress);
+        if(!loginAttempts.allowAttempt(key)) throw new BusinessException("DEMO_LOGIN_RATE_LIMITED","Demasiados intentos. Reintentá en 15 minutos",429,900);
         DemoUser user=users.findByUsernameIgnoreCase(normalize(request.username()))
             .filter(x->x.active&&passwords.matches(request.password(),x.passwordHash))
             .orElse(null);
-        if(user==null) {
-            if(!loginAttempts.recordFailure(key)) throw new BusinessException("DEMO_LOGIN_RATE_LIMITED","Demasiados intentos. Reintentá en 15 minutos",429,900);
-            throw new BusinessException("INVALID_CREDENTIALS","Usuario o contraseña incorrectos",401);
-        }
+        if(user==null) throw new BusinessException("INVALID_CREDENTIALS","Usuario o contraseña incorrectos",401);
         loginAttempts.reset(key);
         String token=newToken();
         DemoAuthSession session=new DemoAuthSession();
@@ -96,8 +94,8 @@ class DemoAuthService {
     @Transactional DemoAuthController.UserResponse bootstrap(String secret,DemoAuthController.BootstrapRequest request,String remoteAddress) {
         if(bootstrapSecret.isBlank()) throw new BusinessException("DEMO_BOOTSTRAP_DISABLED","El bootstrap DEMO no está configurado",403);
         String key=attemptKey("bootstrap:"+remoteAddress);
+        if(!loginAttempts.allowAttempt(key)) throw new BusinessException("DEMO_LOGIN_RATE_LIMITED","Demasiados intentos. Reintentá en 15 minutos",429,900);
         if(secret==null||!constantEquals(secret,bootstrapSecret)) {
-            if(!loginAttempts.recordFailure(key)) throw new BusinessException("DEMO_LOGIN_RATE_LIMITED","Demasiados intentos. Reintentá en 15 minutos",429,900);
             throw new BusinessException("INVALID_BOOTSTRAP_SECRET","Secreto de bootstrap inválido",401);
         }
         loginAttempts.reset(key);
