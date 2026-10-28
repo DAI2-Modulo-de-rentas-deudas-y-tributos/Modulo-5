@@ -33,6 +33,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.YearMonth;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -244,7 +245,7 @@ class PostgreSqlIntegrationTest {
         assertThat(auditoria.findByEntityTypeAndEntityIdOrderByOccurredAt("ExemptionRequest",solicitud.id.toString()))
             .extracting(x->x.action).containsExactly("EXEMPTION_REQUESTED","EXEMPTION_REVIEW_STARTED",
                 "EXEMPTION_DOCUMENTATION_REQUESTED","EXEMPTION_DOCUMENTATION_SUBMITTED","EXEMPTION_SUBMITTED_FOR_RESOLUTION");
-        exenciones.approve(solicitud.id);
+        TestActorSupport.asApprover(() -> exenciones.approve(solicitud.id));
         assertThat(liquidations.preview(new ApiDtos.LiquidationRequest(deuda.taxpayerId,deuda.taxConceptId,YearMonth.now().toString(),BigDecimal.ZERO,fin.plusMonths(3))).finalAmount()).isZero();
         var futura=new ApiDtos.LiquidationRequest(deuda.taxpayerId,deuda.taxConceptId,YearMonth.now().plusYears(2).toString(),BigDecimal.ZERO,fin.plusYears(2));
         assertThat(liquidations.create(futura).finalAmount).isEqualByComparingTo("100");
@@ -326,14 +327,13 @@ class PostgreSqlIntegrationTest {
             .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.message").value("Demasiados intentos. Reintentá en 15 minutos"));
     }
 
-    @Test void successfulDemoLoginResetsTheFailureWindow() {
+    @Test void successfulDemoLoginResetsTheAttemptWindow() {
         authenticate();
         String username="rate-reset-"+UUID.randomUUID();
         demoAuth.create(new DemoAuthController.CreateUserRequest(username,"clave-segura","Rate reset",DemoRole.RENTAS,null));
         var request=new DemoAuthController.LoginRequest(username,"clave-segura");
-        for(int attempt=0;attempt<5;attempt++)
-            assertThatThrownBy(()->demoAuthService.login(new DemoAuthController.LoginRequest(username,"incorrecta"),"127.0.0.1"))
-                .isInstanceOf(BusinessException.class);
+        assertThatThrownBy(()->demoAuthService.login(new DemoAuthController.LoginRequest(username,"incorrecta"),"127.0.0.1"))
+            .isInstanceOfSatisfying(BusinessException.class,ex->assertThat(ex.code).isEqualTo("INVALID_CREDENTIALS"));
         assertThat(demoAuthService.login(request,"127.0.0.1").user().username()).isEqualTo(username);
         for(int attempt=0;attempt<5;attempt++)
             assertThatThrownBy(()->demoAuthService.login(new DemoAuthController.LoginRequest(username,"incorrecta"),"127.0.0.1"))
@@ -344,27 +344,105 @@ class PostgreSqlIntegrationTest {
             .hasFieldOrPropertyWithValue("code","DEMO_LOGIN_RATE_LIMITED");
     }
 
+    @Test void validDemoLoginCannotBypassAnExhaustedAttemptWindow() {
+        authenticate();
+        String username="rate-lock-"+UUID.randomUUID();
+        String remoteAddress="198.51.100.71";
+        demoAuth.create(new DemoAuthController.CreateUserRequest(username,"clave-segura","Rate lock",DemoRole.RENTAS,null));
+        var invalid=new DemoAuthController.LoginRequest(username,"incorrecta");
+        for(int attempt=0;attempt<5;attempt++)
+            assertThatThrownBy(()->demoAuthService.login(invalid,remoteAddress))
+                .isInstanceOfSatisfying(BusinessException.class,ex->assertThat(ex.code).isEqualTo("INVALID_CREDENTIALS"));
+
+        assertThatThrownBy(()->demoAuthService.login(new DemoAuthController.LoginRequest(username,"clave-segura"),remoteAddress))
+            .isInstanceOfSatisfying(BusinessException.class,ex->{assertThat(ex.status).isEqualTo(429);assertThat(ex.code).isEqualTo("DEMO_LOGIN_RATE_LIMITED");});
+        String key=DemoAuthService.hashToken("login:"+username+":"+remoteAddress);
+        assertThat(jdbc.queryForObject("select attempts from demo_login_attempt where attempt_key_hash=?",Integer.class,key)).isEqualTo(5);
+        jdbc.update("UPDATE demo_login_attempt SET window_started_at=CURRENT_TIMESTAMP - INTERVAL '16 minutes' WHERE attempt_key_hash=?",key);
+        assertThat(demoAuthService.login(new DemoAuthController.LoginRequest(username,"clave-segura"),remoteAddress).user().username()).isEqualTo(username);
+        demoLoginAttempts.reset(key);
+    }
+
+    @Test void demoLoginAttemptWindowsAreIsolatedByUsername() {
+        authenticate();
+        String remoteAddress="198.51.100.72";
+        String first="rate-first-"+UUID.randomUUID(),second="rate-second-"+UUID.randomUUID();
+        demoAuth.create(new DemoAuthController.CreateUserRequest(first,"clave-segura","First",DemoRole.RENTAS,null));
+        demoAuth.create(new DemoAuthController.CreateUserRequest(second,"clave-segura","Second",DemoRole.RENTAS,null));
+        for(int attempt=0;attempt<5;attempt++)
+            assertThatThrownBy(()->demoAuthService.login(new DemoAuthController.LoginRequest(first,"incorrecta"),remoteAddress))
+                .isInstanceOfSatisfying(BusinessException.class,ex->assertThat(ex.code).isEqualTo("INVALID_CREDENTIALS"));
+
+        assertThat(demoAuthService.login(new DemoAuthController.LoginRequest(second,"clave-segura"),remoteAddress).user().username()).isEqualTo(second);
+        assertThatThrownBy(()->demoAuthService.login(new DemoAuthController.LoginRequest(first,"clave-segura"),remoteAddress))
+            .isInstanceOfSatisfying(BusinessException.class,ex->assertThat(ex.code).isEqualTo("DEMO_LOGIN_RATE_LIMITED"));
+        demoLoginAttempts.reset(DemoAuthService.hashToken("login:"+first+":"+remoteAddress));
+        demoLoginAttempts.reset(DemoAuthService.hashToken("login:"+second+":"+remoteAddress));
+    }
+
+    @Test void existingAndUnknownDemoUsersReceiveTheSameCredentialError() {
+        authenticate();
+        String existing="rate-existing-"+UUID.randomUUID();
+        demoAuth.create(new DemoAuthController.CreateUserRequest(existing,"clave-segura","Existing",DemoRole.RENTAS,null));
+        for(String username:List.of(existing,"rate-unknown-"+UUID.randomUUID()))
+            assertThatThrownBy(()->demoAuthService.login(new DemoAuthController.LoginRequest(username,"incorrecta"),"198.51.100.75"))
+                .isInstanceOfSatisfying(BusinessException.class,ex->{assertThat(ex.status).isEqualTo(401);assertThat(ex.code).isEqualTo("INVALID_CREDENTIALS");});
+    }
+
+    @Test void bootstrapSecretCannotBypassAnExhaustedAttemptWindow() {
+        String remoteAddress="198.51.100.73";
+        var request=new DemoAuthController.BootstrapRequest("bootstrap-"+UUID.randomUUID(),"clave-segura","Bootstrap");
+        for(int attempt=0;attempt<5;attempt++)
+            assertThatThrownBy(()->demoAuthService.bootstrap("incorrecto",request,remoteAddress))
+                .isInstanceOfSatisfying(BusinessException.class,ex->assertThat(ex.code).isEqualTo("INVALID_BOOTSTRAP_SECRET"));
+
+        assertThatThrownBy(()->demoAuthService.bootstrap("test-bootstrap-secret",request,remoteAddress))
+            .isInstanceOfSatisfying(BusinessException.class,ex->{assertThat(ex.status).isEqualTo(429);assertThat(ex.code).isEqualTo("DEMO_LOGIN_RATE_LIMITED");});
+        assertThat(jdbc.queryForObject("select attempts from demo_login_attempt where attempt_key_hash=?",Integer.class,
+            DemoAuthService.hashToken("bootstrap:"+remoteAddress))).isEqualTo(5);
+        demoLoginAttempts.reset(DemoAuthService.hashToken("bootstrap:"+remoteAddress));
+    }
+
+    @Test void concurrentDemoLoginRequestsCannotExceedFiveAdmissions() throws Exception {
+        String username="rate-concurrent-"+UUID.randomUUID();
+        String remoteAddress="198.51.100.74";
+        var invalid=new DemoAuthController.LoginRequest(username,"incorrecta");
+        ExecutorService pool=Executors.newFixedThreadPool(4);
+        try {
+            List<Callable<String>> attempts=java.util.stream.IntStream.range(0,24)
+                .<Callable<String>>mapToObj(ignored->()->{
+                    try {demoAuthService.login(invalid,remoteAddress);return "UNEXPECTED_SUCCESS";}
+                    catch(BusinessException ex) {return ex.code;}
+                }).toList();
+            List<String> outcomes=pool.invokeAll(attempts).stream().map(future->{try{return future.get();}catch(Exception ex){throw new RuntimeException(ex);}}).toList();
+            assertThat(outcomes.stream().filter("INVALID_CREDENTIALS"::equals).count()).isEqualTo(5);
+            assertThat(outcomes.stream().filter("DEMO_LOGIN_RATE_LIMITED"::equals).count()).isEqualTo(19);
+            assertThat(outcomes).doesNotContain("UNEXPECTED_SUCCESS");
+        } finally {pool.shutdownNow();}
+        demoLoginAttempts.reset(DemoAuthService.hashToken("login:"+username+":"+remoteAddress));
+    }
+
     @Test void demoLoginRateLimitIsAtomicUnderConcurrentFailures() throws Exception {
         String key=DemoAuthService.hashToken("concurrent-rate-limit:"+UUID.randomUUID());
         ExecutorService pool=Executors.newFixedThreadPool(12);
         try {
             List<Callable<Boolean>> attempts=java.util.stream.IntStream.range(0,24)
-                .<Callable<Boolean>>mapToObj(ignored->()->demoLoginAttempts.recordFailure(key)).toList();
+                .<Callable<Boolean>>mapToObj(ignored->()->demoLoginAttempts.allowAttempt(key)).toList();
             long allowed=pool.invokeAll(attempts).stream().filter(future->{try{return future.get();}catch(Exception ex){throw new RuntimeException(ex);}}).count();
             assertThat(allowed).isEqualTo(5);
         } finally {pool.shutdownNow();}
         demoLoginAttempts.reset(key);
-        assertThat(demoLoginAttempts.recordFailure(key)).isTrue();
+        assertThat(demoLoginAttempts.allowAttempt(key)).isTrue();
     }
 
     @Test void demoLoginRateLimitExpiresAfterFifteenMinutesAndIsSharedAcrossInstances() {
         String key=DemoAuthService.hashToken("expiring-rate-limit:"+UUID.randomUUID());
         DemoLoginAttemptLimiter secondInstance=new PostgreSqlDemoLoginAttemptLimiter(jdbc);
-        assertThat(demoLoginAttempts.recordFailure(key)).isTrue();
-        assertThat(secondInstance.recordFailure(key)).isTrue();
+        assertThat(demoLoginAttempts.allowAttempt(key)).isTrue();
+        assertThat(secondInstance.allowAttempt(key)).isTrue();
         jdbc.update("UPDATE demo_login_attempt SET window_started_at=CURRENT_TIMESTAMP - INTERVAL '16 minutes' WHERE attempt_key_hash=?",key);
-        for(int attempt=0;attempt<5;attempt++) assertThat(secondInstance.recordFailure(key)).isTrue();
-        assertThat(demoLoginAttempts.recordFailure(key)).isFalse();
+        for(int attempt=0;attempt<5;attempt++) assertThat(secondInstance.allowAttempt(key)).isTrue();
+        assertThat(demoLoginAttempts.allowAttempt(key)).isFalse();
         secondInstance.reset(key);
     }
 
@@ -398,8 +476,12 @@ class PostgreSqlIntegrationTest {
     }
 
     @Test void contextStartsAndFlywayAppliesEveryMigration(){
-        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(29);
-        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(28);
+        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(30);
+        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(29);
+        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version='29'",Integer.class)).isOne();
+        assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='tax_configuration'",String.class)).contains("submitted_by");
+        assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='liquidation_run'",String.class)).contains("submitted_by");
+        assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='social_benefit_rule'",String.class)).contains("submitted_by");
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='ticket_case'",String.class))
             .contains("public_id","correlation_id","last_source_event_id","last_external_updated_at","request_type","subcategory");
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='demo_user'",String.class))
@@ -483,12 +565,12 @@ class PostgreSqlIntegrationTest {
             TaxpayerReference taxpayer=catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(TaxpayerType.CITIZEN,"PG-"+suffix,"1",null,"PostgreSQL IT"));
             TaxConcept concept=catalog.createConcept(new ApiDtos.CreateTaxConceptRequest("PG_"+suffix,"PostgreSQL IT",null,TaxConceptType.FEE,"M5"));
             TaxConfiguration taxConfiguration=catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(concept.id,CalculationType.FIXED,null,new BigDecimal("80"),null,null,true,true,LocalDate.now().minusDays(1),null));
-            catalog.submit(taxConfiguration.id);catalog.approve(taxConfiguration.id);
+            catalog.submit(taxConfiguration.id);TestActorSupport.asApprover(() -> catalog.approve(taxConfiguration.id));
             liquidations.create(new ApiDtos.LiquidationRequest(taxpayer.id,concept.id,YearMonth.now().toString(),BigDecimal.ZERO,LocalDate.now().plusDays(30)));
             Debt debt=debts.findByTaxpayerId(taxpayer.id).get(0);
             workflow.createConfiguration(new ApiDtos.CreatePaymentPlanConfigurationRequest(1,1,BigDecimal.ZERO,new BigDecimal("25"),0,1,true,true,1,LocalDate.now().minusDays(1),null,true));
             PaymentPlanRequest request=workflow.request(new ApiDtos.CreatePaymentPlanRequest(taxpayer.id,List.of(debt.id),1));
-            PaymentPlanRequest granted=workflow.grant(request.id,null);
+            PaymentPlanRequest granted=TestActorSupport.asApprover(() -> workflow.grant(request.id,null));
             Installment installment=installments.findByPaymentPlanIdOrderByNumber(granted.paymentPlanId).get(0);
             Payment payment=payments.register(new ApiDtos.RegisterPaymentRequest(taxpayer.id,null,PaymentMethod.CASH,new BigDecimal("100"),List.of(new ApiDtos.AllocationRequest(null,installment.id,new BigDecimal("100")))));
             PaymentAllocation allocation=allocations.findByPaymentId(payment.id).get(0);
@@ -497,7 +579,7 @@ class PostgreSqlIntegrationTest {
             assertThat(allocation.principalApplied).isEqualByComparingTo("80.00");
             assertThat(allocation.interestApplied).isEqualByComparingTo("20.00");
             assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isZero();
-            PaymentReversalRequest reversal=reversals.request(payment.id,"Regresión PostgreSQL");reversals.approve(reversal.id);reversals.execute(reversal.id);
+            PaymentReversalRequest reversal=reversals.request(payment.id,"Regresión PostgreSQL");TestActorSupport.asApprover(() -> reversals.approve(reversal.id));reversals.execute(reversal.id);
             assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("80.00");
             assertThat(allocations.findByPaymentId(payment.id).get(0).status).isEqualTo("REVERSED");
         } finally {
@@ -646,7 +728,7 @@ class PostgreSqlIntegrationTest {
         workflow.createConfiguration(new ApiDtos.CreatePaymentPlanConfigurationRequest(2,2,BigDecimal.ZERO,
             new BigDecimal("10"),0,1,true,true,1,LocalDate.now().minusDays(1),null,true));
         PaymentPlanRequest request=workflow.request(new ApiDtos.CreatePaymentPlanRequest(organization.id,List.of(debt.id),2));
-        PaymentPlan plan=planRepository.findById(workflow.grant(request.id,null).paymentPlanId).orElseThrow();
+        PaymentPlan plan=planRepository.findById(TestActorSupport.asApprover(() -> workflow.grant(request.id,null)).paymentPlanId).orElseThrow();
         Installment installment=installments.findByPaymentPlanIdOrderByNumber(plan.id).get(0);
         Payment payment=payments.register(new ApiDtos.RegisterPaymentRequest(organization.id,PaymentMethod.CASH,
             installment.totalAmount,List.of(new ApiDtos.AllocationRequest(null,installment.id,installment.totalAmount))));
@@ -706,7 +788,7 @@ class PostgreSqlIntegrationTest {
 
         var simulation=workflow.simulate(new ApiDtos.PaymentPlanSimulationRequest(debt.taxpayerId,List.of(debt.id),2));
         PaymentPlanRequest request=workflow.request(new ApiDtos.CreatePaymentPlanRequest(debt.taxpayerId,List.of(debt.id),2));
-        PaymentPlanRequest granted=workflow.grant(request.id,null);
+        PaymentPlanRequest granted=TestActorSupport.asApprover(() -> workflow.grant(request.id,null));
         PaymentPlan plan=planRepository.findById(granted.paymentPlanId).orElseThrow();
         List<Installment> schedule=installments.findByPaymentPlanIdOrderByNumber(plan.id);
 
@@ -723,7 +805,7 @@ class PostgreSqlIntegrationTest {
         assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("95.51");
 
         PaymentReversalRequest reversal=reversals.request(payment.id,"Prueba monetaria PostgreSQL");
-        reversals.approve(reversal.id);reversals.execute(reversal.id);
+        TestActorSupport.asApprover(() -> reversals.approve(reversal.id));reversals.execute(reversal.id);
         assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("100.01");
         assertThat(installments.findById(schedule.get(1).id).orElseThrow().paidAmount).isEqualByComparingTo("0.00");
     }
@@ -731,7 +813,7 @@ class PostgreSqlIntegrationTest {
     @Test void planReversalAndCreditSingleExecutionLocksRunOnPostgreSql() throws Exception {
         authenticate();Debt planDebt=debt("PG-PLAN",null);List<Throwable> planFailures=runTogether(()->plans.grant(new ApiDtos.GrantPlanRequest(planDebt.id,3,BigDecimal.ZERO)),()->plans.grant(new ApiDtos.GrantPlanRequest(planDebt.id,3,BigDecimal.ZERO)));
         assertThat(planRepository.findAll().stream().filter(x->planDebt.id.equals(x.debtId)&&x.status==PaymentPlanStatus.ACTIVE)).hasSize(1);assertThat(planFailures.stream().filter(Objects::nonNull)).hasSize(1);
-        Debt reversalDebt=debt("PG-REV",null);Payment payment=payments.register(new ApiDtos.RegisterPaymentRequest(reversalDebt.taxpayerId,PaymentMethod.CASH,new BigDecimal("120"),List.of(new ApiDtos.AllocationRequest(reversalDebt.id,new BigDecimal("120")))));PaymentReversalRequest reversal=reversals.request(payment.id,"PostgreSQL concurrente");reversals.approve(reversal.id);
+        Debt reversalDebt=debt("PG-REV",null);Payment payment=payments.register(new ApiDtos.RegisterPaymentRequest(reversalDebt.taxpayerId,PaymentMethod.CASH,new BigDecimal("120"),List.of(new ApiDtos.AllocationRequest(reversalDebt.id,new BigDecimal("120")))));PaymentReversalRequest reversal=reversals.request(payment.id,"PostgreSQL concurrente");TestActorSupport.asApprover(() -> reversals.approve(reversal.id));
         List<Throwable> reversalFailures=runTogether(()->reversals.execute(reversal.id),()->reversals.execute(reversal.id));assertThat(reversalFailures.stream().filter(Objects::nonNull)).hasSize(1);assertThat(paymentRepository.findById(payment.id).orElseThrow().status).isEqualTo(PaymentStatus.REVERSED);
         Debt source=debt("PG-CREDIT-SOURCE",null);Payment overPayment=payments.register(new ApiDtos.RegisterPaymentRequest(source.taxpayerId,PaymentMethod.CASH,new BigDecimal("120"),List.of(new ApiDtos.AllocationRequest(source.id,new BigDecimal("120")))));CreditBalance credit=creditRepository.findBySourcePaymentId(overPayment.id).orElseThrow();Debt first=debt("PG-CREDIT-A",source.taxpayerId),second=debt("PG-CREDIT-B",source.taxpayerId);
         List<Throwable> creditFailures=runTogether(()->credits.apply(credit.id,new ApiDtos.ApplyCreditBalanceRequest(first.id,new BigDecimal("15"))),()->credits.apply(credit.id,new ApiDtos.ApplyCreditBalanceRequest(second.id,new BigDecimal("15"))));assertThat(creditFailures.stream().filter(Objects::nonNull)).hasSize(1);assertThat(creditRepository.findById(credit.id).orElseThrow().availableAmount).isEqualByComparingTo("5.00");assertThat(creditApplications.findAll().stream().filter(x->credit.id.equals(x.creditBalanceId))).hasSize(1);
@@ -743,7 +825,7 @@ class PostgreSqlIntegrationTest {
         workflow.createConfiguration(new ApiDtos.CreatePaymentPlanConfigurationRequest(2,2,BigDecimal.ZERO,
             new BigDecimal("20"),0,1,true,true,1,LocalDate.now().minusDays(1),null,true));
         PaymentPlanRequest request=workflow.request(new ApiDtos.CreatePaymentPlanRequest(debt.taxpayerId,List.of(debt.id),2));
-        Long planId=workflow.grant(request.id,null).paymentPlanId;
+        Long planId=TestActorSupport.asApprover(() -> workflow.grant(request.id,null)).paymentPlanId;
         List<Installment> cuotas=installments.findByPaymentPlanIdOrderByNumber(planId);
         assertThat(cuotas).hasSize(2);
         var pagos=new java.util.concurrent.CopyOnWriteArrayList<Payment>();
@@ -759,7 +841,7 @@ class PostgreSqlIntegrationTest {
         assertThat(pagos).hasSize(2);
         List<Long> reversalsIds=pagos.stream().map(p->{
             PaymentReversalRequest reversal=reversals.request(p.id,"Cuotas distintas simultáneas");
-            reversals.approve(reversal.id);return reversal.id;
+            TestActorSupport.asApprover(() -> reversals.approve(reversal.id));return reversal.id;
         }).toList();
         long outboxBefore=outbox.count();
         assertThat(runWithDebtLocked(debt.id,()->reversals.execute(reversalsIds.get(0)),
@@ -842,11 +924,11 @@ class PostgreSqlIntegrationTest {
         Debt debt=debt("PG-FISCAL",taxpayer.id);debt.dueDate=LocalDate.now().minusDays(10);debts.save(debt);
         var preview=lateCharges.preview(debt.id,LocalDate.now());assertThat(preview.daysOverdue()).isEqualTo(10);assertThat(preview.totalAdjustment()).isPositive();
         var applied=lateCharges.apply(debt.id,LocalDate.now());assertThat(applied.applied()).isTrue();assertThat(lateCharges.apply(debt.id,LocalDate.now()).applied()).isFalse();
-        var processing=dueDates.process(LocalDate.now().plusDays(1));assertThat(processing.debtsOverdue()).isGreaterThanOrEqualTo(1);
+        var processing=dueDates.process(LocalDate.now(ZoneId.of("America/Argentina/Buenos_Aires")));assertThat(processing.debtsOverdue()).isGreaterThanOrEqualTo(1);
         Payment payment=new Payment();payment.taxpayerId=taxpayer.id;payment.paymentMethod=PaymentMethod.TRANSFER;payment.amount=payment.unallocatedAmount=new BigDecimal("25.00");payment.allocatedAmount=BigDecimal.ZERO.setScale(2);payment.status=PaymentStatus.CONFIRMED;payment.allocationStatus=PaymentAllocationStatus.UNALLOCATED;payment.origin=PaymentOrigin.ELECTRONIC;payment.receiptNumber="PG-REC-"+suffix;payment.registeredBy="postgres-it";payment.paidAt=payment.createdAt=OffsetDateTime.of(LocalDate.now().minusDays(2),LocalTime.of(23,30),ZoneOffset.ofHours(-3));paymentRepository.save(payment);
         var batch=reconciliations.importBatch(new FiscalProcessingController.ImportReconciliationRequest("PG-BATCH-"+suffix,List.of(new FiscalProcessingController.ReconciliationItemRequest("PG-TX-"+suffix,dni,new BigDecimal("25"),payment.paidAt))));
         assertThat(batch.reconciledItems()).isEqualTo(1);assertThat(batch.items()).singleElement().satisfies(x->assertThat(x.matchedPaymentId()).isEqualTo(payment.id));
-        assertThat(jdbc.queryForObject("select count(*) from late_charge_application where debt_id=?",Integer.class,debt.id)).isEqualTo(2);
+        assertThat(jdbc.queryForObject("select count(*) from late_charge_application where debt_id=?",Integer.class,debt.id)).isEqualTo(1);
     }
 
     @Test void overdueDebtIsPublishedOnceForEligibleCitizensEvenWithoutLateChargeRule() throws Exception {
@@ -1002,7 +1084,7 @@ class PostgreSqlIntegrationTest {
         TaxConfiguration config = catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(
             concept.id, CalculationType.FIXED, null, new BigDecimal("100.25"), null, null,
             true, true, LocalDate.now().minusDays(1), null));
-        catalog.submit(config.id); catalog.approve(config.id);
+        catalog.submit(config.id); TestActorSupport.asApprover(() -> catalog.approve(config.id));
         List<ApiDtos.LiquidationRunItemRequest> population = new ArrayList<>();
         for (int i = 0; i < 20; i++) {
             TaxpayerReference owner = taxpayer(TaxpayerType.CITIZEN, "PG-BULK-" + UUID.randomUUID(), uniqueDigits(8), null);
@@ -1010,7 +1092,7 @@ class PostgreSqlIntegrationTest {
         }
         LiquidationRun run = bulkRuns.create(new ApiDtos.CreateLiquidationRunRequest(concept.id,
             YearMonth.now().toString(), LocalDate.now().plusDays(30), population));
-        bulkRuns.preview(run.id); bulkRuns.submit(run.id); bulkRuns.approve(run.id, "QA");
+        bulkRuns.preview(run.id); bulkRuns.submit(run.id); TestActorSupport.asApprover(() -> bulkRuns.approve(run.id, "QA"));
         List<Throwable> failures = runTogether(() -> bulkRuns.execute(run.id), () -> bulkRuns.execute(run.id));
         assertThat(failures.stream().filter(Objects::isNull)).hasSize(1);
         assertThat(failures.stream().filter(Objects::nonNull)).singleElement().satisfies(error ->
@@ -1030,7 +1112,7 @@ class PostgreSqlIntegrationTest {
             concept.id, CalculationType.PERCENTAGE, new BigDecimal("2.0000"), null, null, null,
             true, true, LocalDate.now().minusDays(1), null));
         catalog.submit(config.id);
-        catalog.approve(config.id);
+        TestActorSupport.asApprover(() -> catalog.approve(config.id));
         var request = new ApiDtos.LiquidationRequest(owner.id, concept.id, YearMonth.now().toString(),
             new BigDecimal("100000.25"), LocalDate.now().plusDays(30));
 
@@ -1051,7 +1133,7 @@ class PostgreSqlIntegrationTest {
     private void authenticate(){var authorities=List.of("RENTAS","SUPERVISOR","CASHIER").stream().map(x->new SimpleGrantedAuthority("ROLE_"+x)).toList();SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("postgres-it",null),null,authorities));}
     private void authenticateTaxpayer(Long taxpayerId){SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("postgres-it-taxpayer-"+UUID.randomUUID(),taxpayerId),null,List.of(new SimpleGrantedAuthority("ROLE_TAXPAYER"))));}
     private MockHttpServletResponse postElectronic(String session,String key,ApiDtos.ElectronicPaymentRequest request)throws Exception{SecurityContextHolder.clearContext();return mvc.perform(post("/api/v1/electronic-payments").header("X-Demo-Session",session).header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsBytes(request))).andReturn().getResponse();}
-    private Debt debt(String suffix,Long taxpayerId){if(taxpayerId==null)taxpayerId=taxpayer(TaxpayerType.CITIZEN,"PG-"+suffix+"-"+UUID.randomUUID(),uniqueDigits(8),null).id;TaxConcept concept=concept("PG_"+suffix+"_"+UUID.randomUUID(),TaxConceptType.FEE,"M5");TaxConfiguration configuration=catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(concept.id,CalculationType.FIXED,null,new BigDecimal("100"),null,null,true,true,LocalDate.now().minusDays(1),null));catalog.submit(configuration.id);catalog.approve(configuration.id);Liquidation liquidation=liquidations.create(new ApiDtos.LiquidationRequest(taxpayerId,concept.id,YearMonth.now().plusMonths(Math.abs(suffix.hashCode()%12)).toString(),BigDecimal.ZERO,LocalDate.now().plusDays(30)));return debts.findByTaxpayerId(taxpayerId).stream().filter(x->x.liquidationId.equals(liquidation.id)).findFirst().orElseThrow();}
+    private Debt debt(String suffix,Long taxpayerId){if(taxpayerId==null)taxpayerId=taxpayer(TaxpayerType.CITIZEN,"PG-"+suffix+"-"+UUID.randomUUID(),uniqueDigits(8),null).id;TaxConcept concept=concept("PG_"+suffix+"_"+UUID.randomUUID(),TaxConceptType.FEE,"M5");TaxConfiguration configuration=catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(concept.id,CalculationType.FIXED,null,new BigDecimal("100"),null,null,true,true,LocalDate.now().minusDays(1),null));catalog.submit(configuration.id);TestActorSupport.asApprover(() -> catalog.approve(configuration.id));Liquidation liquidation=liquidations.create(new ApiDtos.LiquidationRequest(taxpayerId,concept.id,YearMonth.now().plusMonths(Math.abs(suffix.hashCode()%12)).toString(),BigDecimal.ZERO,LocalDate.now().plusDays(30)));return debts.findByTaxpayerId(taxpayerId).stream().filter(x->x.liquidationId.equals(liquidation.id)).findFirst().orElseThrow();}
     private Liquidation liquidationFor(Debt debt){return jdbc.queryForObject("select id from liquidation where id=?",(rs,n)->{Liquidation l=new Liquidation();l.id=rs.getLong(1);return l;},debt.liquidationId);}
     private TaxConcept concept(String code,TaxConceptType type,String module){return concepts.findByCode(code).orElseGet(()->catalog.createConcept(new ApiDtos.CreateTaxConceptRequest(code,code,null,type,module)));}
     private TaxpayerReference taxpayer(TaxpayerType type,String external,String dni,String cuit){TaxpayerReference t=new TaxpayerReference();t.taxpayerType=type;t.externalId=external;t.dni=dni;t.cuit=cuit;t.displayName="PostgreSQL contract";t.externalStatus=TaxpayerStatus.ACTIVE;t.createdAt=t.updatedAt=java.time.OffsetDateTime.now();return taxpayers.save(t);}

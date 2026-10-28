@@ -128,7 +128,7 @@ class DeferredExemptionReconciliationTests {
         taxpayers.saveAndFlush(taxpayer);
         exemptions.start(request.id);
         exemptions.submit(request.id,"Análisis interno");
-        exemptions.reject(request.id,"No acredita la condición");
+        TestActorSupport.asApprover(() -> exemptions.reject(request.id,"No acredita la condición"));
 
         assertThat(events(request.id)).extracting(event->event.eventType)
             .containsExactly("exemptionRequested","updateExemptionStatus");
@@ -184,8 +184,8 @@ class DeferredExemptionReconciliationTests {
         ExemptionRequest request=exemptions.create(createRequest());
         exemptions.start(request.id);
         exemptions.submit(request.id,"Análisis interno");
-        if(approved)exemptions.approve(request.id,null);
-        else exemptions.reject(request.id,"No acredita la condición");
+        if(approved)TestActorSupport.asApprover(() -> exemptions.approve(request.id,null));
+        else TestActorSupport.asApprover(() -> exemptions.reject(request.id,"No acredita la condición"));
         return requests.findById(request.id).orElseThrow();
     }
     private ApiDtos.CreateExemptionRequest createRequest(){

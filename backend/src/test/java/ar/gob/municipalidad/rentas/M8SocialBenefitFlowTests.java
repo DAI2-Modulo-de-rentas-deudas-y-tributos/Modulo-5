@@ -221,7 +221,7 @@ class M8SocialBenefitFlowTests {
     private void configuration(TaxConcept concept){
         TaxConfiguration config=catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(concept.id,
             CalculationType.FIXED,null,new BigDecimal("100"),null,null,true,true,LocalDate.now().minusYears(1),null));
-        catalog.submit(config.id);catalog.approve(config.id);
+        catalog.submit(config.id);TestActorSupport.asApprover(() -> catalog.approve(config.id));
     }
     private SocialBenefitRule approvedRule(TaxConcept concept,String percentage,LocalDate from,LocalDate until){
         return approvedRule(PROGRAM_ID,concept,percentage,from,until);

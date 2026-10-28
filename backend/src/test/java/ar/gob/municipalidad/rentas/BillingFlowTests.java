@@ -288,7 +288,7 @@ class BillingFlowTests {
     private void activate(Long conceptId) {
         TaxConfiguration configuration = catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(conceptId, CalculationType.FIXED, null, new BigDecimal("100"), null, null, true, true, LocalDate.now().minusDays(1), null));
         catalog.submit(configuration.id);
-        catalog.approve(configuration.id);
+        TestActorSupport.asApprover(() -> catalog.approve(configuration.id));
     }
 
     private ApiDtos.LiquidationRequest liquidation(Long taxpayerId, Long conceptId) {

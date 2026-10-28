@@ -202,7 +202,7 @@ class ExternalPaymentEventsTests {
         TaxpayerReference taxpayer=taxpayer("REVERSAL");Debt debt=externalDebt(taxpayer,"M4",ExternalObligationType.COMMERCIAL_FINE,"FINE-REVERSAL","100");
         Payment payment=payments.register(request(taxpayer.id,"40",new ApiDtos.AllocationRequest(debt.id,new BigDecimal("40"))));
         PaymentReversalRequest reversal=reversals.request(payment.id,"Reversión autorizada");
-        reversals.approve(reversal.id);reversals.execute(reversal.id);
+        TestActorSupport.asApprover(() -> reversals.approve(reversal.id));reversals.execute(reversal.id);
         OutboxEvent event=event("paymentReversed","M4",payment.id,debt.id);
         JsonNode data=payload(event).path("data");
         assertEnvelope(event,payload(event),"paymentReversed","PaymentAllocation");
@@ -223,7 +223,7 @@ class ExternalPaymentEventsTests {
         PaymentReversalRequest reversal=reversals.request(payment.id,"Reversión autorizada");
 
         assertThat(eventsForPayment("paymentReversed","CORE",payment.id)).isEmpty();
-        reversals.approve(reversal.id);reversals.execute(reversal.id);
+        TestActorSupport.asApprover(() -> reversals.approve(reversal.id));reversals.execute(reversal.id);
 
         List<OutboxEvent> events=eventsForPayment("paymentReversed","CORE",payment.id);
         assertThat(events).hasSize(1);
@@ -241,7 +241,7 @@ class ExternalPaymentEventsTests {
         TaxpayerReference taxpayer=taxpayer("PLAN-MIXED");Debt m7=externalDebt(taxpayer,"transito",ExternalObligationType.TRAFFIC_INFRACTION,UUID.randomUUID().toString(),"100");Debt m4=externalDebt(taxpayer,"M4",ExternalObligationType.PERMIT_FEE,"FEE-PLAN-"+UUID.randomUUID(),"100");
         planWorkflow.createConfiguration(new ApiDtos.CreatePaymentPlanConfigurationRequest(2,6,new BigDecimal("10"),new BigDecimal("12"),0,0,true,true,2,LocalDate.now().minusDays(1),null,true));
         PaymentPlanRequest request=planWorkflow.request(new ApiDtos.CreatePaymentPlanRequest(taxpayer.id,List.of(m7.id,m4.id),2));
-        PaymentPlanRequest granted=planWorkflow.grant(request.id,null);PaymentPlan plan=plans.findById(granted.paymentPlanId).orElseThrow();
+        PaymentPlanRequest granted=TestActorSupport.asApprover(() -> planWorkflow.grant(request.id,null));PaymentPlan plan=plans.findById(granted.paymentPlanId).orElseThrow();
         Installment down=installments.findByPaymentPlanIdOrderByNumber(plan.id).get(0);
         Payment payment=payments.register(new ApiDtos.RegisterPaymentRequest(taxpayer.id,null,PaymentMethod.CASH,down.totalAmount,List.of(new ApiDtos.AllocationRequest(null,down.id,down.totalAmount))));
         PaymentAllocation recordedAllocation=allocations.findByPaymentId(payment.id).get(0);
@@ -252,7 +252,7 @@ class ExternalPaymentEventsTests {
         assertThat(permit.path("data").path("amountApplied").decimalValue()).isEqualByComparingTo("10.00");
         assertThat(traffic.path("correlationId").asText()).isEqualTo(originalM7Correlation(m7));
         assertThat(debts.findById(m7.id).orElseThrow().outstandingBalance).isEqualByComparingTo("90.00");
-        PaymentReversalRequest reversal=reversals.request(payment.id,"Cuota revertida");reversals.approve(reversal.id);reversals.execute(reversal.id);
+        PaymentReversalRequest reversal=reversals.request(payment.id,"Cuota revertida");TestActorSupport.asApprover(() -> reversals.approve(reversal.id));reversals.execute(reversal.id);
         JsonNode trafficReversal=payload(event("paymentReversed","M7",payment.id,m7.id));JsonNode permitReversal=payload(event("paymentReversed","M4",payment.id,m4.id));
         assertThat(trafficReversal.path("data").path("reversedAmount").decimalValue()).isEqualByComparingTo("10.00");
         assertThat(permitReversal.path("data").path("reversedAmount").decimalValue()).isEqualByComparingTo("10.00");
@@ -267,7 +267,7 @@ class ExternalPaymentEventsTests {
         TaxpayerReference taxpayer=taxpayer("PLAN-COMPLETE-M7");Debt debt=externalDebt(taxpayer,"M7",ExternalObligationType.TRAFFIC_INFRACTION,UUID.randomUUID().toString(),"100");
         planWorkflow.createConfiguration(new ApiDtos.CreatePaymentPlanConfigurationRequest(2,6,new BigDecimal("10"),new BigDecimal("12"),0,0,true,true,2,LocalDate.now().minusDays(1),null,true));
         PaymentPlanRequest request=planWorkflow.request(new ApiDtos.CreatePaymentPlanRequest(taxpayer.id,List.of(debt.id),2));
-        PaymentPlanRequest granted=planWorkflow.grant(request.id,null);PaymentPlan plan=plans.findById(granted.paymentPlanId).orElseThrow();
+        PaymentPlanRequest granted=TestActorSupport.asApprover(() -> planWorkflow.grant(request.id,null));PaymentPlan plan=plans.findById(granted.paymentPlanId).orElseThrow();
         for(Installment installment:installments.findByPaymentPlanIdOrderByNumber(plan.id)){
             Payment payment=payments.register(new ApiDtos.RegisterPaymentRequest(taxpayer.id,null,PaymentMethod.CASH,installment.totalAmount,List.of(new ApiDtos.AllocationRequest(null,installment.id,installment.totalAmount))));
             assertThat(eventsForPayment("paymentRegistered","M7",payment.id)).hasSize(1);
@@ -292,7 +292,7 @@ class ExternalPaymentEventsTests {
         BigDecimal balance=debts.findById(debt.id).orElseThrow().outstandingBalance;
         BigDecimal planPaid=plans.findById(plan.id).orElseThrow().paidAmount;
         long outboxBefore=outbox.count();
-        PaymentReversalRequest reversal=reversals.request(payment.id,"Cuota histórica cancelada");reversals.approve(reversal.id);
+        PaymentReversalRequest reversal=reversals.request(payment.id,"Cuota histórica cancelada");TestActorSupport.asApprover(() -> reversals.approve(reversal.id));
 
         assertThatThrownBy(()->reversals.execute(reversal.id)).isInstanceOfSatisfying(BusinessException.class,
             error->assertThat(error.code).isEqualTo("INSTALLMENT_CANCELLED"));
@@ -317,7 +317,7 @@ class ExternalPaymentEventsTests {
         PaymentAllocation allocation=allocations.findByPaymentId(payment.id).get(0);
         removeExactDistribution(allocation);
         BigDecimal balance=debts.findById(debt.id).orElseThrow().outstandingBalance;
-        PaymentReversalRequest reversal=reversals.request(payment.id,"Cuota histórica de una deuda");reversals.approve(reversal.id);reversals.execute(reversal.id);
+        PaymentReversalRequest reversal=reversals.request(payment.id,"Cuota histórica de una deuda");TestActorSupport.asApprover(() -> reversals.approve(reversal.id));reversals.execute(reversal.id);
 
         assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo(balance.add(allocation.principalApplied));
         assertThat(allocations.findById(allocation.id).orElseThrow().status).isEqualTo("REVERSED");
@@ -333,7 +333,7 @@ class ExternalPaymentEventsTests {
             List.of(new ApiDtos.AllocationRequest(null,installment.id,installment.totalAmount))));
         PaymentPlan expired=plans.findById(plan.id).orElseThrow();expired.status=PaymentPlanStatus.EXPIRED;plans.save(expired);
         BigDecimal balance=debts.findById(debt.id).orElseThrow().outstandingBalance;long outboxBefore=outbox.count();
-        PaymentReversalRequest reversal=reversals.request(payment.id,"Plan caducado");reversals.approve(reversal.id);
+        PaymentReversalRequest reversal=reversals.request(payment.id,"Plan caducado");TestActorSupport.asApprover(() -> reversals.approve(reversal.id));
 
         assertThatThrownBy(()->reversals.execute(reversal.id)).isInstanceOfSatisfying(BusinessException.class,
             error->assertThat(error.code).isEqualTo("PLAN_NOT_REVERSIBLE"));
@@ -355,7 +355,7 @@ class ExternalPaymentEventsTests {
         BigDecimal trafficBalance=debts.findById(traffic.id).orElseThrow().outstandingBalance;
         BigDecimal permitBalance=debts.findById(permit.id).orElseThrow().outstandingBalance;
         long outboxBefore=outbox.count();
-        PaymentReversalRequest reversal=reversals.request(payment.id,"Distribución histórica desconocida");reversals.approve(reversal.id);
+        PaymentReversalRequest reversal=reversals.request(payment.id,"Distribución histórica desconocida");TestActorSupport.asApprover(() -> reversals.approve(reversal.id));
 
         for(int attempt=0;attempt<2;attempt++)assertThatThrownBy(()->reversals.execute(reversal.id))
             .isInstanceOfSatisfying(BusinessException.class,error->assertThat(error.code).isEqualTo("HISTORICAL_PLAN_DISTRIBUTION_UNVERIFIABLE"));
@@ -470,7 +470,7 @@ class ExternalPaymentEventsTests {
             Payment payment=payments.register(request(taxpayer.id,paid,new ApiDtos.AllocationRequest(debt.id,new BigDecimal(paid))));
             PaymentAllocation allocation=allocations.findByPaymentId(payment.id).get(0);
             String original=hideCorrelation(debt);
-            PaymentReversalRequest reversal=reversals.request(payment.id,"Reversión controlada");reversals.approve(reversal.id);reversals.execute(reversal.id);
+            PaymentReversalRequest reversal=reversals.request(payment.id,"Reversión controlada");TestActorSupport.asApprover(() -> reversals.approve(reversal.id));reversals.execute(reversal.id);
             IntegrationEventLog marker=economicMarker("paymentReversed",allocation.id,debt.id);
             assertThat(eventsForPayment("paymentReversed","M7",payment.id)).isEmpty();
             restoreCorrelation(debt,original);
@@ -492,7 +492,7 @@ class ExternalPaymentEventsTests {
         IntegrationEventLog registration=economicMarker("paymentRegistered",allocation.id,debt.id);
         restoreCorrelation(debt,original);
         PaymentReversalRequest reversal=reversals.request(payment.id,"Reversión controlada");
-        reversals.approve(reversal.id);reversals.execute(reversal.id);
+        TestActorSupport.asApprover(() -> reversals.approve(reversal.id));reversals.execute(reversal.id);
         IntegrationEventLog reversed=economicMarker("paymentReversed",allocation.id,debt.id);
         assertThat(reversed.errorMessage).isEqualTo("PAYMENT_EVENT_NOT_PREPARED");
         assertThat(eventsForPayment("paymentReversed","M7",payment.id)).isEmpty();
@@ -554,7 +554,7 @@ class ExternalPaymentEventsTests {
     private PaymentPlan planFor(TaxpayerReference taxpayer,List<Debt> selected,int count){
         planWorkflow.createConfiguration(new ApiDtos.CreatePaymentPlanConfigurationRequest(2,6,new BigDecimal("10"),new BigDecimal("12"),0,0,true,true,2,LocalDate.now().minusDays(1),null,true));
         PaymentPlanRequest request=planWorkflow.request(new ApiDtos.CreatePaymentPlanRequest(taxpayer.id,selected.stream().map(debt->debt.id).toList(),count));
-        PaymentPlanRequest granted=planWorkflow.grant(request.id,null);
+        PaymentPlanRequest granted=TestActorSupport.asApprover(() -> planWorkflow.grant(request.id,null));
         return plans.findById(granted.paymentPlanId).orElseThrow();
     }
     private void removeExactDistribution(PaymentAllocation allocation){

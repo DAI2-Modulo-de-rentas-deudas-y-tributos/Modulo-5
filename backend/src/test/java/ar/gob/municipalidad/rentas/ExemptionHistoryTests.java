@@ -82,7 +82,7 @@ class ExemptionHistoryTests {
 
         exemptions.start(request.id);
         exemptions.submit(request.id,"Revisión interna");
-        Exemption approved=exemptions.approve(request.id,null);
+        Exemption approved=TestActorSupport.asApprover(() -> exemptions.approve(request.id,null));
 
         assertThat(approved.integrationId).isNotNull();
         assertThat(exemptionRequests.findById(request.id).orElseThrow().status).isEqualTo(ExemptionRequestStatus.APPROVED);
@@ -105,7 +105,7 @@ class ExemptionHistoryTests {
 
         exemptions.start(request.id);
         exemptions.submit(request.id,"Revisión interna");
-        Exemption approved=exemptions.approve(request.id,null);
+        Exemption approved=TestActorSupport.asApprover(() -> exemptions.approve(request.id,null));
         JsonNode resolved=eventFor(request.id,"updateExemptionStatus").path("data");
         assertThat(resolved.path("requestId").asText()).isEqualTo(request.integrationId.toString());
         assertThat(resolved.path("citizenId").asText()).isEqualTo(m1CitizenId.toString());
@@ -121,7 +121,7 @@ class ExemptionHistoryTests {
         ExemptionRequest request=create();
         exemptions.start(request.id);
         exemptions.submit(request.id,"Revisión interna");
-        exemptions.reject(request.id,"No cumple los requisitos");
+        TestActorSupport.asApprover(() -> exemptions.reject(request.id,"No cumple los requisitos"));
 
         JsonNode rejected=eventFor(request.id,"updateExemptionStatus").path("data");
         assertThat(rejected.path("requestId").asText()).isEqualTo(request.integrationId.toString());
@@ -197,7 +197,7 @@ class ExemptionHistoryTests {
         exemptions.submit(request.id,"Análisis interno");
         LocalDate approvedFrom=LocalDate.of(2027,1,1);
         LocalDate approvedUntil=LocalDate.of(2027,6,30);
-        Exemption approved=exemptions.approve(request.id,new ApiDtos.ApproveExemptionRequest(new BigDecimal("75"),approvedFrom,approvedUntil,"Aprobación interna"));
+        Exemption approved=TestActorSupport.asApprover(() -> exemptions.approve(request.id,new ApiDtos.ApproveExemptionRequest(new BigDecimal("75"),approvedFrom,approvedUntil,"Aprobación interna")));
         assertThat(exemptionRequests.findById(request.id).orElseThrow().integrationId).isNotNull();
         assertThat(exemptionRecords.findById(approved.id).orElseThrow().integrationId).isNotNull()
             .isNotEqualTo(request.integrationId);
@@ -221,7 +221,7 @@ class ExemptionHistoryTests {
         ExemptionRequest request=create();
         exemptions.start(request.id);
         exemptions.submit(request.id,"Análisis interno");
-        exemptions.reject(request.id,"No acredita la condición solicitada");
+        TestActorSupport.asApprover(() -> exemptions.reject(request.id,"No acredita la condición solicitada"));
         String owner=demo.token(DemoRole.TAXPAYER,taxpayer.id);
         SecurityContextHolder.clearContext();
 

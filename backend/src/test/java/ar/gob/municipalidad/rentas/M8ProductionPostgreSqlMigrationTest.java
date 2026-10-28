@@ -31,8 +31,8 @@ class M8ProductionPostgreSqlMigrationTest {
         assertThat(jdbc.queryForObject("select current_setting('server_version')",String.class)).startsWith("17.");
         assertThat(jdbc.queryForObject("select to_regclass('public.demo_user')::text",String.class)).isNull();
         assertThat(jdbc.queryForObject("select to_regclass('public.demo_login_attempt')::text",String.class)).isNull();
-        assertThat(jdbc.queryForList("select version from flyway_schema_history where success and version in ('18','24','25','26','27','28') order by installed_rank",String.class))
-            .containsExactly("18","24","25","26","27","28");
+        assertThat(jdbc.queryForList("select version from flyway_schema_history where success and version in ('18','24','25','26','27','28','30') order by installed_rank",String.class))
+            .containsExactly("18","24","25","26","27","28","30");
         assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version='29'",Integer.class)).isZero();
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='debt'",String.class))
             .contains("integration_id");
@@ -41,5 +41,11 @@ class M8ProductionPostgreSqlMigrationTest {
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='social_benefit_reference'",String.class))
             .contains("external_reason","resolution_status","source_payload_hash","received_at");
         assertThat(jdbc.queryForObject("select count(*) from information_schema.tables where table_schema='public' and table_name in ('social_benefit_rule','social_benefit_event_history')",Integer.class)).isEqualTo(2);
+        assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name in ('tax_configuration','liquidation_run','social_benefit_rule')",String.class))
+            .contains("submitted_by");
+        assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='payment_plan_request'",String.class))
+            .contains("exception_submitted_by");
+        assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='refinancing_request'",String.class))
+            .contains("exception_submitted_by");
     }
 }

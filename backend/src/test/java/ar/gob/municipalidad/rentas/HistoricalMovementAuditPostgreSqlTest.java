@@ -162,7 +162,7 @@ class HistoricalMovementAuditPostgreSqlTest {
     private void assertBlockedReversalUnchanged(Payment payment, PaymentAllocation allocation, List<Debt> affected,
             Installment installment, Long planId, String expectedCode) {
         PaymentReversalRequest reversal = reversals.request(payment.id, "Fixture histórica no reversible");
-        reversals.approve(reversal.id);
+        TestActorSupport.asApprover(() -> reversals.approve(reversal.id));
         String before = economicState(payment.id, allocation.id, affected, installment.id, planId);
         long outboxBefore = outbox.count();
         assertThatThrownBy(() -> reversals.execute(reversal.id)).isInstanceOfSatisfying(BusinessException.class,
@@ -206,7 +206,7 @@ class HistoricalMovementAuditPostgreSqlTest {
             "Fixture P4 " + suffix, null, TaxConceptType.FEE, "M5"));
         TaxConfiguration configuration = catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(concept.id,
             CalculationType.FIXED, null, new BigDecimal("100"), null, null, true, true, LocalDate.now().minusDays(1), null));
-        catalog.submit(configuration.id); catalog.approve(configuration.id);
+        catalog.submit(configuration.id); TestActorSupport.asApprover(() -> catalog.approve(configuration.id));
         Liquidation liquidation = liquidations.create(new ApiDtos.LiquidationRequest(taxpayerId, concept.id,
             YearMonth.now().toString(), BigDecimal.ZERO, LocalDate.now().plusDays(30)));
         return debts.findByLiquidationId(liquidation.id).orElseThrow();
@@ -219,7 +219,7 @@ class HistoricalMovementAuditPostgreSqlTest {
 
     private Long grantPlan(Long taxpayerId, List<Long> debtIds) {
         PaymentPlanRequest request = workflow.request(new ApiDtos.CreatePaymentPlanRequest(taxpayerId, debtIds, 2));
-        return workflow.grant(request.id, null).paymentPlanId;
+        return TestActorSupport.asApprover(() -> workflow.grant(request.id, null)).paymentPlanId;
     }
 
     private Payment payInstallment(Long taxpayerId, Installment installment) {
