@@ -58,7 +58,16 @@ export default function DataTable({
             <tr
               key={rowKey(row)}
               onClick={onRowClick ? () => onRowClick(row) : undefined}
-              className={`border-b border-neutral-100 last:border-0 transition-colors hover:bg-neutral-50/70 ${
+              tabIndex={onRowClick ? 0 : undefined}
+              aria-keyshortcuts={onRowClick ? "Enter Space" : undefined}
+              onKeyDown={onRowClick ? (event) => {
+                if (event.target !== event.currentTarget) return;
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onRowClick(row);
+                }
+              } : undefined}
+              className={`border-b border-neutral-100 last:border-0 transition-colors hover:bg-neutral-50/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-blue-700 ${
                 onRowClick ? "cursor-pointer" : ""
               }`}
             >
