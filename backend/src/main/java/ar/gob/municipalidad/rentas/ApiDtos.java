@@ -197,8 +197,12 @@ public final class ApiDtos {
     @Schema(name="ErrorResponse",description="Contrato estándar de errores de la API")
     @JsonInclude(JsonInclude.Include.ALWAYS)
     public record ErrorResponse(
+        @Schema(description="Tipo de problema según RFC 9457",example="about:blank") String type,
+        @Schema(description="Título HTTP del problema",example="Bad Request") String title,
         @Schema(description="Fecha y hora del error") OffsetDateTime timestamp,
         @Schema(description="Código HTTP",example="400") int status,
+        @Schema(description="Detalle funcional seguro del problema") String detail,
+        @Schema(description="URI de la petición que originó el problema",example="/api/v1/tax-concepts") String instance,
         @Schema(description="Código estable de error",example="VALIDATION_ERROR") String code,
         @Schema(description="Mensaje funcional seguro",example="code: no debe estar vacío") String message,
         @Schema(description="Ruta solicitada",example="/api/v1/tax-concepts") String path,

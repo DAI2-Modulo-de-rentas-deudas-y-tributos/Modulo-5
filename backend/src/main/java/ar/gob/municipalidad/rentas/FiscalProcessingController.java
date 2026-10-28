@@ -97,7 +97,8 @@ class LateChargeService {
     }
     private FiscalProcessingController.LateChargeResponse calculate(Debt debt,LateChargeRule rule,LocalDate date,boolean applied,Long id){return calculate(debt,rule,date,applied,id,money(applications.findByDebtId(debt.id).stream().map(x->x.totalAdjustment).reduce(BigDecimal.ZERO,BigDecimal::add)));}
     private FiscalProcessingController.LateChargeResponse calculate(Debt debt,LateChargeRule rule,LocalDate date,boolean applied,Long id,BigDecimal previous){
-        CatalogService.require(debt.status!=DebtStatus.PAID&&debt.status!=DebtStatus.CANCELLED&&debt.outstandingBalance.signum()>0,"DEBT_NOT_CHARGEABLE","La deuda no admite recargos");
+        CatalogService.requireConflict(debt.status!=DebtStatus.PAID&&debt.status!=DebtStatus.CANCELLED,"DEBT_NOT_CHARGEABLE","La deuda no admite recargos");
+        CatalogService.require(debt.outstandingBalance.signum()>0,"DEBT_NOT_CHARGEABLE","La deuda no admite recargos");
         CatalogService.require(date.isAfter(debt.dueDate),"DEBT_NOT_OVERDUE","La deuda no está vencida a la fecha indicada");
         int days=Math.toIntExact(ChronoUnit.DAYS.between(debt.dueDate,date));BigDecimal principal=money(debt.outstandingBalance);
         BigDecimal surcharge=money(principal.multiply(rule.surchargeRate).divide(HUNDRED,8,RoundingMode.HALF_UP));

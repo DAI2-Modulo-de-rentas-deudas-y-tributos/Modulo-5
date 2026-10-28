@@ -192,9 +192,10 @@ class BillingFlowTests {
         CreditBalance credit = credits.findBySourcePaymentId(payment.id).orElseThrow();
         target.status = DebtStatus.CANCELLED;
         debts.save(target);
+        long outboxCount = outbox.count();
 
         assertThatThrownBy(() -> creditService.apply(credit.id, new ApiDtos.ApplyCreditBalanceRequest(target.id, new BigDecimal("20"))))
-            .isInstanceOfSatisfying(BusinessException.class, exception -> assertThat(exception.code).isEqualTo("DEBT_NOT_PAYABLE"));
+            .isInstanceOfSatisfying(BusinessException.class, exception -> {assertThat(exception.code).isEqualTo("DEBT_NOT_PAYABLE");assertThat(exception.status).isEqualTo(409);});
 
         CreditBalance storedCredit = credits.findById(credit.id).orElseThrow();
         Debt storedTarget = debts.findById(target.id).orElseThrow();
@@ -203,6 +204,7 @@ class BillingFlowTests {
         assertThat(storedTarget.outstandingBalance).isEqualByComparingTo("100.00");
         assertThat(storedTarget.status).isEqualTo(DebtStatus.CANCELLED);
         assertThat(creditApplications.findAll()).noneMatch(application -> credit.id.equals(application.creditBalanceId));
+        assertThat(outbox.count()).isEqualTo(outboxCount);
     }
 
     @Test void creditCannotBeAppliedToPaidDebtAndLeavesBalancesUnchanged() {
@@ -213,9 +215,10 @@ class BillingFlowTests {
         target.status = DebtStatus.PAID;
         target.outstandingBalance = BigDecimal.ZERO.setScale(2);
         debts.save(target);
+        long outboxCount = outbox.count();
 
         assertThatThrownBy(() -> creditService.apply(credit.id, new ApiDtos.ApplyCreditBalanceRequest(target.id, new BigDecimal("20"))))
-            .isInstanceOfSatisfying(BusinessException.class, exception -> assertThat(exception.code).isEqualTo("DEBT_NOT_PAYABLE"));
+            .isInstanceOfSatisfying(BusinessException.class, exception -> {assertThat(exception.code).isEqualTo("DEBT_NOT_PAYABLE");assertThat(exception.status).isEqualTo(409);});
 
         CreditBalance storedCredit = credits.findById(credit.id).orElseThrow();
         Debt storedTarget = debts.findById(target.id).orElseThrow();
@@ -224,6 +227,7 @@ class BillingFlowTests {
         assertThat(storedTarget.outstandingBalance).isZero();
         assertThat(storedTarget.status).isEqualTo(DebtStatus.PAID);
         assertThat(creditApplications.findAll()).noneMatch(application -> credit.id.equals(application.creditBalanceId));
+        assertThat(outbox.count()).isEqualTo(outboxCount);
     }
 
     @Test void electronicPaymentUsesTaxpayerIdentityAndElectronicOrigin() {

@@ -38,7 +38,7 @@ class GlobalExceptionHandler {
         if(ex.status==403&&audit!=null) audit.recordAccessDenied(request,ex.code);
         ResponseEntity<ApiDtos.ErrorResponse> error=response(ex.status, ex.code, ex.getMessage(), request);
         if(ex.retryAfterSeconds==null) return error;
-        HttpHeaders headers=new HttpHeaders();headers.set(HttpHeaders.RETRY_AFTER,Integer.toString(ex.retryAfterSeconds));
+        HttpHeaders headers=new HttpHeaders();headers.set(HttpHeaders.RETRY_AFTER,Integer.toString(ex.retryAfterSeconds));headers.setContentType(MediaType.APPLICATION_PROBLEM_JSON);
         return new ResponseEntity<>(error.getBody(),headers,HttpStatus.valueOf(ex.status));
     }
     @ExceptionHandler(MethodArgumentNotValidException.class)
@@ -90,7 +90,9 @@ class GlobalExceptionHandler {
         return response(status,code,message,request,traceId(),null);
     }
     private ResponseEntity<ApiDtos.ErrorResponse> response(int status,String code,String message,HttpServletRequest request,String traceId,Object details) {
-        return ResponseEntity.status(status).body(new ApiDtos.ErrorResponse(OffsetDateTime.now(),status,code,message,request.getRequestURI(),traceId,details));
+        return ResponseEntity.status(status).contentType(MediaType.APPLICATION_PROBLEM_JSON)
+            .body(new ApiDtos.ErrorResponse("about:blank",HttpStatus.valueOf(status).getReasonPhrase(),OffsetDateTime.now(),status,
+                message,request.getRequestURI(),code,message,request.getRequestURI(),traceId,details));
     }
     private String traceId(){String traceId=MDC.get("traceId");return traceId==null?UUID.randomUUID().toString():traceId;}
 }

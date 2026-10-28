@@ -15,6 +15,8 @@ import org.springframework.core.annotation.Order;
 import org.springframework.core.env.Environment;
 import org.springframework.core.env.Profiles;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
@@ -101,11 +103,12 @@ class SecurityErrorResponseWriter {
         }
         response.setStatus(status);
         response.setCharacterEncoding("UTF-8");
-        response.setContentType("application/json");
+        response.setContentType(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
         response.setHeader(CorrelationIdFilter.HEADER,traceId);
         if(status==403) audit.recordAccessDenied(request,code);
         json.writeValue(response.getOutputStream(),new ApiDtos.ErrorResponse(
-            java.time.OffsetDateTime.now(),status,code,message,request.getRequestURI(),traceId,null));
+            "about:blank",HttpStatus.valueOf(status).getReasonPhrase(),java.time.OffsetDateTime.now(),status,
+            message,request.getRequestURI(),code,message,request.getRequestURI(),traceId,null));
     }
 }
 

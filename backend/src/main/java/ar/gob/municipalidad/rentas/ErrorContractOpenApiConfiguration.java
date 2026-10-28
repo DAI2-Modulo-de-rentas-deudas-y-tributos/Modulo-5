@@ -18,11 +18,13 @@ class ErrorContractOpenApiConfiguration {
             ModelConverters.getInstance().read(ApiDtos.ErrorResponse.class)
                 .forEach(openApi.getComponents()::addSchemas);
             openApi.getComponents().addResponses("ApiError",new ApiResponse().description("Error generado por la API")
-                .content(new Content().addMediaType("application/json",new MediaType()
+                .content(new Content().addMediaType("application/problem+json",new MediaType()
                     .schema(new Schema<>().$ref("#/components/schemas/ErrorResponse")))));
-            if(openApi.getPaths()!=null)openApi.getPaths().values().forEach(path -> path.readOperations().forEach(operation -> {
+            if(openApi.getPaths()!=null)openApi.getPaths().forEach((pathName,path) -> path.readOperations().forEach(operation -> {
                 for(String status:new String[]{"400","401","403","404","405","409","422","500"})
                     operation.getResponses().putIfAbsent(status,new ApiResponse().$ref("#/components/responses/ApiError"));
+                if(pathName.equals("/api/v1/dev-auth/login")||pathName.equals("/api/v1/dev-auth/bootstrap"))
+                    operation.getResponses().putIfAbsent("429",new ApiResponse().$ref("#/components/responses/ApiError"));
             }));
         };
     }
