@@ -82,7 +82,7 @@ export async function request(path, { method = "GET", body, signal, responseType
 
   if (!response.ok) {
     throw new ApiError(
-      payload?.message ?? "No se pudo completar la operación.",
+      payload?.message ?? payload?.detail ?? "No se pudo completar la operación.",
       response.status,
       payload,
       payload?.code,

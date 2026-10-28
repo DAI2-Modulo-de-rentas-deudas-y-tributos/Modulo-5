@@ -207,6 +207,6 @@ public final class ApiDtos {
         @Schema(description="Mensaje funcional seguro",example="code: no debe estar vacío") String message,
         @Schema(description="Ruta solicitada",example="/api/v1/tax-concepts") String path,
         @Schema(description="Identificador de correlación; también se devuelve en X-Correlation-Id",example="9e669771-3d87-49a1-bcd7-bf4ebfc164ec") String traceId,
-        @Schema(description="Información estructurada segura cuando corresponde; errores de validación contienen fieldErrors con field y messages",
-            example="{\"fieldErrors\":[{\"field\":\"code\",\"messages\":[\"no debe estar vacío\"]}]}") Object details) {}
+          @Schema(description="Información estructurada segura cuando corresponde; errores de validación contienen fieldErrors con field y messages",
+              example="{\"fieldErrors\":[{\"field\":\"code\",\"messages\":[\"no debe estar vacío\"]}]}") Object details) {}
 }
