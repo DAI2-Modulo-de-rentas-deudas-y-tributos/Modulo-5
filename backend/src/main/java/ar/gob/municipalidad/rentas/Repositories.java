@@ -33,7 +33,10 @@ interface TaxpayerRepository extends FilteredRepository<TaxpayerReference,Long> 
     Optional<TaxpayerReference> findByTaxpayerTypeAndDni(TaxpayerType type,String dni);
     Optional<TaxpayerReference> findByTaxpayerTypeAndCuit(TaxpayerType type,String cuit);
 }
-interface TaxConceptRepository extends FilteredRepository<TaxConcept,Long> { Optional<TaxConcept> findByCode(String code); }
+interface TaxConceptRepository extends FilteredRepository<TaxConcept,Long> {
+    Optional<TaxConcept> findByCode(String code);
+    @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select c from TaxConcept c where c.id=:id") Optional<TaxConcept> findByIdForUpdate(@Param("id") Long id);
+}
 interface TaxConfigurationRepository extends FilteredRepository<TaxConfiguration,Long> {
     @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select c from TaxConfiguration c where c.id=:id") Optional<TaxConfiguration> findByIdForUpdate(@Param("id") Long id);
     Optional<TaxConfiguration> findFirstByTaxConceptIdAndStatusAndValidFromLessThanEqualAndValidUntilGreaterThanEqualOrderByVersionDesc(Long conceptId, TaxConfigurationStatus status, LocalDate from, LocalDate until);

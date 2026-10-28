@@ -61,7 +61,7 @@ class PaymentPlanConfigurationVersioningTests {
         assertThat(v2.createdBy).isEqualTo("configuration-tester");
         assertThat(v2.createdAt).isAfterOrEqualTo(v1.createdAt);
         assertThat(ApiResponses.of(configurations.findById(v1.id).orElseThrow())).isEqualTo(original);
-        assertThat(controller.planConfiguration(v1.id).interestRate()).isEqualByComparingTo("5");
+        assertThat(controller.planConfiguration(v1.id).getBody().interestRate()).isEqualByComparingTo("5");
     }
 
     @Test void existingPlanKeepsHistoricalConfigurationAndNewPlanUsesNewVersion() {

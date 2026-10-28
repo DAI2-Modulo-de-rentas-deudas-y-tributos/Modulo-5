@@ -62,6 +62,7 @@ class TaxpayerReference {
 @Entity @Table(name="tax_concept")
 class TaxConcept {
     @Id @GeneratedValue(strategy=GenerationType.IDENTITY) public Long id;
+    @Version @Column(name="lock_version",nullable=false) public long lockVersion;
     @Column(nullable=false, unique=true, updatable=false) public String code;
     @Column(nullable=false) public String name;
     public String description;
@@ -76,6 +77,7 @@ class TaxConcept {
 @Entity @Table(name="tax_configuration", uniqueConstraints=@UniqueConstraint(columnNames={"tax_concept_id","version"}))
 class TaxConfiguration {
     @Id @GeneratedValue(strategy=GenerationType.IDENTITY) public Long id;
+    @Version @Column(name="lock_version",nullable=false) public long lockVersion;
     @Column(name="tax_concept_id", nullable=false) public Long taxConceptId;
     @Column(nullable=false) public int version;
     @Enumerated(EnumType.STRING) @Column(name="calculation_type", nullable=false) public CalculationType calculationType;

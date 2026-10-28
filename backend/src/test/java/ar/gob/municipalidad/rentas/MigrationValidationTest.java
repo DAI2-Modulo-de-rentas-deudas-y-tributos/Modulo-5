@@ -19,8 +19,8 @@ class MigrationValidationTest {
         registry.add("spring.flyway.locations",()->"classpath:db/migration,classpath:db/migration-test-h2,classpath:db/migration-m8-test-h2");
     }
     @Test void flywaySchemaMatchesJpaModel() {
-        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(30);
-        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(28);
+        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(31);
+        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(29);
         assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version='29'",Integer.class)).isZero();
         assertThat(jdbc.queryForObject("select count(*) from information_schema.tables where table_name='demo_login_attempt'",Integer.class)).isZero();
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='bill'",String.class))
@@ -44,7 +44,11 @@ class MigrationValidationTest {
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='payment_reversal_request'",String.class))
             .contains("resolution_reason");
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='tax_configuration'",String.class))
-            .contains("submitted_by");
+            .contains("submitted_by","lock_version");
+        assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='tax_concept'",String.class))
+            .contains("lock_version");
+        assertThat(jdbc.queryForList("select table_name from information_schema.tables where table_name='idempotency_request'",String.class))
+            .containsExactly("idempotency_request");
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='liquidation_run'",String.class))
             .contains("submitted_by");
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='social_benefit_rule'",String.class))

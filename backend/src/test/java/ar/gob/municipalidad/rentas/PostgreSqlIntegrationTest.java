@@ -23,6 +23,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.annotation.DirtiesContext;
@@ -37,6 +38,7 @@ import java.time.ZoneId;
 import java.time.YearMonth;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
 import java.util.ArrayList;
 import java.util.Objects;
 import java.util.UUID;
@@ -303,6 +305,9 @@ class PostgreSqlIntegrationTest {
     @Autowired DemoUserRepository demoUsers;
     @Autowired org.springframework.security.crypto.password.PasswordEncoder passwordEncoder;
     @Autowired MockMvc mvc;
+    @Autowired ApiController apiController;
+    @Autowired IdempotencyService idempotencyService;
+    @Autowired AdjustmentService adjustmentService;
     @Autowired ConfirmedM8Consumer coreM8;
     @Autowired SocialBenefitRepository socialBenefits;
     @Autowired SocialBenefitEventHistoryRepository socialBenefitHistory;
@@ -327,6 +332,103 @@ class PostgreSqlIntegrationTest {
             .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Retry-After","900"))
             .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.code").value("DEMO_LOGIN_RATE_LIMITED"))
             .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.message").value("Demasiados intentos. Reintentá en 15 minutos"));
+    }
+
+    @Test void etagProtectsAllThreePatchResourcesAndRejectsStaleWrites() {
+        authenticate();
+        TaxConcept concept=concept("ETAG_"+UUID.randomUUID(),TaxConceptType.FEE,"M5");
+        String conceptTag=apiController.concept(concept.id).getHeaders().getETag();
+        var conceptUpdated=apiController.updateConcept(concept.id,new ApiDtos.UpdateTaxConceptRequest("ETag updated",null,true),conceptTag);
+        assertThat(conceptUpdated.getStatusCode().value()).isEqualTo(200);
+        assertThat(conceptUpdated.getHeaders().getETag()).isNotEqualTo(conceptTag);
+        assertThatThrownBy(()->apiController.updateConcept(concept.id,new ApiDtos.UpdateTaxConceptRequest("stale",null,false),conceptTag))
+            .isInstanceOf(BusinessException.class).satisfies(error->assertThat(((BusinessException)error).status).isEqualTo(412));
+        assertThat(concepts.findById(concept.id).orElseThrow().name).isEqualTo("ETag updated");
+
+        TaxConfiguration tax=catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(concept.id,CalculationType.PERCENTAGE,new BigDecimal("5"),null,null,null,true,true,LocalDate.now().minusDays(1),null));
+        String taxTag=apiController.configuration(tax.id).getHeaders().getETag();
+        var taxUpdated=apiController.updateConfiguration(tax.id,new ApiDtos.UpdateTaxConfigurationRequest(CalculationType.PERCENTAGE,new BigDecimal("7"),null,null,null,null,null,null,null),taxTag);
+        assertThat(taxUpdated.getHeaders().getETag()).isNotEqualTo(taxTag);
+        assertThatThrownBy(()->apiController.updateConfiguration(tax.id,new ApiDtos.UpdateTaxConfigurationRequest(CalculationType.PERCENTAGE,new BigDecimal("9"),null,null,null,null,null,null,null),taxTag))
+            .isInstanceOf(BusinessException.class).satisfies(error->assertThat(((BusinessException)error).status).isEqualTo(412));
+        assertThat(catalog.updateConfiguration(tax.id,new ApiDtos.UpdateTaxConfigurationRequest(null,null,null,null,null,null,null,null,null)).rate).isEqualByComparingTo("7");
+
+        PaymentPlanConfiguration plan=workflow.createConfiguration(new ApiDtos.CreatePaymentPlanConfigurationRequest(1,12,new BigDecimal("10"),new BigDecimal("5"),0,2,true,true,1,LocalDate.now().minusDays(1),null,true));
+        String planTag=apiController.planConfiguration(plan.id).getHeaders().getETag();
+        var planUpdated=apiController.updatePlanConfiguration(plan.id,new ApiDtos.UpdatePaymentPlanConfigurationRequest(null,null,null,new BigDecimal("6"),null,null,null,null,null,null,null,null),planTag);
+        assertThat(planUpdated.getHeaders().getETag()).isNotEqualTo(planTag);
+        assertThatThrownBy(()->apiController.updatePlanConfiguration(plan.id,new ApiDtos.UpdatePaymentPlanConfigurationRequest(null,null,null,new BigDecimal("8"),null,null,null,null,null,null,null,null),planTag))
+            .isInstanceOf(BusinessException.class).satisfies(error->assertThat(((BusinessException)error).status).isEqualTo(412));
+        assertThat(planConfigurations.findFirstByOrderByVersionDesc().orElseThrow().interestRate).isEqualByComparingTo("6");
+    }
+
+    @Test void idempotencyForEconomicCreationIsTransactionalAndSerializesConcurrentRetries() throws Exception {
+        authenticate();
+        Debt debt=debt("POST-IDEMPOTENCY-"+UUID.randomUUID(),null);
+        var request=new ApiDtos.CreateAdjustmentRequest(debt.id,AdjustmentType.DISCOUNT,new BigDecimal("10"),"Ajuste repetible");
+        String key="adjustment-"+UUID.randomUUID();
+        var responses=new java.util.concurrent.CopyOnWriteArrayList<ApiDtos.AdjustmentResponse>();
+        assertThat(runTogether(
+            ()->{responses.add(idempotencyService.execute("POST:/adjustments",key,request,ApiDtos.AdjustmentResponse.class,()->ApiResponses.of(adjustmentService.create(request))));return null;},
+            ()->{responses.add(idempotencyService.execute("POST:/adjustments",key,request,ApiDtos.AdjustmentResponse.class,()->ApiResponses.of(adjustmentService.create(request))));return null;})).containsOnlyNulls();
+        assertThat(responses).hasSize(2);
+        assertThat(responses.get(0).id()).isEqualTo(responses.get(1).id());
+        assertThat(jdbc.queryForObject("select count(*) from adjustment_request where debt_id=?",Long.class,debt.id)).isEqualTo(1);
+        assertThat(outbox.findAll()).noneMatch(event->event.eventType.equals("debtAdjusted")&&event.aggregateId.equals(debt.id.toString()));
+        var conflicting=new ApiDtos.CreateAdjustmentRequest(debt.id,AdjustmentType.DISCOUNT,new BigDecimal("11"),"Distinto");
+        assertThatThrownBy(()->idempotencyService.execute("POST:/adjustments",key,conflicting,ApiDtos.AdjustmentResponse.class,()->ApiResponses.of(adjustmentService.create(conflicting))))
+            .isInstanceOf(BusinessException.class).satisfies(error->{assertThat(((BusinessException)error).status).isEqualTo(409);assertThat(((BusinessException)error).code).isEqualTo("IDEMPOTENCY_KEY_REUSED");});
+        assertThat(jdbc.queryForObject("select count(*) from adjustment_request where debt_id=?",Long.class,debt.id)).isEqualTo(1);
+    }
+
+    @Test void adjustmentEndpointReplaysEquivalentResponseAndRejectsChangedBody() throws Exception {
+        authenticate();
+        Debt debt=debt("HTTP-IDEMPOTENCY-"+UUID.randomUUID(),null);
+        String actor="adjustment-http-"+UUID.randomUUID();
+        var auth=new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity(actor,null),null,List.of(new SimpleGrantedAuthority("ROLE_RENTAS")));
+        var request=new ApiDtos.CreateAdjustmentRequest(debt.id,AdjustmentType.DISCOUNT,new BigDecimal("10"),"HTTP idempotency");
+        String key="http-adjustment-"+UUID.randomUUID();
+        String body=json.writeValueAsString(request);
+        var first=mvc.perform(post("/api/v1/adjustments").with(authentication(auth)).header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isCreated()).andReturn().getResponse().getContentAsString();
+        var retry=mvc.perform(post("/api/v1/adjustments").with(authentication(auth)).header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isCreated()).andReturn().getResponse().getContentAsString();
+        var firstJson=(com.fasterxml.jackson.databind.node.ObjectNode)json.readTree(first);
+        var retryJson=(com.fasterxml.jackson.databind.node.ObjectNode)json.readTree(retry);
+        assertThat(OffsetDateTime.parse(retryJson.get("requestedAt").asText()).toInstant())
+            .isEqualTo(OffsetDateTime.parse(firstJson.get("requestedAt").asText()).toInstant());
+        firstJson.remove("requestedAt");
+        retryJson.remove("requestedAt");
+        assertThat(retryJson).isEqualTo(firstJson);
+        assertThat(jdbc.queryForObject("select count(*) from adjustment_request where debt_id=?",Long.class,debt.id)).isEqualTo(1);
+        var changed=new ApiDtos.CreateAdjustmentRequest(debt.id,AdjustmentType.DISCOUNT,new BigDecimal("11"),"Otro contenido");
+        mvc.perform(post("/api/v1/adjustments").with(authentication(auth)).header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsBytes(changed)))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isConflict())
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content().contentTypeCompatibleWith("application/problem+json"))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"));
+        assertThat(jdbc.queryForObject("select count(*) from adjustment_request where debt_id=?",Long.class,debt.id)).isEqualTo(1);
+    }
+
+    @Test void failedIdempotentActionRollsBackReservationAndCanBeRetried() {
+        authenticate();String key="rollback-"+UUID.randomUUID();String operation="POST:/test-rollback";
+        assertThatThrownBy(()->idempotencyService.execute(operation,key,Map.of("value",1),String.class,()->{throw new BusinessException("EXPECTED_FAILURE","expected",422);})).isInstanceOf(BusinessException.class);
+        assertThat(jdbc.queryForObject("select count(*) from idempotency_request where actor_id=? and operation=? and idempotency_key=?",Long.class,"postgres-it",operation,key)).isZero();
+        assertThat(idempotencyService.execute(operation,key,Map.of("value",1),String.class,()->"accepted")).isEqualTo("accepted");
+    }
+
+    @Test void concurrentPlanRequestRetryCreatesOneRequestAndOneOutboxEvent() throws Exception {
+        authenticate();
+        Debt debt=debt("PLAN-REQUEST-IDEMPOTENCY-"+UUID.randomUUID(),null);
+        TaxpayerReference owner=taxpayers.findById(debt.taxpayerId).orElseThrow();owner.canonicalCitizenId=UUID.randomUUID();taxpayers.saveAndFlush(owner);
+        workflow.createConfiguration(new ApiDtos.CreatePaymentPlanConfigurationRequest(1,12,new BigDecimal("10"),new BigDecimal("5"),0,2,true,true,1,LocalDate.now().minusDays(1),null,true));
+        var request=new ApiDtos.CreatePaymentPlanRequest(debt.taxpayerId,List.of(debt.id),3);
+        String key="plan-request-"+UUID.randomUUID();var responses=new java.util.concurrent.CopyOnWriteArrayList<ApiDtos.PaymentPlanRequestResponse>();
+        assertThat(runTogether(
+            ()->{responses.add(idempotencyService.execute("POST:/payment-plan-requests",key,request,ApiDtos.PaymentPlanRequestResponse.class,()->ApiResponses.of(workflow.request(request))));return null;},
+            ()->{responses.add(idempotencyService.execute("POST:/payment-plan-requests",key,request,ApiDtos.PaymentPlanRequestResponse.class,()->ApiResponses.of(workflow.request(request))));return null;})).containsOnlyNulls();
+        assertThat(responses).hasSize(2).extracting(ApiDtos.PaymentPlanRequestResponse::id).containsOnly(responses.get(0).id());
+        assertThat(jdbc.queryForObject("select count(*) from payment_plan_request where taxpayer_id=?",Long.class,debt.taxpayerId)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count(*) from outbox_event where event_type='paymentPlanRequested' and aggregate_type='PaymentPlanRequest' and aggregate_id=?",Long.class,responses.get(0).id().toString())).isEqualTo(1);
     }
 
     @Test void successfulDemoLoginResetsTheAttemptWindow() {
@@ -478,9 +580,10 @@ class PostgreSqlIntegrationTest {
     }
 
     @Test void contextStartsAndFlywayAppliesEveryMigration(){
-        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(30);
-        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(29);
+        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(31);
+        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(30);
         assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version='29'",Integer.class)).isOne();
+        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version='31'",Integer.class)).isOne();
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='tax_configuration'",String.class)).contains("submitted_by");
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='liquidation_run'",String.class)).contains("submitted_by");
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='social_benefit_rule'",String.class)).contains("submitted_by");

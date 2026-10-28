@@ -45,7 +45,14 @@ class PlanWorkflowService {
     }
 
     @Transactional PaymentPlanConfiguration updateConfiguration(Long id,ApiDtos.UpdatePaymentPlanConfigurationRequest r) {
+        return updateConfiguration(id,r,null);
+    }
+
+    @Transactional PaymentPlanConfiguration updateConfiguration(Long id,ApiDtos.UpdatePaymentPlanConfigurationRequest r,String ifMatch) {
         int version=nextVersion();PaymentPlanConfiguration source=configuration(id);
+        EntityTags.requireIfMatch(EntityTags.paymentPlanConfiguration(source),ifMatch);
+        if(ifMatch!=null&&configurations.findFirstByOrderByVersionDesc().map(latest->!latest.id.equals(source.id)).orElse(true))
+            throw new BusinessException("PRECONDITION_FAILED","La configuración dejó de ser la versión vigente",412);
         int min=r.minimumInstallments()==null?source.minimumInstallments:r.minimumInstallments();
         int max=r.maximumInstallments()==null?source.maximumInstallments:r.maximumInstallments();
         BigDecimal down=r.minimumDownPaymentPercentage()==null?source.minimumDownPaymentPercentage:r.minimumDownPaymentPercentage();
