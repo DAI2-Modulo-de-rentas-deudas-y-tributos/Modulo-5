@@ -14,7 +14,7 @@ export default function FilterBar({
   actions,
 }) {
   return (
-    <div className="flex flex-col gap-3 border-b border-neutral-100 bg-neutral-50/40 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+    <div className="workspace-filter flex flex-col gap-3 border-b border-neutral-100 bg-neutral-50/40 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex flex-1 flex-col gap-3 sm:flex-row sm:items-center">
         {onSearchChange && (
           <div className="relative sm:w-72">

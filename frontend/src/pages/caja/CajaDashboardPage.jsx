@@ -1,9 +1,9 @@
 import { useCallback, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import PageHeader from "../../components/ui/PageHeader.jsx";
+import PageHeader from "../../components/layout/WorkspaceHeader.jsx";
 import FeatureCard from "../../components/ui/FeatureCard.jsx";
 import Alert from "../../components/ui/Alert.jsx";
-import Spinner from "../../components/ui/Spinner.jsx";
+import DashboardLoading from "../../components/common/DashboardLoading.jsx";
 import Card from "../../components/common/Card.jsx";
 import DataTable from "../../components/common/DataTable.jsx";
 import StatTile from "../../components/common/StatTile.jsx";
@@ -80,7 +80,7 @@ export default function CajaDashboardPage() {
         }
       />
 
-      <div className="mx-auto flex max-w-6xl flex-col gap-8 px-5 py-8">
+      <div className="workspace-container workspace-content workspace-dashboard">
         {error && (
           <Alert variant="error" title="No pudimos cargar el panel de caja">
             {error}
@@ -88,14 +88,11 @@ export default function CajaDashboardPage() {
         )}
 
         {loading ? (
-          <div className="flex items-center justify-center gap-3 py-10">
-            <Spinner />
-            <span className="text-[13px] text-neutral-400">Calculando la jornada…</span>
-          </div>
+          <DashboardLoading label="Calculando la jornada…" />
         ) : (
           summary && (
             <>
-              <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <section className="workspace-metrics" aria-label="Resumen de caja">
                 <StatTile
                   label="Pagos registrados"
                   value={summary.registeredCount}
@@ -169,10 +166,11 @@ export default function CajaDashboardPage() {
                   </p>
                 </div>
 
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="workspace-directory">
                   {CAJA_MODULES.map((module) => (
                     <FeatureCard
                       key={module.id}
+                      className="workspace-module-link"
                       title={module.label}
                       description={module.description}
                       iconName={module.iconName}

@@ -4,13 +4,15 @@ import Sidebar from "./Sidebar.jsx";
 import Topbar from "./Topbar.jsx";
 import Footer from "./Footer.jsx";
 import { AUDITORIA_MODULES } from "../../config/auditoriaModules.js";
+import "./workspace.css";
 
 /** Shell del área de Auditoría: mismo esqueleto que Rentas y Caja, con sus módulos. */
 export default function AuditoriaLayout() {
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (
-    <div className="flex min-h-screen">
+    <div className="workspace-app">
+      <a className="workspace-skip" href="#workspace-content">Ir al contenido</a>
       <Sidebar
         open={menuOpen}
         onClose={() => setMenuOpen(false)}
@@ -22,13 +24,14 @@ export default function AuditoriaLayout() {
         footerLines={["Módulo 5 — Rentas", "Acceso de sólo lectura"]}
       />
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="workspace-body">
         <Topbar
           onOpenMenu={() => setMenuOpen(true)}
+          menuOpen={menuOpen}
           areaLabel="Área de control"
           areaName="Auditoría de Rentas"
         />
-        <main className="flex-1">
+        <main id="workspace-content" className="workspace-main" tabIndex={-1}>
           <Outlet />
         </main>
         <Footer

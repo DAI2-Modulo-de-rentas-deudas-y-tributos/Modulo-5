@@ -13,7 +13,7 @@ export const MODULES = [
     label: "Contribuyentes",
     iconName: "Users",
     description:
-      "Padrón local de ciudadanos y organizaciones replicado desde M1. Sólo lectura.",
+      "Consultá los datos y la situación fiscal de ciudadanos y organizaciones.",
     roles: ["PERSONAL", "SUPERVISOR"],
     countLabel: "registrados",
   },
@@ -23,7 +23,7 @@ export const MODULES = [
     label: "Configuración de tributos",
     iconName: "Tags",
     description:
-      "Reglas de cálculo de cada concepto, versionadas y con aprobación del Supervisor.",
+      "Consultá las reglas vigentes y proponé cambios para su aprobación.",
     roles: ["PERSONAL", "SUPERVISOR"],
     countLabel: "conceptos",
   },
@@ -53,7 +53,7 @@ export const MODULES = [
     label: "Boletas",
     iconName: "FileText",
     description:
-      "Emisión y descarga de boletas y comprobantes almacenados en S3.",
+      "Emití, consultá y descargá las boletas de los contribuyentes.",
     roles: ["PERSONAL", "SUPERVISOR"],
     countLabel: "emitidas",
   },
@@ -63,7 +63,7 @@ export const MODULES = [
     label: "Pagos",
     iconName: "Banknote",
     description:
-      "Registrar, imputar y reversar pagos. Publica paymentRegistered / paymentReversed.",
+      "Registrá cobros, imputá pagos y consultá los movimientos de cada cuenta.",
     roles: ["PERSONAL", "SUPERVISOR"],
     countLabel: "del día",
   },
@@ -83,7 +83,7 @@ export const MODULES = [
     label: "Planes de pago",
     iconName: "CalendarClock",
     description:
-      "Solicitudes de plan, simulación de cuotas y resolución (GRANTED / REJECTED).",
+      "Simulá cuotas y gestioná las solicitudes de financiación de deuda.",
     roles: ["PERSONAL", "SUPERVISOR"],
     countLabel: "pendientes",
   },
@@ -150,7 +150,7 @@ export const MODULES = [
     label: "Exenciones",
     iconName: "ShieldCheck",
     description:
-      "Solicitudes de exención, documentación respaldatoria y resolución hacia M8.",
+      "Revisá solicitudes, documentación y resoluciones de exención.",
     roles: ["PERSONAL", "SUPERVISOR"],
     countLabel: "pendientes",
   },
@@ -160,7 +160,7 @@ export const MODULES = [
     label: "Tickets",
     iconName: "MessageSquare",
     description:
-      "Reclamos derivados por M2. Cambio de estado vía updateTicketStatus.",
+      "Consultá los reclamos de Atención Ciudadana y seguí su resolución.",
     roles: ["PERSONAL", "SUPERVISOR"],
     countLabel: "abiertos",
   },
@@ -170,7 +170,7 @@ export const MODULES = [
     label: "Bitácora de eventos",
     iconName: "Activity",
     description:
-      "Auditoría de eventos publicados y procesados, reintentos y DLQ.",
+      "Seguí el intercambio con otras áreas y revisá los eventos pendientes.",
     roles: ["SUPERVISOR"],
     countLabel: "en DLQ",
   },
