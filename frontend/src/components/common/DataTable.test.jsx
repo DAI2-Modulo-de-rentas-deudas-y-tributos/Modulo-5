@@ -14,16 +14,36 @@ describe("DataTable", () => {
     const onRowClick = vi.fn();
     render(<DataTable columns={columns} rows={rows} rowKey={(row) => row.id} onRowClick={onRowClick} />);
 
-    const row = screen.getByRole("row", { name: /Deuda municipal/ });
-    expect(row.tabIndex).toBe(0);
-    row.focus();
+    const action = screen.getByRole("button", { name: "Activar fila" });
+    await user.click(action);
+    expect(onRowClick).toHaveBeenCalledTimes(1);
+    onRowClick.mockClear();
+    action.blur();
+    await user.tab();
+    expect(document.activeElement).toBe(action);
     await user.keyboard(key === "Enter" ? "{Enter}" : " ");
 
     expect(onRowClick).toHaveBeenCalledWith(rows[0]);
+    expect(onRowClick).toHaveBeenCalledTimes(1);
   });
 
-  it("no convierte las filas de sólo lectura en controles de teclado", () => {
+  it("no crea acciones de teclado en tablas de sólo lectura", () => {
     render(<DataTable columns={columns} rows={rows} rowKey={(row) => row.id} />);
-    expect(screen.getByRole("row", { name: /Deuda municipal/ }).tabIndex).toBe(-1);
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  it("no activa la fila al usar un control interactivo contenido", async () => {
+    const user = userEvent.setup();
+    const onRowClick = vi.fn();
+    const actionColumns = [{
+      key: "name",
+      header: "Nombre",
+      render: () => <button type="button">Acción propia</button>,
+    }];
+    render(<DataTable columns={actionColumns} rows={rows} rowKey={(row) => row.id} onRowClick={onRowClick} />);
+
+    await user.click(screen.getByRole("button", { name: "Acción propia" }));
+
+    expect(onRowClick).not.toHaveBeenCalled();
   });
 });
