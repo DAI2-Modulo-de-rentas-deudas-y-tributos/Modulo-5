@@ -50,4 +50,23 @@ class FilteredApiTests {
             .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("INVALID_FILTER_VALUE"));
     }
 
+    @Test void taxpayerSearchTreatsLikeWildcardsAsLiteralCharacters() throws Exception {
+        TaxpayerReference percent=catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(TaxpayerType.CITIZEN,"FILTER-PERCENT","123%45",null,"Literal % Uno"));
+        TaxpayerReference underscore=catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(TaxpayerType.CITIZEN,"FILTER_UNDERSCORE","123_45",null,"Literal _ Dos"));
+        TaxpayerReference backslash=catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(TaxpayerType.CITIZEN,"FILTER\\BACKSLASH","123\\45",null,"Literal \\ Tres"));
+
+        mvc.perform(get("/api/v1/taxpayers").header("X-Demo-Session",session).param("q","%"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.page.totalElements").value(1))
+            .andExpect(jsonPath("$.content[0].id").value(percent.id));
+        mvc.perform(get("/api/v1/taxpayers").header("X-Demo-Session",session).param("q","_"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.page.totalElements").value(1))
+            .andExpect(jsonPath("$.content[0].id").value(underscore.id));
+        mvc.perform(get("/api/v1/taxpayers").header("X-Demo-Session",session).param("q","\\"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.page.totalElements").value(1))
+            .andExpect(jsonPath("$.content[0].id").value(backslash.id));
+        mvc.perform(get("/api/v1/taxpayers").header("X-Demo-Session",session).param("q","111"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.page.totalElements").value(1))
+            .andExpect(jsonPath("$.content[0].id").value(taxpayer.id));
+    }
+
 }
