@@ -37,6 +37,7 @@ class SecurityTests {
     @Test void borrarLiquidacionDevuelve405ConMetodosPermitidos() throws Exception {
         mvc.perform(delete("/api/v1/liquidations/1").header("X-Demo-Session",demo.token(DemoRole.RENTAS)))
             .andExpect(status().isMethodNotAllowed())
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
             .andExpect(jsonPath("$.code").value("METHOD_NOT_ALLOWED"))
             .andExpect(header().string("Allow",org.hamcrest.Matchers.containsString("GET")));
     }

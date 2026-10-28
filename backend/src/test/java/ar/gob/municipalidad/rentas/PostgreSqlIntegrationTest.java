@@ -343,6 +343,8 @@ class PostgreSqlIntegrationTest {
         assertThat(conceptUpdated.getHeaders().getETag()).isNotEqualTo(conceptTag);
         assertThatThrownBy(()->apiController.updateConcept(concept.id,new ApiDtos.UpdateTaxConceptRequest("stale",null,false),conceptTag))
             .isInstanceOf(BusinessException.class).satisfies(error->assertThat(((BusinessException)error).status).isEqualTo(412));
+        assertThatThrownBy(()->apiController.updateConcept(concept.id,new ApiDtos.UpdateTaxConceptRequest("wildcard bypass",null,false),"\"stale\", *"))
+            .isInstanceOf(BusinessException.class).satisfies(error->assertThat(((BusinessException)error).status).isEqualTo(412));
         assertThat(concepts.findById(concept.id).orElseThrow().name).isEqualTo("ETag updated");
 
         TaxConfiguration tax=catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(concept.id,CalculationType.PERCENTAGE,new BigDecimal("5"),null,null,null,true,true,LocalDate.now().minusDays(1),null));

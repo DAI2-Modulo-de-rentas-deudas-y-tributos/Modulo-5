@@ -34,9 +34,10 @@ final class EntityTags {
 
     static void requireIfMatch(String current, String provided) {
         if (provided == null) return;
-        boolean matches = List.of(provided.split(",")).stream()
+        String value=provided.trim();
+        boolean matches = value.equals("*") || List.of(value.split(",")).stream()
             .map(String::trim)
-            .anyMatch(candidate -> candidate.equals("*") || candidate.equals(current));
+            .anyMatch(candidate -> candidate.equals(current));
         if (!matches) throw new BusinessException("PRECONDITION_FAILED", "El recurso cambió desde la última lectura", 412);
     }
 

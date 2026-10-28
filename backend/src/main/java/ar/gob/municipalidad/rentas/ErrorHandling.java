@@ -74,6 +74,7 @@ class GlobalExceptionHandler {
     ResponseEntity<ApiDtos.ErrorResponse> methodNotAllowed(HttpRequestMethodNotSupportedException ex,HttpServletRequest request) {
         ResponseEntity<ApiDtos.ErrorResponse> error=response(405,"METHOD_NOT_ALLOWED","El método solicitado no está permitido para este recurso",request);
         HttpHeaders headers=new HttpHeaders();
+        headers.putAll(error.getHeaders());
         if(ex.getSupportedHttpMethods()!=null) headers.setAllow(ex.getSupportedHttpMethods());
         return new ResponseEntity<>(error.getBody(),headers,HttpStatus.METHOD_NOT_ALLOWED);
     }
