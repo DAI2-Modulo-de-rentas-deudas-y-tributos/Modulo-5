@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import { safeExternalUrl } from "../../lib/safeUrl.js";
 import { Paperclip } from "lucide-react";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
 import Card from "../../components/common/Card.jsx";
@@ -237,18 +238,21 @@ function UpdateTicketModal({ ticket, citizenName, onClose, onDone }) {
 
           {ticket.attachments?.length > 0 && (
             <ul className="mt-3 flex flex-col gap-1.5">
-              {ticket.attachments.map((url) => (
-                <li key={url}>
-                  <a
-                    href={url}
+              {ticket.attachments.map((url) => {
+                const safeUrl = safeExternalUrl(url);
+                return <li key={url}>
+                  {safeUrl ? <a
+                    href={safeUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     title={url}
                     className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#0F2C59] transition-colors hover:text-[#D63031]"
                   >
                     <Paperclip className="h-3.5 w-3.5" strokeWidth={2} />
                     {url.split("/").pop()}
-                  </a>
-                </li>
-              ))}
+                  </a> : <span className="text-[12px] text-neutral-500">Adjunto con enlace no válido</span>}
+                </li>;
+              })}
             </ul>
           )}
         </div>

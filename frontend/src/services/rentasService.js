@@ -70,7 +70,7 @@ export const authService = {
     if (AUTH_MODE === "core") {
       throw new ApiError("La autenticación Core/JWT todavía no tiene un contrato integrado.", 503, null, "CORE_AUTH_PENDING");
     }
-    const result = await request("/api/v1/dev-auth/login", { method: "POST", body: { username, password } });
+    const result = await request("/api/v1/dev-auth/login", { method: "POST", body: { username, password }, requiresAuth: false });
     return mapDemoAuthSession(result);
   },
 
