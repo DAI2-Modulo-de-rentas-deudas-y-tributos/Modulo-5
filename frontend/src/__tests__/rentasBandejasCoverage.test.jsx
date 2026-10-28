@@ -80,6 +80,18 @@ beforeEach(() => {
 });
 
 describe("bandeja de tickets", () => {
+  it("no convierte adjuntos con esquemas inseguros en enlaces ejecutables", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(ticketService, "list").mockResolvedValue([{ ...ticket, attachments: ["javascript:alert(1)"] }]);
+    render(<MemoryRouter><TicketsPage /></MemoryRouter>);
+
+    const row = (await screen.findByText("TK-42")).closest("tr");
+    await user.click(within(row).getByRole("button", { name: "Cambiar estado" }));
+    const dialog = await screen.findByRole("dialog", { name: "Ticket TK-42" });
+    expect(within(dialog).queryByRole("link")).toBeNull();
+    expect(within(dialog).getByText("Adjunto con enlace no válido")).toBeDefined();
+  });
+
   it("muestra contexto recibido y registra una actualización con mensaje obligatorio", async () => {
     const user = userEvent.setup();
     vi.spyOn(ticketService, "list").mockResolvedValue([ticket]);
