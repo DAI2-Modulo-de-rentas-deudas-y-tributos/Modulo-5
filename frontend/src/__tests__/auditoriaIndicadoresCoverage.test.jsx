@@ -31,6 +31,8 @@ it("presenta actividad reciente del auditor y permite abrir su registro", async 
     <Route path="*" element={<LocationText />} />
   </Routes></MemoryRouter>);
   expect(await screen.findByText("Hola, Ana.")).toBeDefined();
+  expect(screen.queryByText("NaN")).toBeNull();
+  expect(screen.queryByText(/undefined aprobadas|undefined rechazadas/)).toBeNull();
   const row = (await screen.findByText("rentas.demo")).closest("tr");
   expect(within(row).getByText(/#17/)).toBeDefined();
   await user.click(screen.getByRole("button", { name: "Ver registro completo" }));

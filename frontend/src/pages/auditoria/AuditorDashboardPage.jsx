@@ -6,7 +6,6 @@ import Alert from "../../components/ui/Alert.jsx";
 import DashboardLoading from "../../components/common/DashboardLoading.jsx";
 import Card from "../../components/common/Card.jsx";
 import DataTable from "../../components/common/DataTable.jsx";
-import StatTile from "../../components/common/StatTile.jsx";
 import { AUDITORIA_MODULES } from "../../config/auditoriaModules.js";
 import { auditService } from "../../services/rentasService.js";
 import useResource from "../../hooks/useResource.js";
@@ -14,7 +13,6 @@ import { useAuth } from "../../context/AuthContext.jsx";
 import {
   actionLabelFor,
   entityLabelFor,
-  formatDate,
   formatDateTime,
   labelFor,
 } from "../../lib/format.js";
@@ -78,57 +76,6 @@ export default function AuditorDashboardPage() {
                 Auditoría consulta todo el circuito de Rentas pero no modifica ninguna entidad.
                 Las correcciones las hace el área responsable y quedan registradas acá.
               </Alert>
-
-              <section className="workspace-metrics" aria-label="Operaciones de auditoría">
-                <StatTile
-                  label="Operaciones del día"
-                  value={summary.dailyOperations}
-                  hint={`Jornada del ${formatDate(summary.date)}`}
-                  iconName="Activity"
-                />
-                <StatTile
-                  label="Pagos registrados"
-                  value={summary.paymentsRegistered}
-                  hint="Cobros imputados hoy"
-                  iconName="Banknote"
-                />
-                <StatTile
-                  label="Pagos revertidos"
-                  value={summary.paymentsReversed}
-                  hint="Requieren respaldo documental"
-                  iconName="Undo2"
-                  tone={summary.paymentsReversed > 0 ? "danger" : "success"}
-                />
-                <StatTile
-                  label="Ajustes manuales"
-                  value={summary.manualAdjustments}
-                  hint="Reversiones y resoluciones"
-                  iconName="ListChecks"
-                />
-              </section>
-
-              <section className="workspace-metrics workspace-metrics-three" aria-label="Seguimiento de auditoría">
-                <StatTile
-                  label="Planes incumplidos"
-                  value={summary.defaultedPlans}
-                  hint="Cuotas impagas"
-                  iconName="CalendarClock"
-                  tone={summary.defaultedPlans > 0 ? "danger" : "success"}
-                />
-                <StatTile
-                  label="Exenciones resueltas"
-                  value={summary.exemptionsApproved + summary.exemptionsRejected}
-                  hint={`${summary.exemptionsApproved} aprobadas · ${summary.exemptionsRejected} rechazadas`}
-                  iconName="ShieldCheck"
-                />
-                <StatTile
-                  label="Eventos con error"
-                  value={summary.integrationErrors}
-                  hint="Reintentos y DLQ"
-                  iconName="TriangleAlert"
-                  tone={summary.integrationErrors > 0 ? "danger" : "success"}
-                />
-              </section>
 
               <Card
                 title="Actividad reciente"
