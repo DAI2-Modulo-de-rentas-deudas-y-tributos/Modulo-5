@@ -9,6 +9,8 @@ on:
     branches:
       - main
       - develop
+  # cd-prod.yml lo invoca como compuerta antes de desplegar cada commit de main.
+  workflow_call:
 
 permissions:
   contents: read
@@ -73,6 +75,7 @@ jobs:
           test -d contracts
           test -d infra/environments/dev
           test -d infra/environments/test
+          test -d infra/environments/prod
           test -d docs/adr
 
   frontend:
@@ -251,6 +254,12 @@ jobs:
 
       - name: Validate TEST
         working-directory: infra/environments/test
+        run: |
+          terraform init -backend=false
+          terraform validate
+
+      - name: Validate PROD
+        working-directory: infra/environments/prod
         run: |
           terraform init -backend=false
           terraform validate

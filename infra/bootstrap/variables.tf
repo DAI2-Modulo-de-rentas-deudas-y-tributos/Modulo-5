@@ -39,3 +39,8 @@ variable "github_test_environment" {
   default     = "test"
 }
 
+variable "github_prod_environment" {
+  description = "Nombre exacto del GitHub Environment de PROD; debe aceptar solo la rama main."
+  type        = string
+  default     = "prod"
+}

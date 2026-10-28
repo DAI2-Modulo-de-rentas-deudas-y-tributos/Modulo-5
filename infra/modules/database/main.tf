@@ -34,6 +34,7 @@ resource "aws_db_instance" "this" {
   delete_automated_backups   = true
   deletion_protection        = var.deletion_protection
   skip_final_snapshot        = var.skip_final_snapshot
+  final_snapshot_identifier  = var.skip_final_snapshot ? null : "${var.name_prefix}-postgres-final"
   apply_immediately          = true
   auto_minor_version_upgrade = true
 

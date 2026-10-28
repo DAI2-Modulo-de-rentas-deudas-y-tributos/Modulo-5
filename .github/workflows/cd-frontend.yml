@@ -1,9 +1,17 @@
-name: Deploy frontend AWS DEV
+name: Deploy frontend AWS
 
-# DEV es efímero: este workflow solo se ejecuta como etapa de cd-dev.yml,
-# que levanta el ambiente, lo verifica y lo destruye.
+# Etapa reutilizable de cd-dev.yml (DEV efímero) y cd-prod.yml (PROD persistente).
 on:
   workflow_call:
+    inputs:
+      environment:
+        description: "Ambiente destino: dev o prod"
+        required: true
+        type: string
+      amplify_branch:
+        description: "Rama de Amplify del ambiente: develop o main"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -14,12 +22,13 @@ jobs:
     name: deploy-frontend
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    environment: dev
+    environment: ${{ inputs.environment }}
 
     env:
       AWS_REGION: ${{ vars.AWS_REGION }}
-      AMPLIFY_APP_NAME: "modulo-5-rentas-dev-frontend"
-      AMPLIFY_BRANCH: "develop"
+      AMPLIFY_APP_NAME: "modulo-5-rentas-${{ inputs.environment }}-frontend"
+      AMPLIFY_BRANCH: ${{ inputs.amplify_branch }}
+      TARGET_ENVIRONMENT: ${{ inputs.environment }}
 
     steps:
       - name: Checkout
@@ -34,14 +43,14 @@ jobs:
           aws-region: ${{ vars.AWS_REGION }}
           allowed-account-ids: "756663253996"
           mask-aws-account-id: true
-          role-session-name: frontend-dev-${{ github.run_id }}
+          role-session-name: frontend-${{ inputs.environment }}-${{ github.run_id }}
 
       - name: Resolve Amplify configuration
         id: amplify
         shell: bash
         run: |
           set -euo pipefail
-          : "${AWS_REGION:?Missing AWS_REGION in the dev environment}"
+          : "${AWS_REGION:?Missing AWS_REGION in the ${TARGET_ENVIRONMENT} environment}"
 
           app_id=$(aws amplify list-apps \
             --query "apps[?name=='${AMPLIFY_APP_NAME}'].appId | [0]" \
@@ -156,7 +165,7 @@ jobs:
             --output text)
 
           {
-            echo "### Frontend DEV desplegado"
+            echo "### Frontend ${TARGET_ENVIRONMENT^^} desplegado"
             echo
             echo "- URL: https://${AMPLIFY_BRANCH}.${default_domain}"
             echo "- Job: \`${{ steps.deployment.outputs.job-id }}\`"

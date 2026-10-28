@@ -30,6 +30,7 @@ npm run build                     # dist/ — lo que publica Amplify
 terraform fmt -check -recursive infra
 cd infra/environments/dev  && terraform init -backend=false && terraform validate
 cd infra/environments/test && terraform init -backend=false && terraform validate
+cd infra/environments/prod && terraform init -backend=false && terraform validate
 ```
 
 `backend/` todavía no tiene aplicación: agregar aquí sus comandos al scaffoldearlo.
@@ -53,8 +54,8 @@ cd infra/environments/test && terraform init -backend=false && terraform validat
   antes de generar código: un cambio de contrato no es una decisión local.
 - **Infra**: `infra/` es AWS solo por Terraform. `bootstrap/` (estado remoto S3 con
   `use_lockfile = true`, OIDC de GitHub, roles plan/deploy) se aplica una vez; `modules/` por
-  capacidad (network, database, ecs, edge, messaging, storage); `environments/dev` y
-  `environments/test` son composiciones con **estado remoto independiente** — no usar Terraform
+  capacidad (network, database, ecs, edge, messaging, storage); `environments/dev`,
+  `environments/test` y `environments/prod` son composiciones con **estado remoto independiente** — no usar Terraform
   workspaces para representar ambientes. Región por defecto `us-east-2`, `project_name`
   `modulo-5-rentas`. No ejecutar `terraform apply` antes del bootstrap y la revisión del plan.
 
@@ -64,9 +65,11 @@ cd infra/environments/test && terraform init -backend=false && terraform validat
   artefacto inmutable** a `test`. `main` es la versión estable.
 - `dev` es **efímero**: cada merge a `develop` lo levanta, corre un smoke test y lo destruye
   (`cd-dev.yml`); solo se conserva su repositorio ECR, desde donde se promueve a `test`.
-  `test` es el único ambiente accesible de forma continua.
+- `prod` es **persistente** y sigue a `main`: cada merge o commit corre el CI y despliega
+  (`cd-prod.yml`, ADR 0003). Un deploy en curso no se cancela; de los commits que llegan
+  mientras tanto solo se despliega el último. Perfil `prod`, sin modo demo.
 - CI (`.github/workflows/ci.yml`): job `repository-structure` verifica que existan
-  `frontend`, `backend`, `contracts`, `infra/environments/{dev,test}` y `docs/adr`; job
+  `frontend`, `backend`, `contracts`, `infra/environments/{dev,test,prod}` y `docs/adr`; job
   `terraform` corre fmt/validate; `ci-required` es el check final obligatorio — si se agregan
   jobs con filtros por carpeta, deben seguir colgando de `ci-required`.
 - Las decisiones arquitectónicas relevantes se documentan como ADR numerados en `docs/adr/`
