@@ -30,15 +30,15 @@ class FiscalProcessingController {
         int notFoundItems,String importedBy,OffsetDateTime importedAt,List<ReconciliationItemResponse> items) {}
     record ResolveReconciliationRequest(@NotNull Long paymentId,@NotBlank String reason) {}
 
-    private final LateChargeService lateCharges;private final DueDateService dueDates;private final ReconciliationService reconciliations;
-    FiscalProcessingController(LateChargeService lateCharges,DueDateService dueDates,ReconciliationService reconciliations){this.lateCharges=lateCharges;this.dueDates=dueDates;this.reconciliations=reconciliations;}
+    private final LateChargeService lateCharges;private final DueDateService dueDates;private final ReconciliationService reconciliations;private final FiscalProcessingDatePolicy dates;
+    FiscalProcessingController(LateChargeService lateCharges,DueDateService dueDates,ReconciliationService reconciliations,FiscalProcessingDatePolicy dates){this.lateCharges=lateCharges;this.dueDates=dueDates;this.reconciliations=reconciliations;this.dates=dates;}
 
     @PostMapping("/debts/{id}/late-charge-preview") @PreAuthorize("hasAnyRole('RENTAS','SUPERVISOR','AUDITOR')")
-    LateChargeResponse preview(@PathVariable Long id,@RequestBody(required=false) CalculationDateRequest body){return lateCharges.preview(id,date(body));}
+    LateChargeResponse preview(@PathVariable Long id,@RequestBody(required=false) CalculationDateRequest body){LocalDate date=date(body);dates.requireNotFuture(date);return lateCharges.preview(id,date);}
     @PostMapping("/debts/{id}/late-charges") @PreAuthorize("hasAnyRole('RENTAS','SUPERVISOR')")
-    LateChargeResponse apply(@PathVariable Long id,@RequestBody(required=false) CalculationDateRequest body){return lateCharges.apply(id,date(body));}
+    LateChargeResponse apply(@PathVariable Long id,@RequestBody(required=false) CalculationDateRequest body){LocalDate date=date(body);dates.requireNotFuture(date);return lateCharges.apply(id,date);}
     @PostMapping("/administration/process-due-dates") @PreAuthorize("hasAnyRole('RENTAS','SUPERVISOR')")
-    DueDateResponse process(@RequestBody(required=false) DueDateRequest body){return dueDates.process(body==null||body.processingDate()==null?LocalDate.now():body.processingDate());}
+    DueDateResponse process(@RequestBody(required=false) DueDateRequest body){LocalDate date=dates.todayIfMissing(body==null?null:body.processingDate());dates.requireNotFuture(date);return dueDates.process(date);}
     @PostMapping("/payment-reconciliations/batches") @PreAuthorize("hasAnyRole('RENTAS','SUPERVISOR','CASHIER')")
     ReconciliationBatchResponse importBatch(@Valid @RequestBody ImportReconciliationRequest body){return reconciliations.importBatch(body);}
     @GetMapping("/payment-reconciliations/batches/{id}") @PreAuthorize("hasAnyRole('RENTAS','SUPERVISOR','CASHIER','AUDITOR')")
@@ -47,18 +47,28 @@ class FiscalProcessingController {
     Page<ReconciliationItemResponse> observed(Pageable pageable){return reconciliations.observed(pageable);}
     @PostMapping("/payment-reconciliations/items/{id}/resolve") @PreAuthorize("hasAnyRole('RENTAS','SUPERVISOR')")
     ReconciliationItemResponse resolve(@PathVariable Long id,@Valid @RequestBody ResolveReconciliationRequest body){return reconciliations.resolve(id,body);}
-    private LocalDate date(CalculationDateRequest body){return body==null||body.calculationDate()==null?LocalDate.now():body.calculationDate();}
+    private LocalDate date(CalculationDateRequest body){return dates.todayIfMissing(body==null?null:body.calculationDate());}
+}
+
+@org.springframework.stereotype.Component
+class FiscalProcessingDatePolicy {
+    private final Clock clock;
+    FiscalProcessingDatePolicy(Clock clock){this.clock=clock;}
+    LocalDate today(){return LocalDate.now(clock);}
+    LocalDate todayIfMissing(LocalDate date){return date==null?today():date;}
+    void requireNotFuture(LocalDate date){if(date.isAfter(today()))throw new BusinessException("FUTURE_DATE_NOT_ALLOWED","La fecha de procesamiento no puede ser futura",422);}
 }
 
 @org.springframework.stereotype.Service
 class LateChargeService {
     private static final BigDecimal HUNDRED=new BigDecimal("100");
     private final DebtRepository debts;private final LateChargeRuleRepository rules;private final LateChargeApplicationRepository applications;
-    private final AdjustmentRepository adjustments;private final AuditService audit;private final CurrentIdentity identity;
+    private final AdjustmentRepository adjustments;private final AuditService audit;private final CurrentIdentity identity;private final FiscalProcessingDatePolicy dates;
     LateChargeService(DebtRepository debts,LateChargeRuleRepository rules,LateChargeApplicationRepository applications,
-        AdjustmentRepository adjustments,AuditService audit,CurrentIdentity identity){this.debts=debts;this.rules=rules;this.applications=applications;this.adjustments=adjustments;this.audit=audit;this.identity=identity;}
+        AdjustmentRepository adjustments,AuditService audit,CurrentIdentity identity,FiscalProcessingDatePolicy dates){this.debts=debts;this.rules=rules;this.applications=applications;this.adjustments=adjustments;this.audit=audit;this.identity=identity;this.dates=dates;}
 
     FiscalProcessingController.LateChargeResponse preview(Long debtId,LocalDate date){
+        dates.requireNotFuture(date);
         Debt debt=debt(debtId);LateChargeRule rule=rule(date);
         return applications.findByDebtIdAndRuleIdAndCalculationDate(debt.id,rule.id,date)
             .map(existing->response(existing,rule.code,false))
@@ -67,6 +77,7 @@ class LateChargeService {
     @Transactional(readOnly=true) Map<Long,FiscalProcessingController.LateChargeResponse> previewIfApplicable(Collection<Debt> candidates,LocalDate date){List<Debt> chargeable=candidates.stream().filter(debt->debt.status!=DebtStatus.PAID&&debt.status!=DebtStatus.CANCELLED&&debt.outstandingBalance.signum()>0&&date.isAfter(debt.dueDate)).toList();if(chargeable.isEmpty())return Map.of();List<LateChargeRule> applicable=rules.findApplicable(date,PageRequest.of(0,1));if(applicable.isEmpty())return Map.of();LateChargeRule rule=applicable.get(0);List<LateChargeApplication> previous=applications.findByDebtIdIn(chargeable.stream().map(x->x.id).toList());Map<Long,BigDecimal> totals=previous.stream().collect(java.util.stream.Collectors.groupingBy(x->x.debtId,java.util.stream.Collectors.reducing(BigDecimal.ZERO,x->x.totalAdjustment,BigDecimal::add)));Set<Long> alreadyApplied=previous.stream().filter(x->x.ruleId.equals(rule.id)&&x.calculationDate.equals(date)).map(x->x.debtId).collect(java.util.stream.Collectors.toSet());Map<Long,FiscalProcessingController.LateChargeResponse> result=new HashMap<>();for(Debt debt:chargeable)if(!alreadyApplied.contains(debt.id))result.put(debt.id,calculate(debt,rule,date,false,null,money(totals.getOrDefault(debt.id,BigDecimal.ZERO))));return result;}
     boolean hasApplicableRule(LocalDate date){return !rules.findApplicable(date,PageRequest.of(0,1)).isEmpty();}
     @Transactional FiscalProcessingController.LateChargeResponse apply(Long debtId,LocalDate date){
+        dates.requireNotFuture(date);
         Debt debt=debts.findByIdForUpdate(debtId).orElseThrow(()->CatalogService.notFound("Deuda"));LateChargeRule rule=rule(date);
         Optional<LateChargeApplication> existing=applications.findByDebtIdAndRuleIdAndCalculationDate(debt.id,rule.id,date);
         if(existing.isPresent())return response(existing.get(),rule.code,false);
@@ -101,10 +112,11 @@ class LateChargeService {
 class DueDateService {
     private final DueDateProcessingRepository runs;private final DebtRepository debts;private final InstallmentRepository installments;
     private final PaymentPlanRepository plans;private final PaymentPlanConfigurationRepository configurations;private final PlanExpirationRepository expirations;
-    private final LateChargeService lateCharges;private final ConfirmedIntegrationOutbox integrationOutbox;private final CurrentIdentity identity;private final AuditService audit;
+    private final LateChargeService lateCharges;private final ConfirmedIntegrationOutbox integrationOutbox;private final CurrentIdentity identity;private final AuditService audit;private final FiscalProcessingDatePolicy dates;
     DueDateService(DueDateProcessingRepository runs,DebtRepository debts,InstallmentRepository installments,PaymentPlanRepository plans,
-        PaymentPlanConfigurationRepository configurations,PlanExpirationRepository expirations,LateChargeService lateCharges,ConfirmedIntegrationOutbox integrationOutbox,CurrentIdentity identity,AuditService audit){this.runs=runs;this.debts=debts;this.installments=installments;this.plans=plans;this.configurations=configurations;this.expirations=expirations;this.lateCharges=lateCharges;this.integrationOutbox=integrationOutbox;this.identity=identity;this.audit=audit;}
+        PaymentPlanConfigurationRepository configurations,PlanExpirationRepository expirations,LateChargeService lateCharges,ConfirmedIntegrationOutbox integrationOutbox,CurrentIdentity identity,AuditService audit,FiscalProcessingDatePolicy dates){this.runs=runs;this.debts=debts;this.installments=installments;this.plans=plans;this.configurations=configurations;this.expirations=expirations;this.lateCharges=lateCharges;this.integrationOutbox=integrationOutbox;this.identity=identity;this.audit=audit;this.dates=dates;}
     @Transactional FiscalProcessingController.DueDateResponse process(LocalDate date){
+        dates.requireNotFuture(date);
         Optional<DueDateProcessing> prior=runs.findByProcessingDate(date);if(prior.isPresent())return response(prior.get());
         DueDateProcessing run=new DueDateProcessing();run.processingDate=date;run.processedAt=OffsetDateTime.now();run.processedBy=identity.get().userId();
         List<Debt> allDebts=debts.findAll();run.debtsScanned=allDebts.size();boolean hasLateChargeRule=lateCharges.hasApplicableRule(date);
