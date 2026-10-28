@@ -1570,11 +1570,6 @@ export const portalService = {
 
   // ---------------------------------------------------------------- Trámites
 
-  /** Simulación previa: el ciudadano ve la cuota antes de mandar la solicitud. */
-  async simulatePaymentPlan({ taxpayerId, debtIds, installments }) {
-    return paymentPlanService.simulate({ taxpayerId, debtIds, installments });
-  },
-
   /** Pedir financiar deudas en cuotas → publica paymentPlanRequested. */
   async requestPaymentPlan({ taxpayerId, debtIds, installments }) {
     return paymentPlanService.request({ taxpayerId, debtIds, installments });

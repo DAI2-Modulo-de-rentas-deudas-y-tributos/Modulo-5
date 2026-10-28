@@ -80,6 +80,35 @@ describe("área de auditoría", () => {
     expect(screen.getByText(/importe original/i)).toBeDefined();
   });
 
+  it("muestra estado anulado y origen recibidos por API en el detalle", async () => {
+    vi.unstubAllGlobals();
+    instalarBackendFalso({
+      "GET /api/v1/debts/{id}": {
+        id: 3200,
+        taxpayerId: 123,
+        taxConceptId: 4,
+        externalObligationId: 9901,
+        originType: "TRAFFIC_FINE",
+        status: "CANCELLED",
+        originalAmount: 25000,
+        currentAmount: 25000,
+        outstandingBalance: 0,
+        dueDate: "2026-08-15",
+        overdue: false,
+        inPaymentPlan: false,
+        createdAt: "2026-07-15T10:00:00-03:00",
+        updatedAt: "2026-08-01T10:00:00-03:00",
+      },
+    });
+    await loginAsAuditor(user);
+    await user.click(screen.getByRole("link", { name: /^deudas$/i }));
+    await user.click(await screen.findByText("#3200"));
+
+    expect(await screen.findByRole("heading", { name: /deuda #3200/i })).toBeDefined();
+    expect(screen.getByText("Anulada")).toBeDefined();
+    expect(screen.getByText("TRAFFIC_FINE #9901")).toBeDefined();
+  });
+
   it("sigue la cadena del evento en DLQ hasta su payload", async () => {
     await loginAsAuditor(user);
     await user.click(screen.getByRole("link", { name: /^integraciones$/i }));

@@ -2,10 +2,7 @@ import { lazy, Suspense } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext.jsx";
 import ProtectedRoute from "./routes/ProtectedRoute.jsx";
-import RentasLayout from "./components/layout/RentasLayout.jsx";
-import CajaLayout from "./components/layout/CajaLayout.jsx";
-import AuditoriaLayout from "./components/layout/AuditoriaLayout.jsx";
-import PortalLayout from "./components/layout/PortalLayout.jsx";
+import AreaLayout from "./components/layout/AreaLayout.jsx";
 import { homePathForRole } from "./config/workspaces.js";
 import LoginPage from "./pages/LoginPage.jsx";
 import DashboardPage from "./pages/DashboardPage.jsx";
@@ -86,7 +83,7 @@ export default function App() {
           <Route path="/login" element={<LoginPage />} />
 
           <Route element={<ProtectedRoute roles={["PERSONAL", "SUPERVISOR"]} />}>
-            <Route path="/rentas" element={<RentasLayout />}>
+            <Route path="/rentas" element={<AreaLayout area="rentas" />}>
               <Route index element={<DashboardPage />} />
               <Route path="contribuyentes" element={<ContribuyentesPage />} />
               <Route path="tributos" element={<ConfiguracionTributosPage />} />
@@ -114,7 +111,7 @@ export default function App() {
           </Route>
 
           <Route element={<ProtectedRoute roles={["CAJERO"]} />}>
-            <Route path="/caja" element={<CajaLayout />}>
+            <Route path="/caja" element={<AreaLayout area="caja" />}>
               <Route index element={<CajaDashboardPage />} />
               <Route path="cobros" element={<CobrosPage />} />
               <Route path="contribuyentes" element={<ContribuyentesCajaPage />} />
@@ -127,7 +124,7 @@ export default function App() {
           </Route>
 
           <Route element={<ProtectedRoute roles={["AUDITOR"]} />}>
-            <Route path="/auditor" element={<AuditoriaLayout />}>
+            <Route path="/auditor" element={<AreaLayout area="auditoria" />}>
               <Route index element={<AuditorDashboardPage />} />
               <Route path="contribuyentes" element={<ContribuyentesAuditorPage />} />
               <Route path="contribuyentes/:taxpayerId" element={<ContribuyenteAuditorDetallePage />} />
@@ -159,7 +156,7 @@ export default function App() {
           </Route>
 
           <Route element={<ProtectedRoute roles={["CONTRIBUYENTE"]} />}>
-            <Route path="/portal" element={<PortalLayout />}>
+            <Route path="/portal" element={<AreaLayout area="portal" />}>
               <Route index element={<InicioPage />} />
               <Route path="deudas" element={<MisDeudasPage />} />
               <Route path="boletas" element={<MisBoletasPage />} />
