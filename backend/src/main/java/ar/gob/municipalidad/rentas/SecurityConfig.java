@@ -24,6 +24,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter;
 import org.springframework.stereotype.Component;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
@@ -65,6 +66,10 @@ class SecurityConfig {
                     "UNAUTHENTICATED","Se requiere autenticación"))
                 .accessDeniedHandler((request,response,error) -> errors.write(request,response,403,
                     "ACCESS_DENIED","No tiene permisos para realizar esta operación")))
+            .headers(headers -> headers
+                .contentTypeOptions(Customizer.withDefaults())
+                .frameOptions(frame -> frame.deny())
+                .referrerPolicy(referrer -> referrer.policy(ReferrerPolicyHeaderWriter.ReferrerPolicy.NO_REFERRER)))
             .cors(Customizer.withDefaults())
             .authorizeHttpRequests(auth -> {
                 auth.requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
@@ -83,8 +88,9 @@ class SecurityConfig {
 @Component
 class SecurityErrorResponseWriter {
     private final ObjectMapper json;
+    private final AuditService audit;
 
-    SecurityErrorResponseWriter(ObjectMapper json) { this.json=json; }
+    SecurityErrorResponseWriter(ObjectMapper json,AuditService audit) { this.json=json;this.audit=audit; }
 
     void write(HttpServletRequest request,HttpServletResponse response,int status,String code,String message)
             throws IOException {
@@ -97,6 +103,7 @@ class SecurityErrorResponseWriter {
         response.setCharacterEncoding("UTF-8");
         response.setContentType("application/json");
         response.setHeader(CorrelationIdFilter.HEADER,traceId);
+        if(status==403) audit.recordAccessDenied(request,code);
         json.writeValue(response.getOutputStream(),new ApiDtos.ErrorResponse(
             java.time.OffsetDateTime.now(),status,code,message,request.getRequestURI(),traceId,null));
     }

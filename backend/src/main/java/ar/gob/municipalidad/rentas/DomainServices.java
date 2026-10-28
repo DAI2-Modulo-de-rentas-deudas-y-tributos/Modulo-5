@@ -3,6 +3,9 @@ package ar.gob.municipalidad.rentas;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.MDC;
+import org.springframework.security.authentication.AnonymousAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -26,6 +29,30 @@ class AuditService {
         e.userId=identity.get().userId(); e.userRole=identity.role(); e.correlationId=MDC.get("traceId"); e.occurredAt=OffsetDateTime.now();
         e.previousData=serialize(previousData); e.newData=serialize(newData);
         repository.save(e);
+    }
+    void recordSecurityEvent(String action,String actorId,String actorRole,Object data) {
+        repository.save(securityEvent(action,actorId,actorRole,data));
+    }
+    void recordSecurityEventRequiresNew(String action,String actorId,String actorRole,Object data) {
+        requiresNew.executeWithoutResult(status -> repository.save(securityEvent(action,actorId,actorRole,data)));
+    }
+    void recordAccessDenied(jakarta.servlet.http.HttpServletRequest request,String code) {
+        Authentication authentication=SecurityContextHolder.getContext().getAuthentication();
+        boolean authenticated=authentication!=null&&authentication.isAuthenticated()&&!(authentication instanceof AnonymousAuthenticationToken);
+        String actorId=authenticated&&authentication.getPrincipal() instanceof AuthenticatedIdentity actor
+            ?actor.integrationActorId()!=null?actor.integrationActorId().toString():"authenticated":"anonymous";
+        String actorRole=authenticated?authentication.getAuthorities().stream().map(org.springframework.security.core.GrantedAuthority::getAuthority).sorted().collect(java.util.stream.Collectors.joining(",")):"ANONYMOUS";
+        recordSecurityEventRequiresNew("ACCESS_DENIED",actorId,actorRole,Map.of("method",request.getMethod(),"path",routeFamily(request.getRequestURI()),"code",code));
+    }
+    private String routeFamily(String requestUri) {
+        String[] segments=requestUri.split("/");
+        int included=Math.min(3,segments.length-1);
+        return included<=0?"/":"/"+String.join("/",Arrays.copyOfRange(segments,1,included+1));
+    }
+    private AuditEntry securityEvent(String action,String actorId,String actorRole,Object data) {
+        AuditEntry e=new AuditEntry();e.entityType="SecurityEvent";e.entityId=UUID.randomUUID().toString();e.action=action;
+        e.userId=actorId==null||actorId.isBlank()?"anonymous":actorId;e.userRole=actorRole==null||actorRole.isBlank()?"ANONYMOUS":actorRole;
+        e.correlationId=MDC.get("traceId");e.occurredAt=OffsetDateTime.now();e.newData=serialize(data);return e;
     }
     void requireDifferentActor(String entityType,Object entityId,String... initiatingActors) {
         String actor=identity.get().userId();

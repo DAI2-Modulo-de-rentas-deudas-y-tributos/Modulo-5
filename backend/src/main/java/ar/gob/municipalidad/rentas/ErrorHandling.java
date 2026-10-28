@@ -32,8 +32,10 @@ class BusinessException extends RuntimeException {
 @RestControllerAdvice
 class GlobalExceptionHandler {
     private static final Logger log=LoggerFactory.getLogger(GlobalExceptionHandler.class);
+    @org.springframework.beans.factory.annotation.Autowired(required=false) private AuditService audit;
     @ExceptionHandler(BusinessException.class)
     ResponseEntity<ApiDtos.ErrorResponse> business(BusinessException ex, HttpServletRequest request) {
+        if(ex.status==403&&audit!=null) audit.recordAccessDenied(request,ex.code);
         ResponseEntity<ApiDtos.ErrorResponse> error=response(ex.status, ex.code, ex.getMessage(), request);
         if(ex.retryAfterSeconds==null) return error;
         HttpHeaders headers=new HttpHeaders();headers.set(HttpHeaders.RETRY_AFTER,Integer.toString(ex.retryAfterSeconds));
@@ -65,6 +67,7 @@ class GlobalExceptionHandler {
     }
     @ExceptionHandler(AccessDeniedException.class)
     ResponseEntity<ApiDtos.ErrorResponse> accessDenied(AccessDeniedException ex,HttpServletRequest request) {
+        if(audit!=null) audit.recordAccessDenied(request,"ACCESS_DENIED");
         return response(403,"ACCESS_DENIED","No tiene permisos para realizar esta operación",request);
     }
     @ExceptionHandler(HttpRequestMethodNotSupportedException.class)

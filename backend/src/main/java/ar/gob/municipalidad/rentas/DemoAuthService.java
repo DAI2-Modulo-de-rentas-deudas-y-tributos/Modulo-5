@@ -51,11 +51,17 @@ class DemoAuthService {
 
     @Transactional DemoAuthController.LoginResponse login(DemoAuthController.LoginRequest request, String remoteAddress) {
         String key=attemptKey("login:"+normalize(request.username())+":"+remoteAddress);
-        if(!loginAttempts.allowAttempt(key)) throw new BusinessException("DEMO_LOGIN_RATE_LIMITED","Demasiados intentos. Reintentá en 15 minutos",429,900);
+        if(!loginAttempts.allowAttempt(key)) {
+            audit.recordSecurityEventRequiresNew("DEMO_LOGIN_RATE_LIMITED","anonymous","ANONYMOUS",java.util.Map.of("reason","DEMO_LOGIN_RATE_LIMITED"));
+            throw new BusinessException("DEMO_LOGIN_RATE_LIMITED","Demasiados intentos. Reintentá en 15 minutos",429,900);
+        }
         DemoUser user=users.findByUsernameIgnoreCase(normalize(request.username())).orElse(null);
         boolean active=user!=null&&user.active;
         boolean passwordMatches=passwords.matches(request.password(),active?user.passwordHash:unknownUserPasswordHash);
-        if(!active||!passwordMatches) throw new BusinessException("INVALID_CREDENTIALS","Usuario o contraseña incorrectos",401);
+        if(!active||!passwordMatches) {
+            audit.recordSecurityEventRequiresNew("DEMO_LOGIN_FAILED","anonymous","ANONYMOUS",java.util.Map.of("reason","INVALID_CREDENTIALS"));
+            throw new BusinessException("INVALID_CREDENTIALS","Usuario o contraseña incorrectos",401);
+        }
         loginAttempts.reset(key);
         String token=newToken();
         DemoAuthSession session=new DemoAuthSession();
@@ -64,12 +70,15 @@ class DemoAuthService {
         session.createdAt=OffsetDateTime.now();
         session.expiresAt=session.createdAt.plus(sessionTtl);
         sessions.save(session);
+        audit.recordSecurityEvent("DEMO_LOGIN_SUCCEEDED",user.integrationActorId.toString(),user.role.name(),java.util.Map.of("outcome","SUCCESS"));
         return new DemoAuthController.LoginResponse(token,response(user));
     }
 
     @Transactional void logout(String rawToken) {
         DemoAuthSession session=requireSession(rawToken);
+        DemoUser user=requireUser(session);
         session.revokedAt=OffsetDateTime.now();
+        audit.recordSecurityEvent("DEMO_LOGOUT_SUCCEEDED",user.integrationActorId.toString(),user.role.name(),java.util.Map.of("outcome","SUCCESS"));
     }
 
     DemoAuthController.UserResponse me(String rawToken) {
