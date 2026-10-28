@@ -20,6 +20,7 @@ class SocialBenefitRule {
     @Column(nullable=false) public boolean enabled;
     @Enumerated(EnumType.STRING) @Column(nullable=false) public SocialBenefitRuleStatus status;
     @Column(name="proposed_by",nullable=false) public String proposedBy;
+    @Column(name="submitted_by") public String submittedBy;
     @Column(name="approved_by") public String approvedBy;
     @Column(name="approved_actor_id") public UUID approvedActorId;
     @Column(name="created_at",nullable=false) public OffsetDateTime createdAt;

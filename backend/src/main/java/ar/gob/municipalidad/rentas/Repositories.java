@@ -35,6 +35,7 @@ interface TaxpayerRepository extends FilteredRepository<TaxpayerReference,Long> 
 }
 interface TaxConceptRepository extends FilteredRepository<TaxConcept,Long> { Optional<TaxConcept> findByCode(String code); }
 interface TaxConfigurationRepository extends FilteredRepository<TaxConfiguration,Long> {
+    @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select c from TaxConfiguration c where c.id=:id") Optional<TaxConfiguration> findByIdForUpdate(@Param("id") Long id);
     Optional<TaxConfiguration> findFirstByTaxConceptIdAndStatusAndValidFromLessThanEqualAndValidUntilGreaterThanEqualOrderByVersionDesc(Long conceptId, TaxConfigurationStatus status, LocalDate from, LocalDate until);
     Optional<TaxConfiguration> findFirstByTaxConceptIdOrderByVersionDesc(Long conceptId);
 }
@@ -150,6 +151,7 @@ interface InstallmentRepository extends JpaRepository<Installment,Long> {
 interface PlanExpirationRepository extends FilteredRepository<PlanExpirationRequest,Long> { boolean existsByPaymentPlanIdAndStatus(Long planId,PlanExpirationStatus status); @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select e from PlanExpirationRequest e where e.id=:id") Optional<PlanExpirationRequest> findByIdForUpdate(Long id); long countByStatus(PlanExpirationStatus status); }
 interface RefinancingRequestRepository extends FilteredRepository<RefinancingRequest,Long> { @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select r from RefinancingRequest r where r.id=:id") Optional<RefinancingRequest> findByIdForUpdate(Long id); boolean existsByOriginalPlanIdAndStatusIn(Long planId,Collection<RefinancingRequestStatus> statuses); long countByStatus(RefinancingRequestStatus status); }
 interface AdjustmentRepository extends FilteredRepository<AdjustmentRequest,Long> {
+    @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select a from AdjustmentRequest a where a.id=:id") Optional<AdjustmentRequest> findByIdForUpdate(@Param("id") Long id);
     List<AdjustmentRequest> findByDebtIdInAndStatusAndResolvedAtAfter(Collection<Long> debtIds,AdjustmentStatus status,OffsetDateTime resolvedAfter);
     List<AdjustmentRequest> findByDebtIdOrderByRequestedAtAscIdAsc(Long debtId);
     long countByStatus(AdjustmentStatus status);

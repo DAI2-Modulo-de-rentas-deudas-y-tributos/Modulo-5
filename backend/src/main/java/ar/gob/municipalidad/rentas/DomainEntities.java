@@ -89,6 +89,7 @@ class TaxConfiguration {
     @Column(name="valid_until") public LocalDate validUntil;
     @Enumerated(EnumType.STRING) @Column(nullable=false) public TaxConfigurationStatus status;
     @Column(name="created_by",nullable=false) public String createdBy;
+    @Column(name="submitted_by") public String submittedBy;
     @Column(name="approved_by") public String approvedBy;
     @Column(name="created_at",nullable=false) public OffsetDateTime createdAt;
     @Column(name="approved_at") public OffsetDateTime approvedAt;
@@ -296,6 +297,7 @@ class PaymentPlanRequest {
     @Enumerated(EnumType.STRING) @Column(nullable=false) public PaymentPlanRequestStatus status;
     @Column(name="requested_by",nullable=false) public String requestedBy;
     @Column(name="requested_at",nullable=false) public OffsetDateTime requestedAt;
+    @Column(name="exception_submitted_by") public String exceptionSubmittedBy;
     @Column(name="resolved_by") public String resolvedBy;
     @Column(name="resolved_at") public OffsetDateTime resolvedAt;
     @Column(name="resolution_reason") public String resolutionReason;
@@ -507,6 +509,7 @@ class RefinancingRequest {
     @Enumerated(EnumType.STRING) @Column(nullable=false) public RefinancingRequestStatus status;
     @Column(name="requested_by",nullable=false) public String requestedBy;
     @Column(name="requested_at",nullable=false) public OffsetDateTime requestedAt;
+    @Column(name="exception_submitted_by") public String exceptionSubmittedBy;
     @Column(name="resolved_by") public String resolvedBy;
     @Column(name="resolved_at") public OffsetDateTime resolvedAt;
     @Column(name="new_payment_plan_id") public Long newPaymentPlanId;
@@ -546,6 +549,7 @@ class LiquidationRun {
     @Column(name="estimated_total_amount",nullable=false,precision=19,scale=2) public BigDecimal estimatedTotalAmount;
     @Column(name="created_by",nullable=false) public String createdBy;
     @Column(name="created_at",nullable=false) public OffsetDateTime createdAt;
+    @Column(name="submitted_by") public String submittedBy;
     @Column(name="submitted_at") public OffsetDateTime submittedAt;
     @Column(name="resolved_by") public String resolvedBy;
     @Column(name="resolved_at") public OffsetDateTime resolvedAt;

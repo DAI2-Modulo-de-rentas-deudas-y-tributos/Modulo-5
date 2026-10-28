@@ -48,12 +48,13 @@ class SocialBenefitRuleService {
     @Transactional SocialBenefitRule submit(Long id){
         requireRole("RENTAS");SocialBenefitRule rule=getForUpdate(id);
         CatalogService.require(rule.status==SocialBenefitRuleStatus.DRAFT,"INVALID_SOCIAL_RULE_TRANSITION","Sólo un borrador puede enviarse");
-        rule.status=SocialBenefitRuleStatus.PENDING_APPROVAL;audit.record("SocialBenefitRule",id,"SOCIAL_RULE_SUBMITTED",rule);return rule;
+        rule.status=SocialBenefitRuleStatus.PENDING_APPROVAL;rule.submittedBy=identity.get().userId();audit.record("SocialBenefitRule",id,"SOCIAL_RULE_SUBMITTED",rule);return rule;
     }
 
     @Transactional SocialBenefitRule approve(Long id){
         requireRole("SUPERVISOR");SocialBenefitRule rule=getForUpdate(id);
         CatalogService.require(rule.status==SocialBenefitRuleStatus.PENDING_APPROVAL,"INVALID_SOCIAL_RULE_TRANSITION","La regla no espera aprobación");
+        audit.requireDifferentActor("SocialBenefitRule",id,rule.proposedBy,rule.submittedBy);
         UUID actor=identity.get().integrationActorId();
         CatalogService.require(actor!=null,"INTEGRATION_ACTOR_ID_REQUIRED","El supervisor autenticado necesita un UUID persistente");
         boolean overlap=rules.findByProgramIdAndTaxConceptId(rule.programId,rule.taxConceptId).stream()
