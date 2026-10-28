@@ -102,13 +102,16 @@ class SocialBenefitRuleController {
     private final SocialBenefitRuleService rules;
     SocialBenefitRuleController(SocialBenefitRuleService rules){this.rules=rules;}
     @GetMapping @PreAuthorize("hasAnyRole('RENTAS','SUPERVISOR','AUDITOR')")
-    List<SocialBenefitRule> list(){return rules.list();}
+    List<ApiDtos.SocialBenefitRuleResponse> list(){return rules.list().stream().map(ApiResponses::of).toList();}
     @PostMapping @ResponseStatus(HttpStatus.CREATED) @PreAuthorize("hasRole('RENTAS')")
-    SocialBenefitRule propose(@RequestBody SocialBenefitRuleService.RuleProposal input){return rules.propose(input);}
+    ApiDtos.SocialBenefitRuleResponse propose(@jakarta.validation.Valid @RequestBody ApiDtos.CreateSocialBenefitRuleRequest input){
+        return ApiResponses.of(rules.propose(new SocialBenefitRuleService.RuleProposal(
+            input.programId(),input.conceptCode(),input.percentage(),input.validFrom(),input.validUntil())));
+    }
     @PostMapping("/{id}/submit") @PreAuthorize("hasRole('RENTAS')")
-    SocialBenefitRule submit(@PathVariable Long id){return rules.submit(id);}
+    ApiDtos.SocialBenefitRuleResponse submit(@PathVariable Long id){return ApiResponses.of(rules.submit(id));}
     @PostMapping("/{id}/approve") @PreAuthorize("hasRole('SUPERVISOR')")
-    SocialBenefitRule approve(@PathVariable Long id){return rules.approve(id);}
+    ApiDtos.SocialBenefitRuleResponse approve(@PathVariable Long id){return ApiResponses.of(rules.approve(id));}
     @PostMapping("/{id}/disable") @PreAuthorize("hasRole('SUPERVISOR')")
-    SocialBenefitRule disable(@PathVariable Long id){return rules.disable(id);}
+    ApiDtos.SocialBenefitRuleResponse disable(@PathVariable Long id){return ApiResponses.of(rules.disable(id));}
 }

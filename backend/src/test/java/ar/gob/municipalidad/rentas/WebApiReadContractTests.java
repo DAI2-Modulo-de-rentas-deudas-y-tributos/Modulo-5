@@ -31,6 +31,7 @@ class WebApiReadContractTests {
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper json;
     @Autowired TaxpayerRepository taxpayers;
+    @Autowired TaxConceptRepository concepts;
     @Autowired DebtRepository debts;
     @Autowired DemoUserRepository demoUsers;
     @Autowired PasswordEncoder encoder;
@@ -302,6 +303,41 @@ class WebApiReadContractTests {
             .andExpect(jsonPath("$[0].correlationId").isNotEmpty());
         mvc.perform(withStaff(get("/api/v1/integrations/outbox"))).andExpect(status().isOk())
             .andExpect(jsonPath("$.content").isNotEmpty());
+    }
+
+    @Test void socialBenefitRuleApiUsesDtosAndValidatesPercentageBeforePersistence() throws Exception {
+        String url="/api/v1/social-benefit-rules";
+        TaxConcept concept=new TaxConcept();concept.code="SBR_DTO_TEST";concept.name=concept.code;concept.type=TaxConceptType.FEE;
+        concept.originModule="M5";concept.active=true;concept.createdAt=concept.updatedAt=OffsetDateTime.now();concepts.save(concept);
+        String invalid="{\"programId\":\"28d8ec18-9639-4d86-858a-b48c590ee702\",\"conceptCode\":\"SBR_DTO_TEST\",\"percentage\":150,\"validFrom\":\"2026-10-28\"}";
+        var error=mvc.perform(post(url).header("X-Demo-Session",rentas).contentType(MediaType.APPLICATION_JSON).content(invalid))
+            .andExpect(status().isBadRequest()).andReturn();
+        JsonNode errorBody=json.readTree(error.getResponse().getContentAsString());
+        assertThat(errorBody.path("code").asText()).isEqualTo("VALIDATION_ERROR");
+        assertThat(errorBody.path("details").path("fieldErrors").toString()).contains("percentage");
+
+        String valid="{\"programId\":\"28d8ec18-9639-4d86-858a-b48c590ee702\",\"conceptCode\":\"SBR_DTO_TEST\",\"percentage\":10,\"validFrom\":\"2026-10-28\"}";
+        JsonNode created=postJson(url,valid,201,rentas);
+        assertThat(created.path("status").asText()).isEqualTo("DRAFT");
+        assertThat(created.path("programId").asText()).isEqualTo("28d8ec18-9639-4d86-858a-b48c590ee702");
+        assertThat(created.has("approvedActorId")).isFalse();
+
+        String ruleId=created.path("id").asText();
+        JsonNode submitted=postJson(url+"/"+ruleId+"/submit","{}",200,rentas);
+        assertThat(submitted.path("status").asText()).isEqualTo("PENDING_APPROVAL");
+        JsonNode approved=postJson(url+"/"+ruleId+"/approve","{}",200,staff);
+        assertThat(approved.path("status").asText()).isEqualTo("APPROVED");
+        assertThat(approved.path("enabled").asBoolean()).isTrue();
+        JsonNode disabled=postJson(url+"/"+ruleId+"/disable","{}",200,staff);
+        assertThat(disabled.path("enabled").asBoolean()).isFalse();
+        assertThat(disabled.has("approvedActorId")).isFalse();
+
+        var listed=mvc.perform(get(url).header("X-Demo-Session",staff)).andExpect(status().isOk()).andReturn();
+        JsonNode list=json.readTree(listed.getResponse().getContentAsString());
+        JsonNode listedRule=java.util.stream.StreamSupport.stream(list.spliterator(),false)
+            .filter(item->item.path("id").asLong()==created.path("id").asLong()).findFirst().orElseThrow();
+        assertThat(listedRule.has("approvedActorId")).isFalse();
+        assertThat(listedRule.path("percentage").decimalValue()).isEqualByComparingTo("10.00");
     }
 
     private org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder withStaff(
