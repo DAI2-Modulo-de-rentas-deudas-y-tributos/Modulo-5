@@ -55,6 +55,27 @@ class LateChargeServiceTests {
         verifyNoInteractions(adjustments,audit,identity);
     }
 
+    @Test void previewRoundsHalfCentSurchargeAndInterestUpWithoutMutatingDebt(){
+        Debt debt=debt();debt.currentAmount=new BigDecimal("0.05");debt.outstandingBalance=new BigDecimal("0.05");
+        LateChargeRule rule=rule();rule.surchargeRate=new BigDecimal("10.0000");rule.dailyInterestRate=new BigDecimal("10.0000");
+        debt.dueDate=DATE.minusDays(1);
+        when(debts.findById(debt.id)).thenReturn(Optional.of(debt));
+        when(rules.findApplicable(eq(DATE),any())).thenReturn(List.of(rule));
+        when(applications.findByDebtIdAndRuleIdAndCalculationDate(debt.id,rule.id,DATE)).thenReturn(Optional.empty());
+        when(applications.findByDebtId(debt.id)).thenReturn(List.of());
+
+        FiscalProcessingController.LateChargeResponse response=service().preview(debt.id,DATE);
+
+        assertThat(response.daysOverdue()).isEqualTo(1);
+        assertThat(response.surchargeAmount()).isEqualByComparingTo("0.01");
+        assertThat(response.interestAmount()).isEqualByComparingTo("0.01");
+        assertThat(response.totalAdjustment()).isEqualByComparingTo("0.02");
+        assertThat(response.updatedTotal()).isEqualByComparingTo("0.07");
+        assertThat(debt.currentAmount).isEqualByComparingTo("0.05");
+        assertThat(debt.outstandingBalance).isEqualByComparingTo("0.05");
+        verifyNoInteractions(adjustments,audit,identity);
+    }
+
     @Test void applyPersistsApplicationAndOnlyNonzeroAdjustmentsThenUpdatesDebt(){
         Debt debt=debt();LateChargeRule rule=rule();
         when(debts.findByIdForUpdate(debt.id)).thenReturn(Optional.of(debt));
@@ -83,6 +104,20 @@ class LateChargeServiceTests {
 
         assertThatThrownBy(()->service().preview(debt.id,DATE))
             .isInstanceOfSatisfying(BusinessException.class,error->assertThat(error.code).isEqualTo("DEBT_NOT_CHARGEABLE"));
+
+        verify(applications,never()).save(any());
+        verifyNoInteractions(adjustments,audit,identity);
+    }
+
+    @Test void rejectsDebtOnItsDueDateBecauseItIsNotOverdueYet(){
+        Debt debt=debt();debt.dueDate=DATE;
+        when(debts.findById(debt.id)).thenReturn(Optional.of(debt));
+        when(rules.findApplicable(eq(DATE),any())).thenReturn(List.of(rule()));
+        when(applications.findByDebtIdAndRuleIdAndCalculationDate(debt.id,5L,DATE)).thenReturn(Optional.empty());
+        when(applications.findByDebtId(debt.id)).thenReturn(List.of());
+
+        assertThatThrownBy(()->service().preview(debt.id,DATE))
+            .isInstanceOfSatisfying(BusinessException.class,error->assertThat(error.code).isEqualTo("DEBT_NOT_OVERDUE"));
 
         verify(applications,never()).save(any());
         verifyNoInteractions(adjustments,audit,identity);
