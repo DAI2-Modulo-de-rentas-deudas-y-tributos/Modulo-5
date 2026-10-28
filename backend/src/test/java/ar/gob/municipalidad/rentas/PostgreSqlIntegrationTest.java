@@ -23,6 +23,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -316,6 +318,7 @@ class PostgreSqlIntegrationTest {
     @Autowired DueDateService dueDates;
     @Autowired DueDateProcessingRepository dueDateRuns;
     @Autowired PaymentPlanConfigurationRepository planConfigurations;
+    @Autowired TaxConfigurationRepository taxConfigurations;
     @Autowired ReconciliationService reconciliations;
     @Autowired LiquidationRunService bulkRuns;
 
@@ -362,6 +365,114 @@ class PostgreSqlIntegrationTest {
         assertThatThrownBy(()->apiController.updatePlanConfiguration(plan.id,new ApiDtos.UpdatePaymentPlanConfigurationRequest(null,null,null,new BigDecimal("8"),null,null,null,null,null,null,null,null),planTag))
             .isInstanceOf(BusinessException.class).satisfies(error->assertThat(((BusinessException)error).status).isEqualTo(412));
         assertThat(planConfigurations.findFirstByOrderByVersionDesc().orElseThrow().interestRate).isEqualByComparingTo("6");
+    }
+
+    @Test void etagHttpContractSupportsFreshStaleMultiTagWildcardAndMissingHeaders() throws Exception {
+        authenticate();
+        var rentas=new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("etag-http-"+UUID.randomUUID(),null),null,
+            List.of(new SimpleGrantedAuthority("ROLE_RENTAS")));
+        TaxConcept concept=concept("ETAG_HTTP_"+UUID.randomUUID(),TaxConceptType.FEE,"M5");
+        String conceptPath="/api/v1/tax-concepts/"+concept.id;
+        String conceptTag=mvc.perform(get(conceptPath).with(authentication(rentas)))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+            .andReturn().getResponse().getHeader("ETag");
+        assertThat(conceptTag).isNotBlank();
+        var firstConceptBody=json.writeValueAsBytes(new ApiDtos.UpdateTaxConceptRequest("etag first",null,true));
+        var firstConcept=mvc.perform(patch(conceptPath).with(authentication(rentas)).header("If-Match",conceptTag)
+                .contentType(MediaType.APPLICATION_JSON).content(firstConceptBody))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk()).andReturn().getResponse();
+        String currentConceptTag=firstConcept.getHeader("ETag");
+        assertThat(currentConceptTag).isNotEqualTo(conceptTag);
+        mvc.perform(patch(conceptPath).with(authentication(rentas)).header("If-Match",conceptTag)
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsBytes(new ApiDtos.UpdateTaxConceptRequest("stale",null,false))))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isPreconditionFailed())
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content().contentTypeCompatibleWith("application/problem+json"))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.code").value("PRECONDITION_FAILED"));
+        assertThat(concepts.findById(concept.id).orElseThrow().name).isEqualTo("etag first");
+        var multiTagUpdate=mvc.perform(patch(conceptPath).with(authentication(rentas)).header("If-Match","\"obsolete\", "+currentConceptTag)
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsBytes(new ApiDtos.UpdateTaxConceptRequest("etag list",null,true))))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk()).andReturn().getResponse();
+        var wildcardUpdate=mvc.perform(patch(conceptPath).with(authentication(rentas)).header("If-Match","*")
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsBytes(new ApiDtos.UpdateTaxConceptRequest("etag wildcard",null,true))))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk()).andReturn().getResponse();
+        assertThat(multiTagUpdate.getHeader("ETag")).isNotEqualTo(currentConceptTag);
+        assertThat(wildcardUpdate.getHeader("ETag")).isNotEqualTo(multiTagUpdate.getHeader("ETag"));
+        mvc.perform(patch(conceptPath).with(authentication(rentas))
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsBytes(new ApiDtos.UpdateTaxConceptRequest("etag legacy",null,true))))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk());
+        assertThat(concepts.findById(concept.id).orElseThrow().name).isEqualTo("etag legacy");
+
+        authenticate();
+        TaxConfiguration configuration=catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(concept.id,CalculationType.PERCENTAGE,
+            new BigDecimal("5"),null,null,null,true,true,LocalDate.now().minusDays(1),null));
+        String configurationPath="/api/v1/tax-configurations/"+configuration.id;
+        String configurationTag=mvc.perform(get(configurationPath).with(authentication(rentas)))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk()).andReturn().getResponse().getHeader("ETag");
+        var rateUpdate=json.writeValueAsBytes(new ApiDtos.UpdateTaxConfigurationRequest(CalculationType.PERCENTAGE,new BigDecimal("7"),null,null,null,null,null,null,null));
+        mvc.perform(patch(configurationPath).with(authentication(rentas)).header("If-Match","\"obsolete\"")
+                .contentType(MediaType.APPLICATION_JSON).content(rateUpdate))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isPreconditionFailed());
+        assertThat(taxConfigurations.findById(configuration.id).orElseThrow().rate).isEqualByComparingTo("5");
+        mvc.perform(patch(configurationPath).with(authentication(rentas)).header("If-Match",configurationTag)
+                .contentType(MediaType.APPLICATION_JSON).content(rateUpdate))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk());
+
+        authenticate();
+        PaymentPlanConfiguration plan=workflow.createConfiguration(new ApiDtos.CreatePaymentPlanConfigurationRequest(1,12,new BigDecimal("10"),
+            new BigDecimal("5"),0,2,true,true,1,LocalDate.now().minusDays(1),null,false));
+        String planPath="/api/v1/payment-plan-configurations/"+plan.id;
+        String planTag=mvc.perform(get(planPath).with(authentication(rentas)))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk()).andReturn().getResponse().getHeader("ETag");
+        var planUpdate=json.writeValueAsBytes(new ApiDtos.UpdatePaymentPlanConfigurationRequest(null,null,null,new BigDecimal("6"),null,null,null,null,null,null,null,null));
+        mvc.perform(patch(planPath).with(authentication(rentas)).header("If-Match","\"obsolete\"")
+                .contentType(MediaType.APPLICATION_JSON).content(planUpdate))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isPreconditionFailed());
+        assertThat(planConfigurations.findById(plan.id).orElseThrow().interestRate).isEqualByComparingTo("5");
+        var updatedPlan=mvc.perform(patch(planPath).with(authentication(rentas)).header("If-Match",planTag)
+                .contentType(MediaType.APPLICATION_JSON).content(planUpdate))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk()).andReturn().getResponse();
+        assertThat(updatedPlan.getHeader("ETag")).isNotEqualTo(planTag);
+        assertThat(planConfigurations.findFirstByOrderByVersionDesc().orElseThrow().interestRate).isEqualByComparingTo("6");
+    }
+
+    @Test void concurrentHttpWritersUsingOneEtagAllowOnlyOneUpdate() throws Exception {
+        authenticate();
+        TaxConcept concept=concept("ETAG_RACE_"+UUID.randomUUID(),TaxConceptType.FEE,"M5");
+        String path="/api/v1/tax-concepts/"+concept.id;
+        var rentas=new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("etag-race-"+UUID.randomUUID(),null),null,
+            List.of(new SimpleGrantedAuthority("ROLE_RENTAS")));
+        String tag=mvc.perform(get(path).with(authentication(rentas))).andReturn().getResponse().getHeader("ETag");
+        assertThat(tag).isNotBlank();
+        var first=json.writeValueAsBytes(new ApiDtos.UpdateTaxConceptRequest("race first",null,true));
+        var second=json.writeValueAsBytes(new ApiDtos.UpdateTaxConceptRequest("race second",null,true));
+        List<Integer> statuses=new java.util.concurrent.CopyOnWriteArrayList<>();
+        assertThat(runTogether(
+            ()->{statuses.add(mvc.perform(patch(path).with(authentication(rentas)).header("If-Match",tag).contentType(MediaType.APPLICATION_JSON).content(first)).andReturn().getResponse().getStatus());return null;},
+            ()->{statuses.add(mvc.perform(patch(path).with(authentication(rentas)).header("If-Match",tag).contentType(MediaType.APPLICATION_JSON).content(second)).andReturn().getResponse().getStatus());return null;})).containsOnlyNulls();
+        assertThat(statuses).containsExactlyInAnyOrder(200,412);
+        assertThat(List.of("race first","race second")).contains(concepts.findById(concept.id).orElseThrow().name);
+    }
+
+    @Test void openApiDocumentsOptionalIfMatchAndEtagResponsesForVersionedResources() throws Exception {
+        var document=json.readTree(mvc.perform(get("/v3/api-docs")).andReturn().getResponse().getContentAsString());
+        for(String pathName:List.of("/api/v1/tax-concepts/{id}","/api/v1/tax-configurations/{id}","/api/v1/payment-plan-configurations/{id}")) {
+            var path=document.path("paths").path(pathName);
+            var patchOperation=path.path("patch");
+            var parameters=patchOperation.path("parameters");
+            boolean foundOptionalIfMatch=false;
+            for(var parameter:parameters) {
+                if("If-Match".equals(parameter.path("name").asText())) {
+                    foundOptionalIfMatch=true;
+                    assertThat(parameter.path("required").asBoolean()).isFalse();
+                    assertThat(parameter.path("description").asText()).contains("compatibilidad sin precondición");
+                }
+            }
+            assertThat(foundOptionalIfMatch).as("If-Match documentado en %s",pathName).isTrue();
+            assertThat(patchOperation.path("responses").path("412").path("$ref").asText())
+                .isEqualTo("#/components/responses/ApiError");
+            assertThat(path.path("get").path("responses").path("200").path("headers").has("ETag")).isTrue();
+            assertThat(patchOperation.path("responses").path("200").path("headers").has("ETag")).isTrue();
+        }
     }
 
     @Test void idempotencyForEconomicCreationIsTransactionalAndSerializesConcurrentRetries() throws Exception {

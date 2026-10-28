@@ -28,7 +28,12 @@ class ErrorContractOpenApiConfiguration {
                 if(pathName.equals("/api/v1/dev-auth/login")||pathName.equals("/api/v1/dev-auth/bootstrap"))
                     operation.getResponses().putIfAbsent("429",new ApiResponse().$ref("#/components/responses/ApiError"));
                 if(pathName.matches("/api/v1/(tax-concepts|tax-configurations|payment-plan-configurations)/\\{id\\}") && path.getPatch()==operation){
-                    operation.addParametersItem(new Parameter().name("If-Match").in("header").required(false).description("ETag recibido del GET. Si se omite, se conserva compatibilidad sin precondición.").schema(new StringSchema()));
+                    Parameter ifMatch=operation.getParameters()==null?null:operation.getParameters().stream()
+                        .filter(parameter->"If-Match".equalsIgnoreCase(parameter.getName())).findFirst().orElse(null);
+                    if(ifMatch==null){ifMatch=new Parameter().name("If-Match");operation.addParametersItem(ifMatch);}
+                    ifMatch.setIn("header");ifMatch.setRequired(false);
+                    ifMatch.setDescription("ETag recibido del GET. Si se omite, se conserva compatibilidad sin precondición.");
+                    ifMatch.setSchema(new StringSchema());
                     operation.getResponses().putIfAbsent("412",new ApiResponse().$ref("#/components/responses/ApiError"));
                     ApiResponse response=operation.getResponses().get("200");if(response!=null)response.addHeaderObject("ETag",new io.swagger.v3.oas.models.headers.Header().description("Nueva versión del recurso").schema(new StringSchema()));
                 }
