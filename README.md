@@ -75,7 +75,8 @@ Los ambientes `dev` y `test` usan el modo demo a propósito mientras Core/JWT si
 pendiente: es el único borde de identidad disponible para operar y para la
 aceptación automatizada. `prod`, desplegado desde `main`, corre con el perfil `prod`
 y `VITE_AUTH_MODE=core`, así que no admite inicios de sesión hasta integrar
-Core/JWT. El esquema DEMO no puede viajar hasta ahí porque el perfil `prod` excluye sus servicios, repositorios y validación Hibernate,
+Core/JWT. El esquema DEMO no puede viajar hasta ahí porque el perfil `prod` excluye
+sus servicios, repositorios y validación Hibernate,
 la migración `V18` retira las tablas y dos precondiciones de Terraform cortan el plan
 si alguien intenta activar el modo demo o un secreto `RENTAS_DEMO_*` bajo ese perfil.
 Esa garantía está cubierta por `ProductionSchemaIsolationTest` y
