@@ -100,7 +100,11 @@ class CoreRabbitMqConsumer {
             dispatcher.dispatch(new String(message.getBody(),java.nio.charset.StandardCharsets.UTF_8));
             channel.basicAck(deliveryTag,false);
         } catch (RuntimeException ex) {
-            log.warn("CORE_INBOUND rejected exceptionType={}",ex.getClass().getSimpleName());
+            String payload=new String(message.getBody(),java.nio.charset.StandardCharsets.UTF_8);
+            log.warn("CORE_INBOUND rejected eventId={} correlationId={} eventType={} exceptionType={}",
+                OperationalLogSupport.uuidField(payload,"eventId"),OperationalLogSupport.uuidField(payload,"correlationId"),
+                OperationalLogSupport.safeIdentifierField(payload,"eventType"),
+                ex.getClass().getSimpleName(),OperationalLogSupport.sanitizedStackTrace(ex));
             channel.basicNack(deliveryTag,false,false);
         }
     }

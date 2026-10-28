@@ -2,7 +2,11 @@ package ar.gob.municipalidad.rentas;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rabbitmq.client.Channel;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageProperties;
 
@@ -10,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -56,6 +61,46 @@ class CoreRabbitMqConsumerTests {
         listener.receive(new Message("invalid".getBytes(StandardCharsets.UTF_8),new MessageProperties()),channel,30);
         verify(channel).basicNack(30,false,false);
         verify(channel,never()).basicNack(30,false,true);
+    }
+
+    @Test void rejectedInboundLogsOnlyUuidIdentifiersAndSanitizedStackTrace() throws Exception {
+        UUID eventId=UUID.randomUUID(),correlationId=UUID.randomUUID();
+        String payload="{\"eventId\":\""+eventId+"\",\"correlationId\":\""+correlationId
+            +"\",\"eventType\":\"ticketUpdated\",\"data\":{\"dni\":\"40111222\",\"cuit\":\"20-40111222-3\",\"token\":\"secret-token\"}}";
+        CoreInboundEventDispatcher dispatcher=mock(CoreInboundEventDispatcher.class);
+        doThrow(new IllegalArgumentException("40111222 20-40111222-3 secret-token "+payload)).when(dispatcher).dispatch(payload);
+        CoreRabbitMqConsumer listener=new CoreRabbitMqConsumer(dispatcher);
+        Channel channel=mock(Channel.class);
+        Logger logger=(Logger)LoggerFactory.getLogger(CoreRabbitMqConsumer.class);
+        ListAppender<ILoggingEvent> logs=new ListAppender<>();logs.start();logger.addAppender(logs);
+        try {
+            listener.receive(new Message(payload.getBytes(StandardCharsets.UTF_8),new MessageProperties()),channel,31);
+            verify(channel).basicNack(31,false,false);
+            verify(channel,never()).basicNack(31,false,true);
+            String output=logs.list.stream().map(event->event.getFormattedMessage()+" "+event.getThrowableProxy().getMessage())
+                .reduce("",(left,right)->left+"\n"+right);
+            assertThat(output).contains("eventId="+eventId,"correlationId="+correlationId,"eventType=ticketUpdated","exceptionType=IllegalArgumentException")
+                .doesNotContain("40111222","20-40111222-3","secret-token",payload);
+            assertThat(logs.list).anySatisfy(event->assertThat(event.getThrowableProxy().getStackTraceElementProxyArray()).isNotEmpty());
+        } finally {
+            logger.detachAppender(logs);
+        }
+    }
+
+    @Test void inboundLogOmitsUnsafeEventTypeValues() throws Exception {
+        String payload="{\"eventType\":\"ticketUpdated\\nDNI=40111222\",\"data\":{}}";
+        CoreInboundEventDispatcher dispatcher=mock(CoreInboundEventDispatcher.class);
+        doThrow(new IllegalArgumentException("unsafe input")).when(dispatcher).dispatch(payload);
+        Logger logger=(Logger)LoggerFactory.getLogger(CoreRabbitMqConsumer.class);
+        ListAppender<ILoggingEvent> logs=new ListAppender<>();logs.start();logger.addAppender(logs);
+        try {
+            new CoreRabbitMqConsumer(dispatcher).receive(
+                new Message(payload.getBytes(StandardCharsets.UTF_8),new MessageProperties()),mock(Channel.class),32);
+            String output=logs.list.stream().map(ILoggingEvent::getFormattedMessage).reduce("",String::concat);
+            assertThat(output).contains("eventType=unavailable").doesNotContain("ticketUpdated","40111222");
+        } finally {
+            logger.detachAppender(logs);
+        }
     }
 
     private Message message(long tag){MessageProperties properties=new MessageProperties();properties.setDeliveryTag(tag);return new Message(ticketUpdated().getBytes(StandardCharsets.UTF_8),properties);}

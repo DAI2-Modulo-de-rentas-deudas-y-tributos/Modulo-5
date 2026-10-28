@@ -80,7 +80,7 @@ class GlobalExceptionHandler {
     }
     @ExceptionHandler(Exception.class)
     ResponseEntity<ApiDtos.ErrorResponse> unexpected(Exception ex,HttpServletRequest request) {
-        String traceId=traceId();log.error("Unexpected API error traceId={} exceptionType={}",traceId,ex.getClass().getSimpleName());
+        String traceId=traceId();log.error("Unexpected API error traceId={} exceptionType={}",traceId,ex.getClass().getSimpleName(),OperationalLogSupport.sanitizedStackTrace(ex));
         return response(500,"INTERNAL_ERROR","Ocurrió un error interno",request,traceId,null);
     }
     private ResponseEntity<ApiDtos.ErrorResponse> response(int status, String code, String message, HttpServletRequest request) {

@@ -87,7 +87,10 @@ class OutboxPublisher {
             event.retryCount++;
             event.errorMessage="CORE_BROKER_PUBLISH_FAILED";
             event.status=event.retryCount>=5?OutboxStatus.DEAD_LETTER:OutboxStatus.FAILED;
-            log.warn("OUTBOX publish failed eventType={} targetModule={} code={}",event.eventType,event.targetModule,event.errorMessage);
+            log.warn("OUTBOX publish failed outboxId={} eventId={} correlationId={} eventType={} targetModule={} exceptionType={}",
+                event.id,OperationalLogSupport.uuidField(event.payload,"eventId"),
+                OperationalLogSupport.uuidField(event.payload,"correlationId"),event.eventType,event.targetModule,
+                ex.getClass().getSimpleName(),OperationalLogSupport.sanitizedStackTrace(ex));
         }
     }}
     private boolean validEconomicIdentifiers(OutboxEvent event){
