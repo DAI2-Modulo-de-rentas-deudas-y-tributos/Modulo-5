@@ -2,12 +2,15 @@ package ar.gob.municipalidad.rentas;
 
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -15,9 +18,14 @@ import java.time.*;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @ActiveProfiles("test")
 @SpringBootTest
+@AutoConfigureMockMvc
 @Transactional
 class BillingFlowTests {
     @Autowired CatalogService catalog;
@@ -38,6 +46,11 @@ class BillingFlowTests {
     @Autowired IntegrationEventLogRepository integrationLogs;
     @Autowired com.fasterxml.jackson.databind.ObjectMapper json;
     @Autowired ElectronicPaymentRepository electronicPaymentAttempts;
+    @Autowired MockMvc mvc;
+    @Autowired DemoUserRepository demoUsers;
+    @Autowired TaxpayerRepository taxpayers;
+    @Autowired org.springframework.security.crypto.password.PasswordEncoder passwordEncoder;
+    @Autowired DemoAuthService demoAuth;
 
     @BeforeEach void authenticateEmployee() {
         authenticate(new AuthenticatedIdentity("tester", null), "RENTAS", "CASHIER");
@@ -228,6 +241,31 @@ class BillingFlowTests {
         assertThat(storedTarget.status).isEqualTo(DebtStatus.PAID);
         assertThat(creditApplications.findAll()).noneMatch(application -> credit.id.equals(application.creditBalanceId));
         assertThat(outbox.count()).isEqualTo(outboxCount);
+    }
+
+    @Test void apiRejectsCreditApplicationToCancelledDebtWith409AndNoEconomicChanges() throws Exception {
+        Debt source = debt("BILL-CREDIT-CANCELLED-API-SOURCE", "CREDIT-CANCELLED-API-SOURCE");
+        Debt target = anotherDebt(source, "CREDIT-CANCELLED-API-TARGET");
+        Payment payment = payments.register(new ApiDtos.RegisterPaymentRequest(source.taxpayerId, PaymentMethod.CASH,
+            new BigDecimal("120"), List.of(new ApiDtos.AllocationRequest(source.id, new BigDecimal("120")))));
+        CreditBalance credit = credits.findBySourcePaymentId(payment.id).orElseThrow();
+        target.status = DebtStatus.CANCELLED;
+        debts.save(target);
+        String token = new DemoAuthSessions(demoUsers, taxpayers, passwordEncoder, demoAuth).token(DemoRole.RENTAS);
+        long outboxBefore = outbox.count();
+
+        mvc.perform(post("/api/v1/credit-balances/{id}/apply", credit.id)
+                .header("X-Demo-Session", token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(new ApiDtos.ApplyCreditBalanceRequest(target.id, new BigDecimal("20")))))
+            .andExpect(status().isConflict())
+            .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+            .andExpect(jsonPath("$.code").value("DEBT_NOT_PAYABLE"));
+
+        assertThat(credits.findById(credit.id).orElseThrow().availableAmount).isEqualByComparingTo("20.00");
+        assertThat(debts.findById(target.id).orElseThrow().status).isEqualTo(DebtStatus.CANCELLED);
+        assertThat(creditApplications.findAll()).noneMatch(application -> credit.id.equals(application.creditBalanceId));
+        assertThat(outbox.count()).isEqualTo(outboxBefore);
     }
 
     @Test void electronicPaymentUsesTaxpayerIdentityAndElectronicOrigin() {

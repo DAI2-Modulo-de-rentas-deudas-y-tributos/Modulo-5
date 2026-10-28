@@ -65,6 +65,21 @@ class AuditService {
 
 @Service
 class CatalogService {
+    private static final Set<String> STATE_CONFLICT_CODES=Set.of(
+        "TAXPAYER_BLOCKED","DEBT_NOT_PAYABLE","DEBT_NOT_BILLABLE","BILL_NOT_PAYABLE",
+        "DEBT_IN_ACTIVE_PAYMENT_PLAN","DEBT_ALREADY_IN_PAYMENT_PLAN","DEBT_ALREADY_IN_ACTIVE_PAYMENT_PLAN",
+        "DEBT_NOT_ADJUSTABLE","DEBT_NOT_ELIGIBLE_FOR_PLAN","PAYMENT_NOT_ALLOCATABLE",
+        "PAYMENT_BALANCE_CONVERTED_TO_CREDIT","INSTALLMENT_NOT_PAYABLE","PAYMENT_NOT_REVERSIBLE",
+        "REVERSAL_ALREADY_EXISTS","REVERSAL_NOT_PENDING","REVERSAL_NOT_APPROVED","ADJUSTMENT_NOT_PENDING",
+        "RUN_NOT_DRAFT","RUN_NOT_READY","RUN_NOT_PENDING","RUN_NOT_APPROVED","RUN_CONFIGURATION_CHANGED",
+        "INVALID_CONFIGURATION_TRANSITION","CONFIGURATION_NOT_EDITABLE","CONFIGURATION_NOT_ACTIVE",
+        "INVALID_EXEMPTION_TRANSITION","DOCUMENTATION_NOT_REQUIRED","INVALID_PLAN_REQUEST_TRANSITION",
+        "PLAN_DEBT_CHANGED","PLAN_EXCEPTION_APPROVAL_REQUIRED","PLAN_NOT_ACTIVE","PLAN_NOT_DEFAULTED",
+        "EXPIRATION_ALREADY_PENDING","EXPIRATION_NOT_PENDING","REFINANCING_ALREADY_PENDING",
+        "INVALID_REFINANCING_TRANSITION","REFINANCING_NOT_PENDING","REFINANCING_EXCEPTION_APPROVAL_REQUIRED",
+        "PLAN_NOT_REFINANCING_ELIGIBLE","PLAN_BALANCE_CHANGED","PLAN_WITHOUT_BALANCE","MAX_REFINANCING_REACHED",
+        "TICKET_ALREADY_CLOSED","INTEGRATION_EVENT_NOT_REPROCESSABLE","EXTERNAL_OBLIGATION_NOT_RETRYABLE",
+        "RECONCILIATION_ALREADY_RESOLVED","RECONCILIATION_PAYMENT_MISMATCH");
     private final TaxpayerRepository taxpayers; private final TaxConceptRepository concepts;
     private final TaxConfigurationRepository configurations; private final AuditService audit; private final CurrentIdentity identity;
     CatalogService(TaxpayerRepository taxpayers, TaxConceptRepository concepts, TaxConfigurationRepository configurations, AuditService audit, CurrentIdentity identity) {
@@ -107,8 +122,8 @@ class CatalogService {
         require(r.calculationType()!=CalculationType.PERCENTAGE || r.rate()!=null,"RATE_REQUIRED","El cálculo porcentual requiere alícuota");
     }
     static BusinessException notFound(String entity) { return new BusinessException("NOT_FOUND",entity+" no encontrado",404); }
-    static void require(boolean ok,String code,String message) { if(!ok) throw new BusinessException(code,message,422); }
     static void requireConflict(boolean ok,String code,String message) { if(!ok) throw new BusinessException(code,message,409); }
+    static void require(boolean ok,String code,String message) { if(!ok) throw new BusinessException(code,message,STATE_CONFLICT_CODES.contains(code)?409:422); }
 }
 
 @Service

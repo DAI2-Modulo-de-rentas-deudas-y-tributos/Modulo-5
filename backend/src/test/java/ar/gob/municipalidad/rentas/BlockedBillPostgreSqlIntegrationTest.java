@@ -76,7 +76,7 @@ class BlockedBillPostgreSqlIntegrationTest {
     }
 
     @Test
-    void taxpayerBlockedGets422WithoutPersistingBillOrLinks() throws Exception {
+    void taxpayerBlockedGets409WithoutPersistingBillOrLinks() throws Exception {
         Debt blockedDebt = debtFor(TaxpayerStatus.BLOCKED);
         long billsBefore = bills.count();
         long linksBefore = billDebts.count();
@@ -85,7 +85,7 @@ class BlockedBillPostgreSqlIntegrationTest {
                         .header("X-Demo-Session", session())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(request(blockedDebt)))
-                .andExpect(status().isUnprocessableEntity())
+                .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("TAXPAYER_BLOCKED"));
 
         assertThat(bills.count()).isEqualTo(billsBefore);

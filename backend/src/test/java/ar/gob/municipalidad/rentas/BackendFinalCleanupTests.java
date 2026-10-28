@@ -59,7 +59,7 @@ class BackendFinalCleanupTests {
         long billsBefore=bills.count(),linksBefore=billDebts.count();BigDecimal balance=debt.outstandingBalance;
 
         assertThatThrownBy(()->billing.create(new ApiDtos.CreateBillRequest(taxpayer.id,List.of(debt.id),LocalDate.now().plusDays(10))))
-            .isInstanceOfSatisfying(BusinessException.class,error->{assertThat(error.code).isEqualTo("TAXPAYER_BLOCKED");assertThat(error.status).isEqualTo(422);});
+            .isInstanceOfSatisfying(BusinessException.class,error->{assertThat(error.code).isEqualTo("TAXPAYER_BLOCKED");assertThat(error.status).isEqualTo(409);});
         assertThat(bills.count()).isEqualTo(billsBefore);assertThat(billDebts.count()).isEqualTo(linksBefore);
         assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo(balance);
 
@@ -67,7 +67,7 @@ class BackendFinalCleanupTests {
         mvc.perform(post("/api/v1/bills").header("X-Demo-Session",session)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"taxpayerId\":"+taxpayer.id+",\"debtIds\":["+debt.id+"],\"dueDate\":\""+LocalDate.now().plusDays(10)+"\"}"))
-            .andExpect(status().isUnprocessableEntity()).andExpect(jsonPath("$.code").value("TAXPAYER_BLOCKED"));
+            .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("TAXPAYER_BLOCKED"));
         assertThat(bills.count()).isEqualTo(billsBefore);assertThat(billDebts.count()).isEqualTo(linksBefore);
     }
 
