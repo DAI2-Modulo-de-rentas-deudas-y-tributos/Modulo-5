@@ -43,6 +43,7 @@ interface LiquidationRepository extends FilteredRepository<Liquidation,Long> { L
 interface LiquidationComponentRepository extends JpaRepository<LiquidationComponent,Long> { List<LiquidationComponent> findByLiquidationIdOrderById(Long liquidationId); List<LiquidationComponent> findByLiquidationIdInOrderByLiquidationIdAscIdAsc(Collection<Long> liquidationIds); }
 interface DebtRepository extends FilteredRepository<Debt,Long> {
     List<Debt> findByTaxpayerId(Long taxpayerId); Optional<Debt> findByLiquidationId(Long liquidationId); boolean existsByExternalObligationId(Long externalObligationId);
+    List<Debt> findByStatusInAndOutstandingBalanceGreaterThanAndDueDateLessThanAndIdGreaterThanOrderByIdAsc(Collection<DebtStatus> statuses,BigDecimal balance,LocalDate date,Long afterId,Pageable pageable);
     @Query("select d.taxpayerId from Debt d where d.id=:id") Optional<Long> findTaxpayerIdById(Long id);
     @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select d from Debt d where d.id=:id") Optional<Debt> findByIdForUpdate(Long id);
     @Query("""
@@ -126,6 +127,7 @@ interface PaymentPlanRepository extends FilteredRepository<PaymentPlan,Long> {
     List<PaymentPlan> findByDebtIdOrderByGrantedAtAscIdAsc(Long debtId);
     long countByTaxpayerIdAndStatus(Long taxpayerId,PaymentPlanStatus status);
     Page<PaymentPlan> findByTaxpayerId(Long taxpayerId,Pageable pageable);
+    List<PaymentPlan> findByStatusAndConfigurationIdIsNotNullAndIdGreaterThanOrderByIdAsc(PaymentPlanStatus status,Long afterId,Pageable pageable);
     @Query("select p.debtId from PaymentPlan p where p.debtId in :debtIds and p.status=:status") Set<Long> findDebtIdsByStatus(@Param("debtIds") Collection<Long> debtIds,@Param("status") PaymentPlanStatus status);
     @Query("""
         select p from PaymentPlan p where p.status=ar.gob.municipalidad.rentas.PaymentPlanStatus.ACTIVE
@@ -145,10 +147,14 @@ interface PaymentPlanDebtRepository extends JpaRepository<PaymentPlanDebt,Long> 
 interface InstallmentRepository extends JpaRepository<Installment,Long> {
     List<Installment> findByPaymentPlanIdOrderByNumber(Long planId);
     List<Installment> findByPaymentPlanIdInOrderByPaymentPlanIdAscNumberAsc(Collection<Long> planIds);
+    List<Installment> findByStatusInAndOutstandingAmountGreaterThanAndDueDateLessThanAndIdGreaterThanOrderByIdAsc(Collection<InstallmentStatus> statuses,BigDecimal amount,LocalDate date,Long afterId,Pageable pageable);
+    @Query("select i.paymentPlanId as paymentPlanId,count(i.id) as installmentCount from Installment i where i.paymentPlanId in :planIds and i.status=:status group by i.paymentPlanId")
+    List<PlanInstallmentCount> countByPlanIdsAndStatus(@Param("planIds") Collection<Long> planIds,@Param("status") InstallmentStatus status);
     @Query("select i.paymentPlanId from Installment i where i.id=:id") Optional<Long> findPaymentPlanIdById(Long id);
     @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select i from Installment i where i.id=:id") Optional<Installment> findByIdForUpdate(Long id);
 }
-interface PlanExpirationRepository extends FilteredRepository<PlanExpirationRequest,Long> { boolean existsByPaymentPlanIdAndStatus(Long planId,PlanExpirationStatus status); @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select e from PlanExpirationRequest e where e.id=:id") Optional<PlanExpirationRequest> findByIdForUpdate(Long id); long countByStatus(PlanExpirationStatus status); }
+interface PlanInstallmentCount { Long getPaymentPlanId(); long getInstallmentCount(); }
+interface PlanExpirationRepository extends FilteredRepository<PlanExpirationRequest,Long> { boolean existsByPaymentPlanIdAndStatus(Long planId,PlanExpirationStatus status); @Query("select e.paymentPlanId from PlanExpirationRequest e where e.paymentPlanId in :planIds and e.status=:status") List<Long> findPlanIdsByStatus(@Param("planIds") Collection<Long> planIds,@Param("status") PlanExpirationStatus status); @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select e from PlanExpirationRequest e where e.id=:id") Optional<PlanExpirationRequest> findByIdForUpdate(Long id); long countByStatus(PlanExpirationStatus status); }
 interface RefinancingRequestRepository extends FilteredRepository<RefinancingRequest,Long> { @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select r from RefinancingRequest r where r.id=:id") Optional<RefinancingRequest> findByIdForUpdate(Long id); boolean existsByOriginalPlanIdAndStatusIn(Long planId,Collection<RefinancingRequestStatus> statuses); long countByStatus(RefinancingRequestStatus status); }
 interface AdjustmentRepository extends FilteredRepository<AdjustmentRequest,Long> {
     @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select a from AdjustmentRequest a where a.id=:id") Optional<AdjustmentRequest> findByIdForUpdate(@Param("id") Long id);

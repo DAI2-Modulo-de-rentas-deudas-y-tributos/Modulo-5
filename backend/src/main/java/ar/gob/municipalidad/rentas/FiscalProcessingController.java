@@ -5,6 +5,9 @@ import jakarta.validation.constraints.*;
 import org.springframework.data.domain.*;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.dao.DataIntegrityViolationException;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import org.springframework.web.bind.annotation.*;
 import java.math.*;
 import java.time.*;
@@ -110,21 +113,54 @@ class LateChargeService {
 
 @org.springframework.stereotype.Service
 class DueDateService {
+    private final DueDateProcessingRepository runs;private final DueDateProcessor processor;private final FiscalProcessingDatePolicy dates;
+    DueDateService(DueDateProcessingRepository runs,DueDateProcessor processor,FiscalProcessingDatePolicy dates){this.runs=runs;this.processor=processor;this.dates=dates;}
+    FiscalProcessingController.DueDateResponse process(LocalDate date){
+        dates.requireNotFuture(date);
+        try{return processor.process(date);}catch(DataIntegrityViolationException ex){return runs.findByProcessingDate(date).map(this::response).orElseThrow(()->ex);}
+    }
+    private FiscalProcessingController.DueDateResponse response(DueDateProcessing x){return new FiscalProcessingController.DueDateResponse(x.id,x.processedAt,x.debtsScanned,x.debtsOverdue,x.adjustmentsGenerated,x.installmentsOverdue,x.plansDefaulted,x.skippedAlreadyProcessed,x.errors);}
+}
+
+@org.springframework.stereotype.Service
+class DueDateProcessor {
+    private static final int BATCH_SIZE=100;
+    private static final List<DebtStatus> COLLECTIBLE=List.of(DebtStatus.PENDING,DebtStatus.PARTIALLY_PAID);
+    private static final List<InstallmentStatus> OPEN_INSTALLMENTS=List.of(InstallmentStatus.PENDING,InstallmentStatus.PARTIALLY_PAID,InstallmentStatus.OVERDUE);
     private final DueDateProcessingRepository runs;private final DebtRepository debts;private final InstallmentRepository installments;
     private final PaymentPlanRepository plans;private final PaymentPlanConfigurationRepository configurations;private final PlanExpirationRepository expirations;
     private final LateChargeService lateCharges;private final ConfirmedIntegrationOutbox integrationOutbox;private final CurrentIdentity identity;private final AuditService audit;private final FiscalProcessingDatePolicy dates;
-    DueDateService(DueDateProcessingRepository runs,DebtRepository debts,InstallmentRepository installments,PaymentPlanRepository plans,
+    @PersistenceContext private EntityManager entityManager;
+    DueDateProcessor(DueDateProcessingRepository runs,DebtRepository debts,InstallmentRepository installments,PaymentPlanRepository plans,
         PaymentPlanConfigurationRepository configurations,PlanExpirationRepository expirations,LateChargeService lateCharges,ConfirmedIntegrationOutbox integrationOutbox,CurrentIdentity identity,AuditService audit,FiscalProcessingDatePolicy dates){this.runs=runs;this.debts=debts;this.installments=installments;this.plans=plans;this.configurations=configurations;this.expirations=expirations;this.lateCharges=lateCharges;this.integrationOutbox=integrationOutbox;this.identity=identity;this.audit=audit;this.dates=dates;}
     @Transactional FiscalProcessingController.DueDateResponse process(LocalDate date){
         dates.requireNotFuture(date);
         Optional<DueDateProcessing> prior=runs.findByProcessingDate(date);if(prior.isPresent())return response(prior.get());
         DueDateProcessing run=new DueDateProcessing();run.processingDate=date;run.processedAt=OffsetDateTime.now();run.processedBy=identity.get().userId();
-        List<Debt> allDebts=debts.findAll();run.debtsScanned=allDebts.size();boolean hasLateChargeRule=lateCharges.hasApplicableRule(date);
-        for(Debt debt:allDebts){if(!debt.isCollectible()||!debt.dueDate.isBefore(date))continue;run.debtsOverdue++;integrationOutbox.overdueDebt(debt,date);if(!hasLateChargeRule){run.errors++;continue;}try{var result=lateCharges.apply(debt.id,date);if(result.applied())run.adjustmentsGenerated+=(result.surchargeAmount().signum()>0?1:0)+(result.interestAmount().signum()>0?1:0);else run.skippedAlreadyProcessed++;}catch(BusinessException ex){if("DEBT_NOT_CHARGEABLE".equals(ex.code))run.skippedAlreadyProcessed++;else run.errors++;}}
-        for(Installment i:installments.findAll())if(i.status!=InstallmentStatus.PAID&&i.status!=InstallmentStatus.CANCELLED&&i.outstandingAmount.signum()>0&&i.dueDate.isBefore(date)){if(i.status!=InstallmentStatus.OVERDUE){i.status=InstallmentStatus.OVERDUE;run.installmentsOverdue++;}}
-        for(PaymentPlan plan:plans.findAll())if(plan.status==PaymentPlanStatus.ACTIVE&&plan.configurationId!=null){PaymentPlanConfiguration config=configurations.findById(plan.configurationId).orElse(null);if(config==null)continue;long overdue=installments.findByPaymentPlanIdOrderByNumber(plan.id).stream().filter(i->i.status==InstallmentStatus.OVERDUE).count();if(overdue>config.maxOverdueInstallments&&!expirations.existsByPaymentPlanIdAndStatus(plan.id,PlanExpirationStatus.PENDING_APPROVAL)){PlanExpirationRequest e=new PlanExpirationRequest();e.paymentPlanId=plan.id;e.reason="Caducidad detectada por procesamiento de vencimientos del "+date;e.status=PlanExpirationStatus.PENDING_APPROVAL;e.requestedBy=identity.get().userId();e.requestedAt=OffsetDateTime.now();expirations.save(e);run.plansDefaulted++;audit.record("PlanExpirationRequest",e.id,"PLAN_DEFAULT_DETECTED",e);}}
+        run= runs.saveAndFlush(run);Long runId=run.id;
+        int debtsScanned=Math.toIntExact(debts.count()),debtsOverdue=0,adjustmentsGenerated=0,installmentsOverdue=0,plansDefaulted=0,skipped=0,errors=0;
+        boolean hasLateChargeRule=lateCharges.hasApplicableRule(date);long afterId=0;
+        while(true){List<Debt> batch=debts.findByStatusInAndOutstandingBalanceGreaterThanAndDueDateLessThanAndIdGreaterThanOrderByIdAsc(COLLECTIBLE,BigDecimal.ZERO,date,afterId,PageRequest.of(0,BATCH_SIZE));if(batch.isEmpty())break;
+            for(Debt debt:batch){debtsOverdue++;integrationOutbox.overdueDebt(debt,date);if(!hasLateChargeRule){errors++;continue;}try{var result=lateCharges.apply(debt.id,date);if(result.applied())adjustmentsGenerated+=(result.surchargeAmount().signum()>0?1:0)+(result.interestAmount().signum()>0?1:0);else skipped++;}catch(BusinessException ex){if("DEBT_NOT_CHARGEABLE".equals(ex.code))skipped++;else errors++;}}
+            afterId=batch.get(batch.size()-1).id;flushAndClear();
+        }
+        afterId=0;
+        while(true){List<Installment> batch=installments.findByStatusInAndOutstandingAmountGreaterThanAndDueDateLessThanAndIdGreaterThanOrderByIdAsc(OPEN_INSTALLMENTS,BigDecimal.ZERO,date,afterId,PageRequest.of(0,BATCH_SIZE));if(batch.isEmpty())break;
+            for(Installment installment:batch)if(installment.status!=InstallmentStatus.OVERDUE){installment.status=InstallmentStatus.OVERDUE;installmentsOverdue++;}
+            afterId=batch.get(batch.size()-1).id;flushAndClear();
+        }
+        afterId=0;
+        while(true){List<PaymentPlan> batch=plans.findByStatusAndConfigurationIdIsNotNullAndIdGreaterThanOrderByIdAsc(PaymentPlanStatus.ACTIVE,afterId,PageRequest.of(0,BATCH_SIZE));if(batch.isEmpty())break;
+            List<Long> planIds=batch.stream().map(plan->plan.id).toList();Map<Long,PaymentPlanConfiguration> configById=new HashMap<>();configurations.findAllById(batch.stream().map(plan->plan.configurationId).distinct().toList()).forEach(config->configById.put(config.id,config));
+            Map<Long,Long> overdueByPlan=new HashMap<>();installments.countByPlanIdsAndStatus(planIds,InstallmentStatus.OVERDUE).forEach(count->overdueByPlan.put(count.getPaymentPlanId(),count.getInstallmentCount()));
+            Set<Long> pendingPlanIds=new HashSet<>(expirations.findPlanIdsByStatus(planIds,PlanExpirationStatus.PENDING_APPROVAL));
+            for(PaymentPlan plan:batch){PaymentPlanConfiguration config=configById.get(plan.configurationId);if(config==null)continue;long overdue=overdueByPlan.getOrDefault(plan.id,0L);if(overdue>config.maxOverdueInstallments&&!pendingPlanIds.contains(plan.id)){PlanExpirationRequest e=new PlanExpirationRequest();e.paymentPlanId=plan.id;e.reason="Caducidad detectada por procesamiento de vencimientos del "+date;e.status=PlanExpirationStatus.PENDING_APPROVAL;e.requestedBy=identity.get().userId();e.requestedAt=OffsetDateTime.now();expirations.save(e);plansDefaulted++;audit.record("PlanExpirationRequest",e.id,"PLAN_DEFAULT_DETECTED",e);}}
+            afterId=batch.get(batch.size()-1).id;flushAndClear();
+        }
+        run=runs.findById(runId).orElseThrow();run.debtsScanned=debtsScanned;run.debtsOverdue=debtsOverdue;run.adjustmentsGenerated=adjustmentsGenerated;run.installmentsOverdue=installmentsOverdue;run.plansDefaulted=plansDefaulted;run.skippedAlreadyProcessed=skipped;run.errors=errors;
         runs.save(run);audit.record("DueDateProcessing",run.id,"DUE_DATES_PROCESSED",run);return response(run);
     }
+    private void flushAndClear(){entityManager.flush();entityManager.clear();}
     private FiscalProcessingController.DueDateResponse response(DueDateProcessing x){return new FiscalProcessingController.DueDateResponse(x.id,x.processedAt,x.debtsScanned,x.debtsOverdue,x.adjustmentsGenerated,x.installmentsOverdue,x.plansDefaulted,x.skippedAlreadyProcessed,x.errors);}
 }
 

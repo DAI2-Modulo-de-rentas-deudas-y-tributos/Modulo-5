@@ -60,18 +60,10 @@ class FiscalProcessingDateValidationTests {
         verifyNoInteractions(debts,rules,applications,adjustments,audit,lateChargeIdentity);
 
         DueDateProcessingRepository runs=mock(DueDateProcessingRepository.class);
-        DebtRepository dueDebts=mock(DebtRepository.class);
-        InstallmentRepository installments=mock(InstallmentRepository.class);
-        PaymentPlanRepository plans=mock(PaymentPlanRepository.class);
-        PaymentPlanConfigurationRepository configurations=mock(PaymentPlanConfigurationRepository.class);
-        PlanExpirationRepository expirations=mock(PlanExpirationRepository.class);
-        ConfirmedIntegrationOutbox outbox=mock(ConfirmedIntegrationOutbox.class);
-        CurrentIdentity identity=mock(CurrentIdentity.class);
-        AuditService dueDateAudit=mock(AuditService.class);
-        DueDateService dueDates=new DueDateService(runs,dueDebts,installments,plans,configurations,expirations,
-            mock(LateChargeService.class),outbox,identity,dueDateAudit,dates);
+        DueDateProcessor processor=mock(DueDateProcessor.class);
+        DueDateService dueDates=new DueDateService(runs,processor,dates);
         assertThatThrownBy(()->dueDates.process(dates.today().plusDays(1)))
             .isInstanceOfSatisfying(BusinessException.class,ex->assertThat(ex.code).isEqualTo("FUTURE_DATE_NOT_ALLOWED"));
-        verifyNoInteractions(runs,dueDebts,installments,plans,configurations,expirations,outbox,identity,dueDateAudit);
+        verifyNoInteractions(runs,processor);
     }
 }

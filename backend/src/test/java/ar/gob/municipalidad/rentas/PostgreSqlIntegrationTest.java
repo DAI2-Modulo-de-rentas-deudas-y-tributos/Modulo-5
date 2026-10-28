@@ -46,6 +46,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import static org.assertj.core.api.Assertions.*;
 
 @SpringBootTest(properties={"spring.jpa.properties.hibernate.generate_statistics=true","spring.jpa.properties.hibernate.session.events.log=false"})
@@ -308,6 +309,7 @@ class PostgreSqlIntegrationTest {
     @Autowired LateChargeRuleRepository lateChargeRules;
     @Autowired LateChargeService lateCharges;
     @Autowired DueDateService dueDates;
+    @Autowired DueDateProcessingRepository dueDateRuns;
     @Autowired PaymentPlanConfigurationRepository planConfigurations;
     @Autowired ReconciliationService reconciliations;
     @Autowired LiquidationRunService bulkRuns;
@@ -967,6 +969,56 @@ class PostgreSqlIntegrationTest {
             event.status=status;outbox.save(event);dueDates.process(processingDate.plusDays(status.ordinal()));
             assertThat(overdueEvents(eligible)).hasSize(1);
         }
+    }
+
+    @Test void dueDateProcessingHandlesMoreRowsThanOneBatch() {
+        authenticate();
+        TaxpayerReference taxpayer=taxpayer(TaxpayerType.CITIZEN,"PG-DUE-BATCH-"+UUID.randomUUID(),uniqueDigits(8),null);
+        Debt seed=debt("DUE-BATCH-SEED-"+UUID.randomUUID(),taxpayer.id);
+        List<Debt> fixture=new ArrayList<>();fixture.add(seed);
+        for(int i=1;i<101;i++){
+            Debt debt=new Debt();debt.taxpayerId=taxpayer.id;debt.taxConceptId=seed.taxConceptId;debt.originType=DebtOriginType.LIQUIDATION;
+            debt.liquidationId=seed.liquidationId;debt.configurationId=seed.configurationId;
+            debt.originalAmount=debt.currentAmount=debt.outstandingBalance=new BigDecimal("10.00");debt.status=DebtStatus.PENDING;
+            debt.dueDate=LocalDate.of(1800,1,1);debt.createdAt=debt.updatedAt=OffsetDateTime.now();fixture.add(debt);
+        }
+        seed.dueDate=LocalDate.of(1800,1,1);debts.save(seed);
+        debts.saveAll(fixture);debts.flush();
+        int version=planConfigurations.findAll().stream().mapToInt(config->config.version).max().orElse(0)+1;
+        PaymentPlanConfiguration config=new PaymentPlanConfiguration();config.version=version;config.minimumInstallments=1;config.maximumInstallments=120;
+        config.minimumDownPaymentPercentage=BigDecimal.ZERO;config.interestRate=BigDecimal.ZERO;config.graceDays=0;config.maxOverdueInstallments=101;
+        config.partialInstallmentPaymentAllowed=true;config.refinancingAllowed=true;config.maxRefinancingCount=1;config.validFrom=LocalDate.of(1800,1,1);
+        config.active=true;config.createdBy="postgres-it";config.createdAt=OffsetDateTime.now();planConfigurations.save(config);planConfigurations.flush();
+        PaymentPlan plan=new PaymentPlan();plan.taxpayerId=taxpayer.id;plan.debtId=seed.id;plan.configurationId=config.id;plan.configurationVersion=config.version;
+        plan.originalPrincipalAmount=plan.financedPrincipalAmount=plan.totalPlanAmount=plan.outstandingPlanAmount=new BigDecimal("101.00");
+        plan.downPaymentAmount=plan.financingInterestAmount=plan.paidAmount=BigDecimal.ZERO;plan.installmentCount=101;plan.refinancingCount=0;
+        plan.status=PaymentPlanStatus.ACTIVE;plan.grantedBy="postgres-it";plan.grantedAt=OffsetDateTime.now();planRepository.save(plan);planRepository.flush();
+        List<Installment> installmentFixture=new ArrayList<>();for(int i=1;i<=101;i++){Installment installment=new Installment();installment.paymentPlanId=plan.id;
+            installment.number=i;installment.type=InstallmentType.REGULAR;installment.principalAmount=BigDecimal.ONE;installment.interestAmount=BigDecimal.ZERO;
+            installment.totalAmount=installment.outstandingAmount=BigDecimal.ONE;installment.paidAmount=BigDecimal.ZERO;installment.dueDate=LocalDate.of(1800,1,1);
+            installment.status=InstallmentStatus.PENDING;installmentFixture.add(installment);}
+        installments.saveAll(installmentFixture);installments.flush();
+        LocalDate processingDate=LocalDate.of(1800,1,2);
+        long started=System.nanoTime();
+
+        var run=dueDates.process(processingDate);
+
+        long elapsedMillis=TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started);
+        assertThat(run.debtsScanned()).isGreaterThanOrEqualTo(101);
+        assertThat(run.debtsOverdue()).isEqualTo(101);
+        assertThat(run.installmentsOverdue()).isEqualTo(101);
+        assertThat(installments.findByPaymentPlanIdOrderByNumber(plan.id)).allMatch(installment->installment.status==InstallmentStatus.OVERDUE);
+        System.out.printf("due-date fixture rows=101 elapsedMs=%d%n",elapsedMillis);
+    }
+
+    @Test void concurrentDueDateProcessingForSameDateReturnsSingleIdempotentRun() throws Exception {
+        LocalDate date=LocalDate.of(1801,1,1);while(dueDateRuns.findByProcessingDate(date).isPresent())date=date.plusDays(1);
+        LocalDate processingDate=date;
+        AtomicReference<FiscalProcessingController.DueDateResponse> first=new AtomicReference<>(),second=new AtomicReference<>();
+        assertThat(runTogether(()->{first.set(dueDates.process(processingDate));return null;},()->{second.set(dueDates.process(processingDate));return null;})).containsOnlyNulls();
+        assertThat(first.get()).isNotNull();assertThat(second.get()).isNotNull();
+        assertThat(first.get().id()).isEqualTo(second.get().id());
+        assertThat(dueDates.process(processingDate).id()).isEqualTo(first.get().id());
     }
 
     @Test void concurrentOverdueProcessingDoesNotCreateDuplicateOutboxEvents() throws Exception {
