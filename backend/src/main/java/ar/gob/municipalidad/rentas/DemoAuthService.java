@@ -28,6 +28,7 @@ class DemoAuthService {
     private final DemoAuthSessionRepository sessions;
     private final TaxpayerRepository taxpayers;
     private final PasswordEncoder passwords;
+    private final String unknownUserPasswordHash;
     private final AuditService audit;
     private final DemoLoginAttemptLimiter loginAttempts;
     private final String bootstrapSecret;
@@ -39,6 +40,7 @@ class DemoAuthService {
             @Value("${rentas.security.demo-bootstrap-password:}") String bootstrapSecret,
             @Value("${rentas.security.demo-session-ttl:PT8H}") Duration sessionTtl) {
         this.users=users;this.bootstrapLock=bootstrapLock;this.sessions=sessions;this.taxpayers=taxpayers;this.passwords=passwords;this.audit=audit;this.loginAttempts=loginAttempts;
+        this.unknownUserPasswordHash=passwords.encode(newToken());
         this.bootstrapSecret=bootstrapSecret==null?"":bootstrapSecret;
         this.sessionTtl=sessionTtl;
     }
@@ -50,10 +52,10 @@ class DemoAuthService {
     @Transactional DemoAuthController.LoginResponse login(DemoAuthController.LoginRequest request, String remoteAddress) {
         String key=attemptKey("login:"+normalize(request.username())+":"+remoteAddress);
         if(!loginAttempts.allowAttempt(key)) throw new BusinessException("DEMO_LOGIN_RATE_LIMITED","Demasiados intentos. Reintentá en 15 minutos",429,900);
-        DemoUser user=users.findByUsernameIgnoreCase(normalize(request.username()))
-            .filter(x->x.active&&passwords.matches(request.password(),x.passwordHash))
-            .orElse(null);
-        if(user==null) throw new BusinessException("INVALID_CREDENTIALS","Usuario o contraseña incorrectos",401);
+        DemoUser user=users.findByUsernameIgnoreCase(normalize(request.username())).orElse(null);
+        boolean active=user!=null&&user.active;
+        boolean passwordMatches=passwords.matches(request.password(),active?user.passwordHash:unknownUserPasswordHash);
+        if(!active||!passwordMatches) throw new BusinessException("INVALID_CREDENTIALS","Usuario o contraseña incorrectos",401);
         loginAttempts.reset(key);
         String token=newToken();
         DemoAuthSession session=new DemoAuthSession();
