@@ -29,5 +29,5 @@ class M7ConcurrencyTests {
         assertThat(debts.existsByExternalObligationId(stored.id)).isTrue();assertThat(debts.findByTaxpayerId(taxpayer.id)).hasSize(1);
     }
 
-    private Callable<ExternalObligation> task(CountDownLatch start,ConfirmedInboundEvents.M7InfractionData data){return ()->{start.await();return m7.consume(new ConfirmedInboundEvents.M7InfractionConfirmedEvent(UUID.randomUUID(),"infractionConfirmed",OffsetDateTime.now(),"transito",data));};}
+    private Callable<ExternalObligation> task(CountDownLatch start,ConfirmedInboundEvents.M7InfractionData data){return ()->{start.await();return m7.consume(new ConfirmedInboundEvents.M7InfractionConfirmedEvent(UUID.randomUUID(),"infractionConfirmed","1.0",OffsetDateTime.now(),"transito",UUID.randomUUID(),null,data));};}
 }

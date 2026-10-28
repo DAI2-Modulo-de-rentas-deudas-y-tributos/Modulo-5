@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rentas.local/schemas/m5-economic-outbound.proposed.schema.json",
+  "title": "M5 economic outbound events — proposal, not activated",
+  "description": "Validates the proposed M5 data shape and the unchanged eight-field Core envelope. eventVersion and receiver acceptance remain pending.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "eventId",
+    "eventType",
+    "eventVersion",
+    "occurredAt",
+    "sourceModule",
+    "correlationId",
+    "causationId",
+    "data"
+  ],
+  "properties": {
+    "eventId": {"$ref": "#/$defs/eventId"},
+    "eventType": {"enum": ["paymentRegistered", "debtSettled", "paymentReversed"]},
+    "eventVersion": {"type": "string", "minLength": 1},
+    "occurredAt": {"$ref": "#/$defs/dateTime"},
+    "sourceModule": {"const": "rentas"},
+    "correlationId": {"type": ["string", "null"], "format": "uuid", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
+    "causationId": {"type": ["string", "null"], "format": "uuid", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
+    "data": {"type": "object"}
+  },
+  "oneOf": [
+    {"properties": {"eventType": {"const": "paymentRegistered"}, "data": {"$ref": "#/$defs/paymentRegisteredData"}}},
+    {"properties": {"eventType": {"const": "debtSettled"}, "data": {"$ref": "#/$defs/debtSettledData"}}},
+    {"properties": {"eventType": {"const": "paymentReversed"}, "data": {"$ref": "#/$defs/paymentReversedData"}}}
+  ],
+  "$defs": {
+    "eventId": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "uuid": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "dateTime": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$"
+    },
+    "money": {"type": "number", "minimum": 0, "multipleOf": 0.01},
+    "positiveMoney": {"type": "number", "exclusiveMinimum": 0, "multipleOf": 0.01},
+    "externalOrigin": {
+      "allOf": [
+        {
+          "if": {"properties": {"originType": {"const": "TRAFFIC_FINE"}}, "required": ["originType"]},
+          "then": {
+            "required": ["infractionId"],
+            "properties": {
+              "originId": {"$ref": "#/$defs/uuid"},
+              "infractionId": {"$ref": "#/$defs/uuid"}
+            }
+          },
+          "else": {"not": {"required": ["infractionId"]}}
+        }
+      ]
+    },
+    "paymentRegisteredData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["paymentId", "debtId", "originType", "originId", "amountApplied", "paidAt", "remainingBalance"],
+      "properties": {
+        "paymentId": {"$ref": "#/$defs/uuid"},
+        "debtId": {"$ref": "#/$defs/uuid"},
+        "originType": {"enum": ["PERMIT_FEE", "COMMERCIAL_FINE", "TRAFFIC_FINE"]},
+        "originId": {"type": "string", "minLength": 1},
+        "infractionId": {"$ref": "#/$defs/uuid"},
+        "amountApplied": {"$ref": "#/$defs/positiveMoney"},
+        "paidAt": {"$ref": "#/$defs/dateTime"},
+        "remainingBalance": {"$ref": "#/$defs/money"}
+      },
+      "allOf": [{"$ref": "#/$defs/externalOrigin"}]
+    },
+    "debtSettledData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["debtId", "conceptCode", "originType", "originId", "settledAt", "remainingBalance", "outstandingBalance"],
+      "properties": {
+        "debtId": {"$ref": "#/$defs/uuid"},
+        "citizenId": {"$ref": "#/$defs/uuid"},
+        "conceptCode": {"type": "string", "minLength": 1},
+        "originType": {"enum": ["PERMIT_FEE", "COMMERCIAL_FINE", "TRAFFIC_FINE", "MUNICIPAL_TAX"]},
+        "originId": {"type": "string", "minLength": 1},
+        "infractionId": {"$ref": "#/$defs/uuid"},
+        "settledAt": {"$ref": "#/$defs/dateTime"},
+        "remainingBalance": {"const": 0},
+        "outstandingBalance": {"const": 0}
+      },
+      "allOf": [
+        {"$ref": "#/$defs/externalOrigin"},
+        {
+          "if": {"properties": {"originType": {"const": "MUNICIPAL_TAX"}}, "required": ["originType"]},
+          "then": {"required": ["citizenId"], "properties": {"originId": {"$ref": "#/$defs/uuid"}}}
+        }
+      ]
+    },
+    "paymentReversedData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["paymentId", "debtId", "originType", "originId", "reversedAmount", "reversedAt", "remainingBalance", "reason"],
+      "properties": {
+        "paymentId": {"$ref": "#/$defs/uuid"},
+        "debtId": {"$ref": "#/$defs/uuid"},
+        "originType": {"enum": ["PERMIT_FEE", "COMMERCIAL_FINE", "TRAFFIC_FINE"]},
+        "originId": {"type": "string", "minLength": 1},
+        "infractionId": {"$ref": "#/$defs/uuid"},
+        "reversedAmount": {"$ref": "#/$defs/positiveMoney"},
+        "reversedAt": {"$ref": "#/$defs/dateTime"},
+        "remainingBalance": {"$ref": "#/$defs/money"},
+        "reason": {"type": "string", "minLength": 1}
+      },
+      "allOf": [{"$ref": "#/$defs/externalOrigin"}]
+    }
+  }
+}

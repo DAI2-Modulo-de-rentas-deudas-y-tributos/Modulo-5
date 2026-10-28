@@ -92,7 +92,7 @@ class ReversalEligibilityTests {
         Debt source = debt("USED-AFTER-APPROVAL", null);
         Payment payment = pay(source, "120");
         PaymentReversalRequest request = reversals.request(payment.id, "Pago duplicado");
-        reversals.approve(request.id);
+        TestActorSupport.asApprover(() -> reversals.approve(request.id));
         UsedCreditFixture fixture = useGeneratedCredit(source, payment, "USED-AFTER-APPROVAL-TARGET");
 
         assertThatThrownBy(() -> reversals.execute(request.id))
@@ -147,7 +147,7 @@ class ReversalEligibilityTests {
             concept.id, CalculationType.FIXED, null, new BigDecimal("100"), null, null, true, true,
             LocalDate.now().minusDays(1), null));
         catalog.submit(configuration.id);
-        catalog.approve(configuration.id);
+        TestActorSupport.asApprover(() -> catalog.approve(configuration.id));
         liquidations.create(new ApiDtos.LiquidationRequest(
             ownerId, concept.id, YearMonth.now().toString(), BigDecimal.ZERO, LocalDate.now().plusDays(30)));
         Long finalOwnerId = ownerId;

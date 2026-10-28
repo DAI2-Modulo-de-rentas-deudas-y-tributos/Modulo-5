@@ -50,12 +50,45 @@ class OperationalLogPrivacyTests {
 
             assertSafeLogs(localLogs, "eventType=paymentRegistered", "targetModule=M4");
             assertSafeLogs(outboxLogs, "eventType=paymentRegistered", "targetModule=PLATFORM");
-            assertThat(event.status).isEqualTo(OutboxStatus.PUBLISHED);
+            assertThat(event.status).isEqualTo(OutboxStatus.LOCAL_ONLY);
             verifyNoInteractions(publisher);
             assertThat(event.payload).isEqualTo(PAYLOAD);
         } finally {
             localLogger.detachAppender(localLogs);
             outboxLogger.detachAppender(outboxLogs);
+        }
+    }
+
+    @Test
+    void failedOutboxPublishLogsSafeIdentifiersAndStackFrames() {
+        Logger outboxLogger = logger(OutboxPublisher.class);
+        ListAppender<ILoggingEvent> logs = capture(outboxLogger);
+        try {
+            UUID eventId = UUID.randomUUID();
+            UUID correlationId = UUID.randomUUID();
+            String payload = "{\"eventId\":\"" + eventId + "\",\"correlationId\":\"" + correlationId
+                + "\",\"data\":{\"dni\":\"" + DNI + "\",\"cuit\":\"" + CUIT
+                + "\",\"token\":\"secret-token\"}}";
+            OutboxEvent event = new OutboxEvent();
+            event.id = UUID.randomUUID();
+            event.eventType = "testEvent";
+            event.targetModule = "CORE";
+            event.payload = payload;
+            event.status = OutboxStatus.PENDING;
+            event.createdAt = OffsetDateTime.now();
+            OutboxRepository repository = mock(OutboxRepository.class);
+            when(repository.findPublishable(any(Pageable.class))).thenReturn(List.of(event));
+
+            new OutboxPublisher(repository, (type, target, body) -> {
+                throw new IllegalStateException("DNI=" + DNI + " CUIT=" + CUIT + " secret-token " + payload);
+            }).publishPending();
+
+            assertSafeLogs(logs, "outboxId=" + event.id, "eventId=" + eventId,
+                "correlationId=" + correlationId, "exceptionType=IllegalStateException");
+            assertHasSafeStackTrace(logs);
+            assertThat(event.status).isEqualTo(OutboxStatus.FAILED);
+        } finally {
+            outboxLogger.detachAppender(logs);
         }
     }
 
@@ -72,6 +105,7 @@ class OperationalLogPrivacyTests {
                 new IllegalStateException("DNI=" + DNI + " CUIT=" + CUIT + " card=" + PAYMENT_DATA), request);
 
             assertSafeLogs(logs, "traceId=correlation-demo-123", "exceptionType=IllegalStateException");
+            assertHasSafeStackTrace(logs);
         } finally {
             MDC.remove("traceId");
             errorLogger.detachAppender(logs);
@@ -90,9 +124,17 @@ class OperationalLogPrivacyTests {
     }
 
     private static void assertSafeLogs(ListAppender<ILoggingEvent> appender, String... expectedMetadata) {
-        String output = appender.list.stream().map(ILoggingEvent::getFormattedMessage)
+        String output = appender.list.stream().map(event -> event.getFormattedMessage() + " "
+                + (event.getThrowableProxy() == null ? "" : event.getThrowableProxy().getMessage()))
             .reduce("", (left, right) -> left + "\n" + right);
         assertThat(output).contains(expectedMetadata)
-            .doesNotContain(DNI, CUIT, PAYMENT_DATA, "amount=1250.50", PAYLOAD);
+            .doesNotContain(DNI, CUIT, PAYMENT_DATA, "secret-token", "amount=1250.50", PAYLOAD);
+    }
+
+    private static void assertHasSafeStackTrace(ListAppender<ILoggingEvent> appender) {
+        assertThat(appender.list).anySatisfy(event -> {
+            assertThat(event.getThrowableProxy()).isNotNull();
+            assertThat(event.getThrowableProxy().getStackTraceElementProxyArray()).isNotEmpty();
+        });
     }
 }

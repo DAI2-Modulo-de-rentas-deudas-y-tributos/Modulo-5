@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext.jsx";
 import ProtectedRoute from "./routes/ProtectedRoute.jsx";
@@ -43,7 +44,6 @@ import DeudasAuditorPage from "./pages/auditoria/DeudasAuditorPage.jsx";
 import DeudaDetallePage from "./pages/auditoria/DeudaDetallePage.jsx";
 import PagosAuditorPage from "./pages/auditoria/PagosAuditorPage.jsx";
 import PagoDetallePage from "./pages/auditoria/PagoDetallePage.jsx";
-import ReversionDetallePage from "./pages/auditoria/ReversionDetallePage.jsx";
 import PlanesAuditorPage from "./pages/auditoria/PlanesAuditorPage.jsx";
 import PlanDetallePage from "./pages/auditoria/PlanDetallePage.jsx";
 import ExencionesAuditorPage from "./pages/auditoria/ExencionesAuditorPage.jsx";
@@ -51,7 +51,6 @@ import ExencionDetallePage from "./pages/auditoria/ExencionDetallePage.jsx";
 import TicketsAuditorPage from "./pages/auditoria/TicketsAuditorPage.jsx";
 import TicketDetallePage from "./pages/auditoria/TicketDetallePage.jsx";
 import IntegracionesPage from "./pages/auditoria/IntegracionesPage.jsx";
-import IntegracionDetallePage from "./pages/auditoria/IntegracionDetallePage.jsx";
 import AuditoriaPage from "./pages/auditoria/AuditoriaPage.jsx";
 import AuditoriaDetallePage from "./pages/auditoria/AuditoriaDetallePage.jsx";
 import IndicadoresPage from "./pages/auditoria/IndicadoresPage.jsx";
@@ -66,6 +65,9 @@ import PagoElectronicoPage from "./pages/portal/PagoElectronicoPage.jsx";
 import BeneficiosPortalPage from "./pages/portal/BeneficiosPortalPage.jsx";
 import RefinanciacionPortalPage from "./pages/portal/RefinanciacionPortalPage.jsx";
 
+const ReversionDetallePage = lazy(() => import("./pages/auditoria/ReversionDetallePage.jsx"));
+const IntegracionDetallePage = lazy(() => import("./pages/auditoria/IntegracionDetallePage.jsx"));
+
 /**
  * Rutas de las dos áreas de trabajo del módulo.
  *
@@ -79,6 +81,7 @@ export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
+        <Suspense fallback={<div role="status" className="p-6 text-sm text-neutral-500">Cargando pantalla…</div>}>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
 
@@ -175,6 +178,7 @@ export default function App() {
           <Route path="/" element={<HomeRedirect />} />
           <Route path="*" element={<HomeRedirect />} />
         </Routes>
+        </Suspense>
       </BrowserRouter>
     </AuthProvider>
   );

@@ -10,7 +10,7 @@ import { useAuth } from "../context/AuthContext.jsx";
 import { homePathForRole } from "../config/workspaces.js";
 
 export default function LoginPage() {
-  const { login, isAuthenticated, user } = useAuth();
+  const { login, isAuthenticated, user, sessionNotice, dismissSessionNotice } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -108,6 +108,11 @@ export default function LoginPage() {
 
             <form id="login-form" onSubmit={onSubmit} noValidate aria-labelledby="login-title" aria-busy={submitting} tabIndex={-1}>
               <div className="login-fields">
+              {sessionNotice && (
+                <Alert variant="info" title="Sesión finalizada" onDismiss={dismissSessionNotice}>
+                  {sessionNotice}
+                </Alert>
+              )}
                 <div aria-live="polite" aria-atomic="true">
                   {submitError && (
                     <Alert variant="error" title="No pudimos validar tus datos">{submitError}</Alert>

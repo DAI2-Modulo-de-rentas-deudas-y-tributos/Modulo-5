@@ -13,7 +13,7 @@ export const MODULES = [
     label: "Contribuyentes",
     iconName: "Users",
     description:
-      "Consultá los datos y la situación fiscal de ciudadanos y organizaciones.",
+      "Consultá el padrón local de ciudadanos y organizaciones y su situación fiscal.",
     roles: ["PERSONAL", "SUPERVISOR"],
     countLabel: "registrados",
   },
@@ -63,7 +63,7 @@ export const MODULES = [
     label: "Pagos",
     iconName: "Banknote",
     description:
-      "Registrá cobros, imputá pagos y consultá los movimientos de cada cuenta.",
+      "Registrá, imputá y reversá pagos, y consultá la trazabilidad de cada movimiento.",
     roles: ["PERSONAL", "SUPERVISOR"],
     countLabel: "del día",
   },
@@ -150,7 +150,7 @@ export const MODULES = [
     label: "Exenciones",
     iconName: "ShieldCheck",
     description:
-      "Revisá solicitudes, documentación y resoluciones de exención.",
+      "Revisá solicitudes, documentación respaldatoria y resoluciones de exención.",
     roles: ["PERSONAL", "SUPERVISOR"],
     countLabel: "pendientes",
   },
@@ -160,7 +160,7 @@ export const MODULES = [
     label: "Tickets",
     iconName: "MessageSquare",
     description:
-      "Consultá los reclamos de Atención Ciudadana y seguí su resolución.",
+      "Consultá los reclamos recibidos desde Atención Ciudadana y seguí su resolución.",
     roles: ["PERSONAL", "SUPERVISOR"],
     countLabel: "abiertos",
   },

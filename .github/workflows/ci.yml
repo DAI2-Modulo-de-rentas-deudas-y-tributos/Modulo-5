@@ -220,6 +220,7 @@ jobs:
             backend/target/pdf-evidence/
             backend/target/bulk-evidence/
             backend/target/surefire-reports/
+            backend/target/site/jacoco/
           retention-days: 7
           if-no-files-found: warn
 

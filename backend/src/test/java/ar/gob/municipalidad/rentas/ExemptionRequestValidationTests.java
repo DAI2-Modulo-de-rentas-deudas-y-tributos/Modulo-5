@@ -131,7 +131,7 @@ class ExemptionRequestValidationTests {
         ExemptionRequest approved=exemptions.create(request(concept.id,"Solicitud aprobada",new BigDecimal("25"),date(1),date(31)));
         exemptions.start(approved.id);
         exemptions.submit(approved.id);
-        exemptions.approve(approved.id);
+        TestActorSupport.asApprover(() -> exemptions.approve(approved.id));
 
         ExemptionRequest created=exemptions.create(request(concept.id,"Nueva solicitud",new BigDecimal("50"),date(1),date(31)));
 

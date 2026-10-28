@@ -2,6 +2,7 @@ package ar.gob.municipalidad.rentas;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -14,6 +15,7 @@ import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.OffsetDateTime;
 import java.util.Map;
+import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -29,6 +31,10 @@ class DemoAuthFlowTests {
     @Autowired DemoAuthSessionRepository sessions;
     @Autowired TaxpayerRepository taxpayers;
     @Autowired org.springframework.security.crypto.password.PasswordEncoder encoder;
+    @Autowired DemoAuthService auth;
+    @Autowired TicketCaseRepository tickets;
+    @Autowired OutboxRepository outbox;
+    @Autowired EntityManager entityManager;
 
     @BeforeEach void baseVacia() {
         sessions.deleteAll();users.deleteAll();users.flush();
@@ -78,6 +84,36 @@ class DemoAuthFlowTests {
     @Test void tokenAleatorioPorLogin() throws Exception {
         String first=supervisor();String second=token("qa.supervisor");
         assertThat(first).matches("[A-Za-z0-9_-]{43}").isNotEqualTo(second);
+    }
+    @Test void uuidDeIntegracionSePersisteYEsDistintoPorUsuario() throws Exception {
+        String supervisor=supervisor();
+        crear(supervisor,"qa.rentas",DemoRole.RENTAS,null).andExpect(status().isCreated());
+        UUID supervisorId=users.findByUsernameIgnoreCase("qa.supervisor").orElseThrow().integrationActorId;
+        UUID rentasId=users.findByUsernameIgnoreCase("qa.rentas").orElseThrow().integrationActorId;
+        assertThat(supervisorId).isNotNull().isNotEqualTo(rentasId);
+        entityManager.flush();entityManager.clear();
+        assertThat(users.findByUsernameIgnoreCase("qa.rentas").orElseThrow().integrationActorId).isEqualTo(rentasId);
+        assertThat(auth.resolve(token("qa.rentas")).identity().integrationActorId()).isEqualTo(rentasId);
+        assertThat(auth.resolve(token("qa.rentas")).identity().integrationActorId()).isEqualTo(rentasId);
+    }
+    @Test void eventoM2UsaUuidDelEmpleadoAutenticadoYNoCabecerasDelCliente() throws Exception {
+        String supervisor=supervisor();
+        crear(supervisor,"qa.rentas",DemoRole.RENTAS,null).andExpect(status().isCreated());
+        UUID actorId=users.findByUsernameIgnoreCase("qa.rentas").orElseThrow().integrationActorId;
+        String token=token("qa.rentas");
+        TicketCase ticket=new TicketCase();ticket.externalTicketId=UUID.randomUUID().toString();
+        ticket.category="Pagos y deudas";ticket.description="Consulta de pago";ticket.priority=TicketPriority.HIGH;
+        ticket.status=TicketCaseStatus.OPEN;ticket.createdAt=ticket.updatedAt=OffsetDateTime.now();
+        ticket.correlationId=UUID.randomUUID().toString();ticket.lastSourceEventId=UUID.randomUUID().toString();
+        tickets.saveAndFlush(ticket);
+        mvc.perform(post("/api/v1/tickets/{id}/assign",ticket.id).header("X-Demo-Session",token)
+            .header("X-Dev-User","usuario-forjado")).andExpect(status().isOk());
+        OutboxEvent event=outbox.findAll().stream().filter(x->"updateTicketStatus".equals(x.eventType)).findFirst().orElseThrow();
+        JsonNode payload=json.readTree(event.payload);
+        assertThat(payload.path("data").path("updatedBy").path("type").asText()).isEqualTo("EXTERNAL_USER");
+        assertThat(payload.path("data").path("updatedBy").path("id").asText()).isEqualTo(actorId.toString());
+        assertThat(payload.path("data").path("updatedBy").path("id").asText()).isNotEqualTo("qa.rentas");
+        assertThat(payload.path("data").path("updatedBy").path("id").asText()).isNotEqualTo("usuario-forjado");
     }
     @Test void baseAlmacenaSoloHashNoTokenCrudo() throws Exception {
         String token=supervisor();

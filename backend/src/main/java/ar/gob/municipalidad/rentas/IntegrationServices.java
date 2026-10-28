@@ -6,15 +6,18 @@ import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.*;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Optional;
 
-interface EventPublisher { void publish(String eventType, String targetModule, String payload); }
+interface EventPublisher { OutboxStatus publish(String eventType, String targetModule, String payload); }
 
 @Component
+@ConditionalOnProperty(prefix="rentas",name="broker-adapter",havingValue="local-log",matchIfMissing=true)
 class LocalLogEventPublisher implements EventPublisher {
     private static final Logger log=LoggerFactory.getLogger(LocalLogEventPublisher.class);
-    public void publish(String eventType,String targetModule,String payload){log.info("BROKER_ADAPTER local-log eventType={} targetModule={}",eventType,targetModule);}
+    public OutboxStatus publish(String eventType,String targetModule,String payload){log.info("BROKER_ADAPTER local-log eventType={} targetModule={}",eventType,targetModule);return OutboxStatus.LOCAL_ONLY;}
 }
 
 @Service
@@ -39,8 +42,103 @@ class ExternalObligationService {
 @Service
 class OutboxPublisher {
     private static final Logger log=LoggerFactory.getLogger(OutboxPublisher.class);
+    private static final ObjectMapper payloadJson=new ObjectMapper();
     private final OutboxRepository repository; private final EventPublisher publisher;
-    OutboxPublisher(OutboxRepository repository,EventPublisher publisher){this.repository=repository;this.publisher=publisher;}
+    private final boolean rabbitMode;
+    @org.springframework.beans.factory.annotation.Autowired
+    OutboxPublisher(OutboxRepository repository,EventPublisher publisher,
+        @org.springframework.beans.factory.annotation.Value("${rentas.broker-adapter:local-log}") String brokerAdapter){
+        this.repository=repository;this.publisher=publisher;this.rabbitMode="rabbitmq".equalsIgnoreCase(brokerAdapter);
+    }
+    OutboxPublisher(OutboxRepository repository,EventPublisher publisher){this(repository,publisher,"local-log");}
     @Scheduled(fixedDelayString="${rentas.outbox-delay-ms:5000}")
-    @Transactional void publishPending(){for(OutboxEvent event:repository.findPublishable(org.springframework.data.domain.PageRequest.of(0,50))){try{event.lastAttemptAt=OffsetDateTime.now();if("PLATFORM".equals(event.targetModule))log.info("INTERNAL_OUTBOX eventType={} targetModule={}",event.eventType,event.targetModule);else publisher.publish(event.eventType,event.targetModule,event.payload);event.status=OutboxStatus.PUBLISHED;event.publishedAt=OffsetDateTime.now();event.errorMessage=null;}catch(RuntimeException ex){event.retryCount++;String message=ex.getMessage()==null?ex.getClass().getSimpleName():ex.getMessage();event.errorMessage=message.substring(0,Math.min(message.length(),255));event.status=event.retryCount>=5?OutboxStatus.DEAD_LETTER:OutboxStatus.FAILED;}}}
+    @Transactional void publishPending(){for(OutboxEvent event:repository.findPublishable(org.springframework.data.domain.PageRequest.of(0,50))){
+        if(!validEconomicIdentifiers(event)){
+            event.status=OutboxStatus.DEAD_LETTER;
+            event.errorMessage="ECONOMIC_CONTRACT_REVIEW_REQUIRED: invalid M5 UUID identifiers";
+            continue;
+        }
+        if(!validExemptionIdentifiers(event)){
+            event.status=OutboxStatus.DEAD_LETTER;
+            event.errorMessage="M8_CONTRACT_REVIEW_REQUIRED: invalid exemption UUID identifiers";
+            continue;
+        }
+        if(!validPaymentPlanIdentifiers(event)){
+            event.status=OutboxStatus.DEAD_LETTER;
+            event.errorMessage="M1_PLAN_CONTRACT_REVIEW_REQUIRED: invalid payment plan UUID payload";
+            continue;
+        }
+        List<OutboxStatus> accepted=rabbitMode?List.of(OutboxStatus.BROKER_CONFIRMED):List.of(OutboxStatus.PUBLISHED,OutboxStatus.LOCAL_ONLY,OutboxStatus.BROKER_CONFIRMED);
+        if("updateExemptionStatus".equals(event.eventType)
+            &&!repository.existsByEventTypeAndAggregateTypeAndAggregateIdAndStatusIn("exemptionRequested",event.aggregateType,event.aggregateId,accepted))continue;
+        if("updatePaymentPlanStatus".equals(event.eventType)
+            &&!repository.existsByEventTypeAndAggregateTypeAndAggregateIdAndStatusIn("paymentPlanRequested",event.aggregateType,event.aggregateId,accepted))continue;
+        try{
+            event.lastAttemptAt=OffsetDateTime.now();
+            OutboxStatus result;
+            if("PLATFORM".equals(event.targetModule)){
+                log.info("INTERNAL_OUTBOX eventType={} targetModule={}",event.eventType,event.targetModule);
+                result=OutboxStatus.LOCAL_ONLY;
+            }else result=publisher.publish(event.eventType,event.targetModule,event.payload);
+            event.status=result==OutboxStatus.BROKER_CONFIRMED?result:OutboxStatus.LOCAL_ONLY;
+            event.publishedAt=event.status==OutboxStatus.BROKER_CONFIRMED?OffsetDateTime.now():null;
+            event.errorMessage=null;
+        }catch(RuntimeException ex){
+            event.retryCount++;
+            event.errorMessage="CORE_BROKER_PUBLISH_FAILED";
+            event.status=event.retryCount>=5?OutboxStatus.DEAD_LETTER:OutboxStatus.FAILED;
+            log.warn("OUTBOX publish failed outboxId={} eventId={} correlationId={} eventType={} targetModule={} exceptionType={}",
+                event.id,OperationalLogSupport.uuidField(event.payload,"eventId"),
+                OperationalLogSupport.uuidField(event.payload,"correlationId"),event.eventType,event.targetModule,
+                ex.getClass().getSimpleName(),OperationalLogSupport.sanitizedStackTrace(ex));
+        }
+    }}
+    private boolean validEconomicIdentifiers(OutboxEvent event){
+        if(!"CORE".equals(event.targetModule)
+            ||!java.util.Set.of("paymentRegistered","paymentReversed","debtSettled").contains(event.eventType))return true;
+        try{
+            var data=payloadJson.readTree(event.payload).path("data");
+            java.util.UUID.fromString(data.path("debtId").asText());
+            if(!"debtSettled".equals(event.eventType))java.util.UUID.fromString(data.path("paymentId").asText());
+            if(data.hasNonNull("citizenId"))java.util.UUID.fromString(data.path("citizenId").asText());
+            return true;
+        }catch(Exception ex){return false;}
+    }
+    private boolean validExemptionIdentifiers(OutboxEvent event){
+        if(!"exemptionRequested".equals(event.eventType)&&!"updateExemptionStatus".equals(event.eventType))return true;
+        try{
+            var data=payloadJson.readTree(event.payload).path("data");
+            java.util.UUID.fromString(data.path("requestId").asText());
+            java.util.UUID.fromString(data.path("citizenId").asText());
+            if("updateExemptionStatus".equals(event.eventType)){
+                String status=data.path("status").asText();
+                if("APPROVED".equals(status))java.util.UUID.fromString(data.path("exemptionId").asText());
+                else if(!"REJECTED".equals(status))return false;
+            }
+            return true;
+        }catch(Exception ex){return false;}
+    }
+    private boolean validPaymentPlanIdentifiers(OutboxEvent event){
+        if(!"CORE".equals(event.targetModule)
+            ||!("paymentPlanRequested".equals(event.eventType)||"updatePaymentPlanStatus".equals(event.eventType)))return true;
+        try{
+            var data=payloadJson.readTree(event.payload).path("data");
+            java.util.UUID.fromString(data.path("requestId").asText());
+            java.util.UUID.fromString(data.path("citizenId").asText());
+            if("paymentPlanRequested".equals(event.eventType)){
+                var debtIds=data.path("debtIds");
+                if(!debtIds.isArray()||debtIds.isEmpty()||data.path("totalDebt").decimalValue().signum()<=0||data.path("installments").intValue()<=0)return false;
+                for(var debtId:debtIds)java.util.UUID.fromString(debtId.asText());
+            }else{
+                String status=data.path("status").asText();
+                if("GRANTED".equals(status)){
+                    java.util.UUID.fromString(data.path("planId").asText());
+                    if(data.path("installments").intValue()<=0||data.path("totalAmount").decimalValue().signum()<=0||data.hasNonNull("reason"))return false;
+                }else if("REJECTED".equals(status)){
+                    if(data.hasNonNull("planId")||data.hasNonNull("installments")||data.hasNonNull("totalAmount")||data.path("reason").asText().isBlank())return false;
+                }else return false;
+            }
+            return true;
+        }catch(Exception ex){return false;}
+    }
 }

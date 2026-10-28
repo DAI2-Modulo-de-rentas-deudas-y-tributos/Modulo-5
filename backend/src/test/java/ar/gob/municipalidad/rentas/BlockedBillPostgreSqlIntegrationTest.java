@@ -47,6 +47,7 @@ class BlockedBillPostgreSqlIntegrationTest {
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
         registry.add("spring.datasource.username", POSTGRES::getUsername);
         registry.add("spring.datasource.password", POSTGRES::getPassword);
+        registry.add("spring.flyway.locations", () -> "classpath:db/migration,classpath:db/migration-postgresql,classpath:db/migration-demo");
     }
 
     @Autowired MockMvc mvc;
@@ -124,7 +125,7 @@ class BlockedBillPostgreSqlIntegrationTest {
                 concept.id, CalculationType.FIXED, null, new BigDecimal("100"), null, null,
                 true, true, LocalDate.now().minusDays(1), null));
         catalog.submit(configuration.id);
-        catalog.approve(configuration.id);
+        TestActorSupport.asApprover(() -> catalog.approve(configuration.id));
         var liquidation = liquidations.create(new ApiDtos.LiquidationRequest(
                 taxpayer.id, concept.id, YearMonth.now().toString(), BigDecimal.ZERO, LocalDate.now().plusDays(30)));
         return debts.findByTaxpayerId(taxpayer.id).stream()

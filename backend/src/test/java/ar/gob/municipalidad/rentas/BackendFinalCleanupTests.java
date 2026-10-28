@@ -81,7 +81,7 @@ class BackendFinalCleanupTests {
     @Test void liquidationDetailExposesDebtOriginHistoryAndAdjustments() throws Exception {
         Debt debt=liquidatedDebt("LIQUIDATION-DETAIL");
         AdjustmentRequest adjustment=adjustments.create(new ApiDtos.CreateAdjustmentRequest(debt.id,AdjustmentType.SURCHARGE,new BigDecimal("12.50"),"Recargo documentado"));
-        adjustments.approve(adjustment.id,"Aprobado para auditoría");
+        TestActorSupport.asApprover(() -> adjustments.approve(adjustment.id,"Aprobado para auditoría"));
 
         String session=demo.token(DemoRole.AUDITOR);SecurityContextHolder.clearContext();
         mvc.perform(get("/api/v1/liquidations/{id}",debt.liquidationId).header("X-Demo-Session",session))
@@ -155,7 +155,7 @@ class BackendFinalCleanupTests {
     private Debt liquidatedDebt(String suffix) {
         TaxpayerReference taxpayer=taxpayer(suffix,TaxpayerStatus.ACTIVE);TaxConcept concept=concept("CONCEPT_"+suffix);
         TaxConfiguration configuration=catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(concept.id,CalculationType.FIXED,null,new BigDecimal("100"),null,null,true,true,LocalDate.now().minusDays(1),null));
-        catalog.submit(configuration.id);catalog.approve(configuration.id);
+        catalog.submit(configuration.id);TestActorSupport.asApprover(() -> catalog.approve(configuration.id));
         liquidations.create(new ApiDtos.LiquidationRequest(taxpayer.id,concept.id,YearMonth.now().toString(),BigDecimal.ZERO,LocalDate.now().plusDays(30)));
         return debts.findByTaxpayerId(taxpayer.id).get(0);
     }

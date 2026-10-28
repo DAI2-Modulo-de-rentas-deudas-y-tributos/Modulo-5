@@ -1,0 +1,19 @@
+{
+  "eventId": "6bc57a9d-1b3f-498d-91b4-290d74e7c850",
+  "eventType": "paymentPlanRequested",
+  "eventVersion": "1.0",
+  "occurredAt": "2026-10-26T15:30:00Z",
+  "sourceModule": "rentas",
+  "correlationId": null,
+  "causationId": null,
+  "data": {
+    "requestId": "7d6a54b0-5e58-4ed2-a1d1-94bde2fc1d41",
+    "citizenId": "1bc4530b-27da-4f48-b7b6-03d27a7f0be4",
+    "debtIds": [
+      "5c489a6c-4b32-4bae-8d0a-e09dbe500e59",
+      "a0584c63-6488-4864-8b12-c5efb5b5ee8e"
+    ],
+    "totalDebt": 200000.00,
+    "installments": 6
+  }
+}

@@ -65,7 +65,7 @@ class DomainFlowTests {
             assertThat(a.principalApplied.add(a.interestApplied)).isEqualByComparingTo(a.amount);
             assertThat(a.principalApplied).isEqualByComparingTo("100.00");
         });
-        PaymentReversalRequest request=reversalService.request(payment.id,"Carga duplicada"); reversalService.approve(request.id); reversalService.execute(request.id);
+        PaymentReversalRequest request=reversalService.request(payment.id,"Carga duplicada"); TestActorSupport.asApprover(() -> reversalService.approve(request.id)); reversalService.execute(request.id);
         assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("100.00");
         assertThatThrownBy(()->reversalService.execute(request.id)).isInstanceOf(BusinessException.class).hasMessageContaining("aprobada");
         assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("100.00");
@@ -86,20 +86,20 @@ class DomainFlowTests {
 
     @Test void debtCannotBelongToTwoActivePlans() {
         Debt debt=debt("CIT-6","PLAN",true); var request=new ApiDtos.GrantPlanRequest(debt.id,3,new BigDecimal("12"));
-        PaymentPlan plan=planService.grant(request); assertThat(plan.installmentCount).isEqualTo(3);
-        assertThatThrownBy(()->planService.grant(request)).isInstanceOf(BusinessException.class).hasMessageContaining("plan activo");
+        PaymentPlan plan=TestActorSupport.asApprover(() -> planService.grant(request)); assertThat(plan.installmentCount).isEqualTo(3);
+        assertThatThrownBy(()->TestActorSupport.asApprover(() -> planService.grant(request))).isInstanceOf(BusinessException.class).hasMessageContaining("plan activo");
     }
 
     @Test void approvedCurrentExemptionReducesLiquidation() {
         TaxpayerReference taxpayer=taxpayer("CIT-7"); TaxConcept concept=concept("EXEMPT",TaxConceptType.FEE,"M5"); activateFixed(concept.id,"100",true);
         ExemptionRequest request=exemptionService.create(new ApiDtos.CreateExemptionRequest(taxpayer.id,concept.id,"Vulnerabilidad",new BigDecimal("50"),YearMonth.now().atDay(1),LocalDate.now().plusYears(1)));
-        exemptionService.start(request.id); exemptionService.submit(request.id); exemptionService.approve(request.id);
+        exemptionService.start(request.id); exemptionService.submit(request.id); TestActorSupport.asApprover(() -> exemptionService.approve(request.id));
         assertThat(liquidationService.preview(liquidation(taxpayer.id,concept.id)).finalAmount()).isEqualByComparingTo("50.00");
     }
 
     private TaxpayerReference taxpayer(String externalId){return catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(TaxpayerType.CITIZEN,externalId,"123",null,"Persona "+externalId));}
     private TaxConcept concept(String code,TaxConceptType type,String module){return catalog.createConcept(new ApiDtos.CreateTaxConceptRequest(code,code,null,type,module));}
-    private TaxConfiguration activateFixed(Long conceptId,String amount,boolean partial){TaxConfiguration c=catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(conceptId,CalculationType.FIXED,null,new BigDecimal(amount),null,null,partial,true,LocalDate.now().minusDays(1),null));catalog.submit(c.id);return catalog.approve(c.id);}
+    private TaxConfiguration activateFixed(Long conceptId,String amount,boolean partial){TaxConfiguration c=catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(conceptId,CalculationType.FIXED,null,new BigDecimal(amount),null,null,partial,true,LocalDate.now().minusDays(1),null));catalog.submit(c.id);return TestActorSupport.asApprover(() -> catalog.approve(c.id));}
     private ApiDtos.LiquidationRequest liquidation(Long taxpayerId,Long conceptId){return new ApiDtos.LiquidationRequest(taxpayerId,conceptId,YearMonth.now().toString(),BigDecimal.ZERO,LocalDate.now().plusDays(30));}
     private Debt debt(String taxpayerExternal,String code,boolean partial){TaxpayerReference taxpayer=taxpayer(taxpayerExternal);TaxConcept concept=concept(code,TaxConceptType.FEE,"M5");activateFixed(concept.id,"100",partial);liquidationService.create(liquidation(taxpayer.id,concept.id));return debts.findByTaxpayerId(taxpayer.id).get(0);}
 }

@@ -10,6 +10,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.boot.actuate.health.*;
 import org.springframework.web.bind.annotation.*;
 import io.swagger.v3.oas.annotations.Hidden;
+import java.time.Clock;
+import java.time.ZoneId;
 import static org.springframework.data.web.config.EnableSpringDataWebSupport.PageSerializationMode.VIA_DTO;
 
 @EnableScheduling
@@ -21,6 +23,10 @@ public class RentasApplication {
     @Bean PageableHandlerMethodArgumentResolverCustomizer pageableMaxPageSize(
             @Value("${spring.data.web.pageable.max-page-size:100}") int maxPageSize) {
         return resolver -> resolver.setMaxPageSize(maxPageSize);
+    }
+
+    @Bean Clock fiscalProcessingClock() {
+        return Clock.system(ZoneId.of("America/Argentina/Buenos_Aires"));
     }
 }
 

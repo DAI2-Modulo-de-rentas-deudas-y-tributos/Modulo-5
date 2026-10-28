@@ -7,7 +7,6 @@ import DashboardLoading from "../../components/common/DashboardLoading.jsx";
 import Card from "../../components/common/Card.jsx";
 import DataTable from "../../components/common/DataTable.jsx";
 import StatTile from "../../components/common/StatTile.jsx";
-import StatusBadge from "../../components/common/StatusBadge.jsx";
 import { AUDITORIA_MODULES } from "../../config/auditoriaModules.js";
 import { auditService } from "../../services/rentasService.js";
 import useResource from "../../hooks/useResource.js";
@@ -20,7 +19,7 @@ import {
   labelFor,
 } from "../../lib/format.js";
 
-/** Panel del auditor: volumen del día, desvíos que exigen mirada y actividad reciente. */
+/** Panel del auditor con actividad reciente y acceso de consulta. */
 export default function AuditorDashboardPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -31,14 +30,14 @@ export default function AuditorDashboardPage() {
   const firstName = user.fullName.split(" ")[0];
 
   const activityColumns = [
-    { key: "at", header: "Fecha/Hora", render: (row) => formatDateTime(row.at) },
+    { key: "occurredAt", header: "Fecha/Hora", render: (row) => formatDateTime(row.occurredAt) },
     {
-      key: "username",
+      key: "userId",
       header: "Usuario",
       render: (row) => (
         <div className="flex flex-col">
-          <span className="font-medium text-neutral-800">{row.username}</span>
-          <span className="text-[12px] text-neutral-400">{labelFor(row.role)}</span>
+          <span className="font-medium text-neutral-800">{row.userId}</span>
+          <span className="text-[12px] text-neutral-400">{labelFor(row.userRole)}</span>
         </div>
       ),
     },
@@ -48,11 +47,10 @@ export default function AuditorDashboardPage() {
       header: "Entidad",
       render: (row) => (
         <span className="tabular-nums text-neutral-600">
-          {entityLabelFor(row.entity.type)} #{row.entity.id}
+          {entityLabelFor(row.entityType)} #{row.entityId}
         </span>
       ),
     },
-    { key: "result", header: "Resultado", render: (row) => <StatusBadge status={row.result} /> },
   ];
 
   return (
@@ -61,7 +59,7 @@ export default function AuditorDashboardPage() {
         label={user.roleLabel}
         title={`Hola, ${firstName}.`}
         highlight="Control del módulo"
-        description="Volumen de la jornada, desvíos a revisar y trazabilidad de cada operación."
+        description="Trazabilidad reciente de las operaciones registradas en Rentas."
       />
 
       <div className="workspace-container workspace-content workspace-dashboard">
@@ -147,7 +145,7 @@ export default function AuditorDashboardPage() {
               >
                 <DataTable
                   columns={activityColumns}
-                  rows={summary.recentActivity}
+                  rows={summary}
                   rowKey={(row) => row.id}
                   emptyIconName="ScrollText"
                   emptyTitle="Sin actividad"
@@ -155,7 +153,6 @@ export default function AuditorDashboardPage() {
                   onRowClick={(row) => navigate(`/auditor/auditoria/${row.id}`)}
                 />
               </Card>
-
               <section className="flex flex-col gap-4">
                 <div>
                   <h2 className="text-[15px] font-semibold text-[#0F2C59]">Módulos de consulta</h2>

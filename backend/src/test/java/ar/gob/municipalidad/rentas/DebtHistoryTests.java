@@ -78,7 +78,7 @@ class DebtHistoryTests {
         Debt debt=debt();
         Payment payment=payments.register(new ApiDtos.RegisterPaymentRequest(debt.taxpayerId,PaymentMethod.CASH,new BigDecimal("100"),List.of(new ApiDtos.AllocationRequest(debt.id,new BigDecimal("100")))));
         PaymentReversalRequest reversal=reversals.request(payment.id,"Pago duplicado");
-        reversals.approve(reversal.id);
+        TestActorSupport.asApprover(() -> reversals.approve(reversal.id));
         reversals.execute(reversal.id);
 
         ApiDtos.DebtHistoryResponse response=history.get(debt.id);
@@ -106,7 +106,7 @@ class DebtHistoryTests {
         Payment overpayment=payments.register(new ApiDtos.RegisterPaymentRequest(source.taxpayerId,PaymentMethod.CASH,new BigDecimal("120"),List.of(new ApiDtos.AllocationRequest(source.id,new BigDecimal("120")))));
         creditService.apply(credits.findBySourcePaymentId(overpayment.id).orElseThrow().id,new ApiDtos.ApplyCreditBalanceRequest(target.id,new BigDecimal("20")));
         AdjustmentRequest adjustment=adjustmentService.create(new ApiDtos.CreateAdjustmentRequest(target.id,AdjustmentType.SURCHARGE,new BigDecimal("5"),"Actualización"));
-        adjustmentService.approve(adjustment.id,"Aprobado");
+        TestActorSupport.asApprover(() -> adjustmentService.approve(adjustment.id,"Aprobado"));
 
         ApiDtos.DebtHistoryResponse response=history.get(target.id);
 
@@ -169,7 +169,7 @@ class DebtHistoryTests {
         String code="HIST-"+UUID.randomUUID().toString().substring(0,8);
         TaxConcept concept=catalog.createConcept(new ApiDtos.CreateTaxConceptRequest(code,code,null,TaxConceptType.FEE,"M5"));
         TaxConfiguration configuration=catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(concept.id,CalculationType.FIXED,null,new BigDecimal("100"),null,null,true,true,LocalDate.now().minusDays(1),null));
-        catalog.submit(configuration.id);catalog.approve(configuration.id);
+        catalog.submit(configuration.id);TestActorSupport.asApprover(() -> catalog.approve(configuration.id));
         liquidations.create(new ApiDtos.LiquidationRequest(taxpayerId,concept.id,YearMonth.now().toString(),BigDecimal.ZERO,LocalDate.now().plusDays(30)));
         return debts.findByTaxpayerId(taxpayerId).stream().filter(d->d.taxConceptId.equals(concept.id)).findFirst().orElseThrow();
     }

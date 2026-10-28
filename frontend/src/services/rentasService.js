@@ -70,7 +70,7 @@ export const authService = {
     if (AUTH_MODE === "core") {
       throw new ApiError("La autenticación Core/JWT todavía no tiene un contrato integrado.", 503, null, "CORE_AUTH_PENDING");
     }
-    const result = await request("/api/v1/dev-auth/login", { method: "POST", body: { username, password } });
+    const result = await request("/api/v1/dev-auth/login", { method: "POST", body: { username, password }, requiresAuth: false });
     return mapDemoAuthSession(result);
   },
 
@@ -895,10 +895,9 @@ export const ticketService = {
   },
 
   /** Usa los casos de uso reales de M5; cada operación deja su evento en el outbox local. */
-  async updateStatus({ ticketId, status, message, takeOwnership = false }) {
+  async updateStatus({ ticketId, status, message }) {
     const base = `/api/v1/tickets/${ticketId}`;
     if (status === "IN_PROGRESS") return request(`${base}/assign`, { method: "POST" });
-    if (takeOwnership) await request(`${base}/assign`, { method: "POST" });
     if (status === "WAITING_FOR_INFORMATION") {
       return request(`${base}/request-information`, { method: "POST", body: { message } });
     }
@@ -1184,9 +1183,10 @@ export const cashierService = {
  * puede modificar ninguna entidad. No hay una sola operación de escritura acá.
  */
 export const auditService = {
-  /** Panel del auditor: volumen de la jornada, desvíos y actividad reciente. */
+  /** Actividad reciente para el panel de sólo lectura del auditor. */
   async dashboard() {
-    return request("/api/v1/audit/dashboard");
+    const page = await request("/api/v1/audit?page=0&size=10&sort=occurredAt,desc");
+    return page.content ?? [];
   },
 
   // ------------------------------------------------------------ Contribuyentes
@@ -1669,7 +1669,7 @@ export const dashboardService = {
       planes: specific.pendingPlanRequests ?? 0,
       exenciones: specific.pendingExemptions ?? 0,
       tickets: specific.openTickets ?? 0,
-      unallocatedPayments: specific.unallocatedPaymentAmount ?? 0,
+      unallocatedPaymentAmount: specific.unallocatedPaymentAmount ?? 0,
       recentActivity: specific.recentOperations ?? [],
     } : {};
     return {
