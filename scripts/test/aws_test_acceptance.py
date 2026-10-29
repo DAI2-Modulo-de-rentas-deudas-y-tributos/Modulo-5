@@ -427,7 +427,7 @@ def run_bulk(
         futures = [pool.submit(execute_once) for _ in range(2)]
         responses = [future.result(timeout=max_duration_seconds + 60) for future in futures]
     execution_seconds = time.monotonic() - execution_started
-    require(sorted(response.status for response in responses) == [200, 422],
+    require(sorted(response.status for response in responses) == [200, 409],
             f"Ejecución concurrente inesperada: {[response.status for response in responses]}")
     expect_run_rejection(next(response for response in responses if response.status != 200))
     executed = json.loads(next(response for response in responses if response.status == 200).body)
@@ -479,7 +479,7 @@ def run_bulk(
 
 
 def expect_run_rejection(response: HttpResponse) -> None:
-    require(response.status == 422, f"Se esperaba rechazo de negocio HTTP 422, recibido {response.status}")
+    require(response.status == 409, f"Se esperaba conflicto de estado HTTP 409, recibido {response.status}")
     try:
         code = json.loads(response.body).get("code")
     except (ValueError, AttributeError) as error:

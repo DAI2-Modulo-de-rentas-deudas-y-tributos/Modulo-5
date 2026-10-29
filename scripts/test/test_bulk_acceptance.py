@@ -97,13 +97,13 @@ class BulkAcceptanceTests(unittest.TestCase):
 
     def test_only_the_expected_business_rejection_counts_as_idempotency(self):
         correct = json.dumps({"code": "RUN_NOT_APPROVED"}).encode()
-        expect_run_rejection(HttpResponse(422, {}, correct))
-        for status in (200, 401, 403, 404, 409, 500, 502, 503):
+        expect_run_rejection(HttpResponse(409, {}, correct))
+        for status in (200, 401, 403, 404, 422, 500, 502, 503):
             with self.subTest(status=status), self.assertRaises(AcceptanceFailure):
                 expect_run_rejection(HttpResponse(status, {}, correct))
         for body in (b'{}', b'{"code":"OTHER_ERROR"}', b'<html>Error</html>'):
             with self.assertRaises(AcceptanceFailure):
-                expect_run_rejection(HttpResponse(422, {}, body))
+                expect_run_rejection(HttpResponse(409, {}, body))
 
     def test_preview_and_execution_preserve_decimal_amounts_and_partial_error(self):
         expected = {1: Decimal("100.25"), 2: Decimal("200.50")}
