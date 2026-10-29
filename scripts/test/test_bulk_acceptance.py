@@ -6,7 +6,7 @@ from decimal import Decimal
 from unittest.mock import Mock
 
 from aws_test_acceptance import (
-    AcceptanceFailure, HttpResponse, expect_run_rejection, get_all_pages,
+    AcceptanceFailure, HttpResponse, create_active_concept, expect_run_rejection, get_all_pages,
     load_taxpayers, run_bulk, validate_bulk_economics, validate_bulk_items,
 )
 
@@ -86,6 +86,14 @@ class BulkAcceptanceTests(unittest.TestCase):
                 run_bulk(client, taxpayers, 50, 120, "qa")
         client.json.assert_not_called()
         client.request.assert_not_called()
+
+    def test_configuration_is_approved_by_a_different_supervisor(self):
+        client, approver = Mock(), Mock()
+        client.json.side_effect = [{"id": 7}, {"id": 8}, {"status": "PENDING_APPROVAL"}]
+        approver.json.return_value = {"status": "ACTIVE"}
+        create_active_concept(client, approver, "QA", "run")
+        self.assertNotIn("/tax-configurations/8/approve", [call.args[1] for call in client.json.call_args_list])
+        approver.json.assert_called_once_with("POST", "/tax-configurations/8/approve")
 
     def test_only_the_expected_business_rejection_counts_as_idempotency(self):
         correct = json.dumps({"code": "RUN_NOT_APPROVED"}).encode()
