@@ -1,0 +1,214 @@
+name: SCRUM-807 experimental PIT probe
+
+run-name: "SCRUM-807 / ${{ github.sha }} / ${{ github.event_name }}"
+
+on:
+  push:
+    branches:
+      - codex/scrum-807-pit-actions
+  workflow_dispatch:
+    inputs:
+      run_probe:
+        description: Confirmar ejecución acotada de PaymentPlanService
+        type: choice
+        required: true
+        default: do-not-run
+        options:
+          - do-not-run
+          - run-probe
+      expected_sha:
+        description: SHA completo (40 caracteres) de la revisión aprobada
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scrum-807-pit-probe-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  pit-probe:
+    # El push sólo corre si el commit HEAD fue etiquetado expresamente.
+    # El dispatch queda disponible como alternativa futura, tras aprobarlo en default.
+    if: >-
+      github.ref == 'refs/heads/codex/scrum-807-pit-actions' &&
+      ((github.event_name == 'push' && contains(github.event.head_commit.message, '[run-pit-probe]')) ||
+       (github.event_name == 'workflow_dispatch' && inputs.run_probe == 'run-probe' && inputs.expected_sha == github.sha))
+    name: PIT probe (one production class, full test discovery)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: rentas
+          POSTGRES_USER: rentas
+          POSTGRES_PASSWORD: rentas_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rentas -d rentas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/rentas
+      SPRING_DATASOURCE_USERNAME: rentas
+      SPRING_DATASOURCE_PASSWORD: rentas_ci
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout approved experimental revision
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Record immutable code revision and validate trigger
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = 'refs/heads/codex/scrum-807-pit-actions'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p backend/target/scrum-807-probe
+          printf 'repository=%s\nref=%s\nsha=%s\nevent=%s\n' \
+            "$GITHUB_REPOSITORY" "$GITHUB_REF" "$GITHUB_SHA" "$GITHUB_EVENT_NAME" \
+            | tee backend/target/scrum-807-probe/revision.txt
+          git status --porcelain=v1 >> backend/target/scrum-807-probe/revision.txt
+
+      - name: Set up Java 17 and Maven cache
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+          cache-dependency-path: backend/pom.xml
+
+      - name: Record runner capacity and verify Docker
+        run: |
+          set -euo pipefail
+          mkdir -p backend/target/scrum-807-probe
+          {
+            date -u --iso-8601=seconds
+            java -version
+            ./backend/mvnw -version
+            free -h
+            df -h "$GITHUB_WORKSPACE"
+            docker info
+            docker system df
+          } 2>&1 | tee backend/target/scrum-807-probe/runner-baseline.log
+
+          available_kb=$(df --output=avail "$GITHUB_WORKSPACE" | tail -n 1 | tr -d ' ')
+          if (( available_kb < 5242880 )); then
+            echo "Menos de 5 GiB libres; se detiene antes de descargar dependencias o iniciar PIT." \
+              | tee -a backend/target/scrum-807-probe/runner-baseline.log
+            exit 1
+          fi
+
+      - name: Prepare disposable probe POM
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/pit_scrum807_pom.py \
+            --scope probe \
+            --write backend/pom.pit-scrum807.xml \
+            | tee backend/target/scrum-807-probe/configuration.log
+          trap 'rm -f backend/pom.pit-scrum807.xml' EXIT
+          ./backend/mvnw -B -ntp -f backend/pom.pit-scrum807.xml \
+            -Pmutation-testing -DskipTests test-compile \
+            2>&1 | tee backend/target/scrum-807-probe/test-compile.log
+
+      - name: Run bounded PIT probe and sample resources
+        timeout-minutes: 105
+        run: |
+          set -uo pipefail
+          output_dir="$GITHUB_WORKSPACE/backend/target/scrum-807-probe"
+          reports_dir="$GITHUB_WORKSPACE/backend/target/pit-scrum807-reports"
+          mkdir -p "$output_dir" "$reports_dir"
+          python3 .github/scripts/pit_scrum807_pom.py \
+            --scope probe \
+            --write backend/pom.pit-scrum807.xml \
+            > "$output_dir/configuration.log" 2>&1 || exit $?
+          trap 'rm -f backend/pom.pit-scrum807.xml' EXIT
+
+          # Defensa adicional: el POM tiene exactamente una clase mutable.
+          grep -q '<param>ar.gob.municipalidad.rentas.PaymentPlanService\*</param>' \
+            backend/pom.pit-scrum807.xml || exit 12
+          test "$(grep -c '<param>ar.gob.municipalidad.rentas.*Service\*</param>' backend/pom.pit-scrum807.xml)" -eq 1 || exit 13
+
+          started=$(date +%s)
+          ./backend/mvnw -B -ntp -f backend/pom.pit-scrum807.xml \
+            -Pmutation-testing \
+            -DreportsDirectory="$reports_dir" \
+            org.pitest:pitest-maven:1.18.2:mutationCoverage \
+            > "$output_dir/pit.log" 2>&1 &
+          pit_pid=$!
+
+          (
+            while kill -0 "$pit_pid" 2>/dev/null; do
+              {
+                printf '\n--- %s ---\n' "$(date -u --iso-8601=seconds)"
+                printf 'PIT wrapper PID: %s\n' "$pit_pid"
+                free -b
+                df -B1 "$GITHUB_WORKSPACE"
+                ps -eo pid,ppid,etime,%cpu,rss,vsz,comm --sort=-rss \
+                  | awk 'NR == 1 || /[j]ava|[m]vnw/'
+                docker stats --no-stream 2>&1 || true
+                docker ps -a --no-trunc --format 'table {{.ID}}\t{{.Image}}\t{{.Status}}'
+              } >> "$output_dir/resource-telemetry.log" 2>&1
+              sleep 15
+            done
+          ) &
+          monitor_pid=$!
+
+          wait "$pit_pid"
+          pit_status=$?
+          kill "$monitor_pid" 2>/dev/null || true
+          wait "$monitor_pid" 2>/dev/null || true
+          ended=$(date +%s)
+          printf 'exit_code=%s\nduration_seconds=%s\n' "$pit_status" "$((ended - started))" \
+            | tee "$output_dir/result.txt"
+          tail -n 160 "$output_dir/pit.log" || true
+
+          docker ps -a --format 'table {{.ID}}\t{{.Image}}\t{{.Status}}' \
+            > "$output_dir/container-summary.log" 2>&1 || true
+
+          exit "$pit_status"
+
+      - name: Remove disposable PIT POM
+        if: always()
+        run: rm -f backend/pom.pit-scrum807.xml
+
+      - name: Check probe reports
+        if: always()
+        run: |
+          set -euo pipefail
+          reports_dir=backend/target/pit-scrum807-reports
+          find "$reports_dir" -maxdepth 2 -type f -printf '%P\t%s bytes\n' 2>/dev/null \
+            | tee backend/target/scrum-807-probe/report-inventory.log || true
+          missing=0
+          for report in index.html mutations.xml mutations.csv; do
+            if ! find "$reports_dir" -type f -name "$report" -print -quit | grep -q .; then
+              echo "Falta reporte requerido: $report" \
+                | tee -a backend/target/scrum-807-probe/report-inventory.log
+              missing=1
+            fi
+          done
+          if (( missing != 0 )); then
+            exit 1
+          fi
+
+      - name: Upload PIT probe logs and reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: scrum-807-pit-probe-${{ github.run_id }}
+          path: |
+            backend/target/scrum-807-probe/
+            backend/target/pit-scrum807-reports/
+          if-no-files-found: warn
+          retention-days: 14
