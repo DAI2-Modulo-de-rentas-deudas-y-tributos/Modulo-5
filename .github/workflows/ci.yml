@@ -9,6 +9,8 @@ on:
     branches:
       - main
       - develop
+  # cd-prod.yml lo invoca como compuerta antes de desplegar cada commit de main.
+  workflow_call:
 
 permissions:
   contents: read
@@ -73,6 +75,7 @@ jobs:
           test -d contracts
           test -d infra/environments/dev
           test -d infra/environments/test
+          test -d infra/environments/prod
           test -d docs/adr
 
   frontend:
@@ -153,6 +156,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install PDF validation tools
+        id: pdf-tools
         run: |
           python -m pip install -r scripts/test/requirements.txt
           sudo apt-get update
@@ -203,7 +207,9 @@ jobs:
           done
 
       - name: Render PDF evidence
-        if: always()
+        # pdftoppm viene de poppler-utils: si los tests fallaron antes de instalarlo,
+        # el render solo taparia la falla real con un "command not found".
+        if: always() && steps.pdf-tools.outcome == 'success'
         shell: bash
         run: |
           shopt -s nullglob
@@ -251,6 +257,12 @@ jobs:
 
       - name: Validate TEST
         working-directory: infra/environments/test
+        run: |
+          terraform init -backend=false
+          terraform validate
+
+      - name: Validate PROD
+        working-directory: infra/environments/prod
         run: |
           terraform init -backend=false
           terraform validate

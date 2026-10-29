@@ -13,6 +13,7 @@ Infraestructura AWS del modulo, administrada exclusivamente con Terraform.
 - `modules/hosting/`: aplicacion y rama de Amplify Hosting.
 - `environments/dev/`: composicion desplegada desde `develop`.
 - `environments/test/`: composicion aislada preparada para promocion manual.
+- `environments/prod/`: composicion persistente desplegada desde `main`.
 
 Cada ambiente utiliza un estado remoto independiente. No se usan Terraform
 workspaces para representar ambientes.
@@ -34,22 +35,43 @@ seguridad solo permite entrada desde el ALB. RDS nunca es publico.
 1. Un Pull Request ejecuta CI y valida Terraform sin conectarse a AWS.
 2. Si cambia IAM, el bootstrap se aplica localmente con `rentas-admin`.
 3. Al fusionar en `develop`, `cd-dev.yml` levanta un DEV **efímero**: aplica
-   Terraform, despliega backend (`cd-backend-dev.yml`, imagen inmutable en ECR)
-   y frontend (`cd-frontend-dev.yml`, `dist` en Amplify), corre un smoke test y
+   Terraform, despliega backend (`cd-backend.yml`, imagen inmutable en ECR)
+   y frontend (`cd-frontend.yml`, `dist` en Amplify), corre un smoke test y
    destruye el ambiente, falle o no la verificación.
 4. Solo sobrevive el repositorio ECR de DEV, porque TEST promueve las imágenes
-   desde ahí. El ambiente accesible de forma continua es TEST.
+   desde ahí.
+5. Cada merge o commit a `main` dispara `cd-prod.yml`, que actualiza PROD.
 
-Los workflows DEV asumen el rol DEV y las promociones manuales asumen el rol TEST mediante OIDC. No existen access keys de AWS, tokens personales de GitHub ni claves de base de datos en GitHub.
+Los workflows DEV asumen el rol DEV, las promociones manuales el rol TEST y `cd-prod.yml` el rol PROD mediante OIDC. No existen access keys de AWS, tokens personales de GitHub ni claves de base de datos en GitHub.
 
 Las variables no sensibles de frontend y backend se definen por ambiente en
-`environments/{dev,test}`. Los secretos del backend se referencian por ARN y ECS
+`environments/{dev,test,prod}`. Los secretos del backend se referencian por ARN y ECS
 los obtiene desde Secrets Manager al iniciar la tarea. La matriz y el procedimiento
 de alta o rotacion estan en `docs/runbooks/environment-secrets.md`.
 
 ## Promocion a TEST
 
 TEST no se despliega por pushes ni merges. El workflow `cd-test.yml` ejecuta `plan` por defecto y solo aplica con la seleccion explicita `apply` mas la confirmacion `DEPLOY_TEST`. El backend reutiliza una imagen inmutable publicada previamente en ECR DEV. El frontend se reconstruye desde el mismo commit porque necesita la URL de API propia de TEST.
+
+## PROD desde `main`
+
+PROD es persistente y tiene su propia base PostgreSQL, con proteccion contra
+eliminacion, 7 dias de backups y snapshot final. `cd-prod.yml` corre el CI, aplica
+Terraform y despliega backend y frontend en cada push a `main`. Un deploy en curso
+nunca se cancela; los commits que llegan mientras tanto esperan y solo se despliega
+el mas reciente. Decision completa en `docs/adr/0003-ambiente-produccion.md`.
+
+Alta, una sola vez:
+
+1. Aplicar `bootstrap/` localmente con `rentas-admin` (`terraform plan` y luego
+   `apply`): crea el rol PROD y la denegacion de DEV/TEST sobre recursos
+   `Environment=prod`.
+2. En GitHub, crear el Environment `prod` con *Deployment branches* limitado a
+   `main`. Sin esa regla cualquier rama podria asumir el rol PROD.
+3. Cargar sus variables: `AWS_REGION`, `AWS_ROLE_ARN` (salida
+   `github_prod_role_arn`), `TF_STATE_BUCKET` y
+   `TF_STATE_KEY=environments/prod/terraform.tfstate`.
+4. Ejecutar `cd-prod.yml` manualmente o fusionar en `main`.
 
 ## Estado inicial sin aplicaciones
 
