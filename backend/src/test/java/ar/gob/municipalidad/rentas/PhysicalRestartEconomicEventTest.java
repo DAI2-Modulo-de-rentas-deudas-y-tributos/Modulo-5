@@ -99,11 +99,13 @@ class PhysicalRestartEconomicEventTest {
     }
 
     private WorkerRun runWorker(Map<String, String> environment) throws Exception {
-        String java = Path.of(System.getProperty("java.home"), "bin", "java.exe").toString();
+        String executable = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("win")
+            ? "java.exe" : "java";
+        String javaCommand = Path.of(System.getProperty("java.home"), "bin", executable).toString();
         String classpath = testClasspath();
         Path output = Files.createTempFile("m5-p4-worker-", ".log");
         try {
-            ProcessBuilder builder = new ProcessBuilder(java, PhysicalRestartWorker.class.getName())
+            ProcessBuilder builder = new ProcessBuilder(javaCommand, PhysicalRestartWorker.class.getName())
                 .redirectErrorStream(true).redirectOutput(output.toFile());
             Map<String, String> childEnvironment = builder.environment();
             childEnvironment.remove("DB_URL");

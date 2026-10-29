@@ -45,19 +45,22 @@ class ExemptionRequestValidationTests {
     private TaxpayerReference taxpayer;
     private TaxConcept concept;
     private DemoAuthSessions demo;
+    private long initialRequestCount;
 
     @BeforeEach void setUp() {
         taxpayer=catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(TaxpayerType.CITIZEN,"EXEMPTION-VALIDATION","30111222",null,"Validación exención"));
         concept=catalog.createConcept(new ApiDtos.CreateTaxConceptRequest("EXEMPTION-VALIDATION","Concepto validable",null,TaxConceptType.FEE,"M5"));
         demo=new DemoAuthSessions(demoUsers,taxpayers,encoder,demoAuth);
         authenticate(new AuthenticatedIdentity("taxpayer-owner",taxpayer.id),"TAXPAYER");
+        // Existing rows may be shared by earlier Spring test contexts; assert this test's delta only.
+        initialRequestCount=requests.count();
     }
 
     @AfterEach void clearAuthentication() { SecurityContextHolder.clearContext(); }
 
     @Test void nonexistentConceptIsRejectedWithoutPersistence() {
         assertBusinessError(() -> exemptions.create(request(Long.MAX_VALUE,"Motivo válido",new BigDecimal("50"),date(1),date(31))),"NOT_FOUND",404);
-        assertThat(requests.count()).isZero();
+        assertThat(requests.count()).isEqualTo(initialRequestCount);
     }
 
     @Test void inactiveConceptIsRejectedWithoutPersistence() {
@@ -65,34 +68,34 @@ class ExemptionRequestValidationTests {
         concepts.saveAndFlush(concept);
 
         assertBusinessError(() -> exemptions.create(validRequest()),"TAX_CONCEPT_NOT_ACTIVE",422);
-        assertThat(requests.count()).isZero();
+        assertThat(requests.count()).isEqualTo(initialRequestCount);
     }
 
     @Test void missingValidFromIsRejectedWithoutPersistence() {
         assertBusinessError(() -> exemptions.create(request(concept.id,"Motivo válido",new BigDecimal("50"),null,date(31))),"INVALID_VALIDITY_RANGE",422);
-        assertThat(requests.count()).isZero();
+        assertThat(requests.count()).isEqualTo(initialRequestCount);
     }
 
     @Test void missingValidUntilIsRejectedWithoutPersistence() {
         assertBusinessError(() -> exemptions.create(request(concept.id,"Motivo válido",new BigDecimal("50"),date(1),null)),"INVALID_VALIDITY_RANGE",422);
-        assertThat(requests.count()).isZero();
+        assertThat(requests.count()).isEqualTo(initialRequestCount);
     }
 
     @Test void invalidValidityRangeIsRejectedWithoutPersistence() {
         assertBusinessError(() -> exemptions.create(request(concept.id,"Motivo válido",new BigDecimal("50"),date(31),date(1))),"INVALID_VALIDITY_RANGE",422);
-        assertThat(requests.count()).isZero();
+        assertThat(requests.count()).isEqualTo(initialRequestCount);
     }
 
     @ParameterizedTest
     @ValueSource(strings={"0","100.01"})
     void invalidPercentageIsRejectedByServiceWithoutPersistence(String percentage) {
         assertBusinessError(() -> exemptions.create(request(concept.id,"Motivo válido",new BigDecimal(percentage),date(1),date(31))),"INVALID_EXEMPTION_PERCENTAGE",422);
-        assertThat(requests.count()).isZero();
+        assertThat(requests.count()).isEqualTo(initialRequestCount);
     }
 
     @Test void blankReasonIsRejectedByServiceWithoutPersistence() {
         assertBusinessError(() -> exemptions.create(request(concept.id,"   ",new BigDecimal("50"),date(1),date(31))),"INVALID_REQUEST",422);
-        assertThat(requests.count()).isZero();
+        assertThat(requests.count()).isEqualTo(initialRequestCount);
     }
 
     @Test void apiBeanValidationRejectsInvalidFieldsBeforePersistence() throws Exception {
@@ -102,7 +105,7 @@ class ExemptionRequestValidationTests {
                 .header("X-Demo-Session",demo.token(DemoRole.TAXPAYER,taxpayer.id))
                 .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(invalid)))
             .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
-        assertThat(requests.count()).isZero();
+        assertThat(requests.count()).isEqualTo(initialRequestCount);
     }
 
     @ParameterizedTest
@@ -113,7 +116,7 @@ class ExemptionRequestValidationTests {
         requests.saveAndFlush(existing);
 
         assertBusinessError(() -> exemptions.create(request(concept.id,"Solicitud superpuesta",new BigDecimal("50"),LocalDate.of(2030,1,1),LocalDate.of(2030,12,31))),"OVERLAPPING_EXEMPTION_REQUEST",422);
-        assertThat(requests.count()).isEqualTo(1);
+        assertThat(requests.count()).isEqualTo(initialRequestCount + 1);
     }
 
     @Test void rejectedRequestDoesNotBlockAValidRequest() {
@@ -124,7 +127,7 @@ class ExemptionRequestValidationTests {
         ExemptionRequest created=exemptions.create(request(concept.id,"Nueva solicitud",new BigDecimal("50"),date(1),date(31)));
 
         assertThat(created.status).isEqualTo(ExemptionRequestStatus.PENDING);
-        assertThat(requests.count()).isEqualTo(2);
+        assertThat(requests.count()).isEqualTo(initialRequestCount + 2);
     }
 
     @Test void activeApprovedExemptionDoesNotInventAnAdditionalBlock() {
@@ -144,7 +147,7 @@ class ExemptionRequestValidationTests {
 
         assertThat(created.status).isEqualTo(ExemptionRequestStatus.PENDING);
         assertThat(created.reason).isEqualTo("Motivo válido");
-        assertThat(requests.count()).isEqualTo(1);
+        assertThat(requests.count()).isEqualTo(initialRequestCount + 1);
     }
 
     @Test void taxpayerOwnershipIsStillEnforcedByApi() throws Exception {
@@ -158,13 +161,13 @@ class ExemptionRequestValidationTests {
                 .header("X-Demo-Session",foreignSession)
                 .contentType(MediaType.APPLICATION_JSON).content(body))
             .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("FORBIDDEN_OWNERSHIP"));
-        assertThat(requests.count()).isZero();
+        assertThat(requests.count()).isEqualTo(initialRequestCount);
 
         mvc.perform(post("/api/v1/exemption-requests")
                 .header("X-Demo-Session",ownerSession)
                 .contentType(MediaType.APPLICATION_JSON).content(body))
             .andExpect(status().isCreated()).andExpect(jsonPath("$.status").value("PENDING"));
-        assertThat(requests.count()).isEqualTo(1);
+        assertThat(requests.count()).isEqualTo(initialRequestCount + 1);
     }
 
     private ApiDtos.CreateExemptionRequest validRequest() {
