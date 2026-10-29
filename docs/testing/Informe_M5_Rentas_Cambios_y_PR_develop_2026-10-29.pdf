@@ -3,16 +3,15 @@
 1 0 obj
 <<
 /Producer (pypdf)
-/Title (M5 Rentas \055 Estado actual del PR \04378 hacia develop)
-/Subject (Informe de integraci\363n\054 pruebas\054 decisiones pendientes y estado Jira al 29\05710\0572026)
-/Author (Santiago Nemi \057 equipo M5)
+/Title (Informe M5 Rentas \055 cambios y PR develop \055 actualizaci\363n 29\05510\0552026)
+/Subject (Cierre de integraci\363n PR \04378 y evidencias actuales)
 >>
 endobj
 2 0 obj
 <<
 /Type /Pages
-/Count 13
-/Kids [ 4 0 R 9 0 R 28 0 R 30 0 R 32 0 R 34 0 R 36 0 R 38 0 R 40 0 R 42 0 R 44 0 R 46 0 R 52 0 R ]
+/Count 14
+/Kids [ 4 0 R 9 0 R 28 0 R 30 0 R 32 0 R 34 0 R 36 0 R 38 0 R 40 0 R 42 0 R 44 0 R 46 0 R 52 0 R 58 0 R ]
 >>
 endobj
 3 0 obj
@@ -4132,72 +4131,164 @@ endobj
 /Type /Font
 >>
 endobj
+58 0 obj
+<<
+/Annots [ 59 0 R 60 0 R ]
+/Contents 61 0 R
+/MediaBox [ 0 0 595.2756 841.8898 ]
+/Resources <<
+/Font 62 0 R
+/ProcSet [ /PDF /Text /ImageB /ImageC /ImageI ]
+>>
+/Rotate 0
+/Trans <<
+>>
+/Type /Page
+/Parent 2 0 R
+>>
+endobj
+59 0 obj
+<<
+/A <<
+/S /URI
+/Type /Action
+/URI (https\072\057\057github\056com\057DAI2\055Modulo\055de\055rentas\055deudas\055y\055tributos\057Modulo\0555\057pull\05778)
+>>
+/Border [ 0 0 0 ]
+/Rect [ 71.19312 705.4929 85.37112 715.6929 ]
+/Subtype /Link
+/Type /Annot
+>>
+endobj
+60 0 obj
+<<
+/A <<
+/S /URI
+/Type /Action
+/URI (https\072\057\057github\056com\057DAI2\055Modulo\055de\055rentas\055deudas\055y\055tributos\057Modulo\0555\057actions\057runs\05740924049823)
+>>
+/Border [ 0 0 0 ]
+/Rect [ 74.94862 241.5118 120.8186 250.5118 ]
+/Subtype /Link
+/Type /Annot
+>>
+endobj
+61 0 obj
+<<
+/Filter [ /ASCII85Decode /FlateDecode ]
+/Length 3024
+>>
+stream
+Gatm=?#SIY&q05P(gq=apVN&lD^g*T';meF1eDO3%uUE(ZpZujA]\#:h+`CtStT[tq/DL/Mk[@bdcBoAbaC8g8HOB8r>@2D5#,g2@ZkHQFAA]C3&EdndIc6Zmu5&e:"q$?n:_eaA:u-8KL=cqmkSoX6Wgd0O^f93)1!GXa`ST@E][X)1jR]Sn+6*9]=MF_?JsLIfV'[?XR3N"S;IKr2]EFb4flH'*RF7h\tn1!Qc:MUA4\_GkL6B2A=QT".*3sH-tJRtfUeY]jd?%$Q1ZCQ*112C$-RZkdr.)APATOMjOcXIp[<$BH"/qu,0;*<WL&`E[?bOtZe],VQ^'%`]]^pD(!s?9n=(*d^+aA1R"1]h'qkUmA6>_nHS/.a*+*q$N\AI^3sI&JR3BI\fo2M4)P6?4)F;i^L1><h*DU>_LI]goiS!IFL.A.#[Ul)[nVBYul1"IWCZ<2/"gl6Eg['S_i-AOr?fNk,G&=NVg1$)B1[6"B7AY08O\D`VBB4lqEeG)131)U1D3A"4;'OuEFR-_(qOA8j)*dOFhnhB@/,V9Gm1s`K:'c8u2TT:V3_^3:s/]4']ki?<=</XSm:853bFA#kB,\(+^R4<n!eqj"a/$0u9MS$30b4<ns8$jbnf0ojkNmXt6ZmB/3j509$TYEUa/(7$9$U='V-;[,^6R*DV#"jilVj3^<58P"#K]u.cX\R9)U"tY9jgL1qg(u2<CrbkQL;R/.?YajC894)Fhl9WKbZGZC/<A)Q#6'V/f)Yn&^MHCQeoqf.Pr/%RYQ'&RmL8!;[GC?@Njg-p%fBa=]KFBka`gMl-.#4$p7o6LI#=;Tdq\Q9B?BJ/G*CM7@'i&ds8=-d@deQ[o]LC6<KE6@+43mWChi?/SpS=FIR+;dWe2/GQN?l/`Cp`&rKm+.b$5/D+gb,&oUVKH;lO:j>[23[,4t"_@Qrg+4c9cKYHP/+^:1N[)+e(+CmY)3h2.WB`@0&kKnoOm"donQ)u&J=A@:lDe&N-K%0VDnS"ICTG.)`:\UI-'S.DIhg4ku@o][1SadX1ei\fYpgCRS`Hqj\?al['@)%aXqQ@.!'aJcO@M7.=O\*:.NQN;TaN(@1ZX]G/*?C+dP=K?VJO'$1J`t6?esX],>o-*tX.mZCrD\5A<\"n(oN?'..K'codThCm(PS<*4W@)"#%su110'R+AXK>\-gBFtGmCoP28XGc6*kZMS"L*\-'del;Yr6XGh_2HnGXu"ntUs]I0sjBG]*I3mZ0:d]<PX#;pZqdfal"CFOPjsW*YeK]C*r@%hL7&<NMr$*3)U<_S5(%/DE$%di[59i<FU7!<t0m*IU_ERtgB6=N*)`S+eKk]h]8IU.#FC:@S=_kK.1=!7[04ZBX#Ib&UZ#CGh;43>u7Q3=(_C2n_1X-<ZKR;VG=0KRs*[8>mX(_['t2E56p4kcb$=(OpO%ns#?WZVK0=jHBWGpU[GPisq)'#P_M9#fj%4[0>Lkc.5H)dksIZ/r,Y4F%6Yq[f6M5&C/!idJ*4n;u6LJ@X3i9Qh.jlp/,NS'lD,('R-+Y9aopAdNMm>mLJP-,LIHL0(5gp4OX@HUPi1^)0gFSK"-Ai<'b_F/4[!Je,iH529qo+o>;@VFIt_O?3H%G>#fD_rG+I-Hl5H/I>+&(.2J>O$_niI\tB$ta!\dRZ\S@\,AS:n@Y3lJao<EhWQ]+X*1-i=Ji_X7<]t`>d?[-jgGBe=SbtX`]Gt9`&'t5=\JTfY4[+T'KQ)KC-'do:bW5h6lZNSn9P"\]-C$+d.bc3]Y%RrG_*#Rs]M(r=5aLOIHd4n&`F!+Q-QH*r;BQtQ>e:Y;At^!G'/B*$<elS[Ulpcn9@BWq#mQqDS5gH+9VP60O[85USsH6U"PHJ3e2J,E@;G[d?#\[8%7d=P7Y"JaO37D7ESrrXM%>7_Ct;B=rUIL/+pB1Jneki7eH5X_,mS7*;Q(G_3DCfDU]pWb4pl,!$Qh"_!^*kr!Vh<IX#c%ZV9;W$#WBB:X6*2Dr>C+"4a0>FIZ])ddW)f2O8R-:".;>WB0b8L>')*7VX.I,%.<N!YO.G;hAa=I4+pq?4+u4/8DG:"]-6)"No4b9!9)?D^frsPDQ&R4[_@1C>5r`K4L[F?Qs4%sru-Vt#E=u!g:"Q8Ge$JO"2A?cYBI.JAVimEA=4u(O9;(f,!dGoOjgjE-ARX>W>V.#oo<"Fa[n]Z1#G<U$VG^BUV"R1dD4"hi65)GIWX'!XH`r^+\nn=Uf,V'2WdUJWj1uS+^+"QMfr'$,tKI!\m<4h'iC9BPiuc%f,8`.*G^tA\6[;AKU_/cVs_"*)]Uakc*P&HH%*ON+[,tT-XZ?J1aDgif5FCQ6[Zf)GDAu?TQ<i3&XRD_c`MnKW$Ik56Jo/_U2`VtThdLth[tYddi8LkZ&-l,Q8LtA_?OFmCj;E#*H*%)D\]I*a>D#P127(2<%=X_NU5ckZk:Wk@CJLpjDU-c*eaM5eTV1#KeHN,Wq+SOI-HE0:#jW)6FtRlon_Y4H_&\S&REOQTa#P](G]36nB=nNm3nuHD?#K)VP9!j7.5`6n=<>2`KXK1iBZ%'U*(TDb2$h46X$-qkSEJ4T;dF]RkEe7pB(]^qU2EY'=\n"C5KZb>DmY^'?AOD#VjlP$)idL`T1&rYi_E[?&lqVVj!$Y]5a@*'uYn<M@0;n?/ur)fmkJn;c@`,:H#N6*@//"/2)MU^bBOH`lKF\"E!268P!.H+CJ<4:mTJtkhiUIj3noeKNK(=$"&f-<cB]<SuCiLP+fT!d20@,o8A5s(Qc)c+ak5f5E0!SYNrlh#5a\`8DgC]TUJNi]:Ii@#f%c9+9AE<Lb'LP#%Y_gjW@h0CqW_g;MV)2S.E9%cs-&u'Z^)GGp]QPG`MIq@i^c;+eM&Wib*Z;=OqANoac>e(#7(nQF0(uf<`,e;0HEM<b[$W)LjbZ#IjSLeS'Zk'';+kD;TIpou?=anE##McK044GQ39,s2^j5qgT)5`/LDVF5@X(i=#GpDpW^?S+>=0eEXS0dF#1@(I9T7!/KG0%s0CqRf~>
+endstream
+endobj
+62 0 obj
+<<
+/F1 63 0 R
+/F2 64 0 R
+/F3 65 0 R
+>>
+endobj
+63 0 obj
+<<
+/BaseFont /Helvetica
+/Encoding /WinAnsiEncoding
+/Name /F1
+/Subtype /Type1
+/Type /Font
+>>
+endobj
+64 0 obj
+<<
+/BaseFont /Helvetica-Bold
+/Encoding /WinAnsiEncoding
+/Name /F2
+/Subtype /Type1
+/Type /Font
+>>
+endobj
+65 0 obj
+<<
+/BaseFont /Symbol
+/Name /F3
+/Subtype /Type1
+/Type /Font
+>>
+endobj
 xref
-0 58
+0 66
 0000000000 65535 f 
 0000000015 00000 n 
-0000000268 00000 n 
-0000000411 00000 n 
-0000000460 00000 n 
-0000000659 00000 n 
-0000003107 00000 n 
-0000003148 00000 n 
-0000003255 00000 n 
-0000003367 00000 n 
-0000003776 00000 n 
-0000010634 00000 n 
-0000010742 00000 n 
-0000010850 00000 n 
-0000010958 00000 n 
-0000011066 00000 n 
-0000011174 00000 n 
-0000011287 00000 n 
-0000012585 00000 n 
-0000012841 00000 n 
-0000031887 00000 n 
-0000032654 00000 n 
-0000032767 00000 n 
-0000032880 00000 n 
-0000032993 00000 n 
-0000034308 00000 n 
-0000034575 00000 n 
-0000053203 00000 n 
-0000053984 00000 n 
-0000054394 00000 n 
-0000062298 00000 n 
-0000062708 00000 n 
-0000069392 00000 n 
-0000069802 00000 n 
-0000077764 00000 n 
-0000078174 00000 n 
-0000085298 00000 n 
-0000085708 00000 n 
-0000092521 00000 n 
-0000092931 00000 n 
-0000098886 00000 n 
-0000099296 00000 n 
-0000105831 00000 n 
-0000106241 00000 n 
-0000111645 00000 n 
-0000112055 00000 n 
-0000118259 00000 n 
-0000118461 00000 n 
-0000121836 00000 n 
-0000121891 00000 n 
-0000121999 00000 n 
-0000122112 00000 n 
-0000122190 00000 n 
-0000122392 00000 n 
-0000126309 00000 n 
-0000126364 00000 n 
-0000126472 00000 n 
-0000126585 00000 n 
+0000000214 00000 n 
+0000000364 00000 n 
+0000000413 00000 n 
+0000000612 00000 n 
+0000003060 00000 n 
+0000003101 00000 n 
+0000003208 00000 n 
+0000003320 00000 n 
+0000003729 00000 n 
+0000010587 00000 n 
+0000010695 00000 n 
+0000010803 00000 n 
+0000010911 00000 n 
+0000011019 00000 n 
+0000011127 00000 n 
+0000011240 00000 n 
+0000012538 00000 n 
+0000012794 00000 n 
+0000031840 00000 n 
+0000032607 00000 n 
+0000032720 00000 n 
+0000032833 00000 n 
+0000032946 00000 n 
+0000034261 00000 n 
+0000034528 00000 n 
+0000053156 00000 n 
+0000053937 00000 n 
+0000054347 00000 n 
+0000062251 00000 n 
+0000062661 00000 n 
+0000069345 00000 n 
+0000069755 00000 n 
+0000077717 00000 n 
+0000078127 00000 n 
+0000085251 00000 n 
+0000085661 00000 n 
+0000092474 00000 n 
+0000092884 00000 n 
+0000098839 00000 n 
+0000099249 00000 n 
+0000105784 00000 n 
+0000106194 00000 n 
+0000111598 00000 n 
+0000112008 00000 n 
+0000118212 00000 n 
+0000118414 00000 n 
+0000121789 00000 n 
+0000121844 00000 n 
+0000121952 00000 n 
+0000122065 00000 n 
+0000122143 00000 n 
+0000122345 00000 n 
+0000126262 00000 n 
+0000126317 00000 n 
+0000126425 00000 n 
+0000126538 00000 n 
+0000126616 00000 n 
+0000126844 00000 n 
+0000127117 00000 n 
+0000127410 00000 n 
+0000130527 00000 n 
+0000130582 00000 n 
+0000130690 00000 n 
+0000130803 00000 n 
 trailer
 <<
-/Size 58
+/Size 66
 /Root 3 0 R
 /Info 1 0 R
 >>
 startxref
-126663
+130881
 %%EOF
