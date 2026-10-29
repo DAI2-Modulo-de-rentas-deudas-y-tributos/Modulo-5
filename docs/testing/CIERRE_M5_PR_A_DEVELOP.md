@@ -1,70 +1,81 @@
-# Módulo 5 / Rentas - preparación de PR hacia `develop`
+# Módulo 5 Rentas — cierre de integración hacia `develop`
 
-**Fecha de corte: 29/10/2026. Estado: candidata local preparada; publicación y merge pendientes.**
+**Actualizado:** 29/10/2026
+**Estado:** PR #78 abierto en Draft. En el SHA `2eb704dd` Maven y JaCoCo pasaron; el job backend terminó en FAILURE por la aceptación HTTP operativa de configuración tributaria, bloqueada por la regla de autoaprobación. No listo para merge.
 
-## Alcance y verdad del snapshot
+## Estado de Git y publicación
 
-- Candidata revisada: rama local `integration/m5-final-develop-20261028`; el código y workflow de esta etapa quedaron en `e9ee88a`, y este informe los documenta. `origin/develop` actualizado a `27e6f6d11181da870dc3dcb4c6edc14da5155100`. Tras agregar este informe, la rama tiene 57 commits y 302 archivos de diferencia; el PDF final agregará uno más. No está atrasada respecto de develop. El SHA candidato no está publicado y `ls-remote` no encuentra una rama remota candidata.
-- Worktree experimental: `codex/scrum-807-pit-actions`, en el mismo HEAD base, no publicado. El paquete ZIP fue comparado con la propuesta previa; sus mejoras de autorización del trigger y minimización de logs fueron incorporadas localmente.
-- Los cuatro cambios locales de la candidata fueron revisados: `backend/pom.xml`, `DebtHistoryTests.java`, `PaymentPlanServiceMutationTests.java` y `docs/security/SCRUM-793_SCA_2026-10-28.md`. Los tres primeros corresponden a pruebas/dependencias; el informe de SCA conserva explícitamente los cuatro riesgos Spring pendientes.
-- La propuesta PIT, sus cuatro pruebas de contrato y la solicitud de decisión de Seguridad están presentes en la candidata local. Los tests del generador pasaron (4/4) y SnakeYAML pudo parsear el YAML; `actionlint` y la validación por GitHub Actions no se ejecutaron. No se publicó ni ejecutó el workflow.
+- Repositorio: `DAI2-Modulo-de-rentas-deudas-y-tributos/Modulo-5`.
+- Rama candidata: `integration/m5-final-develop-20261028`.
+- Base remota: `develop` en `27e6f6d11181da870dc3dcb4c6edc14da5155100`.
+- HEAD publicado al momento de la actualización de este documento: `c4e9be33de68ec9d5331ec72c548f4ec468f7e89`. Este informe se incorporará mediante un commit documental posterior, por lo que el HEAD avanzará.
+- PR: [#78 — chore(m5): consolidar integración y calidad antes de develop](https://github.com/DAI2-Modulo-de-rentas-deudas-y-tributos/Modulo-5/pull/78), base `develop`, compare `integration/m5-final-develop-20261028`.
+- Estado observado: OPEN, DRAFT, MERGEABLE. No se hizo merge ni deploy.
+- Último run revisado: HEAD `2eb704dd7e3fcbad9ba1bfc907151ec0e7842b8f`; `application-detection`, `repository-structure`, `terraform` y `frontend` SUCCESS. Maven/JaCoCo del job backend SUCCESS; el paso de aceptación PDF/bulk recibió 403 `SELF_APPROVAL_FORBIDDEN`; `backend` y `ci-required` quedaron FAILURE.
+- El diff antes de agregar este informe final era de 57 commits y 302 archivos. Los PR anteriores #70, #71, #73 y #75 siguen en Draft; #74 y #76 figuran mergeados. Ninguno fue modificado en esta etapa.
 
-## Secuencia de cierre recomendada
+## Alcance de la candidata
 
-1. **Revisión funcional/Git:** obtener export verificable del worktree local de la candidata (o publicar en una rama aislada tras aprobación). Ejecutar `git status`, `git diff --stat`, `git diff --check`, `git rev-parse HEAD`, compararlo con `origin/develop`, reconciliar cada commit y las ramas/PR apiladas. Evitar reintroducir cambios ya mergeados por otros.
-2. **Separar por responsabilidad:** pruebas SCRUM-807 (`DebtHistoryTests`, `PaymentPlanServiceMutationTests`); dependencias y SCA SCRUM-793 (`pom.xml`, informe); experimentación PIT sólo en rama `codex/scrum-807-pit-actions`. Evitar incluir por arrastre CI, frontend o migraciones de otros sin su aprobación.
-3. **DevOps/Seguridad:** aprobar nuevo workflow experimental por `push`, retención de logs, uso de runner público y permisos. Registrar quién aprobó y fecha. No tocar CI habitual ni rama predeterminada.
-4. **Snapshot remoto:** construir código exactamente idéntico a la candidata aprobada + infraestructura de sonda; verificar hashes de los cuatro archivos y documentar SHA de commit completo. Ejecutar sólo la sonda `PaymentPlanService` con commit marcado `[run-pit-probe]`. No usar reporte de esa clase para afirmar cobertura global.
-5. **Análisis de sonda:** exigir `BUILD SUCCESS`, `0 MEMORY_ERROR`, ausencia de errores de infraestructura, reportes HTML/XML/CSV consistentes, tiempo y memoria con margen, denominador documentado. Revisar por mutante cualquier `TIMED_OUT`.
-6. **Decisión global:** solo si DevOps aprueba costo/runner y la sonda fue estable, diseñar workflow **separado** para PIT global de 14 clases sin filtros de test. Gate completo: score >=60%, cero error de minion, reportes íntegros; no atribuir score a pruebas filtradas.
-7. **Seguridad:** los cuatro CVE Spring continúan pendientes de actualización compatible o aceptación formal por el responsable del riesgo. Verificar ACL de broker antes de Core real. No autorizar riesgo en nombre de Seguridad.
-8. **Revisiones inter-áreas:** DevOps para `.github/workflows/ci.yml`, frontend para rescates, QA para suite/cobertura, PO para migraciones/contratos y Core/M9 para integración real. Diferenciar validaciones locales de entregas externas/ACK no probados.
-9. **Draft PR a `develop`:** cuando la rama remota y el SHA sean reproducibles, redactar PR con SHA, lista de commits/archivos, evidencia Maven/JaCoCo/PIT/SCA, riesgos y checklist de revisores. No publicarlo como "listo" mientras los gates estén abiertos.
-10. **Merge:** después de revisiones y checks obligatorios, con autorización expresa y verificación de SHA/branch protection, coordinar merge. Actualizar el PDF con número de PR, commit merge, fecha y resultado real.
+La candidata consolida cambios acumulados de backend, frontend, contratos, pruebas, documentación y DevOps de varias etapas y responsables. No debe atribuirse todo el contenido a un único autor ni fusionarse sin revisión de los propietarios correspondientes. Se identificaron tres commits de Rodrigo Blanco/RodriBlan en la ascendencia. También se requiere revisión DevOps de la modificación de `.github/workflows/ci.yml`, que añade el reporte JaCoCo al artefacto.
 
-## Evidencia verificable aportada
+La integración sigue preparada para Core/M9, pero RabbitMQ local no demuestra entrega al Core externo ni `ACK` de su consumidor. No se conectó Core/RabbitMQ compartido.
 
-| Criterio | Evidencia reportada | Interpretación |
+## Evidencia de validación
+
+| Verificación | Evidencia | Alcance y límite |
 |---|---|---|
-| Maven Java 17 | Reportes Surefire del 28/10/2026 23:55: 568 tests, 0 fallas/errores/omitidos; el reporte registra Temurin 17.0.20.1 | Evidencia local histórica del worktree con sus cuatro cambios; no sustituye CI remoto |
-| JaCoCo | XML del 28/10/2026: 91,80% líneas, 89,47% instrucciones y 66,70% ramas | Gate de líneas PASS en esa ejecución |
-| PIT `PaymentPlanService` | 11/12 mutaciones, 1 sin cobertura, 0 errores/TO, dos repeticiones | Sonda parcial; no valida 60% global |
-| PIT completo | sin reporte global válido; historia de 41 timeouts | SCRUM-807 NO VERIFICABLE |
-| Dependencias | menores compatibles validadas; 4 CVE Spring residuales | SCRUM-793 BLOQUEADO hasta decisión |
-| Integración Core/M9 | broker Rabbit local; ACK externo no probado | Pendiente contractual/E2E |
-| GitHub Actions experimental | Cuatro tests del generador de POM PASS; YAML parseado por SnakeYAML | No se ejecutó actionlint ni Actions; pendiente revisión DevOps y Seguridad |
+| Backend Maven | Reportes locales del 28/10: 568 tests, 0 fallos, 0 errores, 0 omitidos; Temurin 17.0.20.1 | Histórica; no repetida localmente sobre el HEAD remoto. CI del PR #78 es la verificación actual. |
+| PostgreSQL/Flyway | Reporte local: PostgreSQL Testcontainers 17.11, Flyway hasta V31 | Histórica; no se ejecutaron migraciones sobre la base compartida `rentas`. |
+| JaCoCo | 91,80% líneas; 89,47% instrucciones; 66,70% ramas | XML histórico de la ejecución del 28/10. |
+| PIT de `PaymentPlanService` | Dos sondas: 11 KILLED, 1 NO_COVERAGE, 0 MEMORY_ERROR y 0 TIMED_OUT | Evidencia parcial. No equivale al gate global. |
+| PIT global / SCRUM-807 | No hay reporte global completo ni mutation score verificable | NO VERIFICABLE; umbral exigido >=60% sobre las 14 clases y descubrimiento íntegro de tests. |
+| SCRUM-793 / SCA | Se aplicaron overrides compatibles en dependencias no cubiertas por los cuatro CVE Spring; solicitud de decisión documentada | Cuatro CVE siguen pendientes de corrección compatible o aceptación formal por Seguridad. |
+| Tests del generador PIT | 4/4 PASS | Ejecutados localmente en este SHA. |
+| Workflow PIT | YAML parseado con SnakeYAML | No se ejecutaron `actionlint` ni el workflow remoto; revisión DevOps/Security pendiente. |
+| `git diff --check` | PASS antes de la publicación inicial | Repetir tras el commit documental final. |
 
-Al corte de esta actualización, la máquina tiene 2,12 GiB de RAM física libre, Docker Desktop no está disponible y el Java del shell es Temurin 21.0.12.1; no se repitió `clean verify` ni PIT. Los resultados anteriores son históricos y se presentan como tales.
+La estación no pudo ejecutar el backend completo con las condiciones contractuales: no hay JDK 17 en la ruta disponible, Docker Desktop no responde y la memoria libre observada fue de 2,12 GiB. `ExemptionRequestValidationTests` sí pasó de forma aislada con Temurin 21.0.12.1: 17/17. El run remoto del SHA `2eb704dd` ejecutó `clean verify` en Temurin 17 y reportó 568/568, 0 fallos/errores/omitidos y gate JaCoCo aprobado. La validación HTTP final del mismo job no pasó, por lo que el job global sigue rojo.
 
-## GitHub y responsables
+## Diagnóstico del CI en los dos SHA publicados
 
-- `develop` remoto observado: `27e6f6d11181da870dc3dcb4c6edc14da5155100`.
-- El diff candidata/develop abarca 302 archivos antes de añadir el PDF final: backend 128, frontend 81, docs 67, contratos 21, workflows 2, scripts 2 y README 1.
-- Hay tres commits de Rodrigo Blanco/RodriBlan en la ascendencia candidata; además la candidata agrega el reporte JaCoCo al artefacto de `.github/workflows/ci.yml`. Requiere revisión de DevOps y de los responsables de los cambios incorporados.
-- PR #70, #71, #73 y #75 siguen abiertos como Draft; #74 y #76 aparecen mergeados. La integración candidata aún no tiene PR. Los checks automáticos de los PR consultados no reportaron estados.
-- SCRUM-807 y SCRUM-793 siguen asignados a Santiago Nemi y en Jira figuran `Tareas por hacer`.
+En el run de `c4e9be33`, `clean verify` registró 568 tests, 16 fallos y 1 error. Los fallos eran conteos absolutos de solicitudes de exención en `ExemptionRequestValidationTests`, que asumían una tabla vacía, y el error usaba `java.exe` fijo en Ubuntu. Se corrigió comparando el delta contra el estado inicial de cada test y eligiendo el binario Java según el SO. La clase focal pasó 17/17 en Temurin 21 local.
 
-## Checklist para habilitar el PR
+En el nuevo run del SHA `2eb704dd7e3fcbad9ba1bfc907151ec0e7842b8f`, el backend ejecutó `clean verify`: 568/568 PASS, 0 fallos, 0 errores, 0 omitidos; JaCoCo informó que todos sus checks se cumplieron. Frontend, detección, estructura y Terraform también pasaron. El job backend y `ci-required` terminaron rojos en el paso operativo `Validate PDF and bulk HTTP flows on PostgreSQL`: `POST /tax-configurations/1/approve` respondió 403 `SELF_APPROVAL_FORBIDDEN`.
 
-- [ ] Candidata local exportada y diff 57 commits reconciliado con `origin/develop` actualizado.
-- [ ] Cuatro cambios locales revisados, testeados y comprometidos por separado.
-- [ ] Nuevos commits de compañeros/PR apilados revisados por sus responsables.
-- [ ] DevOps aprueba workflow, activación por push, runner, logs/artefactos y costo.
-- [ ] Seguridad aprueba retención de logs y decide cada CVE residual.
-- [ ] SHA remoto exacto corresponde al código y tests aprobados.
-- [ ] Sonda PIT remota termina satisfactoriamente y publica artefactos válidos.
-- [ ] PIT global completo ejecutado en procedimiento separado y score >=60% verificado.
-- [ ] CI `clean verify`, JaCoCo y seguridad repetidos para SHA final.
-- [ ] Se explicita límite de Core/M9 y revisión de PO sobre migraciones.
-- [ ] Draft PR preparado con evidencia; revisores designados.
-- [ ] Autorización final de merge a `develop` y controles de GitHub satisfechos.
+La aceptación automatizada crea y envía una configuración y luego intenta aprobarla usando la misma sesión. La protección de negocio contra autoaprobación actuó correctamente. No se debilitó esa regla. El siguiente ajuste corresponde al runner de aceptación: usar un actor RENTAS para crear/enviar y un SUPERVISOR distinto para aprobar. El runner `scripts/test/aws_test_acceptance.py` fue originalmente aportado por `pNico1`; se solicitó su revisión en el PR #78 y no se modificó.
 
-## Texto breve sugerido para un eventual Draft PR
+El paso `Render PDF evidence` pasó en el run nuevo, porque el Maven exitoso permitió instalar Poppler antes del render. En el run previo falló en cascada al omitirse esa instalación tras Maven fallido. No se modificó `.github/workflows/ci.yml`.
 
-**Título:** `feat(m5): consolidar Rentas, integraciones y verificaciones de calidad` (adaptar al diff real).
+## SCRUM-807 — PIT
 
-**Resumen:** Consolidación del módulo Rentas con servicios de tributos, liquidaciones, pagos, planes, beneficios, recargos y eventos, más pruebas de dominio, auditoría y dependencias. El alcance real queda limitado al diff revisado entre `develop` y el SHA publicado. Se adjunta informe PDF de trazabilidad.
+La sonda de `PaymentPlanService` elimina 11 de 12 mutantes y deja uno `NO_COVERAGE`; dos ejecuciones anteriores no tuvieron error de minion ni timeout. No se modificó el gate: 14 clases objetivo, mutadores PIT predeterminados, `mutationThreshold=60`, sin `targetTests`, y timeout constante de 60 segundos.
 
-**Bloqueos:** no marcar como listo mientras SCRUM-807 no disponga de PIT global válido, SCRUM-793 no tenga resolución de riesgos residuales, o cambios de CI/PO/frontend/QA carezcan de revisión. No atribuir a E2E local una entrega/ACK de Core externo.
+El workflow experimental aislado propuesto usa Java 17, un thread y una sonda de una clase. Conserva el POM temporal y los reportes de la sonda, pero no es una ejecución global ni está autorizado/ejecutado remotamente. SCRUM-807 continúa NO VERIFICABLE hasta tener el PIT global y sus reportes HTML, XML y CSV completos.
 
-**Campos finales por completar tras cierre:** SHA HEAD candidato, SHA `develop` base, PR número, responsables y aprobaciones, enlace de Actions sonda/global, score PIT, decisión de 4 CVE, SHA del merge y fecha.
+## SCRUM-793 — Dependencias y riesgo
+
+Siguen sin declararse corregidos los cuatro hallazgos Spring: CVE-2026-47890, CVE-2026-47884, CVE-2026-47834 y CVE-2026-47860. El análisis de código no encontró las precondiciones de explotación documentadas para varias rutas, pero la versión efectiva permanece afectada; eso es evidencia de exposición reducida, no una corrección. Seguridad debe resolver cada CVE o aprobar una actualización compatible. No se usaron parches Enterprise-only sin disponibilidad confirmada.
+
+GitHub informó al publicar que `develop` tenía ocho alertas Dependabot (dos altas y seis moderadas). Al corte de este informe falta el inventario individual por paquete/manifiesto; `npm audit` no sustituye el análisis de dependencias Maven.
+
+## Migraciones y entornos
+
+V29 está en `db/migration-demo`. `application-prod.yml` define ubicaciones productivas sin incluir `migration-demo`. V24–V28 y V30–V31 se conservan en sus ubicaciones. No se modificó la base compartida `rentas`.
+
+## Revisiones necesarias antes de merge
+
+- **Product Owner:** contratos, UUID y migraciones heredadas; confirmar compatibilidad de la cadena de PR.
+- **DevOps:** workflow PIT experimental, cambio al artefacto JaCoCo, runner/costo y retención de logs.
+- **Seguridad:** decisión documentada para cada CVE y revisión de artefactos/logs.
+- **Frontend y QA:** aprobación de sus cambios y evidencia aplicable.
+- **Autores de commits incorporados:** revisión de cambios bajo su ownership.
+- **QA/aceptación:** responder a la revisión solicitada por el fallo `SELF_APPROVAL_FORBIDDEN`; el test debe usar actores distintos sin debilitar el control.
+- **CI:** `clean verify`/JaCoCo en `2eb704dd` pasó, pero la aceptación PDF/bulk falló y `ci-required` quedó rojo. Repetir tras la corrección del runner. No se tocó el workflow habitual.
+
+## Decisión
+
+**GO para revisión en Draft. NO-GO para merge** hasta obtener un PIT global válido con score >=60%, una decisión de Seguridad para los cuatro CVE, revisión DevOps y de los propietarios afectados, y CI completamente verde sobre el SHA final. Core/M9 externo y su ACK siguen sin validar.
+
+## Informe PDF
+
+El PDF profesional adjunto actualiza la portada y el registro final de estado. Las páginas centrales son históricas; la portada y la página 12 registran el CI actual: Maven/JaCoCo PASS, aceptación HTTP FAIL por autoaprobación, con revisión solicitada a su autor. El commit documental no modifica código.
