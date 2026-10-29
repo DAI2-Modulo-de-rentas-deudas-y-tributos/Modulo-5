@@ -29,6 +29,9 @@ class DebtHistoryTests {
     @Autowired DebtRepository debts;
     @Autowired ExternalObligationRepository externalObligations;
     @Autowired CreditBalanceRepository credits;
+    @Autowired PaymentPlanRepository plans;
+    @Autowired InstallmentRepository installments;
+    @Autowired AuditRepository audits;
 
     @BeforeEach void setUp() {
         authenticate(new AuthenticatedIdentity("tester",null),"RENTAS","SUPERVISOR");
@@ -98,6 +101,33 @@ class DebtHistoryTests {
             assertThat(entry.referenceId()).isEqualTo(plan.id.toString());
             assertThat(entry.status()).isEqualTo(PaymentPlanStatus.ACTIVE.name());
         });
+    }
+
+    @Test void grantingPlanRecordsItsBusinessAuditAction() {
+        Debt debt=debt();
+
+        PaymentPlan plan=planService.grant(new ApiDtos.GrantPlanRequest(debt.id,3,new BigDecimal("10")));
+
+        assertThat(audits.findByEntityTypeAndEntityIdOrderByOccurredAt("PaymentPlan",plan.id.toString()))
+            .extracting(entry->entry.action)
+            .containsExactly("PAYMENT_PLAN_GRANTED");
+    }
+
+    @Test void grantingPlanForMissingDebtHasNoEconomicOrAuditEffects() {
+        long missingDebtId=Long.MAX_VALUE-100;
+        long plansBefore=plans.count();
+        long installmentsBefore=installments.count();
+        long auditEntriesBefore=audits.count();
+
+        assertThatThrownBy(()->planService.grant(new ApiDtos.GrantPlanRequest(missingDebtId,3,new BigDecimal("10"))))
+            .isInstanceOfSatisfying(BusinessException.class,exception->{
+                assertThat(exception.status).isEqualTo(404);
+                assertThat(exception.code).isEqualTo("NOT_FOUND");
+            });
+
+        assertThat(plans.count()).isEqualTo(plansBefore);
+        assertThat(installments.count()).isEqualTo(installmentsBefore);
+        assertThat(audits.count()).isEqualTo(auditEntriesBefore);
     }
 
     @Test void creditBalanceApplicationAndAdjustmentAppear() {
