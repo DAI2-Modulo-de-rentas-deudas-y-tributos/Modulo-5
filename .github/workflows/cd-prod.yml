@@ -1,0 +1,133 @@
+name: Deploy AWS PROD
+
+# PROD es persistente y sigue a main: cada merge o commit a main corre el CI
+# completo y, si pasa, aplica Terraform y despliega backend y frontend.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/ci.yml
+      - .github/workflows/cd-prod.yml
+      - .github/workflows/cd-backend.yml
+      - .github/workflows/cd-frontend.yml
+      - amplify.yml
+      - backend/**
+      - frontend/**
+      - infra/environments/prod/**
+      - infra/modules/network/**
+      - infra/modules/security/**
+      - infra/modules/database/**
+      - infra/modules/edge/**
+      - infra/modules/ecs/**
+      - infra/modules/hosting/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+# Un deploy de PROD nunca se interrumpe: cortar un terraform apply o una migracion
+# Flyway a mitad de camino deja el ambiente inconsistente. Si llegan commits
+# mientras corre, GitHub conserva en espera solo el mas reciente y cancela los
+# intermedios; ese ultimo ya contiene todos los cambios anteriores de main.
+concurrency:
+  group: prod
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    name: ci
+    uses: ./.github/workflows/ci.yml
+
+  infra:
+    name: terraform-apply-prod
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: prod
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: infra/environments/prod
+
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      TF_STATE_KEY: ${{ vars.TF_STATE_KEY }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.15.8"
+          terraform_wrapper: false
+
+      - name: Configure temporary AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: "756663253996"
+          mask-aws-account-id: true
+          role-session-name: terraform-prod-${{ github.run_id }}
+
+      - name: Check environment variables
+        run: |
+          set -euo pipefail
+          : "${TF_STATE_BUCKET:?Missing TF_STATE_BUCKET in the prod environment}"
+          : "${TF_STATE_KEY:?Missing TF_STATE_KEY in the prod environment}"
+          : "${AWS_REGION:?Missing AWS_REGION in the prod environment}"
+
+      - name: Initialize remote state
+        run: |
+          terraform init -input=false -reconfigure \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${TF_STATE_KEY}" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="encrypt=true" \
+            -backend-config="use_lockfile=true"
+
+      - name: Validate
+        run: terraform validate -no-color
+
+      - name: Plan
+        run: terraform plan -input=false -lock-timeout=5m -no-color -out=prod.tfplan
+
+      - name: Apply
+        run: terraform apply -input=false -lock-timeout=5m -auto-approve prod.tfplan
+
+      - name: Publish deployment summary
+        run: |
+          {
+            echo "### AWS PROD actualizado"
+            echo
+            echo "Commit: \`${GITHUB_SHA}\`"
+            echo '```text'
+            terraform output -no-color
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  backend:
+    name: backend
+    needs: infra
+    uses: ./.github/workflows/cd-backend.yml
+    with:
+      environment: prod
+      amplify_branch: main
+
+  frontend:
+    name: frontend
+    needs: infra
+    uses: ./.github/workflows/cd-frontend.yml
+    with:
+      environment: prod
+      amplify_branch: main

@@ -35,6 +35,8 @@ un dataset alternativo de producción: todas las operaciones pasan por la API.
 
 - `dev`: integración continua desde la rama `develop`.
 - `test`: promoción controlada del mismo artefacto validado en `dev`.
+- `prod`: persistente; se despliega automáticamente en cada merge o commit a `main`
+  ([ADR 0003](docs/adr/0003-ambiente-produccion.md)).
 
 La rama `main` representa la versión estable. El desarrollo se realiza en ramas
 `feature/*` mediante pull requests hacia `develop`.
@@ -78,11 +80,12 @@ reemplaza Core/JWT: con dev-mode desactivado, `/api/v1/dev-auth/*` no está disp
 El perfil productivo debe ser `prod`; rechaza el modo demo aunque una variable de
 entorno intente habilitarlo y no utiliza sus tablas ni repositorios.
 
-El proyecto despliega únicamente los ambientes `dev` y `test`, y ambos usan el modo
-demo a propósito mientras Core/JWT siga pendiente: es el único borde de identidad
-disponible para operar y para la aceptación automatizada. No existe un ambiente de
-producción; `main` es la rama de salida. El esquema DEMO no puede viajar hasta ahí
-porque el perfil `prod` excluye sus servicios, repositorios y validación Hibernate,
+Los ambientes `dev` y `test` usan el modo demo a propósito mientras Core/JWT siga
+pendiente: es el único borde de identidad disponible para operar y para la
+aceptación automatizada. `prod`, desplegado desde `main`, corre con el perfil `prod`
+y `VITE_AUTH_MODE=core`, así que no admite inicios de sesión hasta integrar
+Core/JWT. El esquema DEMO no puede viajar hasta ahí porque el perfil `prod` excluye
+sus servicios, repositorios y validación Hibernate,
 la migración `V18` retira las tablas y dos precondiciones de Terraform cortan el plan
 si alguien intenta activar el modo demo o un secreto `RENTAS_DEMO_*` bajo ese perfil.
 Esa garantía está cubierta por `ProductionSchemaIsolationTest` y

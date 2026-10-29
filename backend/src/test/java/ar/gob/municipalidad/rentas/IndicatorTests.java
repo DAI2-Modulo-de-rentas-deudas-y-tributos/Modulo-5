@@ -20,6 +20,8 @@ class IndicatorTests {
     @Autowired CatalogService catalog;@Autowired LiquidationService liquidations;@Autowired PaymentService payments;@Autowired IndicatorService indicators;@Autowired TaxpayerQueryService taxpayerQueries;@Autowired DebtRepository debts;
     @BeforeEach void authenticate(){SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("tester",null),null,List.of(new SimpleGrantedAuthority("ROLE_RENTAS"),new SimpleGrantedAuthority("ROLE_CASHIER"))));}
     @AfterEach void clear(){SecurityContextHolder.clearContext();}
+    // Los indicadores son globales y otras clases commitean pagos en la misma base (en CI, PostgreSQL),
+    // asi que se compara contra la linea base previa y no contra una base vacia.
     @Test void indicatorsAndTaxpayerSummaryUseConfirmedEconomicData(){
         LocalDate today=LocalDate.now();
         ApiDtos.IndicatorSummaryResponse before=indicators.summary(null,null);

@@ -1,9 +1,17 @@
-name: Deploy backend AWS DEV
+name: Deploy backend AWS
 
-# DEV es efímero: este workflow solo se ejecuta como etapa de cd-dev.yml,
-# que levanta el ambiente, lo verifica y lo destruye.
+# Etapa reutilizable de cd-dev.yml (DEV efímero) y cd-prod.yml (PROD persistente).
 on:
   workflow_call:
+    inputs:
+      environment:
+        description: "Ambiente destino: dev o prod"
+        required: true
+        type: string
+      amplify_branch:
+        description: "Rama de Amplify del ambiente: develop o main"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -14,18 +22,19 @@ jobs:
     name: deploy-backend
     runs-on: ubuntu-latest
     timeout-minutes: 35
-    environment: dev
+    environment: ${{ inputs.environment }}
 
     env:
       AWS_REGION: ${{ vars.AWS_REGION }}
       AWS_ACCOUNT_ID: "756663253996"
-      ECR_REPOSITORY: "modulo-5-rentas-dev-backend"
-      ECS_CLUSTER: "modulo-5-rentas-dev-cluster"
-      ECS_SERVICE: "modulo-5-rentas-dev-backend"
-      ECS_TASK_FAMILY: "modulo-5-rentas-dev-backend"
+      ECR_REPOSITORY: "modulo-5-rentas-${{ inputs.environment }}-backend"
+      ECS_CLUSTER: "modulo-5-rentas-${{ inputs.environment }}-cluster"
+      ECS_SERVICE: "modulo-5-rentas-${{ inputs.environment }}-backend"
+      ECS_TASK_FAMILY: "modulo-5-rentas-${{ inputs.environment }}-backend"
       ECS_CONTAINER_NAME: "backend"
-      AMPLIFY_APP_NAME: "modulo-5-rentas-dev-frontend"
-      AMPLIFY_BRANCH: "develop"
+      AMPLIFY_APP_NAME: "modulo-5-rentas-${{ inputs.environment }}-frontend"
+      AMPLIFY_BRANCH: ${{ inputs.amplify_branch }}
+      TARGET_ENVIRONMENT: ${{ inputs.environment }}
 
     steps:
       - name: Checkout
@@ -40,13 +49,13 @@ jobs:
           aws-region: ${{ vars.AWS_REGION }}
           allowed-account-ids: "756663253996"
           mask-aws-account-id: true
-          role-session-name: backend-dev-${{ github.run_id }}
+          role-session-name: backend-${{ inputs.environment }}-${{ github.run_id }}
 
       - name: Check environment variables
         shell: bash
         run: |
           set -euo pipefail
-          : "${AWS_REGION:?Missing AWS_REGION in the dev environment}"
+          : "${AWS_REGION:?Missing AWS_REGION in the ${TARGET_ENVIRONMENT} environment}"
 
       - name: Resolve frontend origin
         id: frontend
@@ -144,7 +153,7 @@ jobs:
 
           if [[ -z "${demo_mode}" ]]; then
             echo "La definicion de tarea no declara RENTAS_SECURITY_DEV_MODE."
-            echo "Terraform es la unica fuente de esa variable: aplicar infra/environments/dev antes de desplegar."
+            echo "Terraform es la unica fuente de esa variable: aplicar infra/environments/${TARGET_ENVIRONMENT} antes de desplegar."
             echo "Sin ella el backend arranca saludable pero no expone /api/v1/dev-auth/*."
             exit 1
           fi
@@ -176,6 +185,18 @@ jobs:
             --cluster "${ECS_CLUSTER}" \
             --services "${ECS_SERVICE}"
 
+          # Con el circuit breaker, un deploy fallido vuelve a la revision anterior
+          # y el servicio igual queda estable: se confirma que quedo la nueva.
+          read -r primary_task_definition rollout_state <<< "$(aws ecs describe-services \
+            --cluster "${ECS_CLUSTER}" \
+            --services "${ECS_SERVICE}" \
+            --query 'services[0].deployments[?status==`PRIMARY`] | [0].[taskDefinition, rolloutState]' \
+            --output text)"
+          if [[ "${primary_task_definition}" != "${TASK_DEFINITION_ARN}" || "${rollout_state}" != "COMPLETED" ]]; then
+            echo "ECS revirtio el despliegue: quedo ${primary_task_definition} (${rollout_state})."
+            exit 1
+          fi
+
       - name: Publish deployment summary
         shell: bash
         env:
@@ -183,7 +204,7 @@ jobs:
           TASK_DEFINITION_ARN: ${{ steps.task.outputs.arn }}
         run: |
           {
-            echo "### Backend DEV desplegado"
+            echo "### Backend ${TARGET_ENVIRONMENT^^} desplegado"
             echo
             echo "- Image: \`${IMAGE_URI}\`"
             echo "- Task definition: \`${TASK_DEFINITION_ARN}\`"

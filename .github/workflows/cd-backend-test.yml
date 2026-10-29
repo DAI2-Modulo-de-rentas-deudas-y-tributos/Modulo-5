@@ -220,6 +220,18 @@ jobs:
             --cluster "${ECS_CLUSTER}" \
             --services "${ECS_SERVICE}"
 
+          # Con el circuit breaker, un deploy fallido vuelve a la revision anterior
+          # y el servicio igual queda estable: se confirma que quedo la nueva.
+          read -r primary_task_definition rollout_state <<< "$(aws ecs describe-services \
+            --cluster "${ECS_CLUSTER}" \
+            --services "${ECS_SERVICE}" \
+            --query 'services[0].deployments[?status==`PRIMARY`] | [0].[taskDefinition, rolloutState]' \
+            --output text)"
+          if [[ "${primary_task_definition}" != "${TASK_DEFINITION_ARN}" || "${rollout_state}" != "COMPLETED" ]]; then
+            echo "ECS revirtio el despliegue: quedo ${primary_task_definition} (${rollout_state})."
+            exit 1
+          fi
+
       - name: Publish deployment summary
         shell: bash
         env:

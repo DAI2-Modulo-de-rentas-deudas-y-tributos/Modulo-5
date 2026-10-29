@@ -69,6 +69,6 @@ estado antes del destroy y el siguiente apply lo reimporta, porque
 
 Como el ambiente ya no existe cuando termina el run, la evidencia está en
 GitHub Actions: el resumen del smoke test y, si falla el backend, los eventos
-del servicio ECS que imprime `cd-backend-dev`. Para reproducir, volver a
+del servicio ECS que imprime `cd-backend`. Para reproducir, volver a
 ejecutar `Deploy AWS DEV (efímero)` con `workflow_dispatch` o usar TEST, que es
 el ambiente accesible de forma continua.
