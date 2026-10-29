@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.security.MessageDigest;
 import java.time.OffsetDateTime;
 import java.util.*;
 
@@ -55,21 +56,26 @@ class ConfirmedM1Consumer {
 
 @Service
 class ConfirmedM2Consumer {
+    private static final Set<String> UPDATE_TYPES=Set.of("STATUS_CHANGED","ROUTED","PROGRESS","PRIORITY_CHANGED",
+        "ESCALATION_CHANGED","INFORMATION_REQUIRED","INFORMATION_PROVIDED","DUPLICATE_LINKED","REOPENED",
+        "RESOLVED","CLOSED","CANCELLED","CONTENT_UPDATED");
     private final TicketCaseRepository tickets;private final TicketCaseUpdateRepository updates;private final TaxpayerRepository taxpayers;
     private final IntegrationInbox inbox;private final ConfirmedContractValidator validator;private final ObjectMapper json;
     ConfirmedM2Consumer(TicketCaseRepository tickets,TicketCaseUpdateRepository updates,TaxpayerRepository taxpayers,IntegrationInbox inbox,ConfirmedContractValidator validator,ObjectMapper json){this.tickets=tickets;this.updates=updates;this.taxpayers=taxpayers;this.inbox=inbox;this.validator=validator;this.json=json;}
 
     @Transactional TicketCase consume(ConfirmedInboundEvents.M2TicketUpdatedEvent event){
-        validator.validate(event);CatalogService.require(event.eventId().version()==4,"INVALID_EVENT_ID","eventId debe ser UUIDv4");CatalogService.require("ticketUpdated".equals(event.eventType()),"UNSUPPORTED_EVENT_TYPE","Se esperaba ticketUpdated");CatalogService.require("atencion-ciudadana".equals(event.sourceModule()),"INVALID_SOURCE_MODULE","ticketUpdated debe provenir de atención ciudadana");var data=event.data();String ticketId=data.ticketId().toString();Optional<TicketCase> existing=tickets.findByExternalTicketId(ticketId);if(inbox.processed(event.eventId()))return existing.orElse(null);
+        validator.validate(event);CatalogService.require(event.eventId().version()==4,"INVALID_EVENT_ID","eventId debe ser UUIDv4");CatalogService.require("ticketUpdated".equals(event.eventType()),"UNSUPPORTED_EVENT_TYPE","Se esperaba ticketUpdated");CatalogService.require("1.0".equals(event.eventVersion()),"UNSUPPORTED_EVENT_VERSION","ticketUpdated sólo admite eventVersion 1.0");CatalogService.require("atencion-ciudadana".equals(event.sourceModule()),"INVALID_SOURCE_MODULE","ticketUpdated debe provenir de atención ciudadana");var data=event.data();CatalogService.require(UPDATE_TYPES.contains(data.updateType()),"UNSUPPORTED_UPDATE_TYPE","updateType de M2 no soportado");String ticketId=data.ticketId().toString();Optional<TicketCase> existing=tickets.findByExternalTicketId(ticketId);if(inbox.processed(event.eventId()))return existing.orElse(null);
         var normalized=new NormalizedIntegrationEvent(event.eventId().toString(),event.eventType(),event.occurredAt(),event.sourceModule(),ticketId,json.valueToTree(data),event.correlationId()==null?null:event.correlationId().toString());
-        if(!"M5".equals(data.responsibleAreaId())){inbox.ignore(normalized);return null;}
+        if(!"M5".equals(data.responsibleAreaId())||isAdministrativeReclassification(data)){inbox.ignore(normalized);return null;}
+        if(existing.isEmpty()&&Set.of("REGISTERED","IN_REVIEW","DUPLICATE").contains(data.currentStatus())){inbox.ignore(normalized);return null;}
+        if("ROUTED".equals(data.updateType()))validateRouting(data.details());
         IntegrationEventLog log=inbox.receive(normalized,event);TicketCase ticket=existing.orElseGet(TicketCase::new);
         if(ticket.id==null){CatalogService.require("ROUTED".equals(data.updateType()),"TICKET_SNAPSHOT_REQUIRED","El primer evento del ticket debe ser ROUTED");ticket.externalTicketId=ticketId;ticket.createdAt=event.occurredAt();}
-        if(ticket.lastExternalUpdatedAt!=null&&data.updatedAt().isBefore(ticket.lastExternalUpdatedAt)){inbox.complete(normalized,log);return ticket;}
+        if(ticket.lastExternalUpdatedAt!=null&&!data.updatedAt().isAfter(ticket.lastExternalUpdatedAt)){inbox.complete(normalized,log);return ticket;}
         ticket.publicId=data.publicId();if(event.correlationId()!=null)ticket.correlationId=event.correlationId().toString();ticket.lastSourceEventId=event.eventId().toString();
-        CatalogService.require(!data.isAnonymous()||data.citizenId()==null,"INVALID_EVENT","Un ticket anónimo no puede incluir citizenId");
+        CatalogService.require(data.isAnonymous()?data.citizenId()==null:data.citizenId()!=null,"INVALID_EVENT","citizenId debe estar presente sólo en tickets identificados");
         ticket.externalCitizenId=data.isAnonymous()?null:data.citizenId()==null?null:data.citizenId().toString();ticket.taxpayerId=ticket.externalCitizenId==null?null:taxpayers.findByTaxpayerTypeAndExternalId(TaxpayerType.CITIZEN,ticket.externalCitizenId).map(x->x.id).orElse(null);
-        if("ROUTED".equals(data.updateType())){JsonNode routing=data.details()==null?null:data.details().path("routing");ticket.category=text(routing,"requestType");if(ticket.category==null)ticket.category=text(routing,"ticketType");ticket.description=text(routing,"description");}
+        if("ROUTED".equals(data.updateType())){JsonNode routing=data.details().path("routing");ticket.requestType=text(routing,"requestType");ticket.category=text(routing,"category");ticket.subcategory=text(routing,"subcategory");ticket.description=text(routing,"description");if(routing.path("reassignment").asBoolean(false))ticket.assignedTo=null;}
         if(ticket.category==null)ticket.category="M2";if(ticket.description==null)ticket.description=data.publicMessage()==null?"Ticket derivado a Rentas":data.publicMessage();
         ticket.priority=priority(data.currentPriority());ticket.status=status(data.currentStatus());ticket.updatedAt=data.updatedAt();ticket.lastExternalUpdatedAt=data.updatedAt();if(ticket.status==TicketCaseStatus.COMPLETED||ticket.status==TicketCaseStatus.REJECTED)ticket.completedAt=data.updatedAt();else ticket.completedAt=null;tickets.save(ticket);
         if("INFORMATION_PROVIDED".equals(data.updateType())){String response=text(data.details(),"informationResponse","message");CatalogService.require((response!=null&&!response.isBlank())||(data.attachments()!=null&&!data.attachments().isEmpty()),"INVALID_EVENT","INFORMATION_PROVIDED requiere mensaje o adjunto");TicketCaseUpdate update=new TicketCaseUpdate();update.ticketCaseId=ticket.id;update.type=TicketUpdateType.INTERNAL_NOTE;update.message=response==null?"Se recibieron adjuntos nuevos":response;update.createdBy="M2";update.createdAt=data.updatedAt();updates.save(update);}
@@ -77,7 +83,20 @@ class ConfirmedM2Consumer {
     }
 
     private TicketPriority priority(String value){try{return TicketPriority.valueOf(value);}catch(IllegalArgumentException ex){throw new BusinessException("INVALID_EVENT","Prioridad de ticket desconocida",422);}}
-    private TicketCaseStatus status(String value){return switch(value){case "ROUTED","OPEN","IN_REVIEW"->TicketCaseStatus.OPEN;case "IN_PROGRESS"->TicketCaseStatus.IN_PROGRESS;case "PENDING_INFORMATION"->TicketCaseStatus.WAITING_FOR_INFORMATION;case "RESOLVED","CLOSED"->TicketCaseStatus.COMPLETED;case "CANCELLED"->TicketCaseStatus.REJECTED;default->throw new BusinessException("INVALID_EVENT","Estado de ticket desconocido",422);};}
+    private TicketCaseStatus status(String value){return switch(value){case "ROUTED"->TicketCaseStatus.OPEN;case "REGISTERED","IN_REVIEW"->TicketCaseStatus.IN_REVIEW;case "DUPLICATE"->TicketCaseStatus.DUPLICATE;case "IN_PROGRESS"->TicketCaseStatus.IN_PROGRESS;case "PENDING_INFORMATION"->TicketCaseStatus.WAITING_FOR_INFORMATION;case "RESOLVED","CLOSED"->TicketCaseStatus.COMPLETED;case "CANCELLED"->TicketCaseStatus.REJECTED;default->throw new BusinessException("INVALID_EVENT","Estado de ticket desconocido",422);};}
+    private boolean isAdministrativeReclassification(ConfirmedInboundEvents.M2TicketUpdatedData data){
+        if(!Set.of("INFORMATION_REQUIRED","INFORMATION_PROVIDED").contains(data.updateType())||data.details()==null)return false;
+        String branch="INFORMATION_REQUIRED".equals(data.updateType())?"informationRequest":"informationResponse";
+        return "RECLASSIFICATION".equals(text(data.details(),branch,"purpose"));
+    }
+    private void validateRouting(JsonNode details){
+        JsonNode routing=details==null?null:details.path("routing");
+        CatalogService.require(routing!=null&&routing.isObject(),"INVALID_EVENT","ROUTED requiere details.routing");
+        for(String field:List.of("requestType","category","subcategory","ticketType","summary","description"))
+            CatalogService.require(text(routing,field)!=null&&!text(routing,field).isBlank(),"INVALID_EVENT","ROUTED requiere details.routing."+field);
+        JsonNode reassignment=routing.path("reassignment");
+        CatalogService.require(reassignment.isMissingNode()||reassignment.isBoolean(),"INVALID_EVENT","routing.reassignment debe ser booleano");
+    }
     private String text(JsonNode node,String... path){if(node==null)return null;JsonNode current=node;for(String part:path)current=current.path(part);return current.isMissingNode()||current.isNull()?null:current.asText();}
 }
 
@@ -85,13 +104,61 @@ class ConfirmedM2Consumer {
 class ConfirmedM8Consumer {
     private static final Set<String> STATUSES=Set.of("APPROVED","REJECTED","SUSPENDED","FINALIZED");
     private final SocialBenefitRepository benefits;private final SocialBenefitTaxConceptRepository links;private final TaxpayerRepository taxpayers;
+    private final SocialBenefitRuleRepository rules;private final SocialBenefitEventHistoryRepository history;
     private final IntegrationInbox inbox;private final ConfirmedContractValidator validator;private final ObjectMapper json;
-    ConfirmedM8Consumer(SocialBenefitRepository benefits,SocialBenefitTaxConceptRepository links,TaxpayerRepository taxpayers,IntegrationInbox inbox,ConfirmedContractValidator validator,ObjectMapper json){this.benefits=benefits;this.links=links;this.taxpayers=taxpayers;this.inbox=inbox;this.validator=validator;this.json=json;}
+    ConfirmedM8Consumer(SocialBenefitRepository benefits,SocialBenefitTaxConceptRepository links,TaxpayerRepository taxpayers,SocialBenefitRuleRepository rules,SocialBenefitEventHistoryRepository history,IntegrationInbox inbox,ConfirmedContractValidator validator,ObjectMapper json){this.benefits=benefits;this.links=links;this.taxpayers=taxpayers;this.rules=rules;this.history=history;this.inbox=inbox;this.validator=validator;this.json=json;}
 
     @Transactional SocialBenefitReference consume(ConfirmedInboundEvents.M8SocialBenefitUpdatedEvent event){
-        validator.validate(event);CatalogService.require("socialBenefitUpdated".equals(event.eventType()),"UNSUPPORTED_EVENT_TYPE","Se esperaba socialBenefitUpdated");var data=event.payload();CatalogService.require(STATUSES.contains(data.status()),"INVALID_EVENT","Estado de beneficio social desconocido");CatalogService.require(data.endDate()==null||!data.endDate().isBefore(data.startDate()),"INVALID_VALIDITY_RANGE","La vigencia del beneficio es inválida");Optional<SocialBenefitReference> existing=benefits.findByExternalBenefitId(data.benefitId());if(inbox.processed(event.eventId()))return existing.orElse(null);
-        var normalized=new NormalizedIntegrationEvent(event.eventId(),event.eventType(),event.timestamp(),event.sourceModule(),null,json.valueToTree(data),null);IntegrationEventLog log=inbox.receive(normalized,event);SocialBenefitReference benefit=existing.orElseGet(SocialBenefitReference::new);benefit.externalBenefitId=data.benefitId();benefit.externalCitizenId=data.citizenId();benefit.taxpayerId=taxpayers.findByTaxpayerTypeAndExternalId(TaxpayerType.CITIZEN,data.citizenId()).map(x->x.id).orElse(null);benefit.externalApplicationId=data.applicationId();benefit.externalProgramId=data.programId();benefit.programName=data.programName();benefit.benefitType=data.benefits().stream().anyMatch(x->"TAX_EXEMPTION".equals(x.type()))?"TAX_EXEMPTION":"SOCIAL_BENEFIT";benefit.benefitsPayload=write(data.benefits());benefit.externalStatus=data.status();benefit.calculatedStatus=calculatedStatus(data.status());benefit.discountPercentage=null;benefit.validFrom=data.startDate();benefit.validUntil=data.endDate();benefit.sourceEventId=IntegrationInbox.technicalId(event.eventId());benefit.externalSourceEventId=event.eventId();benefit.updatedAt=data.updatedAt();benefits.save(benefit);links.deleteBySocialBenefitId(benefit.id);inbox.complete(normalized,log);return benefit;
+        validator.validate(event);
+        CatalogService.require("socialBenefitUpdated".equals(event.eventType()),"UNSUPPORTED_EVENT_TYPE","Se esperaba socialBenefitUpdated");
+        CatalogService.require("1.0".equals(event.eventVersion()),"UNSUPPORTED_EVENT_VERSION","Versión de M8 no soportada");
+        CatalogService.require("desarrollo-social".equals(event.sourceModule()),"INVALID_SOURCE_MODULE","El beneficio debe provenir de M8");
+        var data=event.data();CatalogService.require(STATUSES.contains(data.status()),"INVALID_EVENT","Estado de beneficio social desconocido");
+        CatalogService.require(data.startDate()==null||data.endDate()==null||!data.endDate().isBefore(data.startDate()),"INVALID_VALIDITY_RANGE","La vigencia del beneficio es inválida");
+        String benefitId=data.benefitId().toString(), citizenId=data.citizenId().toString(), payloadHash=hash(data);
+        Optional<SocialBenefitReference> existing=benefits.findByExternalBenefitIdForUpdate(benefitId);
+        if(inbox.processed(event.eventId().toString()))return existing.orElse(null);
+        existing.ifPresent(current->{
+            CatalogService.require(current.externalCitizenId.equals(citizenId)&&
+                Objects.equals(current.externalApplicationId,data.applicationId().toString())&&
+                Objects.equals(current.externalProgramId,data.programId().toString()),
+                "BENEFIT_IDENTITY_CONFLICT","El beneficio no puede cambiar de ciudadano, solicitud o programa");
+        });
+        var normalized=new NormalizedIntegrationEvent(event.eventId().toString(),event.eventType(),event.occurredAt(),event.sourceModule(),null,json.valueToTree(data),null);
+        IntegrationEventLog log=inbox.receive(normalized,event);
+        SocialBenefitReference benefit=existing.orElseGet(SocialBenefitReference::new);
+        String outcome="APPLIED";
+        if(existing.isPresent()&&data.updatedAt().isBefore(benefit.updatedAt))outcome="STALE";
+        else if(existing.isPresent()&&data.updatedAt().isEqual(benefit.updatedAt))
+            outcome=Objects.equals(benefit.sourcePayloadHash,payloadHash)?"SAME_STATE":"CONFLICT";
+        if("APPLIED".equals(outcome)){
+            benefit.externalBenefitId=benefitId;benefit.externalCitizenId=citizenId;
+            benefit.taxpayerId=taxpayers.findByTaxpayerTypeAndCanonicalCitizenId(TaxpayerType.CITIZEN,data.citizenId()).map(x->x.id).orElse(null);
+            benefit.externalApplicationId=data.applicationId().toString();benefit.externalProgramId=data.programId().toString();benefit.programName=data.programName();
+            benefit.benefitType=data.benefits().stream().anyMatch(x->"TAX_EXEMPTION".equals(x.type()))?"TAX_EXEMPTION":"SOCIAL_BENEFIT";
+            benefit.benefitsPayload=write(data.benefits());benefit.externalStatus=data.status();benefit.externalReason=data.reason();
+            benefit.calculatedStatus=calculatedStatus(data.status());benefit.discountPercentage=null;
+            benefit.validFrom=data.startDate();benefit.validUntil=data.endDate();
+            benefit.sourceEventId=event.eventId();benefit.externalSourceEventId=event.eventId().toString();
+            benefit.lastCorrelationId=event.correlationId();benefit.sourcePayloadHash=payloadHash;
+            benefit.updatedAt=data.updatedAt();benefit.receivedAt=OffsetDateTime.now();
+            benefit.resolutionStatus=resolution(benefit,data.programId());
+            benefits.save(benefit);links.deleteBySocialBenefitId(benefit.id);
+        }
+        SocialBenefitEventHistory entry=new SocialBenefitEventHistory();entry.sourceEventId=event.eventId();entry.externalBenefitId=benefitId;
+        entry.sourceUpdatedAt=data.updatedAt();entry.externalStatus=data.status();entry.outcome=outcome;entry.payloadHash=payloadHash;
+        entry.recordedAt=OffsetDateTime.now();history.save(entry);
+        inbox.complete(normalized,log);return benefit;
     }
+    private String resolution(SocialBenefitReference benefit,UUID programId){
+        if(!"TAX_EXEMPTION".equals(benefit.benefitType))return "NOT_APPLICABLE";
+        if(benefit.taxpayerId==null)return "PENDING_CITIZEN";
+        if(benefit.validFrom==null)return "PENDING_VALIDITY";
+        return rules.findByProgramId(programId).stream().anyMatch(r->r.status==SocialBenefitRuleStatus.APPROVED&&r.enabled&&
+            (r.validUntil==null||!r.validUntil.isBefore(benefit.validFrom))&&
+            (benefit.validUntil==null||!r.validFrom.isAfter(benefit.validUntil)))?"RESOLVED":"PENDING_TAX_RULE";
+    }
+    private String hash(Object data){try{byte[] digest=MessageDigest.getInstance("SHA-256").digest(json.writeValueAsBytes(data));return HexFormat.of().formatHex(digest);}catch(Exception ex){throw new BusinessException("INVALID_EVENT_PAYLOAD","No se pudo resumir el beneficio",422);}}
     private String write(Object value){try{return json.writeValueAsString(value);}catch(Exception ex){throw new BusinessException("INVALID_EVENT_PAYLOAD","No se pudo serializar benefits",422);}}
     private SocialBenefitStatus calculatedStatus(String external){return switch(external){case "APPROVED"->SocialBenefitStatus.ACTIVE;case "SUSPENDED"->SocialBenefitStatus.SUSPENDED;case "FINALIZED"->SocialBenefitStatus.EXPIRED;case "REJECTED"->SocialBenefitStatus.CANCELLED;default->throw new BusinessException("INVALID_EVENT","Estado de beneficio social desconocido",422);};}
 }
@@ -103,7 +170,6 @@ class ConfirmedM7Consumer {
 
     @Transactional ExternalObligation consume(ConfirmedInboundEvents.M7InfractionConfirmedEvent event){
         validator.validate(event);
-        CatalogService.require(event.eventId().version()==4,"INVALID_EVENT_ID","eventId debe ser UUIDv4");
         CatalogService.require("infractionConfirmed".equals(event.eventType()),"UNSUPPORTED_EVENT_TYPE","Se esperaba infractionConfirmed");
         CatalogService.require("1.0".equals(event.eventVersion()),"UNSUPPORTED_EVENT_VERSION","infractionConfirmed sólo admite eventVersion 1.0");
         CatalogService.require("transito".equals(event.sourceModule()),"INVALID_SOURCE_MODULE","infractionConfirmed sólo admite sourceModule transito");

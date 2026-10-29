@@ -14,7 +14,7 @@ import useTaxpayerIndex from "../../hooks/useTaxpayerIndex.js";
 import { ticketService } from "../../services/rentasService.js";
 import { formatDateTime, labelFor } from "../../lib/format.js";
 
-/** Estados acordados con M2: viajan dentro de updateTicketStatus, no como eventos sueltos. */
+/** Operaciones locales que solicitan una transición a M2; el estado canónico lo confirma M2. */
 const TICKET_STATUSES = [
   { value: "IN_PROGRESS", label: "En curso" },
   { value: "WAITING_FOR_INFORMATION", label: "Esperando información" },
@@ -78,9 +78,9 @@ export default function TicketsPage() {
       header: "",
       align: "right",
       render: (row) => (
-        ["COMPLETED", "REJECTED"].includes(row.status)
-          ? <span className="text-neutral-400">—</span>
-          : <Button size="sm" variant="secondary" onClick={() => setSelected(row)}>Cambiar estado</Button>
+        ["OPEN", "IN_PROGRESS"].includes(row.status)
+          ? <Button size="sm" variant="secondary" onClick={() => setSelected(row)}>Cambiar estado</Button>
+          : <span className="text-neutral-400">—</span>
       ),
     },
   ];
@@ -164,15 +164,18 @@ export default function TicketsPage() {
 
 /** M5 solicita la transición a M2 mediante los casos de uso del backend. */
 function UpdateTicketModal({ ticket, citizenName, onClose, onDone }) {
-  const [status, setStatus] = useState(ticket.status === "OPEN" ? "IN_PROGRESS" : ticket.status);
+  const [status, setStatus] = useState(ticket.status === "OPEN" ? "IN_PROGRESS" : "");
   const [message, setMessage] = useState("");
-  const [takeOwnership, setTakeOwnership] = useState(!ticket.assignedTo);
   const [error, setError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
   const onSubmit = async (event) => {
     event.preventDefault();
     setError(null);
+    if (!status) {
+      setError("Seleccioná una operación para el ticket.");
+      return;
+    }
     if (status !== "IN_PROGRESS" && !message.trim()) {
       setError("Escribí un mensaje para continuar con la gestión del ticket.");
       return;
@@ -184,7 +187,6 @@ function UpdateTicketModal({ ticket, citizenName, onClose, onDone }) {
           ticketId: ticket.ticketId,
           status,
           message: message.trim(),
-          takeOwnership,
         }),
       );
     } catch (caught) {
@@ -260,7 +262,7 @@ function UpdateTicketModal({ ticket, citizenName, onClose, onDone }) {
         type="select"
         value={status}
         onChange={(event) => setStatus(event.target.value)}
-        options={TICKET_STATUSES}
+        options={ticket.status === "OPEN" ? TICKET_STATUSES : TICKET_STATUSES.filter((option) => option.value !== "IN_PROGRESS")}
         required
       />
 
@@ -276,15 +278,9 @@ function UpdateTicketModal({ ticket, citizenName, onClose, onDone }) {
         />
       )}
 
-      <label className="flex items-center gap-2 text-[13px] text-neutral-600">
-        <input
-          type="checkbox"
-          checked={takeOwnership}
-          onChange={(event) => setTakeOwnership(event.target.checked)}
-          className="h-4 w-4 rounded border-neutral-300 accent-[#D63031]"
-        />
-        Asignarme este ticket
-      </label>
+      {status === "IN_PROGRESS" && ticket.status === "OPEN" && (
+        <p className="text-[13px] text-neutral-600">Al iniciar la gestión, el ticket quedará asignado a tu usuario.</p>
+      )}
     </Modal>
   );
 }

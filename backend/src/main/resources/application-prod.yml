@@ -3,6 +3,7 @@ spring:
     locations:
       - classpath:db/migration
       - classpath:db/migration-production
+      - classpath:db/migration-postgresql
   jpa:
     properties:
       hibernate.hbm2ddl.schema_filter_provider: ar.gob.municipalidad.rentas.ProductionSchemaFilterProvider
