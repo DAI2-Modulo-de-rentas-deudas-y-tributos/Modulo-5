@@ -16,6 +16,9 @@
         <commons-compress.version>1.26.0</commons-compress.version>
         <netty.version>4.1.139.Final</netty.version>
         <postgresql.version>42.7.14</postgresql.version>
+        <m5.domain.coverage.line.minimum>0.80</m5.domain.coverage.line.minimum>
+        <m5.domain.coverage.branch.minimum>0.70</m5.domain.coverage.branch.minimum>
+        <m5.domain.coverage.families>BillingService,CreditBalanceService,AdjustmentService,ElectronicPaymentService,ExemptionService,LateChargeService,LiquidationRunService,LiquidationService,PaymentPlanPrincipalLedger,PaymentPlanService,PaymentService,PlanWorkflowService,ReversalService,DueDateProcessor</m5.domain.coverage.families>
     </properties>
     <dependencyManagement>
         <dependencies>
@@ -57,28 +60,25 @@
                         <rule><element>BUNDLE</element><limits><limit>
                             <counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.85</minimum>
                         </limit></limits></rule>
-                        <rule><element>BUNDLE</element><includes>
-                            <include>ar/gob/municipalidad/rentas/BillingService*</include>
-                            <include>ar/gob/municipalidad/rentas/CreditBalanceService*</include>
-                            <include>ar/gob/municipalidad/rentas/AdjustmentService*</include>
-                            <include>ar/gob/municipalidad/rentas/ElectronicPaymentService*</include>
-                            <include>ar/gob/municipalidad/rentas/ExemptionService*</include>
-                            <include>ar/gob/municipalidad/rentas/LateChargeService*</include>
-                            <include>ar/gob/municipalidad/rentas/LiquidationRunService*</include>
-                            <include>ar/gob/municipalidad/rentas/LiquidationService*</include>
-                            <include>ar/gob/municipalidad/rentas/PaymentPlanPrincipalLedger*</include>
-                            <include>ar/gob/municipalidad/rentas/PaymentPlanService*</include>
-                            <include>ar/gob/municipalidad/rentas/PaymentService*</include>
-                            <include>ar/gob/municipalidad/rentas/PlanWorkflowService*</include>
-                            <include>ar/gob/municipalidad/rentas/ReversalService*</include>
-                            <include>ar/gob/municipalidad/rentas/DueDateProcessor*</include>
-                        </includes><limits>
-                            <limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.80</minimum></limit>
-                            <limit><counter>BRANCH</counter><value>COVEREDRATIO</value><minimum>0.70</minimum></limit>
-                        </limits></rule>
                     </rules></configuration>
                 </execution>
             </executions>
+        </plugin>
+        <plugin>
+            <groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId>
+            <executions><execution>
+                <id>domain-coverage-gate</id><phase>verify</phase><goals><goal>test</goal></goals>
+                <configuration>
+                    <includes><include>**/DomainCoverageGate.java</include></includes>
+                    <systemPropertyVariables>
+                        <jacoco.domain.pom>${project.basedir}/pom.xml</jacoco.domain.pom>
+                        <jacoco.domain.csv>${project.build.directory}/site/jacoco/jacoco.csv</jacoco.domain.csv>
+                        <jacoco.domain.output>${project.build.directory}/site/jacoco-domain</jacoco.domain.output>
+                        <jacoco.domain.lines.minimum>${m5.domain.coverage.line.minimum}</jacoco.domain.lines.minimum>
+                        <jacoco.domain.branches.minimum>${m5.domain.coverage.branch.minimum}</jacoco.domain.branches.minimum>
+                    </systemPropertyVariables>
+                </configuration>
+            </execution></executions>
         </plugin>
     </plugins></build>
     <profiles>
