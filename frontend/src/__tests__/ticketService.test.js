@@ -35,4 +35,18 @@ describe("gestión local de tickets", () => {
       "/api/v1/tickets/7/complete",
     ]);
   });
+
+  it("envia el avance por la operacion existente de actualizaciones", async () => {
+    await ticketService.updateStatus({ ticketId: 7, status: "PROGRESS", message: "Se reviso el expediente" });
+    expect(request).toHaveBeenCalledWith("/api/v1/tickets/7/updates", {
+      method: "POST", body: { message: "Se reviso el expediente" },
+    });
+  });
+
+  it("envia una devolucion con explicacion privada", async () => {
+    await ticketService.updateStatus({ ticketId: 7, status: "RETURNED", reasonCode: "REQUEST_TYPE_MISMATCH", message: "Corresponde a otra area" });
+    expect(request).toHaveBeenCalledWith("/api/v1/tickets/7/return", {
+      method: "POST", body: { reasonCode: "REQUEST_TYPE_MISMATCH", internalMessage: "Corresponde a otra area" },
+    });
+  });
 });

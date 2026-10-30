@@ -183,7 +183,14 @@ interface AdjustmentRepository extends FilteredRepository<AdjustmentRequest,Long
 }
 interface LiquidationRunRepository extends FilteredRepository<LiquidationRun,Long> { @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select r from LiquidationRun r where r.id=:id") Optional<LiquidationRun> findByIdForUpdate(Long id); long countByStatus(LiquidationRunStatus status); }
 interface LiquidationRunItemRepository extends JpaRepository<LiquidationRunItem,Long> { List<LiquidationRunItem> findByLiquidationRunIdOrderById(Long runId); }
-interface TicketCaseRepository extends FilteredRepository<TicketCase,Long> { Optional<TicketCase> findByExternalTicketId(String externalTicketId); long countByStatusIn(Collection<TicketCaseStatus> statuses); }
+interface TicketCaseRepository extends FilteredRepository<TicketCase,Long> {
+    Optional<TicketCase> findByExternalTicketId(String externalTicketId);
+    @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select t from TicketCase t where t.externalTicketId=:externalTicketId")
+    Optional<TicketCase> findByExternalTicketIdForUpdate(@Param("externalTicketId") String externalTicketId);
+    @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select t from TicketCase t where t.id=:id")
+    Optional<TicketCase> findByIdForUpdate(@Param("id") Long id);
+    long countByStatusIn(Collection<TicketCaseStatus> statuses);
+}
 interface TicketCaseUpdateRepository extends JpaRepository<TicketCaseUpdate,Long> { List<TicketCaseUpdate> findByTicketCaseIdOrderByCreatedAt(Long ticketCaseId); }
 interface SocialBenefitRepository extends FilteredRepository<SocialBenefitReference,Long> {
     Optional<SocialBenefitReference> findByExternalBenefitId(String externalBenefitId);

@@ -1,4 +1,12 @@
-# Eventos de Rentas (M5) — preparación de la primera entrega
+# Eventos de Rentas (M5) — antecedente de la primera entrega
+
+> **Documento histórico.** Los estados, nombres y pendientes descritos debajo
+> corresponden a la primera entrega y no sustituyen los contratos aceptados
+> posteriormente. En particular, M8 V3 usa `debtOverdue` en lugar del antiguo
+> `overdueDebt`; M2 v1.78 y los flujos M1/M4/M7/M8 cuentan con validación
+> local. Consultar [estado local consolidado](../../docs/integrations/M5_ESTADO_LOCAL_2026-10-30.md)
+> y [contratos de integración vigentes](../../backend/INTEGRATION_CONTRACTS.md).
+> La entrega E2E por Core continúa pendiente.
 
 Todos los eventos salientes de integración usan el sobre acordado con Core:
 `eventId`, `eventType`, `eventVersion`, `occurredAt`, `sourceModule`,

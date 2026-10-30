@@ -97,7 +97,10 @@ class ExemptionHistoryTests {
         taxpayers.saveAndFlush(taxpayer);
 
         ExemptionRequest request=create();
-        JsonNode requested=eventFor(request.id,"exemptionRequested").path("data");
+        JsonNode requestEnvelope=eventFor(request.id,"exemptionRequested");
+        JsonNode requested=requestEnvelope.path("data");
+        assertThat(requestEnvelope.path("correlationId").asText()).isEqualTo(request.integrationId.toString());
+        assertThat(requestEnvelope.path("causationId").isNull()).isTrue();
         assertThat(requested.path("requestId").asText()).isEqualTo(request.integrationId.toString());
         assertThat(requested.path("citizenId").asText()).isEqualTo(m1CitizenId.toString());
         assertThat(requested.path("conceptCode").asText()).isEqualTo(concept.code);
@@ -106,7 +109,10 @@ class ExemptionHistoryTests {
         exemptions.start(request.id);
         exemptions.submit(request.id,"Revisión interna");
         Exemption approved=TestActorSupport.asApprover(() -> exemptions.approve(request.id,null));
-        JsonNode resolved=eventFor(request.id,"updateExemptionStatus").path("data");
+        JsonNode resolutionEnvelope=eventFor(request.id,"updateExemptionStatus");
+        JsonNode resolved=resolutionEnvelope.path("data");
+        assertThat(resolutionEnvelope.path("correlationId").asText()).isEqualTo(requestEnvelope.path("correlationId").asText());
+        assertThat(resolutionEnvelope.path("causationId").asText()).isEqualTo(requestEnvelope.path("eventId").asText());
         assertThat(resolved.path("requestId").asText()).isEqualTo(request.integrationId.toString());
         assertThat(resolved.path("citizenId").asText()).isEqualTo(m1CitizenId.toString());
         assertThat(resolved.path("exemptionId").asText()).isEqualTo(approved.integrationId.toString());
@@ -130,6 +136,8 @@ class ExemptionHistoryTests {
         assertThat(rejected.path("reason").asText()).isEqualTo("No cumple los requisitos");
         assertThat(rejected.has("exemptionId")).isFalse();
         assertThat(rejected.has("percentage")).isFalse();
+        assertThat(rejected.has("validFrom")).isFalse();
+        assertThat(rejected.has("validUntil")).isFalse();
     }
 
     @Test void underReviewHistoryShowsTransition() {

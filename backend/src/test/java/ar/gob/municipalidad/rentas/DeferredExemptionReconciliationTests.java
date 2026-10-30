@@ -88,8 +88,12 @@ class DeferredExemptionReconciliationTests {
         OutboxEvent requested=event(request.id,"exemptionRequested");
         OutboxEvent resolved=event(request.id,"updateExemptionStatus");
         assertThat(requested.createdAt).isBeforeOrEqualTo(resolved.createdAt);
-        JsonNode requestedData=json.readTree(requested.payload).path("data");
-        JsonNode resolvedData=json.readTree(resolved.payload).path("data");
+        JsonNode requestEnvelope=json.readTree(requested.payload),resolutionEnvelope=json.readTree(resolved.payload);
+        assertThat(requestEnvelope.path("correlationId").asText()).isEqualTo(request.integrationId.toString());
+        assertThat(resolutionEnvelope.path("correlationId").asText()).isEqualTo(requestEnvelope.path("correlationId").asText());
+        assertThat(resolutionEnvelope.path("causationId").asText()).isEqualTo(requested.id.toString());
+        JsonNode requestedData=requestEnvelope.path("data");
+        JsonNode resolvedData=resolutionEnvelope.path("data");
         assertThat(requestedData.path("requestId").asText()).isEqualTo(request.integrationId.toString());
         assertThat(requestedData.path("citizenId").asText()).isEqualTo(canonical.toString());
         assertThat(resolvedData.path("requestId").asText()).isEqualTo(request.integrationId.toString());

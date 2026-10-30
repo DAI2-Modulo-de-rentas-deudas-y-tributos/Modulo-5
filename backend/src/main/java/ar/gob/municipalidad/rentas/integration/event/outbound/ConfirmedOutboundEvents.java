@@ -73,7 +73,7 @@ public final class ConfirmedOutboundEvents {
         public OverdueDebtPayload {
             if(debtId==null||citizenId==null||blank(conceptCode)||outstandingAmount==null
                 ||outstandingAmount.signum()<=0||dueDate==null)
-                throw new IllegalArgumentException("overdueDebt requiere UUID, concepto, saldo positivo y vencimiento");
+                throw new IllegalArgumentException("debtOverdue requiere UUID, concepto, saldo positivo y vencimiento");
         }
     }
     @JsonInclude(JsonInclude.Include.NON_NULL)

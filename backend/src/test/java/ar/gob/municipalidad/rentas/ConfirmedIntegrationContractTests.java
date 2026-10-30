@@ -142,14 +142,14 @@ class ConfirmedIntegrationContractTests {
             case "REJECTED"->json.readTree("{\"cancellation\":{\"reasonCode\":\"REJECTED_BY_AREA\"}}");
             default->null;
         };
-        JsonNode tree=json.valueToTree(producer.ticketStatus("550e8400-e29b-41d4-a716-446655440000",updateType,"mensaje","interno",details,actor));assertThat(tree.path("eventType").asText()).isEqualTo("updateTicketStatus");assertThat(tree.path("data").path("updateType").asText()).isEqualTo(updateType);assertThat(tree.path("data").path("updatedBy").path("type").asText()).isEqualTo("EXTERNAL_USER");assertThat(tree.path("data").path("updatedBy").path("id").asText()).isEqualTo(actor.toString());assertThat(tree.path("data").path("updateOccurredAt").isTextual()).isTrue();assertThat(tree.path("data").has("status")).isFalse();assertThat(tree.path("data").has("newStatus")).isFalse();assertThat(tree.path("data").has("previousStatus")).isFalse();
+        JsonNode tree=json.valueToTree(producer.ticketStatus("550e8400-e29b-41d4-a716-446655440000",updateType,"mensaje","interno",details,actor,"294e7015-0e6a-4bd1-8240-ce3148fd937d",null));assertThat(tree.path("eventType").asText()).isEqualTo("updateTicketStatus");assertThat(tree.path("data").path("updateType").asText()).isEqualTo(updateType);assertThat(tree.path("data").path("updatedBy").path("type").asText()).isEqualTo("EXTERNAL_USER");assertThat(tree.path("data").path("updatedBy").path("id").asText()).isEqualTo(actor.toString());assertThat(tree.path("data").path("updateOccurredAt").isTextual()).isTrue();assertThat(tree.path("data").has("status")).isFalse();assertThat(tree.path("data").has("newStatus")).isFalse();assertThat(tree.path("data").has("previousStatus")).isFalse();
     }
 
     @Test void m2OutboundRejectsMissingHumanUuidAndInvalidVariant() throws Exception {
         String id="550e8400-e29b-41d4-a716-446655440000";
-        assertThatThrownBy(()->producer.ticketStatus(id,"STARTED","Iniciado",null,null,(UUID)null)).isInstanceOf(BusinessException.class).hasMessageContaining("UUID de integración");
-        assertThatThrownBy(()->producer.ticketStatus(id,"RESOLVED",null,null,json.readTree("{\"resolution\":{\"type\":\"ACTION_COMPLETED\"}}"),UUID.randomUUID())).isInstanceOf(BusinessException.class).hasMessageContaining("publicMessage");
-        JsonNode system=json.valueToTree(producer.systemTicketStatus(id,"STARTED","Inicio automático",null,null));
+        assertThatThrownBy(()->producer.ticketStatus(id,"STARTED","Iniciado",null,null,(UUID)null,"294e7015-0e6a-4bd1-8240-ce3148fd937d",null)).isInstanceOf(BusinessException.class).hasMessageContaining("UUID de integración");
+        assertThatThrownBy(()->producer.ticketStatus(id,"RESOLVED",null,null,json.readTree("{\"resolution\":{\"type\":\"ACTION_COMPLETED\"}}"),UUID.randomUUID(),"294e7015-0e6a-4bd1-8240-ce3148fd937d",null)).isInstanceOf(BusinessException.class).hasMessageContaining("publicMessage");
+        JsonNode system=json.valueToTree(producer.systemTicketStatus(id,"STARTED","Inicio automático",null,null,"294e7015-0e6a-4bd1-8240-ce3148fd937d",null));
         assertThat(system.path("data").path("updatedBy").path("type").asText()).isEqualTo("SYSTEM");
         assertThat(system.path("data").path("updatedBy").path("id").isNull()).isTrue();
     }
@@ -177,9 +177,9 @@ class ConfirmedIntegrationContractTests {
         assertThat(tree.path("causationId").asText()).isEqualTo(cause);
     }
 
-    @ParameterizedTest @ValueSource(strings={"APPROVED","REJECTED","SUSPENDED","FINALIZED"})
+    @ParameterizedTest @ValueSource(strings={"APPROVED","SUSPENDED","FINALIZED"})
     void m8ConfirmedStatusesAreStoredSeparatelyFromCalculatedState(String status) throws Exception {
-        SocialBenefitReference result=m8.consume(benefit("M8-EVT-"+status,status));assertThat(result.externalStatus).isEqualTo(status);assertThat(result.calculatedStatus).isEqualTo(expectedCalculatedStatus(status));assertThat(result.benefitsPayload).contains("TAX_EXEMPTION","FOOD_ASSISTANCE","UTILITY_SUBSIDY");
+        SocialBenefitReference result=m8.consume(benefit("M8-EVT-"+status,status));assertThat(result.externalStatus).isEqualTo(status);assertThat(result.calculatedStatus).isEqualTo(expectedCalculatedStatus(status));assertThat(result.benefitsPayload).contains("TAX_EXEMPTION","benefitTypeId","programEditionId");
     }
 
     @Test void m8DuplicateBenefitUpdateHasOneEffect() throws Exception {var event=benefit("M8-EVT-DUP","APPROVED");SocialBenefitReference first=m8.consume(event);SocialBenefitReference duplicate=m8.consume(event);assertThat(duplicate.id).isEqualTo(first.id);assertThat(benefits.count()).isEqualTo(1);}
@@ -197,7 +197,7 @@ class ConfirmedIntegrationContractTests {
     @Test void simpleOutboundEconomicContractsKeepConfirmedShapes() {
         var exemption=new ConfirmedOutboundEvents.ExemptionRequestedPayload(UUID.fromString("e5dd27f4-c803-4d5c-a75e-c003d99cc5af"),UUID.fromString("2808fa6c-1e50-4f71-a46e-ca444458924b"),"TASA_SERVICIOS","Situación socioeconómica",new BigDecimal("100.00"),LocalDate.parse("2026-09-01"),LocalDate.parse("2027-08-31"));JsonNode exemptionTree=json.valueToTree(producer.exemptionRequestedEvent(exemption));assertThat(exemptionTree.path("occurredAt").isTextual()).isTrue();assertThat(exemptionTree.path("sourceModule").asText()).isEqualTo("rentas");assertThat(exemptionTree.path("data").path("requestedPercentage").decimalValue()).isEqualByComparingTo("100.00");
         var plan=new ConfirmedOutboundEvents.PaymentPlanRequestedPayload(UUID.fromString("e5dd27f4-c803-4d5c-a75e-c003d99cc5af"),UUID.fromString("2808fa6c-1e50-4f71-a46e-ca444458924b"),List.of(UUID.fromString("a2fd68c2-b186-4e78-aa2b-191e241f584d"),UUID.fromString("653d9e79-2cd1-4ec1-8ada-845374f6903d")),new BigDecimal("200000.00"),6);JsonNode planTree=json.valueToTree(producer.paymentPlanRequestedEvent(plan));assertThat(planTree.path("data").path("debtIds")).hasSize(2);
-        var overdue=new ConfirmedOutboundEvents.OverdueDebtPayload(UUID.fromString("653d9e79-2cd1-4ec1-8ada-845374f6903d"),UUID.fromString("2808fa6c-1e50-4f71-a46e-ca444458924b"),"TASA_SERVICIOS",new BigDecimal("85000.00"),LocalDate.parse("2026-08-20"));assertThat(json.valueToTree(producer.overdueDebtEvent(overdue)).path("eventType").asText()).isEqualTo("overdueDebt");
+        var overdue=new ConfirmedOutboundEvents.OverdueDebtPayload(UUID.fromString("653d9e79-2cd1-4ec1-8ada-845374f6903d"),UUID.fromString("2808fa6c-1e50-4f71-a46e-ca444458924b"),"TASA_SERVICIOS",new BigDecimal("85000.00"),LocalDate.parse("2026-08-20"));assertThat(json.valueToTree(producer.overdueDebtEvent(overdue)).path("eventType").asText()).isEqualTo("debtOverdue");
         var settled=new ConfirmedOutboundEvents.DebtSettledPayload(UUID.fromString("a2fd68c2-b186-4e78-aa2b-191e241f584d"),UUID.fromString("2808fa6c-1e50-4f71-a46e-ca444458924b"),"TASA_SERVICIOS","MUNICIPAL_TAX","liq-1",null,OffsetDateTime.parse("2026-08-27T14:00:00-03:00"),BigDecimal.ZERO.setScale(2),BigDecimal.ZERO.setScale(2));assertThat(json.valueToTree(producer.debtSettledEvent(settled)).path("data").path("outstandingBalance").decimalValue()).isEqualByComparingTo("0.00");
     }
 
@@ -244,7 +244,7 @@ class ConfirmedIntegrationContractTests {
     private ConfirmedInboundEvents.M8SocialBenefitUpdatedEvent benefit(String id,String status) throws Exception {
         String eventId=UUID.nameUUIDFromBytes(id.getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();
         String startDate="APPROVED".equals(status)?"\"2026-09-01\"":"null";
-        return json.readValue("{\"eventId\":\""+eventId+"\",\"eventType\":\"socialBenefitUpdated\",\"eventVersion\":\"1.0\",\"occurredAt\":\"2026-08-23T10:00:00-03:00\",\"sourceModule\":\"desarrollo-social\",\"data\":{\"benefitId\":\"a9866738-84db-4c10-acce-cfa78ec7485d\",\"citizenId\":\"a240d3e4-d143-4908-8797-ad0964aac6d5\",\"applicationId\":\"552eeb92-fc2b-4abe-b390-a9ca5f9f4bdc\",\"programId\":\"e19b76be-5ed6-49f4-9ae8-01c54ac7a34a\",\"programName\":\"Subsidio Habitacional 2026\",\"benefits\":[{\"type\":\"TAX_EXEMPTION\"},{\"type\":\"FOOD_ASSISTANCE\",\"amount\":15000},{\"type\":\"UTILITY_SUBSIDY\",\"amount\":5000}],\"status\":\""+status+"\",\"reason\":\"Actualización administrativa\",\"startDate\":"+startDate+",\"endDate\":\"2027-09-01\",\"updatedAt\":\"2026-08-23T10:00:00-03:00\"}}",ConfirmedInboundEvents.M8SocialBenefitUpdatedEvent.class);
+        return json.readValue("{\"eventId\":\""+eventId+"\",\"eventType\":\"socialBenefitUpdated\",\"eventVersion\":\"1.0\",\"occurredAt\":\"2026-08-23T10:00:00-03:00\",\"sourceModule\":\"desarrollo-social\",\"data\":{\"benefitId\":\"a9866738-84db-4c10-acce-cfa78ec7485d\",\"citizenId\":\"a240d3e4-d143-4908-8797-ad0964aac6d5\",\"applicationId\":\"552eeb92-fc2b-4abe-b390-a9ca5f9f4bdc\",\"programId\":\"e19b76be-5ed6-49f4-9ae8-01c54ac7a34a\",\"programEditionId\":\"e6a13f58-2b9c-4d07-8e4f-7c5b1d9a0f26\",\"programName\":\"Subsidio Habitacional 2026\",\"benefitTypeId\":\"a0f3c1d8-2e4b-4c97-8d16-5b7e9f2a3c80\",\"type\":\"TAX_EXEMPTION\",\"description\":\"Exención de tasa\",\"amount\":null,\"status\":\""+status+"\",\"reason\":\"Actualización administrativa\",\"startDate\":"+startDate+",\"endDate\":\"2027-09-01\",\"updatedAt\":\"2026-08-23T10:00:00-03:00\"}}",ConfirmedInboundEvents.M8SocialBenefitUpdatedEvent.class);
     }
-    private SocialBenefitStatus expectedCalculatedStatus(String status){return switch(status){case "APPROVED"->SocialBenefitStatus.ACTIVE;case "SUSPENDED"->SocialBenefitStatus.SUSPENDED;case "FINALIZED"->SocialBenefitStatus.EXPIRED;default->SocialBenefitStatus.CANCELLED;};}
+    private SocialBenefitStatus expectedCalculatedStatus(String status){return switch(status){case "APPROVED"->SocialBenefitStatus.ACTIVE;case "SUSPENDED"->SocialBenefitStatus.SUSPENDED;case "FINALIZED"->SocialBenefitStatus.EXPIRED;default->throw new IllegalArgumentException(status);};}
 }

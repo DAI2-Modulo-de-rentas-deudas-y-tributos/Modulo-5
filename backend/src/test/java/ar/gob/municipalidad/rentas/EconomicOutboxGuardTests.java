@@ -12,6 +12,19 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 class EconomicOutboxGuardTests {
+    @Test void legacyM8EventNameIsDeadLetteredBeforePublisherIsCalled(){
+        OutboxRepository repository=mock(OutboxRepository.class);
+        EventPublisher publisher=mock(EventPublisher.class);
+        OutboxEvent event=event("overdueDebt",UUID.randomUUID().toString(),UUID.randomUUID().toString());
+        when(repository.findPublishable(any(Pageable.class))).thenReturn(List.of(event));
+
+        new OutboxPublisher(repository,publisher).publishPending();
+
+        assertThat(event.status).isEqualTo(OutboxStatus.DEAD_LETTER);
+        assertThat(event.errorMessage).startsWith("M8_V3_EVENT_NAME_REVIEW_REQUIRED");
+        verifyNoInteractions(publisher);
+    }
+
     @Test void oldEconomicIdentifiersAreDeadLetteredBeforePublisherIsCalled(){
         OutboxRepository repository=mock(OutboxRepository.class);
         EventPublisher publisher=mock(EventPublisher.class);
@@ -23,6 +36,52 @@ class EconomicOutboxGuardTests {
         assertThat(event.status).isEqualTo(OutboxStatus.DEAD_LETTER);
         assertThat(event.errorMessage).startsWith("ECONOMIC_CONTRACT_REVIEW_REQUIRED");
         verifyNoInteractions(publisher);
+    }
+
+    @Test void invalidTrafficOriginIsDeadLetteredBeforePublisherIsCalled(){
+        OutboxRepository repository=mock(OutboxRepository.class);
+        EventPublisher publisher=mock(EventPublisher.class);
+        OutboxEvent event=event("paymentRegistered",UUID.randomUUID().toString(),UUID.randomUUID().toString());
+        event.payload="{\"eventId\":\""+event.id+"\",\"eventType\":\"paymentRegistered\",\"eventVersion\":\"1.0\","
+            +"\"sourceModule\":\"rentas\",\"correlationId\":\""+UUID.randomUUID()+"\",\"causationId\":null,"
+            +"\"data\":{\"paymentId\":\""+UUID.randomUUID()+"\",\"debtId\":\""+UUID.randomUUID()+"\","
+            +"\"originType\":\"TRAFFIC_FINE\",\"originId\":\"INF-LEGACY\",\"infractionId\":\"INF-LEGACY\","
+            +"\"amountApplied\":10,\"paidAt\":\"2026-10-27T10:00:00-03:00\",\"remainingBalance\":20}}";
+        when(repository.findPublishable(any(Pageable.class))).thenReturn(List.of(event));
+
+        new OutboxPublisher(repository,publisher).publishPending();
+
+        assertThat(event.status).isEqualTo(OutboxStatus.DEAD_LETTER);
+        assertThat(event.errorMessage).startsWith("M7_CONTRACT_REVIEW_REQUIRED");
+        verifyNoInteractions(publisher);
+    }
+
+    @Test void historicalM4OriginIsDeadLetteredBeforePublisherIsCalled(){
+        OutboxRepository repository=mock(OutboxRepository.class);EventPublisher publisher=mock(EventPublisher.class);
+        OutboxEvent event=event("paymentRegistered",UUID.randomUUID().toString(),UUID.randomUUID().toString());
+        event.payload="{\"eventId\":\""+event.id+"\",\"eventType\":\"paymentRegistered\",\"eventVersion\":\"1.0\","
+            +"\"sourceModule\":\"rentas\",\"correlationId\":\""+UUID.randomUUID()+"\","
+            +"\"data\":{\"paymentId\":\""+UUID.randomUUID()+"\",\"debtId\":\""+UUID.randomUUID()+"\","
+            +"\"originType\":\"PERMIT_FEE\",\"originId\":\"FEE-123\",\"amountApplied\":10,"
+            +"\"paidAt\":\"2026-10-27T10:00:00-03:00\",\"remainingBalance\":20}}";
+        when(repository.findPublishable(any(Pageable.class))).thenReturn(List.of(event));
+        new OutboxPublisher(repository,publisher).publishPending();
+        assertThat(event.status).isEqualTo(OutboxStatus.DEAD_LETTER);
+        assertThat(event.errorMessage).startsWith("M4_CONTRACT_REVIEW_REQUIRED");verifyNoInteractions(publisher);
+    }
+
+    @Test void unapprovedM4SettlementWithoutCitizenIsDeadLettered(){
+        OutboxRepository repository=mock(OutboxRepository.class);EventPublisher publisher=mock(EventPublisher.class);
+        OutboxEvent event=event("debtSettled",UUID.randomUUID().toString(),UUID.randomUUID().toString());
+        event.payload="{\"eventId\":\""+event.id+"\",\"eventType\":\"debtSettled\",\"eventVersion\":\"1.0\","
+            +"\"sourceModule\":\"rentas\",\"correlationId\":\""+UUID.randomUUID()+"\","
+            +"\"data\":{\"debtId\":\""+UUID.randomUUID()+"\",\"originType\":\"COMMERCIAL_FINE\","
+            +"\"originId\":\""+UUID.randomUUID()+"\",\"conceptCode\":\"COMMERCIAL_FINE\","
+            +"\"settledAt\":\"2026-10-27T10:00:00-03:00\",\"remainingBalance\":0,\"outstandingBalance\":0}}";
+        when(repository.findPublishable(any(Pageable.class))).thenReturn(List.of(event));
+        new OutboxPublisher(repository,publisher).publishPending();
+        assertThat(event.status).isEqualTo(OutboxStatus.DEAD_LETTER);
+        assertThat(event.errorMessage).startsWith("M4_CONTRACT_REVIEW_REQUIRED");verifyNoInteractions(publisher);
     }
 
     @Test void persistentUuidEconomicIdentifiersCanReachLocalPublisher(){

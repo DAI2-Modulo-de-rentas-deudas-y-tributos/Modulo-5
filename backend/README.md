@@ -261,7 +261,7 @@ El resultado se consulta en `GET /api/v1/tickets` y la evidencia técnica en
 `POST /api/v1/tickets/{id}/assign`: el caso pasa a `IN_PROGRESS` y M5 agrega
 `updateTicketStatus` al transactional outbox para M2.
 
-El Outbox usa `PENDING`, `FAILED`, `PUBLISHED` y `DEAD_LETTER`, con contador de reintentos, último intento, error y fecha de publicación. El adapter actual (`BROKER_ADAPTER=local-log`) sólo publica al log.
+El Outbox usa `PENDING`, `FAILED`, `DEAD_LETTER`, `LOCAL_ONLY` y `BROKER_CONFIRMED`. `LOCAL_ONLY` significa que el adaptador local sólo lo anotó en el log; `BROKER_CONFIRMED` acredita recepción por el broker, no procesamiento por M2. El estado histórico `PUBLISHED` es ambiguo: se conserva sin reclasificar. Por compatibilidad puede habilitar cadenas locales heredadas, pero no acredita entrega ni procesamiento por M2. Los reintentos de una misma fila conservan el JSON y el `eventId`. Una aceptación HTTP 202 de Core tampoco confirmaría que M2 consumió el evento.
 
 Antes de conectar Kafka/RabbitMQ siguen pendientes de acuerdo externo: broker, tópicos/colas, schemas versionados, ACK, política de retry y DLQ. Esto no se presenta como integración productiva.
 
@@ -274,7 +274,9 @@ Antes de conectar Kafka/RabbitMQ siguen pendientes de acuerdo externo: broker, t
 - `DomainEntities` / `Repositories`: persistencia e invariantes.
 - `integration/event`, `consumer`, `mapper`, `producer` y `validation`: contratos confirmados M1/M2/M8, normalización y Outbox desacoplado.
 - `IntegrationServices`: adapters genéricos existentes y publicación abstracta.
-- `db/migration`: migraciones comunes Flyway V1–V17.
+- `db/migration`: migraciones comunes Flyway, incluidas V30/V31 aún pendientes de autorización sobre `rentas`.
+- `db/migration-postgresql`: migraciones PostgreSQL con UUID persistentes de M5.
+- `db/migration-demo`: V29 y esquema de autenticación local; no forma parte del perfil `prod`.
 - `db/migration-production`: V18 productiva para retirar el esquema DEMO.
 
 M5 no consulta bases de M1, M2, M4, M7 ni M8: conserva referencias locales y se integra por mensajes.
@@ -284,7 +286,7 @@ M5 no consulta bases de M1, M2, M4, M7 ni M8: conserva referencias locales y se 
 - `BACKEND_COMPLETENESS.md`: matriz endpoint por endpoint y reporte OpenAPI.
 - `GUIA_APRENDIZAJE.md`: explicación progresiva del backend.
 - `GUIA_FINAL_HARDENING.md`: explicación específica de esta etapa de cierre.
-- `INTEGRATION_CONTRACTS.md`: contratos confirmados M1/M2/M7/M8 y pendientes M4/M7 outbound/Core/Broker.
+- `INTEGRATION_CONTRACTS.md`: contratos recibidos de M1/M2/M4/M7/M8, estado de implementación local y pendientes de interoperabilidad con Core/Broker. `../docs/integrations/M5_ESTADO_LOCAL_2026-10-30.md` resume la situación actual y las migraciones aún no autorizadas.
 - `M7_CONTRACT_AND_API_AUDIT.md`: adaptación contractual de Tránsito e inventario auditado de la API REST.
 - `BACKEND_HARDENING_REPORT.md`: baseline, decisiones, evidencias y riesgos restantes.
 - `API_PERFORMANCE_HARDENING_REPORT.md`: cierre de los hallazgos GET/POST, evidencia de consultas y decisiones de compatibilidad.

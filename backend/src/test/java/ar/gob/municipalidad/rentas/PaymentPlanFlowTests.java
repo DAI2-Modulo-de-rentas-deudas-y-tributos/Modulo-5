@@ -207,7 +207,8 @@ class PaymentPlanFlowTests {
         List<String> envelopeFields=new java.util.ArrayList<>();envelope.fieldNames().forEachRemaining(envelopeFields::add);
         assertThat(envelopeFields).containsExactlyInAnyOrder("eventId","eventType","eventVersion","occurredAt","sourceModule","correlationId","causationId","data");
         assertThat(envelope.path("sourceModule").asText()).isEqualTo("rentas");
-        assertThat(UUID.fromString(envelope.path("correlationId").asText())).isNotNull();assertThat(envelope.path("causationId").isNull()).isTrue();
+        assertThat(envelope.path("correlationId").asText()).isEqualTo(request.integrationId.toString());
+        assertThat(envelope.path("causationId").isNull()).isTrue();
         assertThat(data.path("requestId").asText()).isEqualTo(request.integrationId.toString());
         assertThat(data.path("citizenId").asText()).isEqualTo(canonical.toString());
         assertThat(List.of(data.path("debtIds").get(0).asText(),data.path("debtIds").get(1).asText()))
@@ -250,6 +251,25 @@ class PaymentPlanFlowTests {
         assertThat(data.path("status").asText()).isEqualTo("REJECTED");
         assertThat(data.path("reason").asText()).isEqualTo("Deuda no elegible");
         assertThat(data.has("planId")).isFalse();assertThat(data.has("installments")).isFalse();assertThat(data.has("totalAmount")).isFalse();
+    }
+
+    @Test void missingRequestCorrelationDefersPlanResolutionWithoutInventingAnotherThread() throws Exception {
+        Debt debt=debt("PLAN-M1-NO-THREAD","PLAN-M1-NO-THREAD-CONCEPT");
+        TaxpayerReference taxpayer=taxpayers.findById(debt.taxpayerId).orElseThrow();
+        taxpayer.canonicalCitizenId=UUID.fromString("10bfb0f5-00a0-47e7-a062-3fef5e5e92dd");
+        PaymentPlanRequest request=workflow.request(new ApiDtos.CreatePaymentPlanRequest(debt.taxpayerId,List.of(debt.id),2));
+        OutboxEvent source=outbox.findAll().stream().filter(e->e.eventType.equals("paymentPlanRequested"))
+            .filter(e->e.aggregateId.equals(request.id.toString())).findFirst().orElseThrow();
+        var damaged=(com.fasterxml.jackson.databind.node.ObjectNode)json.readTree(source.payload);
+        damaged.putNull("correlationId");source.payload=json.writeValueAsString(damaged);outbox.saveAndFlush(source);
+
+        TestActorSupport.asApprover(() -> workflow.rejectRequest(request.id,"No elegible"));
+
+        assertThat(request.status).isEqualTo(PaymentPlanRequestStatus.REJECTED);
+        assertThat(outbox.findAll().stream().noneMatch(e->e.eventType.equals("updatePaymentPlanStatus")
+            &&e.aggregateId.equals(request.id.toString()))).isTrue();
+        assertThat(deferredPlanReconciliation.reconcile(request.id).outcome()).isEqualTo("REVIEW_REQUIRED");
+        assertThat(outbox.findById(source.id).orElseThrow().payload).isEqualTo(json.writeValueAsString(damaged));
     }
 
     private PaymentPlan grant(Debt debt,int count){PaymentPlanRequest request=workflow.request(new ApiDtos.CreatePaymentPlanRequest(debt.taxpayerId,List.of(debt.id),count));TestActorSupport.asApprover(() -> workflow.grant(request.id,null));return plans.findById(request.paymentPlanId).orElseThrow();}

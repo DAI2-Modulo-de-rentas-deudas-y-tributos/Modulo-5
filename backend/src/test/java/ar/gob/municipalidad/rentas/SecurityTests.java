@@ -289,8 +289,9 @@ class SecurityTests {
         var paths=json.readTree(openApi).path("paths");int operations=0;for(var path=paths.fields();path.hasNext();)operations+=path.next().getValue().size();
         org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/tax-concepts").path("post").path("responses")
             .path("400").path("$ref").asText()).isEqualTo("#/components/responses/ApiError");
-        org.assertj.core.api.Assertions.assertThat(operations).isEqualTo(165);
-        org.assertj.core.api.Assertions.assertThat(paths.size()).isEqualTo(149);
+        org.assertj.core.api.Assertions.assertThat(operations).isEqualTo(166);
+        org.assertj.core.api.Assertions.assertThat(paths.size()).isEqualTo(150);
+        org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/tickets/{id}/return").has("post")).isTrue();
         org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/integrations/deferred/exemptions/{requestId}/reconcile").has("post")).isTrue();
         org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/integrations/deferred/payment-plans/{requestId}/reconcile").has("post")).isTrue();
         org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/integrations/deferred/economic").has("get")).isTrue();

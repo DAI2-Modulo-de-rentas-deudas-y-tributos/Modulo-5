@@ -22,6 +22,17 @@ const TICKET_STATUSES = [
   { value: "COMPLETED", label: "Resuelto" },
   { value: "REJECTED", label: "Rechazado" },
 ];
+const TICKET_ACTIONS = [
+  ...TICKET_STATUSES,
+  { value: "PROGRESS", label: "Registrar avance interno" },
+  { value: "RETURNED", label: "Devolver a M2" },
+];
+const RETURN_REASONS = [
+  { value: "INVALID_INFORMATION", label: "Informacion invalida" },
+  { value: "REQUEST_TYPE_MISMATCH", label: "Tipo de solicitud incorrecto" },
+  { value: "INSUFFICIENT_CONTEXT", label: "Contexto insuficiente" },
+  { value: "OTHER", label: "Otro motivo" },
+];
 
 /**
  * Tickets: reclamos que M2 deriva a Rentas mediante ticketUpdated.
@@ -113,6 +124,7 @@ export default function TicketsPage() {
               label: "Estado",
               options: [
                 { value: "OPEN", label: labelFor("OPEN") },
+                { value: "CANCELLED", label: "Cancelado por M2" },
                 ...TICKET_STATUSES,
               ],
             },
@@ -165,6 +177,7 @@ export default function TicketsPage() {
 function UpdateTicketModal({ ticket, citizenName, onClose, onDone }) {
   const [status, setStatus] = useState(ticket.status === "OPEN" ? "IN_PROGRESS" : "");
   const [message, setMessage] = useState("");
+  const [returnReason, setReturnReason] = useState("");
   const [error, setError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -179,6 +192,10 @@ function UpdateTicketModal({ ticket, citizenName, onClose, onDone }) {
       setError("Escribí un mensaje para continuar con la gestión del ticket.");
       return;
     }
+    if (status === "RETURNED" && !returnReason) {
+      setError("Selecciona un motivo de devolucion.");
+      return;
+    }
     setSubmitting(true);
     try {
       onDone(
@@ -186,6 +203,7 @@ function UpdateTicketModal({ ticket, citizenName, onClose, onDone }) {
           ticketId: ticket.ticketId,
           status,
           message: message.trim(),
+          reasonCode: status === "RETURNED" ? returnReason : undefined,
         }),
       );
     } catch (caught) {
@@ -264,13 +282,18 @@ function UpdateTicketModal({ ticket, citizenName, onClose, onDone }) {
         type="select"
         value={status}
         onChange={(event) => setStatus(event.target.value)}
-        options={ticket.status === "OPEN" ? TICKET_STATUSES : TICKET_STATUSES.filter((option) => option.value !== "IN_PROGRESS")}
+        options={ticket.status === "OPEN" ? TICKET_ACTIONS.filter((option) => option.value !== "PROGRESS") : TICKET_ACTIONS.filter((option) => option.value !== "IN_PROGRESS")}
         required
       />
 
+      {status === "RETURNED" && (
+        <FormField label="Motivo de devolucion" name="returnReason" type="select" value={returnReason}
+          onChange={(event) => setReturnReason(event.target.value)} options={RETURN_REASONS} required />
+      )}
+
       {status !== "IN_PROGRESS" && (
         <FormField
-          label={status === "REJECTED" ? "Motivo del rechazo" : status === "COMPLETED" ? "Resolución" : "Información solicitada"}
+          label={status === "RETURNED" ? "Explicacion interna para M2" : status === "PROGRESS" ? "Avance interno" : status === "REJECTED" ? "Motivo del rechazo" : status === "COMPLETED" ? "Resolucion" : "Informacion solicitada"}
           name="message"
           type="textarea"
           placeholder={status === "REJECTED" ? "Explicá por qué se rechaza" : status === "COMPLETED" ? "Explicá cómo se resolvió" : "Indicá qué documentación necesitás"}

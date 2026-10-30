@@ -27,6 +27,8 @@ class M8SocialBenefitFlowTests {
     private static final UUID CITIZEN_ID=UUID.fromString("ad1dc069-6020-44fc-98a3-17bbd32aa305");
     private static final UUID APPLICATION_ID=UUID.fromString("b3af8f4c-85fb-4f3b-8907-2b4b30ac9c4f");
     private static final UUID PROGRAM_ID=UUID.fromString("3d31d975-962e-43dd-bb72-ec60d803bde5");
+    private static final UUID PROGRAM_EDITION_ID=UUID.fromString("9ce8be6d-5f4a-48ab-b16d-862c33c1bbd4");
+    private static final UUID BENEFIT_TYPE_ID=UUID.fromString("8d1aac35-d761-4671-bbd6-caeeb237f498");
     private static final UUID SUPERVISOR_ID=UUID.fromString("638e1d46-9abb-4f44-9287-7367bb21d9ae");
     private static final OffsetDateTime FIRST_UPDATE=OffsetDateTime.parse("2026-09-01T12:00:00-03:00");
 
@@ -46,12 +48,13 @@ class M8SocialBenefitFlowTests {
     @BeforeEach void authenticate(){as("rentas.qa","RENTAS",UUID.fromString("0796688a-12fc-46b2-b8fc-9003e22d7fd2"));}
     @AfterEach void clearIdentity(){SecurityContextHolder.clearContext();}
 
-    @Test void officialUpdatesPersistAllFourStatesNullableDatesAndTraceability(){
-        String[] statuses={"APPROVED","SUSPENDED","FINALIZED","REJECTED"};
+    @Test void officialV3UpdatesPersistThreeStatesNullableDatesAndTraceability(){
+        String[] statuses={"APPROVED","SUSPENDED","FINALIZED"};
         for(int i=0;i<statuses.length;i++){
             String status=statuses[i];
             SocialBenefitReference received=consumer.consume(event(UUID.randomUUID(),status,FIRST_UPDATE.plusDays(i),
-                i==0?LocalDate.of(2026,9,1):null,LocalDate.of(2027,9,1),"Motivo "+status,"TAX_EXEMPTION"));
+                i==0?LocalDate.of(2026,9,1):null,i==2?LocalDate.of(2027,1,15):i==0?LocalDate.of(2027,9,1):null,
+                "Motivo "+status,"TAX_EXEMPTION"));
             entityManager.flush();entityManager.clear();
             SocialBenefitReference persisted=benefits.findByExternalBenefitId(BENEFIT_ID.toString()).orElseThrow();
             assertThat(persisted.id).isEqualTo(received.id);
@@ -60,7 +63,9 @@ class M8SocialBenefitFlowTests {
             assertThat(persisted.externalProgramId).isEqualTo(PROGRAM_ID.toString());
             assertThat(persisted.externalStatus).isEqualTo(status);
             assertThat(persisted.externalReason).isEqualTo("Motivo "+status);
-            assertThat(persisted.validFrom).isEqualTo(i==0?LocalDate.of(2026,9,1):null);
+            assertThat(persisted.validFrom).isEqualTo(LocalDate.of(2026,9,1));
+            assertThat(persisted.validUntil).isEqualTo(i==2?LocalDate.of(2027,1,15):LocalDate.of(2027,9,1));
+            assertThat(persisted.benefitsPayload).contains(PROGRAM_EDITION_ID.toString(),BENEFIT_TYPE_ID.toString(),"TAX_EXEMPTION");
             assertThat(persisted.resolutionStatus).isEqualTo("PENDING_CITIZEN");
             assertThat(persisted.taxpayerId).isNull();
             assertThat(persisted.sourcePayloadHash).hasSize(64);
@@ -77,7 +82,7 @@ class M8SocialBenefitFlowTests {
         var latest=event(UUID.randomUUID(),"SUSPENDED",FIRST_UPDATE.plusDays(2),null,null,"Pausado","TAX_EXEMPTION");
         consumer.consume(latest);
         consumer.consume(event(UUID.randomUUID(),"APPROVED",FIRST_UPDATE.plusDays(1),LocalDate.of(2026,9,1),null,"Atrasado","TAX_EXEMPTION"));
-        consumer.consume(event(UUID.randomUUID(),"REJECTED",FIRST_UPDATE.plusDays(2),null,null,"Conflicto","TAX_EXEMPTION"));
+        consumer.consume(event(UUID.randomUUID(),"FINALIZED",FIRST_UPDATE.plusDays(2),null,LocalDate.of(2027,1,15),"Conflicto","TAX_EXEMPTION"));
         entityManager.flush();entityManager.clear();
         SocialBenefitReference persisted=benefits.findByExternalBenefitId(BENEFIT_ID.toString()).orElseThrow();
         assertThat(persisted.externalStatus).isEqualTo("SUSPENDED");
@@ -141,7 +146,8 @@ class M8SocialBenefitFlowTests {
         consumer.consume(new ConfirmedInboundEvents.M8SocialBenefitUpdatedEvent(second.eventId(),second.eventType(),
             second.eventVersion(),second.occurredAt(),second.sourceModule(),second.correlationId(),second.causationId(),
             new ConfirmedInboundEvents.M8SocialBenefitData(secondBenefit,data.citizenId(),data.applicationId(),
-                secondProgram,data.programName(),data.benefits(),data.status(),data.reason(),data.startDate(),
+                secondProgram,data.programEditionId(),data.programName(),data.benefitTypeId(),data.type(),
+                data.description(),data.amount(),data.status(),data.reason(),data.startDate(),
                 data.endDate(),data.updatedAt())));
         ApiDtos.LiquidationPreview preview=preview(taxpayer,concept,"2026-09");
         assertThat(preview.discountAmount()).isEqualByComparingTo("70.00");
@@ -158,7 +164,7 @@ class M8SocialBenefitFlowTests {
         assertThat(preview(taxpayer,concept,"2026-09").finalAmount()).isEqualByComparingTo("100.00");
         consumer.consume(event(UUID.randomUUID(),"SUSPENDED",FIRST_UPDATE.plusHours(2),null,null,"Suspendido","TAX_EXEMPTION"));
         assertThat(preview(taxpayer,concept,"2026-09").finalAmount()).isEqualByComparingTo("100.00");
-        consumer.consume(event(UUID.randomUUID(),"FINALIZED",FIRST_UPDATE.plusHours(3),null,null,"Finalizado","TAX_EXEMPTION"));
+        consumer.consume(event(UUID.randomUUID(),"FINALIZED",FIRST_UPDATE.plusHours(3),null,LocalDate.of(2026,9,30),"Finalizado","TAX_EXEMPTION"));
         assertThat(preview(taxpayer,concept,"2026-09").finalAmount()).isEqualByComparingTo("100.00");
     }
 
@@ -243,7 +249,8 @@ class M8SocialBenefitFlowTests {
     private ConfirmedInboundEvents.M8SocialBenefitUpdatedEvent event(UUID eventId,String status,OffsetDateTime updatedAt,
             LocalDate start,LocalDate end,String reason,String benefitType){
         var data=new ConfirmedInboundEvents.M8SocialBenefitData(BENEFIT_ID,CITIZEN_ID,APPLICATION_ID,PROGRAM_ID,
-            "Programa social",List.of(new ConfirmedInboundEvents.M8Benefit(benefitType,null)),status,reason,start,end,updatedAt);
+            PROGRAM_EDITION_ID,"Programa social",BENEFIT_TYPE_ID,benefitType,"Beneficio M8",null,
+            status,reason,start,end,updatedAt);
         return new ConfirmedInboundEvents.M8SocialBenefitUpdatedEvent(eventId,"socialBenefitUpdated","1.0",updatedAt,
             "desarrollo-social",UUID.randomUUID(),null,data);
     }

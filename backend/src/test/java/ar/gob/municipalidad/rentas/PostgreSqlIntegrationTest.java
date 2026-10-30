@@ -1,6 +1,7 @@
 package ar.gob.municipalidad.rentas;
 
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityManagerFactory;
 import org.hibernate.SessionFactory;
@@ -503,8 +504,9 @@ class PostgreSqlIntegrationTest {
             assertThat(hasKey).as("Idempotency-Key en POST %s",path).isEqualTo(!excludedFromIdempotency);
             if(hasKey) covered++;
         }
-        assertThat(postCount).isEqualTo(75);
-        assertThat(covered).isEqualTo(66);
+        assertThat(paths.path("/api/v1/tickets/{id}/return").path("post").isMissingNode()).isFalse();
+        assertThat(postCount).isEqualTo(76);
+        assertThat(covered).isEqualTo(67);
     }
 
     @Test void taxConceptCreationEndpointReplaysConcurrentRequestAndConflictsOnDifferentBody() throws Exception {
@@ -765,13 +767,13 @@ class PostgreSqlIntegrationTest {
         coreM8.consume(approved);
         coreM8.consume(approved);
         coreM8.consume(m8Event(benefitId,citizenId,applicationId,programId,"SUSPENDED",initial.plusDays(2)));
-        coreM8.consume(m8Event(benefitId,citizenId,applicationId,programId,"REJECTED",initial.plusDays(1)));
+        coreM8.consume(m8Event(benefitId,citizenId,applicationId,programId,"FINALIZED",initial.plusDays(1)));
         SocialBenefitReference stored=socialBenefits.findByExternalBenefitId(benefitId.toString()).orElseThrow();
         assertThat(stored.externalCitizenId).isEqualTo(citizenId.toString());
         assertThat(stored.externalApplicationId).isEqualTo(applicationId.toString());
         assertThat(stored.externalProgramId).isEqualTo(programId.toString());
         assertThat(stored.externalStatus).isEqualTo("SUSPENDED");
-        assertThat(stored.validFrom).isNull();
+        assertThat(stored.validFrom).isEqualTo(LocalDate.of(2026,10,1));
         assertThat(stored.taxpayerId).isNull();
         assertThat(stored.resolutionStatus).isEqualTo("PENDING_CITIZEN");
         assertThat(socialBenefitHistory.findByExternalBenefitIdOrderBySourceUpdatedAtAsc(benefitId.toString()))
@@ -781,8 +783,11 @@ class PostgreSqlIntegrationTest {
     private ConfirmedInboundEvents.M8SocialBenefitUpdatedEvent m8Event(UUID benefitId,UUID citizenId,
             UUID applicationId,UUID programId,String status,OffsetDateTime updatedAt){
         var data=new ConfirmedInboundEvents.M8SocialBenefitData(benefitId,citizenId,applicationId,programId,
-            "Programa de prueba",List.of(new ConfirmedInboundEvents.M8Benefit("TAX_EXEMPTION",null)),
-            status,"Prueba PostgreSQL",null,null,updatedAt);
+            UUID.fromString("e6a13f58-2b9c-4d07-8e4f-7c5b1d9a0f26"),"Programa de prueba",
+            UUID.fromString("a0f3c1d8-2e4b-4c97-8d16-5b7e9f2a3c80"),"TAX_EXEMPTION",
+            "Exención municipal",null,status,"Prueba PostgreSQL",
+            "APPROVED".equals(status)?LocalDate.of(2026,10,1):null,
+            "FINALIZED".equals(status)?LocalDate.of(2026,10,31):null,updatedAt);
         return new ConfirmedInboundEvents.M8SocialBenefitUpdatedEvent(UUID.randomUUID(),"socialBenefitUpdated",
             "1.0",updatedAt,"desarrollo-social",UUID.randomUUID(),null,data);
     }
@@ -952,10 +957,11 @@ class PostgreSqlIntegrationTest {
 
     @Test void coreM4EventsAreIdempotentlyDeferredAndReprocessableOnPostgreSql() {
         String cuit=uniqueDigits(11);
+        concept("PERMIT_FEE",TaxConceptType.FEE,"M4");concept("COMMERCIAL_FINE",TaxConceptType.FINE,"M4");
         UUID feeId=UUID.randomUUID();
         var fee=new CoreM4Events.Envelope<>(feeId,"permitFeeGenerated","1.0",OffsetDateTime.now(),
             "habilitaciones",UUID.randomUUID(),null,
-            new CoreM4Events.PermitFeeGeneratedData("FEE-PG-"+feeId,"PA-PG-1","EST-PG-1",cuit,new BigDecimal("50"),"ARS"));
+            new CoreM4Events.PermitFeeGeneratedData(UUID.randomUUID().toString(),UUID.randomUUID().toString(),UUID.randomUUID().toString(),cuit,new BigDecimal("50"),"ARS"));
         long logsBefore=integrationLogs.count(),obligationsBefore=externalObligations.count(),debtsBefore=debts.count();
 
         IntegrationEventLog pending=coreM4.consumePermitFee(fee);
@@ -964,7 +970,7 @@ class PostgreSqlIntegrationTest {
         assertThat(pending.status).isEqualTo(IntegrationEventStatus.FAILED);
         assertThat(pending.errorMessage).isEqualTo(CoreM4Consumer.TAXPAYER_PENDING);
         assertThat(pending.errorMessage).doesNotContain(cuit);
-        assertThat(pending.payload).contains(cuit,"FEE-PG-"+feeId);
+        assertThat(pending.payload).contains(cuit,fee.data().id());
         assertThat(integrationLogs.count()).isEqualTo(logsBefore+1);
 
         taxpayer(TaxpayerType.ORGANIZATION,"M4-PG-"+feeId,null,cuit);
@@ -976,12 +982,12 @@ class PostgreSqlIntegrationTest {
 
         UUID fineId=UUID.randomUUID();
         var fine=new CoreM4Events.Envelope<>(fineId,"commercialFineGenerated","1.0",OffsetDateTime.now(),
-            "habilitaciones",null,null,
-            new CoreM4Events.CommercialFineGeneratedData("FINE-PG-"+fineId,"EST-PG-1","ACT-PG-1",cuit,
-                new BigDecimal("75"),"ARS","Incumplimiento de prueba",OffsetDateTime.now(),"REF-PG-1","VIOLATION-PG-1","M6"));
+            "habilitaciones",UUID.randomUUID(),null,
+            new CoreM4Events.CommercialFineGeneratedData(UUID.randomUUID().toString(),UUID.randomUUID().toString(),UUID.randomUUID().toString(),cuit,
+                new BigDecimal("75"),"ARS","Incumplimiento de prueba",OffsetDateTime.now(),"REF-PG-1",UUID.randomUUID().toString(),"M6"));
         IntegrationEventLog finePending=coreM4.consumeCommercialFine(fine);
         assertThat(finePending.errorMessage).startsWith(CoreM4Consumer.DUE_DATE_PENDING);
-        assertThat(finePending.payload).contains("FINE-PG-"+fineId,"ACT-PG-1","REF-PG-1","VIOLATION-PG-1","M6");
+        assertThat(finePending.payload).contains(fine.data().id(),fine.data().actId(),"REF-PG-1",fine.data().sourceViolationId(),"M6");
 
         var repeatedOrigin=new CoreM4Events.Envelope<>(UUID.randomUUID(),fine.eventType(),fine.eventVersion(),
             fine.occurredAt(),fine.sourceModule(),fine.correlationId(),fine.causationId(),fine.data());
@@ -999,8 +1005,8 @@ class PostgreSqlIntegrationTest {
             new CoreM4Events.PermitFeeGeneratedData("FEE-BAD","PA","EST","123",BigDecimal.TEN,"ARS"))))
             .isInstanceOfSatisfying(BusinessException.class,e->assertThat(e.code).isEqualTo("INVALID_EVENT"));
         var unsupportedCurrency=new CoreM4Events.Envelope<>(UUID.randomUUID(),"permitFeeGenerated","1.0",
-            OffsetDateTime.now(),"habilitaciones",null,null,
-            new CoreM4Events.PermitFeeGeneratedData("FEE-EUR","PA","EST",cuit,BigDecimal.TEN,"EUR"));
+            OffsetDateTime.now(),"habilitaciones",UUID.randomUUID(),null,
+            new CoreM4Events.PermitFeeGeneratedData(UUID.randomUUID().toString(),UUID.randomUUID().toString(),UUID.randomUUID().toString(),cuit,BigDecimal.TEN,"EUR"));
         assertThat(coreM4.consumePermitFee(unsupportedCurrency).errorMessage).isEqualTo("M4_UNSUPPORTED_CURRENCY");
         var missingAmount=new CoreM4Events.Envelope<>(UUID.randomUUID(),"permitFeeGenerated","1.0",
             OffsetDateTime.now(),"habilitaciones",null,null,
@@ -1008,8 +1014,8 @@ class PostgreSqlIntegrationTest {
         assertThatThrownBy(()->coreM4.consumePermitFee(missingAmount))
             .isInstanceOfSatisfying(BusinessException.class,e->assertThat(e.code).isEqualTo("INVALID_EVENT"));
         var sourceWithoutViolation=new CoreM4Events.Envelope<>(UUID.randomUUID(),"commercialFineGenerated","1.0",
-            OffsetDateTime.now(),"habilitaciones",null,null,
-            new CoreM4Events.CommercialFineGeneratedData("FINE-NO-M6","EST","ACT",cuit,BigDecimal.TEN,
+            OffsetDateTime.now(),"habilitaciones",UUID.randomUUID(),null,
+            new CoreM4Events.CommercialFineGeneratedData(UUID.randomUUID().toString(),UUID.randomUUID().toString(),UUID.randomUUID().toString(),cuit,BigDecimal.TEN,
                 "ARS","Prueba",OffsetDateTime.now(),"REF",null,null));
         assertThat(coreM4.consumeCommercialFine(sourceWithoutViolation).errorMessage)
             .startsWith(CoreM4Consumer.DUE_DATE_PENDING);
@@ -1020,19 +1026,20 @@ class PostgreSqlIntegrationTest {
 
     @Test void coreM4FeeAndFineArrivalOrderDoesNotChangeTheirIndependentHandlingOnPostgreSql() {
         String cuit=uniqueDigits(11);taxpayer(TaxpayerType.ORGANIZATION,"M4-ORDER-"+UUID.randomUUID(),null,cuit);
+        concept("PERMIT_FEE",TaxConceptType.FEE,"M4");concept("COMMERCIAL_FINE",TaxConceptType.FINE,"M4");
         UUID fineFirstId=UUID.randomUUID(),feeSecondId=UUID.randomUUID(),feeFirstId=UUID.randomUUID(),fineSecondId=UUID.randomUUID();
         var fineFirst=new CoreM4Events.Envelope<>(fineFirstId,"commercialFineGenerated","1.0",OffsetDateTime.now(),
-            "habilitaciones",null,null,new CoreM4Events.CommercialFineGeneratedData("FINE-ORDER-A-"+fineFirstId,
-            "EST-A","ACT-A",cuit,BigDecimal.TEN,"ARS","Prueba",OffsetDateTime.now(),"REF-A",null,null));
+            "habilitaciones",UUID.randomUUID(),null,new CoreM4Events.CommercialFineGeneratedData(UUID.randomUUID().toString(),
+            UUID.randomUUID().toString(),UUID.randomUUID().toString(),cuit,BigDecimal.TEN,"ARS","Prueba",OffsetDateTime.now(),"REF-A",null,null));
         var feeSecond=new CoreM4Events.Envelope<>(feeSecondId,"permitFeeGenerated","1.0",OffsetDateTime.now(),
-            "habilitaciones",null,null,new CoreM4Events.PermitFeeGeneratedData("FEE-ORDER-B-"+feeSecondId,
-            "PA-B","EST-B",cuit,BigDecimal.TEN,"ARS"));
+            "habilitaciones",UUID.randomUUID(),null,new CoreM4Events.PermitFeeGeneratedData(UUID.randomUUID().toString(),
+            UUID.randomUUID().toString(),UUID.randomUUID().toString(),cuit,BigDecimal.TEN,"ARS"));
         var feeFirst=new CoreM4Events.Envelope<>(feeFirstId,"permitFeeGenerated","1.0",OffsetDateTime.now(),
-            "habilitaciones",null,null,new CoreM4Events.PermitFeeGeneratedData("FEE-ORDER-A-"+feeFirstId,
-            "PA-A","EST-A",cuit,BigDecimal.TEN,"ARS"));
+            "habilitaciones",UUID.randomUUID(),null,new CoreM4Events.PermitFeeGeneratedData(UUID.randomUUID().toString(),
+            UUID.randomUUID().toString(),UUID.randomUUID().toString(),cuit,BigDecimal.TEN,"ARS"));
         var fineSecond=new CoreM4Events.Envelope<>(fineSecondId,"commercialFineGenerated","1.0",OffsetDateTime.now(),
-            "habilitaciones",null,null,new CoreM4Events.CommercialFineGeneratedData("FINE-ORDER-B-"+fineSecondId,
-            "EST-B","ACT-B",cuit,BigDecimal.TEN,"ARS","Prueba",OffsetDateTime.now(),"REF-B",null,null));
+            "habilitaciones",UUID.randomUUID(),null,new CoreM4Events.CommercialFineGeneratedData(UUID.randomUUID().toString(),
+            UUID.randomUUID().toString(),UUID.randomUUID().toString(),cuit,BigDecimal.TEN,"ARS","Prueba",OffsetDateTime.now(),"REF-B",null,null));
         long obligationsBefore=externalObligations.count(),debtsBefore=debts.count();
 
         assertThat(coreM4.consumeCommercialFine(fineFirst).errorMessage).startsWith(CoreM4Consumer.DUE_DATE_PENDING);
@@ -1045,13 +1052,13 @@ class PostgreSqlIntegrationTest {
 
     @Test void m4PlanInstallmentPublishesOnlyThePrincipalAppliedWithOriginalCorrelation() throws Exception {
         authenticate();
-        String cuit=uniqueDigits(11),reference="FEE-PLAN-"+UUID.randomUUID();
+        String cuit=uniqueDigits(11),reference=UUID.randomUUID().toString();
         TaxpayerReference organization=taxpayer(TaxpayerType.ORGANIZATION,"M4-PLAN-"+UUID.randomUUID(),null,cuit);
         TaxConcept taxConcept=concept("M4_PLAN_"+UUID.randomUUID(),TaxConceptType.FEE,"M4");
         UUID sourceEventId=UUID.randomUUID(),sourceCorrelation=UUID.randomUUID();
         var sourceEvent=new CoreM4Events.Envelope<>(sourceEventId,"permitFeeGenerated","1.0",OffsetDateTime.now(),
             "habilitaciones",sourceCorrelation,null,
-            new CoreM4Events.PermitFeeGeneratedData(reference,"PA-PLAN","EST-PLAN",cuit,new BigDecimal("100"),"ARS"));
+            new CoreM4Events.PermitFeeGeneratedData(reference,UUID.randomUUID().toString(),UUID.randomUUID().toString(),cuit,new BigDecimal("100"),"ARS"));
         IntegrationEventLog sourceLog=new IntegrationEventLog();sourceLog.eventId=sourceEventId;sourceLog.externalEventId=sourceEventId.toString();
         sourceLog.eventType=sourceEvent.eventType();sourceLog.sourceModule=sourceEvent.sourceModule();sourceLog.direction=EventDirection.INBOUND;
         sourceLog.status=IntegrationEventStatus.PROCESSED;sourceLog.payload=json.writeValueAsString(sourceEvent);sourceLog.retryCount=0;
@@ -1284,13 +1291,13 @@ class PostgreSqlIntegrationTest {
         Debt organizationDebt=debt("OVERDUE-ORG-"+UUID.randomUUID(),organization.id);organizationDebt.dueDate=processingDate.minusDays(1);debts.save(organizationDebt);
 
         FiscalProcessingController.DueDateResponse run=dueDates.process(processingDate);
-        assertThat(run.errors()).isGreaterThanOrEqualTo(1); // no applicable surcharge rule does not suppress overdueDebt
+        assertThat(run.errors()).isGreaterThanOrEqualTo(1); // no applicable surcharge rule does not suppress debtOverdue
         List<OutboxEvent> events=overdueEvents(eligible);
         assertThat(events).hasSize(1);
-        OutboxEvent event=events.get(0);assertThat(event.targetModule).isEqualTo("CORE");assertThat(event.status).isEqualTo(OutboxStatus.PENDING);assertThat(event.idempotencyKey).isEqualTo("overdueDebt:Debt:"+eligible.id);
+        OutboxEvent event=events.get(0);assertThat(event.targetModule).isEqualTo("CORE");assertThat(event.status).isEqualTo(OutboxStatus.PENDING);assertThat(event.idempotencyKey).isEqualTo("debtOverdue:Debt:"+eligible.id);
         var envelope=json.readTree(event.payload);
         assertThat(envelope.fieldNames()).toIterable().containsExactlyInAnyOrder("eventId","eventType","eventVersion","occurredAt","sourceModule","correlationId","causationId","data");
-        assertThat(envelope.path("eventId").asText()).isEqualTo(event.id.toString());assertThat(envelope.path("eventType").asText()).isEqualTo("overdueDebt");
+        assertThat(envelope.path("eventId").asText()).isEqualTo(event.id.toString());assertThat(envelope.path("eventType").asText()).isEqualTo("debtOverdue");
         assertThat(envelope.path("eventVersion").asText()).isEqualTo("1.0");assertThat(envelope.path("occurredAt").asText()).isNotBlank();
         assertThat(envelope.path("sourceModule").asText()).isEqualTo("rentas");assertThat(envelope.path("correlationId").asText()).isNotBlank();
         assertThat(envelope.path("causationId").isNull()).isTrue();
@@ -1371,7 +1378,7 @@ class PostgreSqlIntegrationTest {
         authenticate();Debt eligible=debt("OVERDUE-ROLLBACK-"+UUID.randomUUID(),null);LocalDate date=uniqueProcessingDate(eligible.id,4);eligible.dueDate=date.minusDays(1);debts.save(eligible);
         TaxpayerReference taxpayer=taxpayers.findById(eligible.taxpayerId).orElseThrow();taxpayer.canonicalCitizenId=UUID.randomUUID();taxpayers.save(taxpayer);
         String aggregateId=eligible.id.toString();
-        jdbc.execute("CREATE OR REPLACE FUNCTION fail_test_overdue_outbox() RETURNS trigger AS $$ BEGIN IF NEW.event_type='overdueDebt' AND NEW.aggregate_id='"+aggregateId+"' THEN RAISE EXCEPTION 'test overdue outbox failure'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql");
+        jdbc.execute("CREATE OR REPLACE FUNCTION fail_test_overdue_outbox() RETURNS trigger AS $$ BEGIN IF NEW.event_type='debtOverdue' AND NEW.aggregate_id='"+aggregateId+"' THEN RAISE EXCEPTION 'test overdue outbox failure'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql");
         jdbc.execute("CREATE TRIGGER fail_test_overdue_outbox BEFORE INSERT ON outbox_event FOR EACH ROW EXECUTE FUNCTION fail_test_overdue_outbox()");
         try {
             assertThatThrownBy(()->dueDates.process(date)).hasMessageContaining("test overdue outbox failure");
@@ -1388,7 +1395,7 @@ class PostgreSqlIntegrationTest {
         LocalDate date=uniqueProcessingDate(eligible.id,6);eligible.dueDate=date.minusDays(1);debts.save(eligible);
         dueDates.process(date);
         assertThat(overdueEvents(eligible)).isEmpty();
-        IntegrationEventLog deferred=integrationLogs.findFirstByBusinessKeyOrderByIdDesc("outbound-deferred:overdueDebt:Debt:"+eligible.id).orElseThrow();
+        IntegrationEventLog deferred=integrationLogs.findFirstByBusinessKeyOrderByIdDesc("outbound-deferred:debtOverdue:Debt:"+eligible.id).orElseThrow();
         assertThat(deferred.status).isEqualTo(IntegrationEventStatus.PENDING);
         assertThat(deferred.errorMessage).isEqualTo("CANONICAL_CITIZEN_ID_PENDING");
         assertThat(debts.findById(eligible.id).orElseThrow().isCollectible()).isTrue();
@@ -1401,7 +1408,7 @@ class PostgreSqlIntegrationTest {
         assertThat(integrationLogs.findById(deferred.id).orElseThrow().status).isEqualTo(IntegrationEventStatus.PROCESSED);
     }
 
-    @Test void municipalSettlementStaysDeferredUntilSharedContractAgreementButUuidCandidateIsStable(){
+    @Test void municipalSettlementWithVerifiedCitizenPreparesOneSharedFact(){
         authenticate();
         Debt created=debt("M8-SETTLED-CANDIDATE-"+UUID.randomUUID(),null);
         TaxpayerReference linked=taxpayers.findById(created.taxpayerId).orElseThrow();
@@ -1412,10 +1419,20 @@ class PostgreSqlIntegrationTest {
 
         Debt paid=debts.findById(created.id).orElseThrow();
         assertThat(paid.status).isEqualTo(DebtStatus.PAID);
-        assertThat(outbox.findAll().stream().noneMatch(event -> "debtSettled".equals(event.eventType)
-            &&paid.id.toString().equals(event.aggregateId))).isTrue();
-        assertThat(integrationLogs.findFirstByBusinessKeyOrderByIdDesc("outbound-deferred:debtSettled:Debt:"+paid.id)
-            .orElseThrow().errorMessage).isEqualTo("SHARED_DEBT_SETTLED_CONTRACT_PENDING");
+        var prepared=outbox.findAll().stream().filter(event -> "debtSettled".equals(event.eventType)
+            &&paid.id.toString().equals(event.aggregateId)).toList();
+        assertThat(prepared).hasSize(1);
+        assertThat(prepared.get(0).idempotencyKey).isEqualTo("outbound:debtSettled:Debt:"+paid.id);
+        JsonNode envelope;
+        try{envelope=json.readTree(prepared.get(0).payload);}catch(Exception ex){throw new AssertionError(ex);}
+        assertThat(envelope.path("correlationId").isNull()).isTrue();
+        assertThat(envelope.path("causationId").isNull()).isTrue();
+        assertThat(envelope.path("data").path("originType").asText()).isEqualTo("MUNICIPAL_TAX");
+        assertThat(envelope.path("data").has("infractionId")).isFalse();
+        assertThat(envelope.path("data").path("citizenId").asText()).isEqualTo(linked.canonicalCitizenId.toString());
+        confirmedOutbox.debtSettled(paid);
+        assertThat(outbox.findAll().stream().filter(event -> "debtSettled".equals(event.eventType)
+            &&paid.id.toString().equals(event.aggregateId))).hasSize(1);
 
         var candidate=confirmedOutbox.municipalDebtSettledCandidate(paid);
         assertThat(candidate.debtId()).isEqualTo(paid.integrationId);
@@ -1423,6 +1440,16 @@ class PostgreSqlIntegrationTest {
         assertThat(candidate.originId()).isEqualTo(liquidationRecords.findById(paid.liquidationId).orElseThrow().integrationId.toString());
         assertThat(candidate.remainingBalance()).isZero();
         assertThat(candidate.outstandingBalance()).isZero();
+    }
+
+    @Test void municipalSettlementWithoutCanonicalCitizenRemainsDeferred(){
+        authenticate();Debt created=debt("M8-SETTLED-NO-M1-"+UUID.randomUUID(),null);
+        payments.register(new ApiDtos.RegisterPaymentRequest(created.taxpayerId,PaymentMethod.CASH,new BigDecimal("100"),
+            List.of(new ApiDtos.AllocationRequest(created.id,new BigDecimal("100")))));
+        assertThat(outbox.findAll().stream().noneMatch(event -> "debtSettled".equals(event.eventType)
+            &&created.id.toString().equals(event.aggregateId))).isTrue();
+        assertThat(integrationLogs.findFirstByBusinessKeyOrderByIdDesc("outbound-deferred:debtSettled:Debt:"+created.id)
+            .orElseThrow().errorMessage).isEqualTo("CANONICAL_CITIZEN_ID_PENDING");
     }
 
     @Test void bootstrapAndArbitraryUsersPersistBcryptOnPostgreSql(){
@@ -1519,7 +1546,7 @@ class PostgreSqlIntegrationTest {
 
     private void assertEquation(Payment payment){Payment stored=paymentRepository.findById(payment.id).orElseThrow();assertThat(stored.allocatedAmount.add(stored.unallocatedAmount)).isEqualByComparingTo(stored.amount);}
     private LocalDate uniqueProcessingDate(Long debtId,int offset){return LocalDate.of(1900,1,1).plusDays(debtId*10+offset);}
-    private List<OutboxEvent> overdueEvents(Debt debt){return outbox.findAll().stream().filter(x->x.eventType.equals("overdueDebt")&&x.targetModule.equals("CORE")&&x.aggregateType.equals("Debt")&&x.aggregateId.equals(debt.id.toString())).toList();}
+    private List<OutboxEvent> overdueEvents(Debt debt){return outbox.findAll().stream().filter(x->x.eventType.equals("debtOverdue")&&x.targetModule.equals("CORE")&&x.aggregateType.equals("Debt")&&x.aggregateId.equals(debt.id.toString())).toList();}
     private void authenticate(){var authorities=List.of("RENTAS","SUPERVISOR","CASHIER").stream().map(x->new SimpleGrantedAuthority("ROLE_"+x)).toList();SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("postgres-it",null),null,authorities));}
     private void authenticateTaxpayer(Long taxpayerId){SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("postgres-it-taxpayer-"+UUID.randomUUID(),taxpayerId),null,List.of(new SimpleGrantedAuthority("ROLE_TAXPAYER"))));}
     private MockHttpServletResponse postElectronic(String session,String key,ApiDtos.ElectronicPaymentRequest request)throws Exception{SecurityContextHolder.clearContext();return mvc.perform(post("/api/v1/electronic-payments").header("X-Demo-Session",session).header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsBytes(request))).andReturn().getResponse();}

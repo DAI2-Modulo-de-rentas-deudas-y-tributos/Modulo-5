@@ -23,19 +23,23 @@ class CoreInboundEventDispatcher {
     private static final Set<String> ENVELOPE_FIELDS=Set.of("eventId","eventType","eventVersion","occurredAt","sourceModule","correlationId","causationId","data");
     private static final Set<String> REQUIRED_ENVELOPE_FIELDS=Set.of("eventId","eventType","occurredAt","sourceModule","data");
     private final ObjectMapper json;
+    private final ConfirmedM1Consumer m1;
     private final ConfirmedM2Consumer m2;
     private final CoreM4Consumer m4;
     private final ConfirmedM7Consumer m7;
     private final ConfirmedM8Consumer m8;
 
-    CoreInboundEventDispatcher(ObjectMapper json,ConfirmedM2Consumer m2,CoreM4Consumer m4,
-        ConfirmedM7Consumer m7,ConfirmedM8Consumer m8){this.json=json;this.m2=m2;this.m4=m4;this.m7=m7;this.m8=m8;}
+    CoreInboundEventDispatcher(ObjectMapper json,ConfirmedM1Consumer m1,ConfirmedM2Consumer m2,CoreM4Consumer m4,
+        ConfirmedM7Consumer m7,ConfirmedM8Consumer m8){this.json=json;this.m1=m1;this.m2=m2;this.m4=m4;this.m7=m7;this.m8=m8;}
 
     void dispatch(String payload) {
         JsonNode envelope=readEnvelope(payload);
         String eventType=envelope.path("eventType").asText();
         try {
             switch(eventType){
+                case "citizenUpdated"->m1.consumeCitizen(json.readValue(envelope.traverse(),new TypeReference<ConfirmedInboundEvents.M1CoreEnvelope<ConfirmedInboundEvents.M1CitizenUpdatedData>>(){}));
+                case "organizationRegistered"->m1.consumeOrganization(json.readValue(envelope.traverse(),new TypeReference<ConfirmedInboundEvents.M1CoreEnvelope<ConfirmedInboundEvents.M1OrganizationRegisteredData>>(){}));
+                case "representationGranted","representationExpired"->m1.consumeRepresentation(json.readValue(envelope.traverse(),new TypeReference<ConfirmedInboundEvents.M1CoreEnvelope<ConfirmedInboundEvents.M1RepresentationData>>(){}));
                 case "ticketUpdated"->m2.consume(json.treeToValue(envelope,ConfirmedInboundEvents.M2TicketUpdatedEvent.class));
                 case "permitFeeGenerated"->{
                     IntegrationEventLog result=m4.consumePermitFee(json.readValue(envelope.traverse(),new TypeReference<CoreM4Events.Envelope<CoreM4Events.PermitFeeGeneratedData>>(){}));

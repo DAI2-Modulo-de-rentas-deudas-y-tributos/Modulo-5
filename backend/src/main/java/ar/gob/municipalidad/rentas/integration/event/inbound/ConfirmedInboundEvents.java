@@ -21,6 +21,11 @@ public final class ConfirmedInboundEvents {
 
     public record Producer(@NotBlank String moduleId,@NotBlank String service) {}
 
+    /** Core transport for M1. The older producer/subject envelope is kept only for legacy callers. */
+    public record M1CoreEnvelope<T>(@NotNull UUID eventId,@NotBlank String eventType,
+        @NotBlank String eventVersion,@NotNull OffsetDateTime occurredAt,@NotBlank String sourceModule,
+        UUID correlationId,UUID causationId,@NotNull @Valid T data) {}
+
     public record M1CitizenUpdatedEvent(@NotBlank String eventId,@NotNull OffsetDateTime occurredAt,
         @NotBlank String eventType,@NotNull @Valid Producer producer,@NotBlank String subject,
         @NotNull @Valid M1CitizenUpdatedData data) {}
@@ -59,10 +64,10 @@ public final class ConfirmedInboundEvents {
         @NotBlank String eventVersion,@NotNull OffsetDateTime occurredAt,@NotBlank String sourceModule,
         UUID correlationId,UUID causationId,@NotNull @Valid M8SocialBenefitData data) {}
     public record M8SocialBenefitData(@NotNull UUID benefitId,@NotNull UUID citizenId,
-        @NotNull UUID applicationId,@NotNull UUID programId,@NotBlank String programName,
-        @NotEmpty List<@NotNull @Valid M8Benefit> benefits,@NotBlank String status,String reason,LocalDate startDate,
-        LocalDate endDate,@NotNull OffsetDateTime updatedAt) {}
-    public record M8Benefit(@NotBlank String type,BigDecimal amount) {}
+        @NotNull UUID applicationId,@NotNull UUID programId,@NotNull UUID programEditionId,
+        @NotBlank String programName,@NotNull UUID benefitTypeId,@NotBlank String type,
+        @NotBlank String description,BigDecimal amount,@NotBlank String status,String reason,
+        LocalDate startDate,LocalDate endDate,@NotNull OffsetDateTime updatedAt) {}
 
     public enum M7DebtorIdType { DNI, CUIT }
     public record M7InfractionConfirmedEvent(@NotNull UUID eventId,@NotBlank String eventType,

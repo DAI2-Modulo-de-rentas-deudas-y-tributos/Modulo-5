@@ -77,18 +77,18 @@ class ConfirmedIntegrationOutbox {
         if(!debt.isCollectible()||!debt.dueDate.isBefore(processingDate))return;
         Debt lockedDebt=debts.findByIdForUpdate(debt.id).orElseThrow(()->CatalogService.notFound("Deuda"));
         if(!lockedDebt.isCollectible()||!lockedDebt.dueDate.isBefore(processingDate))return;
-        String idempotencyKey="overdueDebt:Debt:"+lockedDebt.id;
+        String idempotencyKey="debtOverdue:Debt:"+lockedDebt.id;
         if(outbox.existsByIdempotencyKey(idempotencyKey))return;
         TaxpayerReference taxpayer=taxpayer(lockedDebt.taxpayerId);
         if(!canonicalCitizenAvailable(taxpayer)){
-            defer("overdueDebt","Debt",lockedDebt.id,taxpayer.taxpayerType==TaxpayerType.CITIZEN?"CANONICAL_CITIZEN_ID_PENDING":"M8_ORGANIZATION_POLICY_PENDING");
+            defer("debtOverdue","Debt",lockedDebt.id,taxpayer.taxpayerType==TaxpayerType.CITIZEN?"CANONICAL_CITIZEN_ID_PENDING":"M8_ORGANIZATION_POLICY_PENDING");
             return;
         }
         TaxConcept concept=concept(lockedDebt.taxConceptId);
         var payload=new ConfirmedOutboundEvents.OverdueDebtPayload(lockedDebt.integrationId,taxpayer.canonicalCitizenId,concept.code,lockedDebt.outstandingBalance,lockedDebt.dueDate);
-        String aggregateId=String.valueOf(lockedDebt.id);var event=core("overdueDebt",payload,"Debt",aggregateId);
+        String aggregateId=String.valueOf(lockedDebt.id);var event=core("debtOverdue",payload,"Debt",aggregateId,lockedDebt.integrationId.toString());
         OutboxEvent entity=new OutboxEvent();entity.id=UUID.fromString(event.eventId());entity.eventType=event.eventType();entity.targetModule="CORE";entity.aggregateType="Debt";entity.aggregateId=aggregateId;entity.idempotencyKey=idempotencyKey;entity.payload=write(event);entity.status=OutboxStatus.PENDING;entity.retryCount=0;entity.createdAt=OffsetDateTime.now();outbox.save(entity);
-        resolveDeferral("overdueDebt","Debt",lockedDebt.id);
+        resolveDeferral("debtOverdue","Debt",lockedDebt.id);
     }
     void paymentRegistered(Payment payment,PaymentAllocation allocation,Debt debt){paymentRegistered(payment,allocation,debt,allocation.amount);}
     void paymentRegistered(Payment payment,PaymentAllocation allocation,Debt debt,BigDecimal amount){externalOrigin(debt).ifPresent(origin->{
@@ -101,7 +101,7 @@ class ConfirmedIntegrationOutbox {
                 missingCorrelationReason(origin));
             return;
         }
-        enqueue("PaymentAllocation",allocation.id.toString(),core("paymentRegistered",payload,"Debt",debt.id.toString(),correlation.get(),origin.sourceEventId().toString()),key);
+        enqueue("PaymentAllocation",allocation.id.toString(),core("paymentRegistered",payload,"Debt",debt.id.toString(),correlation.get(),economicCausation(origin)),key);
         resolveEconomicDeferral("paymentRegistered","PaymentAllocation",allocation.id,debt.id);
     });}
     void paymentReversed(Payment payment,PaymentAllocation allocation,Debt debt,String reason){paymentReversed(payment,allocation,debt,reason,allocation.amount);}
@@ -110,20 +110,27 @@ class ConfirmedIntegrationOutbox {
         if(outbox.existsByIdempotencyKey(key))return;
         var payload=new ConfirmedOutboundEvents.PaymentReversedPayload(payment.integrationId,debt.integrationId,originType(origin.externalType()),origin.externalReferenceId(),infractionId(origin),amount,allocation.reversedAt,debt.outstandingBalance,reason);
         Optional<String> correlation=economicCorrelation(origin,debt.id);
-        if(correlation.isEmpty()||("M7".equals(origin.targetModule())
-            &&!outbox.existsByIdempotencyKey(economicKey("paymentRegistered",allocation.id,debt.id)))){
+        if(correlation.isEmpty()||!outbox.existsByIdempotencyKey(economicKey("paymentRegistered",allocation.id,debt.id))){
             deferEconomic("paymentReversed","PaymentAllocation",allocation.id,debt,origin,payment.id,allocation.id,key,payload,
                 correlation.isEmpty()?missingCorrelationReason(origin):"PAYMENT_EVENT_NOT_PREPARED");
             return;
         }
-        enqueue("PaymentAllocation",allocation.id.toString(),core("paymentReversed",payload,"Debt",debt.id.toString(),correlation.get(),origin.sourceEventId().toString()),key);
+        enqueue("PaymentAllocation",allocation.id.toString(),core("paymentReversed",payload,"Debt",debt.id.toString(),correlation.get(),economicCausation(origin)),key);
         resolveEconomicDeferral("paymentReversed","PaymentAllocation",allocation.id,debt.id);
     });}
     void debtSettled(Debt debt){debtSettled(debt,null);}
     void debtSettled(Debt debt,PaymentAllocation allocation){
         if(debt.originType==DebtOriginType.LIQUIDATION){
             TaxpayerReference taxpayer=taxpayer(debt.taxpayerId);
-            defer("debtSettled","Debt",debt.id,canonicalCitizenAvailable(taxpayer)?"SHARED_DEBT_SETTLED_CONTRACT_PENDING":"CANONICAL_CITIZEN_ID_PENDING");
+            if(!canonicalCitizenAvailable(taxpayer)){
+                defer("debtSettled","Debt",debt.id,"CANONICAL_CITIZEN_ID_PENDING");
+                return;
+            }
+            var payload=municipalDebtSettledCandidate(debt);
+            String key="outbound:debtSettled:Debt:"+debt.id;
+            if(outbox.existsByIdempotencyKey(key))return;
+            enqueue("Debt",debt.id.toString(),core("debtSettled",payload,"Debt",debt.id.toString(),null,null),key);
+            resolveDeferral("debtSettled","Debt",debt.id);
             return;
         }
         var origin=externalOrigin(debt);
@@ -138,19 +145,23 @@ class ConfirmedIntegrationOutbox {
         String key=allocation==null?"outbound:debtSettled:Debt:"+debt.id:economicKey("debtSettled",allocation.id,debt.id);
         if(outbox.existsByIdempotencyKey(key))return;
         Optional<String> correlation=economicCorrelation(origin.orElseThrow(),debt.id);
-        if(correlation.isEmpty()||("M7".equals(origin.orElseThrow().targetModule())&&allocation!=null
+        if(correlation.isEmpty()||allocation!=null
             &&!outbox.existsByIdempotencyKey(
-            economicKey("paymentRegistered",allocation.id,debt.id)))){
+            economicKey("paymentRegistered",allocation.id,debt.id))){
             deferEconomic("debtSettled","Debt",debt.id,debt,origin.orElseThrow(),allocation==null?null:allocation.paymentId,
                 allocation==null?null:allocation.id,key,payload,
                 correlation.isEmpty()?missingCorrelationReason(origin.orElseThrow()):"PAYMENT_EVENT_NOT_PREPARED");
             return;
         }
-        enqueue("Debt",debt.id.toString(),core("debtSettled",payload,"Debt",debt.id.toString(),correlation.get(),origin.orElseThrow().sourceEventId().toString()),key);
+        if("M4".equals(origin.orElseThrow().targetModule())&&!canonicalCitizenAvailable(taxpayer)){
+            deferEconomic("debtSettled","Debt",debt.id,debt,origin.orElseThrow(),allocation==null?null:allocation.paymentId,
+                allocation==null?null:allocation.id,key,payload,"M4_CITIZEN_ID_CONTRACT_PENDING");
+            return;
+        }
+        enqueue("Debt",debt.id.toString(),core("debtSettled",payload,"Debt",debt.id.toString(),correlation.get(),economicCausation(origin.orElseThrow())),key);
         resolveEconomicDeferral("debtSettled","Debt",debt.id,debt.id);
     }
 
-    // Sólo candidato local para validar identidades; no se encola hasta acordar el contrato compartido con M4/M7.
     ConfirmedOutboundEvents.DebtSettledPayload municipalDebtSettledCandidate(Debt debt){
         CatalogService.require(debt.originType==DebtOriginType.LIQUIDATION&&debt.liquidationId!=null,"INVALID_DEBT_ORIGIN","La deuda no proviene de una liquidación municipal");
         CatalogService.require(debt.status==DebtStatus.PAID&&debt.outstandingBalance.signum()==0,"DEBT_NOT_SETTLED","La deuda aún no está saldada");
@@ -195,7 +206,7 @@ class ConfirmedIntegrationOutbox {
     }
     OutboxEvent prepareDeferredEconomic(EconomicMovementSnapshot snapshot,String correlationId){
         var event=new ConfirmedOutboundEvents.CoreEnvelope<>(snapshot.eventId().toString(),snapshot.eventType(),"1.0",
-            snapshot.occurredAt(),"rentas",correlationId,snapshot.sourceEventId().toString(),snapshot.data());
+            snapshot.occurredAt(),"rentas",correlationId,null,snapshot.data());
         OutboxEvent entity=new OutboxEvent();entity.id=snapshot.eventId();entity.eventType=snapshot.eventType();entity.targetModule="CORE";
         entity.aggregateType=snapshot.aggregateType();entity.aggregateId=snapshot.aggregateId().toString();
         entity.idempotencyKey=snapshot.idempotencyKey();entity.payload=write(event);entity.status=OutboxStatus.PENDING;
@@ -216,12 +227,16 @@ class ConfirmedIntegrationOutbox {
             });
     }
     Optional<String> economicCorrelation(ExternalDebtOrigin origin,Long debtId){
-        if("M4".equals(origin.targetModule()))return integrationLogs.findFirstByEventIdOrderByIdDesc(origin.sourceEventId())
+        if("M4".equals(origin.targetModule())){
+            if(!canonicalUuid(origin.externalReferenceId()))return Optional.empty();
+            return integrationLogs.findFirstByEventIdOrderByIdDesc(origin.sourceEventId())
             .filter(log->log.direction==EventDirection.INBOUND&&Set.of("permitFeeGenerated","commercialFineGenerated").contains(log.eventType))
             .flatMap(log->{
                 try{
                     JsonNode received=json.readTree(log.payload);
                     if(!"habilitaciones".equals(received.path("sourceModule").asText())
+                        ||!origin.sourceEventId().toString().equals(received.path("eventId").asText())
+                        ||!"1.0".equals(received.path("eventVersion").asText())
                         ||!(origin.externalType()==ExternalObligationType.PERMIT_FEE?"permitFeeGenerated":"commercialFineGenerated")
                             .equals(log.eventType)
                         ||!origin.externalReferenceId().equals(received.path("data").path("id").asText()))return Optional.empty();
@@ -229,12 +244,17 @@ class ConfirmedIntegrationOutbox {
                     return value==null?Optional.empty():Optional.of(UUID.fromString(value).toString());
                 }catch(Exception ex){return Optional.empty();}
             });
+        }
+        if(!canonicalUuid(origin.externalReferenceId()))return Optional.empty();
         return integrationLogs.findFirstByEventIdOrderByIdDesc(origin.sourceEventId())
             .filter(log->log.direction==EventDirection.INBOUND&&"infractionConfirmed".equals(log.eventType))
             .flatMap(log->{
                 try{
                     JsonNode received=json.readTree(log.payload);
                     if(!"transito".equals(received.path("sourceModule").asText())
+                        ||!origin.sourceEventId().toString().equals(received.path("eventId").asText())
+                        ||!"infractionConfirmed".equals(received.path("eventType").asText())
+                        ||!"1.0".equals(received.path("eventVersion").asText())
                         ||!origin.externalReferenceId().equals(received.path("data").path("infractionId").asText()))return Optional.empty();
                     String value=received.path("correlationId").asText(null);
                     return value==null?Optional.empty():Optional.of(UUID.fromString(value).toString());
@@ -242,24 +262,34 @@ class ConfirmedIntegrationOutbox {
             });
     }
     private String missingCorrelationReason(ExternalDebtOrigin origin){
+        if("M4".equals(origin.targetModule())&&!canonicalUuid(origin.externalReferenceId()))
+            return "M4_ORIGINAL_ORIGIN_ID_INVALID";
+        if("M7".equals(origin.targetModule())&&!canonicalUuid(origin.externalReferenceId()))
+            return "M7_ORIGINAL_INFRACTION_ID_INVALID";
         return "M7".equals(origin.targetModule())?"M7_ORIGINAL_CORRELATION_ID_UNAVAILABLE":"M4_ORIGINAL_CORRELATION_ID_UNAVAILABLE";
+    }
+    private boolean canonicalUuid(String value){
+        try{return UUID.fromString(value).toString().equals(value);}catch(Exception ex){return false;}
+    }
+    private String economicCausation(ExternalDebtOrigin origin){
+        return null;
     }
     void deferHistoricalPlanReversal(PaymentAllocation allocation){defer("paymentReversed","PaymentAllocation",allocation.id,"LEGACY_PLAN_DISTRIBUTION_UNAVAILABLE");}
 
-    ConfirmedOutboundEvents.CoreEnvelope<ConfirmedOutboundEvents.M2UpdateTicketStatusData> ticketStatus(String ticketId,String updateType,String publicMessage,String internalMessage,JsonNode details,UUID actorId){return ticketStatus(ticketId,updateType,publicMessage,internalMessage,details,actorId,null,null);}
     ConfirmedOutboundEvents.CoreEnvelope<ConfirmedOutboundEvents.M2UpdateTicketStatusData> ticketStatus(String ticketId,String updateType,String publicMessage,String internalMessage,JsonNode details,UUID actorId,String correlationId,String causationId){
         CatalogService.require(actorId!=null,"INTEGRATION_ACTOR_ID_REQUIRED","El empleado autenticado no tiene UUID de integración; no se puede informar el cambio a M2");
         return ticketStatus(ticketId,updateType,publicMessage,internalMessage,details,new ConfirmedOutboundEvents.UpdatedBy("EXTERNAL_USER",actorId.toString()),correlationId,causationId);
     }
-    ConfirmedOutboundEvents.CoreEnvelope<ConfirmedOutboundEvents.M2UpdateTicketStatusData> systemTicketStatus(String ticketId,String updateType,String publicMessage,String internalMessage,JsonNode details){
-        return ticketStatus(ticketId,updateType,publicMessage,internalMessage,details,new ConfirmedOutboundEvents.UpdatedBy("SYSTEM",null),null,null);
+    ConfirmedOutboundEvents.CoreEnvelope<ConfirmedOutboundEvents.M2UpdateTicketStatusData> systemTicketStatus(String ticketId,String updateType,String publicMessage,String internalMessage,JsonNode details,String correlationId,String causationId){
+        return ticketStatus(ticketId,updateType,publicMessage,internalMessage,details,new ConfirmedOutboundEvents.UpdatedBy("SYSTEM",null),correlationId,causationId);
     }
     private ConfirmedOutboundEvents.CoreEnvelope<ConfirmedOutboundEvents.M2UpdateTicketStatusData> ticketStatus(String ticketId,String updateType,String publicMessage,String internalMessage,JsonNode details,ConfirmedOutboundEvents.UpdatedBy actor,String correlationId,String causationId){
         CatalogService.require(isUuid(ticketId),"INVALID_TICKET_ID","ticketId de M2 debe ser UUID");
+        CatalogService.require(correlationId!=null&&isUuid(correlationId),"M2_CORRELATION_REQUIRED","updateTicketStatus requiere el correlationId original de M2");
+        CatalogService.require(causationId==null||isUuid(causationId),"INVALID_CAUSATION_ID","causationId debe ser UUID cuando exista");
         validateTicketStatus(updateType,publicMessage,internalMessage,details);
         OffsetDateTime at=OffsetDateTime.now();var data=new ConfirmedOutboundEvents.M2UpdateTicketStatusData(ticketId,updateType,publicMessage,internalMessage,null,details,List.of(),actor,at);
-        var initial=core("updateTicketStatus",data,"TicketCase",ticketId);
-        return new ConfirmedOutboundEvents.CoreEnvelope<>(initial.eventId(),initial.eventType(),initial.eventVersion(),initial.occurredAt(),initial.sourceModule(),correlationId==null?initial.correlationId():correlationId,causationId,data);
+        return core("updateTicketStatus",data,"TicketCase",ticketId,correlationId,causationId);
     }
     void ticketStatus(String ticketId,String aggregateId,String updateType,String publicMessage,String internalMessage,JsonNode details,UUID actorId,String correlationId,String causationId){
         var event=ticketStatus(ticketId,updateType,publicMessage,internalMessage,details,actorId,correlationId,causationId);
@@ -294,7 +324,7 @@ class ConfirmedIntegrationOutbox {
     ConfirmedOutboundEvents.CoreEnvelope<ConfirmedOutboundEvents.ExemptionRequestedPayload> exemptionRequestedEvent(ConfirmedOutboundEvents.ExemptionRequestedPayload payload){return core("exemptionRequested",payload,"ExemptionRequest",payload.requestId().toString());}
     ConfirmedOutboundEvents.CoreEnvelope<ConfirmedOutboundEvents.PaymentPlanRequestedPayload> paymentPlanRequestedEvent(ConfirmedOutboundEvents.PaymentPlanRequestedPayload payload){return core("paymentPlanRequested",payload,"PaymentPlanRequest",payload.requestId().toString());}
     ConfirmedOutboundEvents.CoreEnvelope<ConfirmedOutboundEvents.UpdatePaymentPlanStatusPayload> paymentPlanStatusEvent(ConfirmedOutboundEvents.UpdatePaymentPlanStatusPayload payload){return core("updatePaymentPlanStatus",payload,"PaymentPlanRequest",payload.requestId().toString());}
-    ConfirmedOutboundEvents.CoreEnvelope<ConfirmedOutboundEvents.OverdueDebtPayload> overdueDebtEvent(ConfirmedOutboundEvents.OverdueDebtPayload payload){return core("overdueDebt",payload,"Debt",payload.debtId().toString());}
+    ConfirmedOutboundEvents.CoreEnvelope<ConfirmedOutboundEvents.OverdueDebtPayload> overdueDebtEvent(ConfirmedOutboundEvents.OverdueDebtPayload payload){return core("debtOverdue",payload,"Debt",payload.debtId().toString(),payload.debtId().toString());}
     ConfirmedOutboundEvents.CoreEnvelope<ConfirmedOutboundEvents.DebtSettledPayload> debtSettledEvent(ConfirmedOutboundEvents.DebtSettledPayload payload){return core("debtSettled",payload,"Debt",payload.debtId().toString());}
 
     private <T> void enqueueSimple(String type,T payload,String aggregate,Object aggregateId){var event=core(type,payload,aggregate,String.valueOf(aggregateId));enqueue(aggregate,String.valueOf(aggregateId),event);}
@@ -314,8 +344,12 @@ class ConfirmedIntegrationOutbox {
         return outbox.findFirstByEventTypeAndAggregateTypeAndAggregateIdOrderByCreatedAtAsc(type,"ExemptionRequest",requestId.toString());
     }
     private boolean exemptionRequestPrepared(ExemptionRequest request,TaxpayerReference taxpayer){
+        TaxConcept concept=concept(request.taxConceptId);
+        var expected=new ConfirmedOutboundEvents.ExemptionRequestedPayload(request.integrationId,taxpayer.canonicalCitizenId,
+            concept.code,request.reason,request.requestedPercentage,request.requestedFrom,request.requestedUntil);
         return exemptionOutbox("exemptionRequested",request.id)
-            .filter(event->matchesExemptionOutbox(event,request.integrationId,taxpayer.canonicalCitizenId,null)).isPresent();
+            .filter(event->matchesExemptionOutbox(event,request.integrationId,taxpayer.canonicalCitizenId,null)
+                &&matchesExemptionPayload(event,expected)&&requestThread(event).isPresent()).isPresent();
     }
     private boolean matchesExemptionOutbox(OutboxEvent event,UUID requestId,UUID citizenId,String status){
         try{
@@ -325,17 +359,36 @@ class ConfirmedIntegrationOutbox {
                 &&(status==null||status.equals(data.path("status").asText()));
         }catch(Exception ex){return false;}
     }
+    private boolean matchesExemptionPayload(OutboxEvent event,Object expected){
+        try{return json.valueToTree(expected).equals((left,right)->
+            left.isNumber()&&right.isNumber()?left.decimalValue().compareTo(right.decimalValue())
+                :left.equals(right)?0:1,json.readTree(event.payload).path("data"));}
+        catch(Exception ex){return false;}
+    }
     private boolean prepareExemption(String type,Long requestId,UUID integrationId,UUID citizenId,String status,Object payload){
         var existing=exemptionOutbox(type,requestId);
         if(existing.isPresent()){
-            if(!matchesExemptionOutbox(existing.orElseThrow(),integrationId,citizenId,status)){
+            if(!matchesExemptionOutbox(existing.orElseThrow(),integrationId,citizenId,status)
+                ||!matchesExemptionPayload(existing.orElseThrow(),payload)
+                ||!matchesM1Thread(existing.orElseThrow(),"exemptionRequested".equals(type)
+                    ?Optional.empty():exemptionOutbox("exemptionRequested",requestId))){
                 defer(type,"ExemptionRequest",requestId,"EXISTING_OUTBOX_CONTRACT_REVIEW_REQUIRED");
                 return false;
             }
             resolveDeferral(type,"ExemptionRequest",requestId);
             return true;
         }
-        var event=core(type,payload,"ExemptionRequest",requestId.toString());
+        ConfirmedOutboundEvents.CoreEnvelope<?> event;
+        if("exemptionRequested".equals(type))event=core(type,payload,"ExemptionRequest",requestId.toString(),integrationId.toString());
+        else{
+            var source=exemptionOutbox("exemptionRequested",requestId);
+            var thread=source.flatMap(this::requestThread);
+            if(thread.isEmpty()){
+                defer(type,"ExemptionRequest",requestId,"REQUEST_CORRELATION_REVIEW_REQUIRED");
+                return false;
+            }
+            event=core(type,payload,"ExemptionRequest",requestId.toString(),thread.orElseThrow(),source.orElseThrow().id.toString());
+        }
         OutboxEvent entity=new OutboxEvent();entity.id=UUID.fromString(event.eventId());entity.eventType=type;
         entity.targetModule="CORE";entity.aggregateType="ExemptionRequest";entity.aggregateId=requestId.toString();
         entity.idempotencyKey="outbound:"+type+":ExemptionRequest:"+requestId;
@@ -351,7 +404,7 @@ class ConfirmedIntegrationOutbox {
         try{
             var expected=json.readTree(write(payload));
             return planOutbox("paymentPlanRequested",request.id)
-                .filter(event->matchesPlanPayload(event,expected)).isPresent();
+                .filter(event->matchesPlanPayload(event,expected)&&requestThread(event).isPresent()).isPresent();
         }catch(Exception ex){return false;}
     }
     private ConfirmedOutboundEvents.PaymentPlanRequestedPayload paymentPlanPayload(PaymentPlanRequest request,TaxpayerReference taxpayer){
@@ -374,7 +427,9 @@ class ConfirmedIntegrationOutbox {
         Optional<OutboxEvent> existing=outbox.findByIdempotencyKey(key).or(()->planOutbox(type,request.id));
         if(existing.isPresent()){
             try{
-                if(!expected.equals(json.readTree(existing.orElseThrow().payload).path("data"))){
+                if(!expected.equals(json.readTree(existing.orElseThrow().payload).path("data"))
+                    ||!matchesM1Thread(existing.orElseThrow(),"paymentPlanRequested".equals(type)
+                        ?Optional.empty():planOutbox("paymentPlanRequested",request.id))){
                     defer(type,"PaymentPlanRequest",request.id,"EXISTING_OUTBOX_CONTRACT_REVIEW_REQUIRED");return false;
                 }
                 existing.orElseThrow().idempotencyKey=key;
@@ -384,20 +439,44 @@ class ConfirmedIntegrationOutbox {
                 defer(type,"PaymentPlanRequest",request.id,"EXISTING_OUTBOX_CONTRACT_REVIEW_REQUIRED");return false;
             }
         }
-        var previous=outbox.findFirstByEventTypeAndAggregateTypeAndAggregateIdOrderByCreatedAtAsc("paymentPlanRequested","PaymentPlanRequest",request.id.toString());
-        var event=previous.map(source->derivedPlanEvent(type,payload,source)).orElseGet(()->core(type,payload,"PaymentPlanRequest",request.id.toString()));
+        ConfirmedOutboundEvents.CoreEnvelope<?> event;
+        if("paymentPlanRequested".equals(type))event=core(type,payload,"PaymentPlanRequest",request.id.toString(),request.integrationId.toString());
+        else{
+            var source=planOutbox("paymentPlanRequested",request.id);
+            var thread=source.flatMap(this::requestThread);
+            if(thread.isEmpty()){
+                defer(type,"PaymentPlanRequest",request.id,"REQUEST_CORRELATION_REVIEW_REQUIRED");
+                return false;
+            }
+            event=core(type,payload,"PaymentPlanRequest",request.id.toString(),thread.orElseThrow(),source.orElseThrow().id.toString());
+        }
         OutboxEvent entity=new OutboxEvent();entity.id=UUID.fromString(event.eventId());entity.eventType=type;entity.targetModule="CORE";
         entity.aggregateType="PaymentPlanRequest";entity.aggregateId=request.id.toString();entity.idempotencyKey=key;
         entity.payload=write(event);entity.status=OutboxStatus.PENDING;entity.retryCount=0;entity.createdAt=OffsetDateTime.now();outbox.save(entity);
         return true;
     }
-    private <T> ConfirmedOutboundEvents.CoreEnvelope<T> derivedPlanEvent(String type,T data,OutboxEvent source){
+    private Optional<String> requestThread(OutboxEvent request){
         try{
-            String correlationId=json.readTree(source.payload).path("correlationId").asText(null);
-            if(correlationId==null)correlationId=UUID.randomUUID().toString();
-            CatalogService.require(isUuid(correlationId),"INVALID_OUTBOUND_CORRELATION","La solicitud de plan no tiene correlación válida");
-            return new ConfirmedOutboundEvents.CoreEnvelope<>(UUID.randomUUID().toString(),type,"1.0",OffsetDateTime.now(),"rentas",correlationId,source.id.toString(),data);
-        }catch(java.io.IOException ex){throw new IllegalStateException("No se pudo leer la correlación del evento de solicitud",ex);}
+            JsonNode envelope=json.readTree(request.payload);
+            String correlation=envelope.path("correlationId").asText(null);
+            return request.id.toString().equals(envelope.path("eventId").asText())
+                &&"rentas".equals(envelope.path("sourceModule").asText())
+                &&"1.0".equals(envelope.path("eventVersion").asText())
+                &&correlation!=null&&isUuid(correlation)
+                ?Optional.of(correlation):Optional.empty();
+        }catch(Exception ex){return Optional.empty();}
+    }
+    private boolean matchesM1Thread(OutboxEvent event,Optional<OutboxEvent> request){
+        try{
+            JsonNode envelope=json.readTree(event.payload);
+            if(!event.id.toString().equals(envelope.path("eventId").asText()))return false;
+            String correlation=envelope.path("correlationId").asText(null);
+            if(request.isEmpty())return requestThread(event).isPresent()
+                &&envelope.path("causationId").isNull();
+            String sourceThread=requestThread(request.orElseThrow()).orElse(null);
+            return sourceThread!=null&&sourceThread.equals(correlation)
+                &&request.orElseThrow().id.toString().equals(envelope.path("causationId").asText());
+        }catch(Exception ex){return false;}
     }
     private boolean matchesPlanPayload(OutboxEvent event,JsonNode expected){
         try{return expected.equals(json.readTree(event.payload).path("data"));}

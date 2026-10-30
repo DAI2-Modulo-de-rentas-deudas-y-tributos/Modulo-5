@@ -185,6 +185,7 @@ public final class ApiDtos {
         @NotBlank String benefitType,@NotNull SocialBenefitStatus status,@DecimalMin("0.00") @DecimalMax("100.00") BigDecimal discountPercentage,
         @NotNull LocalDate validFrom,LocalDate validUntil,List<String> taxConceptCodes) {}
     public record CreateTicketUpdateRequest(@NotBlank String message) {}
+    public record ReturnTicketRequest(@NotBlank String reasonCode,@NotBlank String internalMessage) {}
     public record TicketInformationRequest(@NotBlank String message) {}
     public record CompleteTicketRequest(@NotBlank String resolution) {}
     public record CollectionIndicatorResponse(long paymentCount,BigDecimal confirmedAmount,BigDecimal allocatedAmount,BigDecimal unallocatedAmount) {}

@@ -21,6 +21,7 @@ un dataset alternativo de producción: todas las operaciones pasan por la API.
 - [Niveles y bloqueos de integración](docs/M5_NIVELES_INTEGRACION.md)
 - [Guía de exposición y demo segura](docs/GUIA_EXPOSICION_PATRONES_SEGURIDAD.md)
 - [Índice de ADR](docs/adr/README.md)
+- [Estado local de integraciones y migraciones pendientes](docs/integrations/M5_ESTADO_LOCAL_2026-10-30.md)
 
 ## Tecnologías acordadas
 

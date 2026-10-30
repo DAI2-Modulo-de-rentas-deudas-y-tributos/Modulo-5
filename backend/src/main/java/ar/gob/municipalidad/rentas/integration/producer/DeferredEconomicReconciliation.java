@@ -73,6 +73,11 @@ class DeferredEconomicReconciliation {
             snapshot=json.treeToValue(root.path("snapshot"),EconomicMovementSnapshot.class);
         }catch(Exception ex){return review(log,"HISTORICAL_MOVEMENT_SNAPSHOT_UNAVAILABLE");}
         if(snapshot!=null&&legacyIdentifiers(snapshot.data()))return review(log,"LEGACY_ECONOMIC_IDS_REVIEW_REQUIRED");
+        if(snapshot!=null&&"M4".equals(snapshot.targetModule())&&!canonicalUuid(snapshot.originId()))
+            return review(log,"M4_ORIGINAL_ORIGIN_ID_INVALID");
+        if(snapshot!=null&&"M4".equals(snapshot.targetModule())&&"debtSettled".equals(snapshot.eventType())
+            &&!canonicalUuid(snapshot.data().path("citizenId").asText()))
+            return review(log,"M4_CITIZEN_ID_CONTRACT_PENDING");
         if(snapshot==null||!validSnapshot(log,snapshot))return review(log,"ECONOMIC_SNAPSHOT_REVIEW_REQUIRED");
         Debt debt=debts.findById(snapshot.debtId()).orElse(null);
         if(debt==null||debt.integrationId==null
@@ -137,7 +142,7 @@ class DeferredEconomicReconciliation {
                 ||!snapshot.originId().equals(data.path("infractionId").asText()))return false;
             try{UUID.fromString(snapshot.originId());}catch(IllegalArgumentException ex){return false;}
         }else if(!Set.of("PERMIT_FEE","COMMERCIAL_FINE").contains(data.path("originType").asText())
-            ||data.has("infractionId"))return false;
+            ||data.has("infractionId")||!canonicalUuid(snapshot.originId()))return false;
         if(snapshot.eventType().equals("debtSettled")){
             return data.path("settledAt").isTextual()&&money(data,"remainingBalance",false)
                 &&money(data,"outstandingBalance",false)

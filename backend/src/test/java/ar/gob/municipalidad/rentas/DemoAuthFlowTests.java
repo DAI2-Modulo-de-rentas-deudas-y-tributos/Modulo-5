@@ -33,6 +33,7 @@ class DemoAuthFlowTests {
     @Autowired org.springframework.security.crypto.password.PasswordEncoder encoder;
     @Autowired DemoAuthService auth;
     @Autowired TicketCaseRepository tickets;
+    @Autowired IntegrationEventLogRepository integrationLogs;
     @Autowired OutboxRepository outbox;
     @Autowired EntityManager entityManager;
 
@@ -106,6 +107,13 @@ class DemoAuthFlowTests {
         ticket.status=TicketCaseStatus.OPEN;ticket.createdAt=ticket.updatedAt=OffsetDateTime.now();
         ticket.correlationId=UUID.randomUUID().toString();ticket.lastSourceEventId=UUID.randomUUID().toString();
         tickets.saveAndFlush(ticket);
+        IntegrationEventLog route=new IntegrationEventLog();route.eventId=UUID.fromString(ticket.lastSourceEventId);
+        route.externalEventId=ticket.lastSourceEventId;route.eventType="ticketUpdated";route.sourceModule="atencion-ciudadana";
+        route.direction=EventDirection.INBOUND;route.status=IntegrationEventStatus.PROCESSED;route.retryCount=0;
+        route.occurredAt=route.receivedAt=OffsetDateTime.now();
+        route.payload=json.writeValueAsString(Map.of("correlationId",ticket.correlationId,
+            "data",Map.of("ticketId",ticket.externalTicketId,"updateType","ROUTED")));
+        integrationLogs.saveAndFlush(route);
         mvc.perform(post("/api/v1/tickets/{id}/assign",ticket.id).header("X-Demo-Session",token)
             .header("X-Dev-User","usuario-forjado")).andExpect(status().isOk());
         OutboxEvent event=outbox.findAll().stream().filter(x->"updateTicketStatus".equals(x.eventType)).findFirst().orElseThrow();
