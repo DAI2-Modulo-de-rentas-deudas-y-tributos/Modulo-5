@@ -2,7 +2,13 @@
 
 **Estado:** material preparado para revisión; ninguno de los cuatro CVE se declara corregido ni aceptado. No se modificó código ni dependencias como parte de este documento. Fecha de preparación: 2026-10-29.
 
-La candidata evaluada se basa en `508cef5da30d517fc4e8ac304d9f68415bf010ba` y contiene cambios locales sin commit en `backend/pom.xml` y `docs/security/SCRUM-793_SCA_2026-10-28.md`. El classpath de los reportes Surefire generados el 28/10/2026 confirma Rabbit Java Client `5.37.0`, Commons Lang `3.18.0`, Log4j `2.25.5` y Commons Compress `1.26.0` (scope de test); estos overrides no cambian las versiones Spring de la matriz ni corrigen los cuatro CVE tratados aquí. Esta solicitud complementa el escaneo actualizado y no sustituye la decisión formal del responsable de Seguridad.
+La evaluación de esta ronda parte de `integration/m5-final-develop-20261028` en `8f8dfc5aaa89a05af59231ca1a55bb5faaa61c60`, más los cambios locales sin commit del gate de cobertura y esta decisión. La última ejecución de `clean verify` terminó correctamente con Temurin 17.0.20.1: 569 tests, 0 fallas, 0 errores y 0 omitidos; JaCoCo global 91,44% líneas (2533/2770) y 66,70% ramas (1743/2613). El gate específico del dominio registró 98,54% líneas (472/479) y 72,71% ramas (634/872) sobre 19 clases de las 14 familias. PostgreSQL Testcontainers 17.11 y migraciones efímeras hasta V31 pasaron. Esta solicitud complementa el escaneo actualizado y no sustituye la decisión formal del responsable de Seguridad.
+
+## Alcance original de SCRUM-793
+
+El ticket original se abrió por `spring-boot-starter-parent:3.5.5` y los hallazgos **CVE-2025-41248** (Spring Security) y **CVE-2025-41249** (Spring Framework). Sus criterios piden actualizar dentro de Spring Boot 3.5.x, verificar que `mvn verify` no cambie comportamiento y ejecutar el escaneo de dependencias para no dejar CVE altas/críticas sin documentar. No exige por sí mismo una migración a Boot 4 ni convierte los cuatro avisos publicados en 2026 en parte de la corrección original.
+
+Las correcciones OSS de 2025 son Spring Security `6.5.5` o superior dentro de la línea afectada y Spring Framework `6.2.11` o superior, respectivamente. La verificación actual resuelve Boot `3.5.16`, Spring Security `6.5.11` y Spring Framework/WebMVC `6.2.19`; por versión, ambos fixes de 2025 están incluidos. El escaneo SCA final histórico dejó documentados los dos findings OSV de WebMVC; no se repitió OSV en esta ronda. Los cuatro CVE 2026 de esta solicitud son riesgos residuales nuevos: no se consideran corregidos por el cambio de parent ni por la ausencia de sus precondiciones en el código.
 
 ## Base técnica y clasificación
 
@@ -38,6 +44,18 @@ Decidir por CVE, no de forma agregada. Una aceptación temporal debe registrar, 
 - Acción requerida antes de abrir Core/RabbitMQ, publicar a un broker compartido o desplegar.
 
 No se propone una aceptación permanente. Si no se aprueba formalmente cada residual, SCRUM-793 queda **PENDIENTE DE DECISIÓN DE SEGURIDAD**. La recomendación técnica es mantener Core/M9 y el consumidor AMQP apagados, sostener la allowlist de orden y planificar una actualización compatible del stack; estas medidas no equivalen a corregir los CVE.
+
+## Alternativas formales para los residuales 2026
+
+### A. Aceptación temporal documentada
+
+Seguridad puede aceptar por CVE el riesgo residual sólo para ambientes expresamente enumerados, con owner nominal, aprobador, fecha de vencimiento/revisión, controles y condiciones de revocación definidos arriba. Para esta candidata, las mitigaciones verificables son: no se observan rutas SSE/XSLT en el código inspeccionado; el `Pageable` del query nativo de Outbox es constante y las ordenaciones HTTP se allowlistean; el consumidor Core/Rabbit está deshabilitado por defecto y no se encontró configuración de descompresión. Deben quedar como evidencia no verificada las ACL del broker, las configuraciones desplegadas fuera del repositorio y cualquier proxy/plantilla externa. Esta opción no permite inferir aprobación para producción, activar Core/Rabbit ni declarar los CVE corregidos.
+
+### B. Migración planificada a Spring Boot 4 OSS corregido
+
+Spring publica las correcciones OSS de estos cuatro avisos en Spring Framework `7.0.9`, Spring Data JPA `4.0.7` y Spring AMQP `4.0.5` (o líneas OSS superiores indicadas por cada aviso). El BOM oficial Spring Boot `4.0.9` administra versiones superiores: Framework `7.0.10`, Data JPA `4.0.8`, AMQP/Rabbit `4.0.6` y Security `7.0.8`. Springdoc declara la línea `3.x` compatible con Boot `4.0.x`; el proyecto actualmente usa Springdoc `2.8.9`, por lo que debe planificarse esa actualización junto al cambio mayor. La ruta alineada es evaluar un BOM de Boot 4; no mezclar versiones manualmente en Boot 3.5 ni aplicar parches Enterprise-only. Antes de autorizarla, el equipo debe validar compatibilidad con Spring Security, Springdoc/OpenAPI, JPA/Hibernate, Rabbit client/AMQP, migraciones y perfiles; luego ejecutar build, Testcontainers, migraciones, pruebas de autorización/contratos y escaneos completos. No se implementó ni se probó esta migración en esta rama.
+
+La alternativa A requiere aprobación escrita del responsable de Seguridad para cada CVE y cada ambiente. La alternativa B requiere autorización de arquitectura/producto para el cambio mayor y coordinación con QA/DevOps. Hasta elegir una alternativa, el estado de SCRUM-793 y de estos hallazgos permanece **ABIERTO / NO CERRADO**.
 
 ## Preguntas de aprobación
 
