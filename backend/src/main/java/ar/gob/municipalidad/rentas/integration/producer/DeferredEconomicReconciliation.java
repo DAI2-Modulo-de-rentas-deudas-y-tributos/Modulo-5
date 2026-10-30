@@ -3,6 +3,7 @@ package ar.gob.municipalidad.rentas;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -41,15 +42,15 @@ record EconomicMovementSnapshot(String eventType,String aggregateType,Long aggre
 class DeferredEconomicReconciliation {
     private static final List<String> TYPES=List.of("paymentRegistered","debtSettled","paymentReversed");
     private final IntegrationEventLogRepository logs;private final OutboxRepository outbox;
-    private final PaymentRepository payments;private final PaymentAllocationRepository allocations;private final DebtRepository debts;
+    private final PaymentRepository payments;private final PaymentAllocationRepository allocations;private final DebtRepository debts;private final TaxpayerRepository taxpayers;
     private final PaymentPlanPrincipalLedger principalLedger;private final ConfirmedIntegrationOutbox producer;
     private final AuditService audit;private final ObjectMapper json;
 
     DeferredEconomicReconciliation(IntegrationEventLogRepository logs,OutboxRepository outbox,
-        PaymentRepository payments,PaymentAllocationRepository allocations,DebtRepository debts,
+        PaymentRepository payments,PaymentAllocationRepository allocations,DebtRepository debts,TaxpayerRepository taxpayers,
         PaymentPlanPrincipalLedger principalLedger,ConfirmedIntegrationOutbox producer,AuditService audit,ObjectMapper json){
         this.logs=logs;this.outbox=outbox;this.payments=payments;this.allocations=allocations;
-        this.debts=debts;this.principalLedger=principalLedger;this.producer=producer;this.audit=audit;this.json=json;
+        this.debts=debts;this.taxpayers=taxpayers;this.principalLedger=principalLedger;this.producer=producer;this.audit=audit;this.json=json;
     }
 
     @Transactional(readOnly=true) Page<Result> pending(Pageable pageable){
@@ -75,9 +76,6 @@ class DeferredEconomicReconciliation {
         if(snapshot!=null&&legacyIdentifiers(snapshot.data()))return review(log,"LEGACY_ECONOMIC_IDS_REVIEW_REQUIRED");
         if(snapshot!=null&&"M4".equals(snapshot.targetModule())&&!canonicalUuid(snapshot.originId()))
             return review(log,"M4_ORIGINAL_ORIGIN_ID_INVALID");
-        if(snapshot!=null&&"M4".equals(snapshot.targetModule())&&"debtSettled".equals(snapshot.eventType())
-            &&!canonicalUuid(snapshot.data().path("citizenId").asText()))
-            return review(log,"M4_CITIZEN_ID_CONTRACT_PENDING");
         if(snapshot==null||!validSnapshot(log,snapshot))return review(log,"ECONOMIC_SNAPSHOT_REVIEW_REQUIRED");
         Debt debt=debts.findById(snapshot.debtId()).orElse(null);
         if(debt==null||debt.integrationId==null
@@ -92,6 +90,24 @@ class DeferredEconomicReconciliation {
             ||!("M7".equals(origin.targetModule())?"TRAFFIC_FINE":origin.externalType().name())
                 .equals(snapshot.data().path("originType").asText())
             ||!validAllocation(snapshot))return review(log,"ECONOMIC_ORIGIN_REVIEW_REQUIRED");
+        if("M4".equals(snapshot.targetModule())&&"debtSettled".equals(snapshot.eventType())){
+            TaxpayerReference taxpayer=taxpayers.findById(debt.taxpayerId).orElse(null);
+            if(taxpayer==null)return review(log,"CANONICAL_CITIZEN_ID_PENDING");
+            JsonNode citizen=snapshot.data().path("citizenId");
+            ObjectNode data=((ObjectNode)snapshot.data()).deepCopy();
+            if(taxpayer.taxpayerType==TaxpayerType.ORGANIZATION&&taxpayer.canonicalCitizenId==null){
+                if(citizen.isTextual())return review(log,"ECONOMIC_SNAPSHOT_REVIEW_REQUIRED");
+                data.putNull("citizenId");
+            }else if(taxpayer.taxpayerType==TaxpayerType.CITIZEN&&taxpayer.canonicalCitizenId!=null){
+                if(citizen.isTextual()&&!taxpayer.canonicalCitizenId.toString().equals(citizen.asText()))
+                    return review(log,"ECONOMIC_SNAPSHOT_REVIEW_REQUIRED");
+                data.put("citizenId",taxpayer.canonicalCitizenId.toString());
+            }else return review(log,"CANONICAL_CITIZEN_ID_PENDING");
+            snapshot=new EconomicMovementSnapshot(snapshot.eventType(),snapshot.aggregateType(),snapshot.aggregateId(),
+                snapshot.debtId(),snapshot.paymentId(),snapshot.allocationId(),snapshot.sourceEventId(),
+                snapshot.originId(),snapshot.targetModule(),snapshot.idempotencyKey(),snapshot.eventId(),
+                snapshot.occurredAt(),data);
+        }
         if(snapshot.allocationId()!=null&&!"paymentRegistered".equals(snapshot.eventType())
             &&!outbox.existsByIdempotencyKey("outbound:paymentRegistered:PaymentAllocation:"
                 +snapshot.allocationId()+":Debt:"+snapshot.debtId()))
@@ -176,7 +192,9 @@ class DeferredEconomicReconciliation {
             }
             if("debtSettled".equals(snapshot.eventType())){
                 if(data.has("citizenId")){
-                    if(!data.path("citizenId").isTextual())return false;
+                    JsonNode citizen=data.path("citizenId");
+                    if(!citizen.isTextual()&&!("M4".equals(snapshot.targetModule())&&citizen.isNull()))return false;
+                    if("M4".equals(snapshot.targetModule())&&citizen.isTextual()&&!canonicalUuid(citizen.asText()))return false;
                     fields.remove("citizenId");
                 }
                 if(!data.path("conceptCode").isTextual()||data.path("conceptCode").asText().isBlank())return false;

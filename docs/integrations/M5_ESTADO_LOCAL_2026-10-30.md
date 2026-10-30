@@ -10,7 +10,7 @@ un evento ni que M1, M2, M4, M7 o M8 lo hayan procesado.
 |---|---|---|
 | M1 | El listener recibe `citizenUpdated`, `organizationRegistered`, `representationGranted` y `representationExpired` desde el envelope Core; conserva `eventId`, correlación y causalidad. Los salientes de exenciones y planes requieren UUID canónico verificado. | Despliegue y vínculo confiable del UUID de ciudadano, claim final de login/JWT, registro de publicaciones y prueba E2E. |
 | M2 | `ticketUpdated` y los seis payloads `updateTicketStatus` v1.78 aprobados tienen pruebas locales. | Ticket real publicado por M2 y evidencia de recepción/consumo por Core/M2. |
-| M4 | Contrato integral recibido; entrada y hechos económicos compartidos validados localmente. | UUID estables de origen, plazos de vencimiento acordados, variante de `debtSettled` sin `citizenId` para organizaciones y E2E. |
+| M4 | Contrato bilateral definido: `debtSettled` informa UUID canónico verificado o `citizenId: null` para organizaciones sin ciudadano asociado, conservando `originType`, `originId` y `debtId`. Entrada y hechos económicos probados localmente. | UUID persistentes publicados por M4, plazos tributarios concretos configurados y prueba E2E por Core. |
 | M7 | `infractionConfirmed` y pagos, cancelaciones y reversiones directos o por cuotas validados localmente. | Evento real de M7, correlación recuperable para casos históricos y confirmación E2E. |
 | M8 | `socialBenefitUpdated`, reglas, exenciones y `debtOverdue` V3 probados localmente. `overdueDebt` es el nombre histórico V2. `debtSettled` municipal se prepara con UUID canónico. | Entrega, ruteo y consumo reales; vínculo canónico M1. |
 
@@ -21,6 +21,10 @@ consumo del módulo destinatario. El transporte, registro de
 publicaciones/suscripciones, ACK, retry y DLQ requieren prueba E2E. La
 validación actual de `eventId` entrante como UUIDv4 debe cotejarse con el
 esquema vigente de Core; los ejemplos ilustrativos no bastan para cambiarla.
+
+La última corrección local M4 pasó **140 pruebas focalizadas y 602 pruebas de
+backend completo**. No se ejecutó una prueba E2E ni se modificó la base
+`rentas`.
 
 ## Migraciones pendientes de autorización
 

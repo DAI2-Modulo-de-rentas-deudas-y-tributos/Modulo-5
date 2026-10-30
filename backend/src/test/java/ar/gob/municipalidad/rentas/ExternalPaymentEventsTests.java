@@ -34,6 +34,7 @@ class ExternalPaymentEventsTests {
     @Autowired AuditRepository auditEntries;
     @Autowired PaymentReversalRepository reversalRequests;
     @Autowired DeferredEconomicReconciliation economicReconciliation;
+    @Autowired ConfirmedIntegrationOutbox confirmedOutbox;
     @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     @BeforeEach void authenticate(){SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("external-events-test",null),null,List.of(new SimpleGrantedAuthority("ROLE_RENTAS"),new SimpleGrantedAuthority("ROLE_CASHIER"))));}
@@ -125,16 +126,21 @@ class ExternalPaymentEventsTests {
 
     @Test void totalM4PaymentUsesConcreteExternalObligationCorrelation()throws Exception{
         TaxpayerReference taxpayer=taxpayer("M4-TOTAL");taxpayer.canonicalCitizenId=UUID.randomUUID();taxpayerRepository.save(taxpayer);
-        String originId=UUID.randomUUID().toString();Debt debt=externalDebt(taxpayer,"M4",ExternalObligationType.PERMIT_FEE,originId,"80");
-        Payment payment=payments.register(request(taxpayer.id,"80",new ApiDtos.AllocationRequest(debt.id,new BigDecimal("80"))));
-
-        JsonNode registered=payload(event("paymentRegistered","M4",payment.id,debt.id)).path("data");
-        JsonNode settled=payload(events("debtSettled","M4",debt.id).get(0)).path("data");
-        assertThat(registered.path("originId").asText()).isEqualTo(originId);assertThat(registered.has("infractionId")).isFalse();
-        assertThat(settled.path("originId").asText()).isEqualTo(originId);assertThat(settled.has("infractionId")).isFalse();
-        assertFields(registered,"paymentId","debtId","originType","originId","amountApplied","paidAt","remainingBalance");
-        assertThat(settled.path("citizenId").asText()).isEqualTo(taxpayer.canonicalCitizenId.toString());
-        assertFields(settled,"debtId","citizenId","conceptCode","originType","originId","settledAt","remainingBalance","outstandingBalance");
+        for(ExternalObligationType type:List.of(ExternalObligationType.PERMIT_FEE,ExternalObligationType.COMMERCIAL_FINE)){
+            String originId=UUID.randomUUID().toString();Debt debt=externalDebt(taxpayer,"M4",type,originId,"80");
+            Payment payment=payments.register(request(taxpayer.id,"80",new ApiDtos.AllocationRequest(debt.id,new BigDecimal("80"))));
+            JsonNode registered=payload(event("paymentRegistered","M4",payment.id,debt.id)).path("data");
+            JsonNode settled=payload(events("debtSettled","M4",debt.id).get(0)).path("data");
+            assertThat(registered.path("originId").asText()).isEqualTo(originId);assertThat(registered.has("infractionId")).isFalse();
+            assertThat(settled.path("originType").asText()).isEqualTo(type.name());
+            assertThat(settled.path("originId").asText()).isEqualTo(originId);assertThat(settled.has("infractionId")).isFalse();
+            assertThat(settled.path("debtId").asText()).isEqualTo(debt.integrationId.toString());
+            assertThat(settled.path("remainingBalance").decimalValue()).isZero();
+            assertThat(settled.path("outstandingBalance").decimalValue()).isZero();
+            assertFields(registered,"paymentId","debtId","originType","originId","amountApplied","paidAt","remainingBalance");
+            assertThat(settled.path("citizenId").asText()).isEqualTo(taxpayer.canonicalCitizenId.toString());
+            assertFields(settled,"debtId","citizenId","conceptCode","originType","originId","settledAt","remainingBalance","outstandingBalance");
+        }
     }
 
     @Test void settledDebtUsesOnlyVerifiedCanonicalCitizenId()throws Exception{
@@ -150,16 +156,74 @@ class ExternalPaymentEventsTests {
         assertThat(data.path("debtId").asText()).isEqualTo(debt.integrationId.toString());
     }
 
-    @Test void m4OrganizationSettlementWaitsForCitizenContractWithoutBlockingPayment(){
-        TaxpayerReference taxpayer=taxpayer("M4-ORGANIZATION-NO-CANONICAL");
+    @Test void m4OrganizationSettlementIncludesExplicitNullForBothOriginsWithoutDuplicates()throws Exception{
+        TaxpayerReference taxpayer=organization("M4-ORGANIZATION-NO-CANONICAL");
+        for(ExternalObligationType type:List.of(ExternalObligationType.PERMIT_FEE,ExternalObligationType.COMMERCIAL_FINE)){
+            String originId=UUID.randomUUID().toString();
+            Debt debt=externalDebt(taxpayer,"M4",type,originId,"100");
+            Payment payment=payments.register(request(taxpayer.id,"100",new ApiDtos.AllocationRequest(debt.id,new BigDecimal("100"))));
+            assertThat(eventsForPayment("paymentRegistered","M4",payment.id)).hasSize(1);
+            OutboxEvent event=events("debtSettled","M4",debt.id).get(0);
+            JsonNode data=payload(event).path("data");
+            assertThat(data.path("originType").asText()).isEqualTo(type.name());
+            assertThat(data.path("originId").asText()).isEqualTo(originId);
+            assertThat(data.path("debtId").asText()).isEqualTo(debt.integrationId.toString());
+            assertThat(data.has("citizenId")).isTrue();
+            assertThat(data.path("citizenId").isNull()).isTrue();
+            assertThat(data.path("remainingBalance").decimalValue()).isZero();
+            assertThat(data.path("outstandingBalance").decimalValue()).isZero();
+            assertFields(data,"debtId","citizenId","conceptCode","originType","originId","settledAt","remainingBalance","outstandingBalance");
+            assertThat(integrationLogs.findFirstByBusinessKeyOrderByIdDesc("outbound-deferred:debtSettled:Debt:"+debt.id+":Debt:"+debt.id)).isEmpty();
+            PaymentAllocation allocation=allocations.findByPaymentId(payment.id).get(0);
+            confirmedOutbox.debtSettled(debts.findById(debt.id).orElseThrow(),allocation);
+            assertThat(events("debtSettled","M4",debt.id)).hasSize(1);
+        }
+    }
+
+    @Test void m4CitizenWithoutCanonicalUuidStillDefersSettlement(){
+        TaxpayerReference taxpayer=taxpayer("M4-CITIZEN-NO-CANONICAL");
         Debt debt=externalDebt(taxpayer,"M4",ExternalObligationType.PERMIT_FEE,UUID.randomUUID().toString(),"100");
         Payment payment=payments.register(request(taxpayer.id,"100",new ApiDtos.AllocationRequest(debt.id,new BigDecimal("100"))));
         assertThat(eventsForPayment("paymentRegistered","M4",payment.id)).hasSize(1);
         assertThat(events("debtSettled","M4",debt.id)).isEmpty();
         IntegrationEventLog pending=economicMarker("debtSettled",debt.id,debt.id);
         assertThat(pending.status).isEqualTo(IntegrationEventStatus.PENDING);
-        assertThat(pending.errorMessage).isEqualTo("M4_CITIZEN_ID_CONTRACT_PENDING");
-        assertThat(economicReconciliation.reconcile(pending.id).reason()).isEqualTo("M4_CITIZEN_ID_CONTRACT_PENDING");
+        assertThat(pending.errorMessage).isEqualTo("CANONICAL_CITIZEN_ID_PENDING");
+        assertThat(economicReconciliation.reconcile(pending.id).reason()).isEqualTo("CANONICAL_CITIZEN_ID_PENDING");
+    }
+
+    @Test void m4OldOrganizationDeferralCanPrepareExplicitNullAfterOriginalCorrelationReturns()throws Exception{
+        TaxpayerReference taxpayer=organization("M4-OLD-DEFERRAL");
+        String originId=UUID.randomUUID().toString();
+        Debt debt=externalDebt(taxpayer,"M4",ExternalObligationType.COMMERCIAL_FINE,originId,"100",false);
+        Payment payment=payments.register(request(taxpayer.id,"100",new ApiDtos.AllocationRequest(debt.id,new BigDecimal("100"))));
+        PaymentAllocation allocation=allocations.findByPaymentId(payment.id).get(0);
+        IntegrationEventLog registration=economicMarker("paymentRegistered",allocation.id,debt.id);
+        IntegrationEventLog settlement=economicMarker("debtSettled",debt.id,debt.id);
+        ObjectNode deferred=(ObjectNode)json.readTree(settlement.payload);
+        ((ObjectNode)deferred.path("snapshot").path("data")).remove("citizenId");
+        String originalEventId=deferred.path("snapshot").path("eventId").asText();
+        settlement.payload=json.writeValueAsString(deferred);
+        settlement.errorMessage="M4_CITIZEN_ID_CONTRACT_PENDING";
+        integrationLogs.save(settlement);
+        IntegrationEventLog source=inbound(debt);
+        ObjectNode original=(ObjectNode)json.readTree(source.payload);
+        original.put("correlationId",UUID.randomUUID().toString());
+        source.payload=json.writeValueAsString(original);
+        integrationLogs.save(source);
+        assertThat(economicReconciliation.reconcile(registration.id).outcome()).isEqualTo("PREPARED_IN_OUTBOX");
+        var result=economicReconciliation.reconcile(settlement.id);
+        assertThat(result.outcome()).isEqualTo("PREPARED_IN_OUTBOX");
+        OutboxEvent prepared=events("debtSettled","M4",debt.id).get(0);
+        assertThat(prepared.id.toString()).isEqualTo(originalEventId);
+        JsonNode data=payload(prepared).path("data");
+        assertThat(data.path("citizenId").isNull()).isTrue();
+        assertThat(data.path("originId").asText()).isEqualTo(originId);
+        assertThat(data.path("debtId").asText()).isEqualTo(debt.integrationId.toString());
+        assertThat(data.path("remainingBalance").decimalValue()).isZero();
+        assertThat(data.path("outstandingBalance").decimalValue()).isZero();
+        assertThat(economicReconciliation.reconcile(settlement.id).outcome()).isEqualTo("ALREADY_PREPARED");
+        assertThat(events("debtSettled","M4",debt.id)).hasSize(1);
     }
 
     @Test void serializedM4FixturesCoverPartialSettlementAndReversalForBothOrigins()throws Exception{
@@ -675,6 +739,7 @@ class ExternalPaymentEventsTests {
             .filter(entry->"PLAN_PRINCIPAL_DISTRIBUTED".equals(entry.action)).forEach(auditEntries::delete);
     }
     private TaxpayerReference taxpayer(String suffix){String unique=suffix+"-"+UUID.randomUUID();return catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(TaxpayerType.CITIZEN,"EXT-PAY-"+unique,String.valueOf(Math.abs(unique.hashCode())+10000000L),null,"Contribuyente "+suffix));}
+    private TaxpayerReference organization(String suffix){String unique=suffix+"-"+UUID.randomUUID();String cuit="30"+String.format("%09d",Math.floorMod(UUID.randomUUID().getMostSignificantBits(),1_000_000_000L));return catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(TaxpayerType.ORGANIZATION,"EXT-PAY-"+unique,null,cuit,"Organización "+suffix));}
     private Debt externalDebt(TaxpayerReference taxpayer,String source,ExternalObligationType type,String reference,String amount){return externalDebt(taxpayer,source,type,reference,amount,true);}
     private Debt externalDebt(TaxpayerReference taxpayer,String source,ExternalObligationType type,String reference,String amount,boolean includeCorrelation){
         TaxConcept concept=(source.equalsIgnoreCase("M4")||source.equalsIgnoreCase("habilitaciones"))

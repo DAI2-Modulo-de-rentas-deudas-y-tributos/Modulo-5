@@ -3,6 +3,7 @@ package ar.gob.municipalidad.rentas;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -142,6 +143,14 @@ class ConfirmedIntegrationOutbox {
         String originType=originType(origin.orElseThrow().externalType());
         String originId=origin.orElseThrow().externalReferenceId();
         var payload=new ConfirmedOutboundEvents.DebtSettledPayload(debt.integrationId,canonicalCitizenAvailable(taxpayer)?taxpayer.canonicalCitizenId:null,concept.code,originType,originId,origin.flatMap(x->Optional.ofNullable(infractionId(x))).orElse(null),settledAt,BigDecimal.ZERO.setScale(2),BigDecimal.ZERO.setScale(2));
+        boolean m4OrganizationWithoutCitizen="M4".equals(origin.orElseThrow().targetModule())
+            &&taxpayer.taxpayerType==TaxpayerType.ORGANIZATION&&taxpayer.canonicalCitizenId==null;
+        Object settlementData=payload;
+        if(m4OrganizationWithoutCitizen){
+            ObjectNode data=json.valueToTree(payload);
+            data.putNull("citizenId");
+            settlementData=data;
+        }
         String key=allocation==null?"outbound:debtSettled:Debt:"+debt.id:economicKey("debtSettled",allocation.id,debt.id);
         if(outbox.existsByIdempotencyKey(key))return;
         Optional<String> correlation=economicCorrelation(origin.orElseThrow(),debt.id);
@@ -149,16 +158,17 @@ class ConfirmedIntegrationOutbox {
             &&!outbox.existsByIdempotencyKey(
             economicKey("paymentRegistered",allocation.id,debt.id))){
             deferEconomic("debtSettled","Debt",debt.id,debt,origin.orElseThrow(),allocation==null?null:allocation.paymentId,
-                allocation==null?null:allocation.id,key,payload,
+                allocation==null?null:allocation.id,key,settlementData,
                 correlation.isEmpty()?missingCorrelationReason(origin.orElseThrow()):"PAYMENT_EVENT_NOT_PREPARED");
             return;
         }
-        if("M4".equals(origin.orElseThrow().targetModule())&&!canonicalCitizenAvailable(taxpayer)){
+        if("M4".equals(origin.orElseThrow().targetModule())&&!canonicalCitizenAvailable(taxpayer)
+            &&!m4OrganizationWithoutCitizen){
             deferEconomic("debtSettled","Debt",debt.id,debt,origin.orElseThrow(),allocation==null?null:allocation.paymentId,
-                allocation==null?null:allocation.id,key,payload,"M4_CITIZEN_ID_CONTRACT_PENDING");
+                allocation==null?null:allocation.id,key,settlementData,"CANONICAL_CITIZEN_ID_PENDING");
             return;
         }
-        enqueue("Debt",debt.id.toString(),core("debtSettled",payload,"Debt",debt.id.toString(),correlation.get(),economicCausation(origin.orElseThrow())),key);
+        enqueue("Debt",debt.id.toString(),core("debtSettled",settlementData,"Debt",debt.id.toString(),correlation.get(),economicCausation(origin.orElseThrow())),key);
         resolveEconomicDeferral("debtSettled","Debt",debt.id,debt.id);
     }
 

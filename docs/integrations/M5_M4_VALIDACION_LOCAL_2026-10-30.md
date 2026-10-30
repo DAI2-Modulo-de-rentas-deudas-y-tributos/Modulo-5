@@ -7,7 +7,7 @@ Referencia contractual: `Contrato_Eventos_M4_Integral.docx`, facilitado por M4 f
 | `permitFeeGenerated` | M4 → M5 | DTO validado, hecho original e hilo persistidos, obligación y deuda creadas sin duplicación por `data.id` | Referencia M1 por CUIT, concepto `PERMIT_FEE` activo y plazo M5 explícito |
 | `commercialFineGenerated` | M4 → M5 | Igual; se conservan `actId`, `sourceViolationId`, `externalRef`, `sourceModule` de data y `decision` en el evento recibido | Referencia M1 por CUIT, concepto `COMMERCIAL_FINE` activo y plazo M5 explícito |
 | `paymentRegistered` | M5 → M4 | Preparado por imputación real con UUID persistentes de pago y deuda, saldo de ese movimiento y `originId` de M4 | M4 debe comenzar a publicar UUID y hay que probar Core extremo a extremo |
-| `debtSettled` | M5 → M4 | Preparado una sola vez por cancelación total si existe `citizenId` canónico verificado | Para organizaciones sin ese UUID se aplaza; M4 debe confirmar la variante nula u omitida |
+| `debtSettled` | M5 → M4 | Preparado una sola vez por cancelación total con UUID canónico verificado o `citizenId: null` explícito para una organización sin ciudadano asociado | Requiere `data.id` UUID original de M4, deuda M5 con UUID persistente y correlación original recuperable |
 | `paymentReversed` | M5 → M4 | Preparado por reversión ejecutada, después del pago registrado, con monto y saldo de la reversión | Entrega real pendiente |
 
 ## Identidad y vencimiento
@@ -31,7 +31,7 @@ Consulta de sólo lectura a `rentas` el 30/10: `external_obligation` tiene **0 f
 
 El JSON entrante, incluido `correlationId` y cualquier `causationId` auténtico, queda en `integration_event_log`. Para un pago M5 posterior se conserva el hilo original. Como el pago es un movimiento nuevo y no una respuesta inmediata al hecho administrativo de M4, `causationId` es `null` en el JSON local del outbox; no se atribuye causalidad ficticia al evento de la tasa o multa. El contrato de M4 pide omitir atributos nulos del envelope: hay que verificar con Core si los elimina al entregar, como informó para los otros módulos, antes del E2E. Cada hecho económico tiene `eventId` propio, estable en el outbox y en sus reintentos. Los eventos aplazados conservan una instantánea del importe y saldo del movimiento.
 
-Un evento económico M4 sin UUID de origen válido, sin correlación original o sin información suficiente queda aplazado para revisión. Las cancelaciones M4 sin `citizenId` canónico también quedan aplazadas; una conciliación no las libera sólo porque reaparezca la correlación. Las cancelaciones M7 con `citizenId` ausente siguen su tratamiento aprobado. Actualización posterior a esta validación local: M8 aceptó `MUNICIPAL_TAX` y `debtSettled` municipal ya se prepara cuando existe un UUID canónico verificado; sigue aplazado si falta. El estado local `LOCAL_ONLY` o `BROKER_CONFIRMED` no significa consumo por M4.
+Un evento económico M4 sin UUID de origen válido, sin correlación original o sin información suficiente queda aplazado para revisión. La confirmación posterior de M4 permite `citizenId: null` en `debtSettled` de organizaciones sin ciudadano canónico; una deuda de ciudadano sin vinculación verificada sigue aplazada. La conciliación controlada puede preparar un aplazamiento anterior de organización a partir de la instantánea económica original, sin recalcular importes, cuando recupera la correlación auténtica. Las cancelaciones M7 con `citizenId` ausente siguen su tratamiento aprobado. M8 aceptó `MUNICIPAL_TAX` y `debtSettled` municipal ya se prepara cuando existe un UUID canónico verificado; sigue aplazado si falta. El estado local `LOCAL_ONLY` o `BROKER_CONFIRMED` no significa consumo por M4.
 
 Los ocho JSON completos de [qa/m4-local-serialized.ndjson](../../qa/m4-local-serialized.ndjson) proceden de filas creadas por el productor en una prueba local. Son datos sintéticos de un contribuyente de prueba con vínculo canónico suministrado por el fixture para demostrar la variante de cancelación; no representan una organización real de M4 ni eventos entregados a Core. Cada origen tiene pago de 40 sobre 100, pago de 60 que deja saldo cero, cancelación y reversión de 40 que reabre saldo 40.
 
@@ -39,15 +39,16 @@ Los ocho JSON completos de [qa/m4-local-serialized.ndjson](../../qa/m4-local-ser
 
 1. M4 debe publicar `data.id`, `permitApplicationId` y `establishmentId` como UUID persistentes y estables; confirmar que un mismo hecho sancionatorio mantiene siempre el mismo `data.id`.
 2. Configurar en M5 conceptos activos `PERMIT_FEE` y `COMMERCIAL_FINE` y aprobar explícitamente plazos y fecha base del vencimiento.
-3. Acordar la variante de `debtSettled.citizenId` para organizaciones. Hasta entonces, no intentar publicar esas cancelaciones.
-4. En un entorno de pruebas compartido, recibir un evento real de cada tipo, verificar CUIT/proyección M1, UUID de origen, importe, trazabilidad M6 y vencimiento calculado.
-5. Reenviar el mismo `eventId` y el mismo `data.id` con otro `eventId`; comprobar una sola obligación y una sola deuda. Un `eventId` con contenido distinto debe rechazarse.
-6. Registrar pago parcial, pago final y reversión en M5. Comparar el JSON del outbox con el contrato M4: IDs, `originId`, importes por imputación, saldos, fechas, `correlationId` y causalidad.
-7. Verificar recepción y deduplicación en M4 a través de Core, incluida entrega fuera de orden. Una aceptación HTTP o confirmación del broker no prueba que M4 procesó el evento.
-8. Conciliar por separado referencias históricas prefijadas; no convertirlas ni reenviarlas automáticamente.
+3. En un entorno de pruebas compartido, recibir un evento real de cada tipo, verificar CUIT/proyección M1, UUID de origen, importe, trazabilidad M6 y vencimiento calculado.
+4. Reenviar el mismo `eventId` y el mismo `data.id` con otro `eventId`; comprobar una sola obligación y una sola deuda. Un `eventId` con contenido distinto debe rechazarse.
+5. Registrar pago parcial, pago final y reversión en M5. Comparar el JSON del outbox con el contrato M4: IDs, `originId`, importes por imputación, saldos, fechas, `correlationId` y causalidad.
+6. Verificar recepción y deduplicación en M4 a través de Core, incluida entrega fuera de orden. Una aceptación HTTP o confirmación del broker no prueba que M4 procesó el evento.
+7. Conciliar por separado referencias históricas prefijadas; no convertirlas ni reenviarlas automáticamente.
 
 No se cambiaron scripts Flyway ni se ejecutaron migraciones. No se configuró ni usó RabbitMQ/Core.
 
 ## Pruebas ejecutadas
 
 El 30/10, la suite completa `mvn test` terminó con **595 pruebas, 0 fallos, 0 errores, 0 omitidas y BUILD SUCCESS**. Incluye los casos M4 focalizados, PostgreSQL efímero, regresiones M1/M2/M7/M8 y las pruebas locales del adaptador de RabbitMQ con contenedor temporal. No se envió ningún evento al Core compartido. Los fixtures JSON se copiaron del outbox de prueba tras esta corrida.
+
+Después de la confirmación de `citizenId: null`, las pruebas focalizadas M4 y económicas terminaron con **140 aprobadas**, y la suite completa backend con **602 aprobadas**, sin fallos ni errores. Los fixtures de ocho eventos anteriores conservan su carácter histórico: muestran la variante con ciudadano canónico; la variante nula y la conciliación de aplazamientos anteriores se comprueban en `ExternalPaymentEventsTests`. Ninguna prueba publicó en Core compartido ni cambió `rentas`.

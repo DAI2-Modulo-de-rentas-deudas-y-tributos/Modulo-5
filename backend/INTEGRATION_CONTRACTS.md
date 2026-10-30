@@ -3,7 +3,8 @@
 > **Estado local al 30/10/2026:** las secciones antiguas de este documento son
 > antecedentes; los contratos aceptados por M1, M2, M7 y M8 se implementaron y
 > probaron localmente. M4 entregó su contrato integral, pero aún debe publicar
-> referencias UUID estables y confirmar `citizenId` nulo para organizaciones.
+> referencias UUID estables; M4 ya confirmó `citizenId: null` para
+> organizaciones sin ciudadano canónico asociado.
 > La recepción y entrega reales por Core y el vínculo canónico con M1 requieren
 > pruebas conjuntas. Ver `../contracts/events/README.md`,
 > `../contracts/schemas/common-event-envelope.schema.json` y
@@ -122,10 +123,13 @@ M5 es propietario de `Debt`, `Payment`, `PaymentPlan`, `Exemption` y demás esta
 `permitFeeGenerated` y `commercialFineGenerated` se consumen localmente con
 DTOs específicos. El contrato integral recibido reemplaza, para estos flujos,
 los nombres tentativos `TasaHabilitacionGenerada` y `MultaComercialGenerada`
-del material histórico. M4 debe suministrar UUID persistentes para las
-referencias de origen y confirmar la variante de `debtSettled` con `citizenId`
-nulo u omitido en organizaciones. La política de vencimiento y la entrega
-real se documentan en `../docs/integrations/M5_M4_VALIDACION_LOCAL_2026-10-30.md`.
+del material histórico. M4 confirmó `citizenId: null` en `debtSettled` para
+organizaciones sin ciudadano canónico asociado; M5 conserva el UUID original
+`data.id` como `originId` y su propio UUID persistente como `debtId`. Si hay
+UUID canónico verificado, lo informa. Un ciudadano sin ese vínculo permanece
+aplazado. M4 aún debe suministrar UUID persistentes para las referencias de
+origen; los plazos concretos y la entrega E2E siguen pendientes. Ver
+`../docs/integrations/M5_M4_VALIDACION_LOCAL_2026-10-30.md`.
 
 ### M7 outbound y otros eventos — Core V4 local
 
