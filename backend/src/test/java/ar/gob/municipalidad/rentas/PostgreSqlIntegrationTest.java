@@ -316,6 +316,7 @@ class PostgreSqlIntegrationTest {
     @Autowired LateChargeRuleRepository lateChargeRules;
     @Autowired LateChargeService lateCharges;
     @Autowired DueDateService dueDates;
+    @Autowired FiscalProcessingDatePolicy dates;
     @Autowired DueDateProcessingRepository dueDateRuns;
     @Autowired PaymentPlanConfigurationRepository planConfigurations;
     @Autowired TaxConfigurationRepository taxConfigurations;
@@ -841,7 +842,7 @@ class PostgreSqlIntegrationTest {
     }
 
     @Test void billPricingPreviewRunsReadOnlyOnPostgreSql() {
-        authenticate();Debt debt=debt("BILL-PRICING",null);debt.dueDate=LocalDate.now().minusDays(2);debts.saveAndFlush(debt);Bill bill=billing.create(new ApiDtos.CreateBillRequest(debt.taxpayerId,List.of(debt.id),LocalDate.now().plusDays(10)));LateChargeRule rule=new LateChargeRule();rule.code="PG-BILL-"+UUID.randomUUID();rule.surchargeRate=new BigDecimal("10");rule.dailyInterestRate=new BigDecimal("1");rule.active=true;rule.validFrom=LocalDate.now();lateChargeRules.save(rule);long applicationsBefore=jdbc.queryForObject("select count(*) from late_charge_application",Long.class),adjustmentsBefore=jdbc.queryForObject("select count(*) from adjustment_request",Long.class);
+        authenticate();LocalDate fiscalToday=dates.today();Debt debt=debt("BILL-PRICING",null);debt.dueDate=fiscalToday.minusDays(2);debts.saveAndFlush(debt);Bill bill=billing.create(new ApiDtos.CreateBillRequest(debt.taxpayerId,List.of(debt.id),fiscalToday.plusDays(10)));LateChargeRule rule=new LateChargeRule();rule.code="PG-BILL-"+UUID.randomUUID();rule.surchargeRate=new BigDecimal("10");rule.dailyInterestRate=new BigDecimal("1");rule.active=true;rule.validFrom=fiscalToday;lateChargeRules.save(rule);long applicationsBefore=jdbc.queryForObject("select count(*) from late_charge_application",Long.class),adjustmentsBefore=jdbc.queryForObject("select count(*) from adjustment_request",Long.class);
         try {
             ApiDtos.BillDetailResponse detail=billing.pricingDetail(bill.id);
             assertThat(detail.updatedPayableAmount()).isEqualByComparingTo("112");
@@ -1261,10 +1262,11 @@ class PostgreSqlIntegrationTest {
         var created=demoAuth.create(new DemoAuthController.CreateUserRequest("pg."+suffix,"clave-segura","Usuario PostgreSQL",DemoRole.TAXPAYER,taxpayer.id));
         assertThat(demoUsers.findById(created.id()).orElseThrow().passwordHash).startsWith("$2");
         assertThat(demoAuth.login(new DemoAuthController.LoginRequest("pg."+suffix,"clave-segura")).user().taxpayerId()).isEqualTo(taxpayer.id);
-        Debt debt=debt("PG-FISCAL",taxpayer.id);debt.dueDate=LocalDate.now().minusDays(10);debts.save(debt);
-        var preview=lateCharges.preview(debt.id,LocalDate.now());assertThat(preview.daysOverdue()).isEqualTo(10);assertThat(preview.totalAdjustment()).isPositive();
-        var applied=lateCharges.apply(debt.id,LocalDate.now());assertThat(applied.applied()).isTrue();assertThat(lateCharges.apply(debt.id,LocalDate.now()).applied()).isFalse();
-        var processing=dueDates.process(LocalDate.now(ZoneId.of("America/Argentina/Buenos_Aires")));assertThat(processing.debtsOverdue()).isGreaterThanOrEqualTo(1);
+        LocalDate fiscalToday=dates.today();
+        Debt debt=debt("PG-FISCAL",taxpayer.id);debt.dueDate=fiscalToday.minusDays(10);debts.save(debt);
+        var preview=lateCharges.preview(debt.id,fiscalToday);assertThat(preview.daysOverdue()).isEqualTo(10);assertThat(preview.totalAdjustment()).isPositive();
+        var applied=lateCharges.apply(debt.id,fiscalToday);assertThat(applied.applied()).isTrue();assertThat(lateCharges.apply(debt.id,fiscalToday).applied()).isFalse();
+        var processing=dueDates.process(fiscalToday);assertThat(processing.debtsOverdue()).isGreaterThanOrEqualTo(1);
         Payment payment=new Payment();payment.taxpayerId=taxpayer.id;payment.paymentMethod=PaymentMethod.TRANSFER;payment.amount=payment.unallocatedAmount=new BigDecimal("25.00");payment.allocatedAmount=BigDecimal.ZERO.setScale(2);payment.status=PaymentStatus.CONFIRMED;payment.allocationStatus=PaymentAllocationStatus.UNALLOCATED;payment.origin=PaymentOrigin.ELECTRONIC;payment.receiptNumber="PG-REC-"+suffix;payment.registeredBy="postgres-it";payment.paidAt=payment.createdAt=OffsetDateTime.of(LocalDate.now().minusDays(2),LocalTime.of(23,30),ZoneOffset.ofHours(-3));paymentRepository.save(payment);
         var batch=reconciliations.importBatch(new FiscalProcessingController.ImportReconciliationRequest("PG-BATCH-"+suffix,List.of(new FiscalProcessingController.ReconciliationItemRequest("PG-TX-"+suffix,dni,new BigDecimal("25"),payment.paidAt))));
         assertThat(batch.reconciledItems()).isEqualTo(1);assertThat(batch.items()).singleElement().satisfies(x->assertThat(x.matchedPaymentId()).isEqualTo(payment.id));

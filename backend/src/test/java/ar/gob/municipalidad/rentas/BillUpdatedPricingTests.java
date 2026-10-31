@@ -32,6 +32,7 @@ class BillUpdatedPricingTests {
     @Autowired LiquidationService liquidations;
     @Autowired LiquidationRepository liquidationRepository;
     @Autowired BillingService billing;
+    @Autowired FiscalProcessingDatePolicy dates;
     @Autowired PaymentService payments;
     @Autowired AdjustmentService adjustmentService;
     @Autowired LateChargeService lateCharges;
@@ -92,7 +93,8 @@ class BillUpdatedPricingTests {
     }
 
     @Test void overdueDebtShowsPendingChargesWithoutMutatingAnythingOnRepeatedReads() {
-        Debt debt=debt("PENDING-LATE");debt.dueDate=LocalDate.now().minusDays(5);debts.saveAndFlush(debt);Bill bill=bill(debt);rule("PENDING-RULE","10","1");
+        LocalDate fiscalToday=dates.today();
+        Debt debt=debt("PENDING-LATE");debt.dueDate=fiscalToday.minusDays(5);debts.saveAndFlush(debt);Bill bill=bill(debt);rule("PENDING-RULE","10","1");
         long applicationCount=applications.count(),adjustmentCount=adjustments.count();BigDecimal current=debt.currentAmount,outstanding=debt.outstandingBalance;
 
         ApiDtos.BillDetailResponse first=billing.pricingDetail(bill.id);ApiDtos.BillDetailResponse second=billing.pricingDetail(bill.id);
@@ -108,12 +110,13 @@ class BillUpdatedPricingTests {
     }
 
     @Test void appliedLateChargeIsExplainedButNotQuotedAgainForSameDate() {
-        Debt debt=debt("APPLIED-LATE");debt.dueDate=LocalDate.now().minusDays(5);debts.saveAndFlush(debt);
+        LocalDate fiscalToday=dates.today();
+        Debt debt=debt("APPLIED-LATE");debt.dueDate=fiscalToday.minusDays(5);debts.saveAndFlush(debt);
         Bill bill=bill(debt);
         // Keep issuance and adjustment distinct even when the database rounds timestamps.
         bill.createdAt=bill.createdAt.minusMinutes(1);bills.saveAndFlush(bill);
         rule("APPLIED-RULE","10","1");
-        lateCharges.apply(debt.id,LocalDate.now());
+        lateCharges.apply(debt.id,fiscalToday);
 
         ApiDtos.BillDebtPricingResponse price=billing.pricingDetail(bill.id).pricingDetails().get(0);
 
@@ -175,7 +178,7 @@ class BillUpdatedPricingTests {
 
     private Bill bill(Debt debt){return billing.create(new ApiDtos.CreateBillRequest(debt.taxpayerId,List.of(debt.id),LocalDate.now().plusDays(10)));}
     private void approveAdjustment(Debt debt,AdjustmentType type,String amount){AdjustmentRequest request=adjustmentService.create(new ApiDtos.CreateAdjustmentRequest(debt.id,type,new BigDecimal(amount),"Prueba de pricing"));TestActorSupport.asApprover(() -> adjustmentService.approve(request.id,"Aprobado"));}
-    private LateChargeRule rule(String code,String surcharge,String interest){LateChargeRule rule=new LateChargeRule();rule.code=code;rule.surchargeRate=new BigDecimal(surcharge);rule.dailyInterestRate=new BigDecimal(interest);rule.active=true;rule.validFrom=LocalDate.now().minusDays(30);return rules.save(rule);}
+    private LateChargeRule rule(String code,String surcharge,String interest){LateChargeRule rule=new LateChargeRule();rule.code=code;rule.surchargeRate=new BigDecimal(surcharge);rule.dailyInterestRate=new BigDecimal(interest);rule.active=true;rule.validFrom=dates.today().minusDays(30);return rules.save(rule);}
     private Debt debt(String suffix){TaxpayerReference taxpayer=taxpayer(suffix);return createDebt(taxpayer,suffix);}
     private Debt anotherDebt(Debt source,String suffix){return createDebt(taxpayers.findById(source.taxpayerId).orElseThrow(),suffix);}
     private Debt createDebt(TaxpayerReference taxpayer,String suffix){String unique=suffix+"-"+UUID.randomUUID().toString().substring(0,8);TaxConcept concept=catalog.createConcept(new ApiDtos.CreateTaxConceptRequest("BILL_"+unique,"Concepto "+unique,null,TaxConceptType.FEE,"M5"));TaxConfiguration configuration=catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(concept.id,CalculationType.FIXED,null,new BigDecimal("100"),null,null,true,true,LocalDate.now().minusDays(1),null));catalog.submit(configuration.id);TestActorSupport.asApprover(() -> catalog.approve(configuration.id));liquidations.create(new ApiDtos.LiquidationRequest(taxpayer.id,concept.id,YearMonth.now().toString(),BigDecimal.ZERO,LocalDate.now().plusDays(30)));return debts.findByTaxpayerId(taxpayer.id).stream().filter(x->x.taxConceptId.equals(concept.id)).findFirst().orElseThrow();}
