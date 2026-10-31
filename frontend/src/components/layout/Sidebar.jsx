@@ -58,7 +58,7 @@ export default function Sidebar({
           </button>
         </div>
         <div className="workspace-area-tag"><span />{areaTag}</div>
-        <nav aria-label={`Navegación de ${areaTag}`} className="workspace-navigation">
+        <nav aria-label={`Navegación de ${areaTag}`} className="workspace-navigation sidebar-nav">
           <NavLink to={homePath} end className={linkClasses} onClick={onClose}>
             <LayoutDashboard size={18} strokeWidth={1.6} aria-hidden="true" />
             <span>{homeLabel}</span>

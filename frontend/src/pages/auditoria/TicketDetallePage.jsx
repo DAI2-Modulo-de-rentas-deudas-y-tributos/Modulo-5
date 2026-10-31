@@ -75,7 +75,7 @@ export default function TicketDetallePage() {
               { label: "Prioridad", value: <StatusBadge status={ticket.priority} /> },
               { label: "Fecha de recepción", value: formatDate(ticket.createdAt) },
               {
-                label: "Estado externo (M2)",
+                label: "Estado informado por Atención Ciudadana",
                 value: <StatusBadge status={ticket.externalStatus} />,
               },
               {

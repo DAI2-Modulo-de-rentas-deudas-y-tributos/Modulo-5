@@ -6,7 +6,7 @@ from decimal import Decimal
 from unittest.mock import Mock
 
 from aws_test_acceptance import (
-    AcceptanceFailure, HttpResponse, expect_run_rejection, get_all_pages,
+    AcceptanceFailure, HttpResponse, create_active_concept, expect_run_rejection, get_all_pages,
     load_taxpayers, run_bulk, validate_bulk_economics, validate_bulk_items,
 )
 
@@ -87,15 +87,23 @@ class BulkAcceptanceTests(unittest.TestCase):
         client.json.assert_not_called()
         client.request.assert_not_called()
 
+    def test_configuration_is_approved_by_a_different_supervisor(self):
+        client, approver = Mock(), Mock()
+        client.json.side_effect = [{"id": 7}, {"id": 8}, {"status": "PENDING_APPROVAL"}]
+        approver.json.return_value = {"status": "ACTIVE"}
+        create_active_concept(client, approver, "QA", "run")
+        self.assertNotIn("/tax-configurations/8/approve", [call.args[1] for call in client.json.call_args_list])
+        approver.json.assert_called_once_with("POST", "/tax-configurations/8/approve")
+
     def test_only_the_expected_business_rejection_counts_as_idempotency(self):
         correct = json.dumps({"code": "RUN_NOT_APPROVED"}).encode()
-        expect_run_rejection(HttpResponse(422, {}, correct))
-        for status in (200, 401, 403, 404, 409, 500, 502, 503):
+        expect_run_rejection(HttpResponse(409, {}, correct))
+        for status in (200, 401, 403, 404, 422, 500, 502, 503):
             with self.subTest(status=status), self.assertRaises(AcceptanceFailure):
                 expect_run_rejection(HttpResponse(status, {}, correct))
         for body in (b'{}', b'{"code":"OTHER_ERROR"}', b'<html>Error</html>'):
             with self.assertRaises(AcceptanceFailure):
-                expect_run_rejection(HttpResponse(422, {}, body))
+                expect_run_rejection(HttpResponse(409, {}, body))
 
     def test_preview_and_execution_preserve_decimal_amounts_and_partial_error(self):
         expected = {1: Decimal("100.25"), 2: Decimal("200.50")}

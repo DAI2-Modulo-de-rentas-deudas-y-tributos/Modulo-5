@@ -1,0 +1,18 @@
+{
+  "eventId": "84ac0249-5f08-43c6-9c85-f0eea5c89324",
+  "eventType": "paymentRegistered",
+  "eventVersion": "1.0",
+  "occurredAt": "2026-10-26T14:00:00-03:00",
+  "sourceModule": "rentas",
+  "correlationId": "14f70bf7-cd42-4278-88a9-67ef9414487d",
+  "causationId": null,
+  "data": {
+    "paymentId": "abf69d71-c0f4-4904-869c-e7eb78a63b99",
+    "debtId": "74bc8a8d-6d1c-44ac-a77c-86fb46e931fd",
+    "originType": "COMMERCIAL_FINE",
+    "originId": "FINE-DISTRIBUTED",
+    "amountApplied": 40.00,
+    "paidAt": "2026-10-26T14:00:00-03:00",
+    "remainingBalance": 60.00
+  }
+}

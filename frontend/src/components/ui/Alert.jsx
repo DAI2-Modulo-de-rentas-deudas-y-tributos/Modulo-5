@@ -29,8 +29,8 @@ export default function Alert({ variant = "info", title, children, onDismiss }) 
   const Icon = config.icon;
 
   return (
-    <div className={`relative flex gap-3 rounded-lg border p-4 ${config.bg}`}>
-      <Icon className={`h-5 w-5 shrink-0 mt-0.5 ${config.iconColor}`} strokeWidth={2} />
+    <div role={variant === "error" ? "alert" : "status"} aria-atomic="true" className={`relative flex gap-3 rounded-lg border p-4 ${config.bg}`}>
+      <Icon aria-hidden="true" className={`h-5 w-5 shrink-0 mt-0.5 ${config.iconColor}`} strokeWidth={2} />
       <div className="flex-1 min-w-0">
         {title && (
           <p className={`text-[14px] font-semibold ${config.titleColor}`}>{title}</p>
@@ -46,7 +46,7 @@ export default function Alert({ variant = "info", title, children, onDismiss }) 
           className="shrink-0 p-0.5 rounded hover:bg-black/5 transition-colors"
           aria-label="Cerrar"
         >
-          <X className="h-4 w-4 text-neutral-400" strokeWidth={2} />
+          <X aria-hidden="true" className="h-4 w-4 text-neutral-400" strokeWidth={2} />
         </button>
       )}
     </div>

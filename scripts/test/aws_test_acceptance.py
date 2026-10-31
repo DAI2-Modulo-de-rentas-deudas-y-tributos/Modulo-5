@@ -137,6 +137,15 @@ def demo_identity(client: ApiClient, role: str, taxpayer_id: int | None = None) 
     return ApiClient(client.api_base_url, None, session)
 
 
+def second_supervisor(client: ApiClient) -> ApiClient:
+    """Segregación de funciones: quien crea o envía una operación no puede aprobarla."""
+    if client.bearer_token:
+        token = os.getenv("TEST_API_APPROVER_BEARER_TOKEN")
+        require(bool(token), "Con TEST_API_BEARER_TOKEN, definir TEST_API_APPROVER_BEARER_TOKEN de otro SUPERVISOR")
+        return ApiClient(client.api_base_url, token)
+    return demo_identity(client, "SUPERVISOR")
+
+
 def page_total(page: dict[str, Any]) -> int:
     metadata = page.get("page") or {}
     return int(metadata.get("totalElements", len(page.get("content", []))))
@@ -196,7 +205,7 @@ def check_health(client: ApiClient) -> dict[str, Any]:
     return payload
 
 
-def create_active_concept(client: ApiClient, label: str, run_id: str,
+def create_active_concept(client: ApiClient, approver: ApiClient, label: str, run_id: str,
                           amount: str = "100.00") -> dict[str, Any]:
     suffix = run_id.replace("-", "")[-12:].upper()
     concept = client.json(
@@ -229,7 +238,7 @@ def create_active_concept(client: ApiClient, label: str, run_id: str,
         expected=(201,),
     )
     client.json("POST", f"/tax-configurations/{configuration['id']}/submit")
-    approved = client.json("POST", f"/tax-configurations/{configuration['id']}/approve")
+    approved = approver.json("POST", f"/tax-configurations/{configuration['id']}/approve")
     require(approved.get("status") == "ACTIVE", "La configuración de QA no quedó activa")
     return concept
 
@@ -284,8 +293,9 @@ def run_pdf(
     taxpayer = taxpayers[0]
     due_date = (date.today() + timedelta(days=30)).isoformat()
     selected = []
+    approver = second_supervisor(client)
     for index, amount in enumerate(("100.25", "250.50")):
-        concept = create_active_concept(client, f"PDF{index}", run_id, amount)
+        concept = create_active_concept(client, approver, f"PDF{index}", run_id, amount)
         liquidation = client.json("POST", "/liquidations", {
             "taxpayerId": taxpayer["id"], "taxConceptId": concept["id"],
             "period": date.today().strftime("%Y-%m"), "taxableBase": "0.00", "dueDate": due_date,
@@ -350,7 +360,8 @@ def run_bulk(
     require(bulk_size in (10, 50, 200), "bulk-size debe ser 10, 50 o 200 contribuyentes válidos")
     require(len({taxpayer['id'] for taxpayer in taxpayers}) >= bulk_size,
             f"Se necesitan {bulk_size} contribuyentes distintos; hay {len(taxpayers)}. No se sustituye volumen real por errores.")
-    concept = create_active_concept(client, "BULK", run_id)
+    approver = second_supervisor(client)
+    concept = create_active_concept(client, approver, "BULK", run_id)
     valid_taxpayers = list({taxpayer["id"]: taxpayer for taxpayer in taxpayers}.values())[:bulk_size]
     items = [
         {"taxpayerId": taxpayer["id"], "taxableBase": "0.00"}
@@ -400,7 +411,7 @@ def run_bulk(
     expect_run_rejection(client.request("POST", f"/liquidation-runs/{run['id']}/execute", expected=None))
 
     client.json("POST", f"/liquidation-runs/{run['id']}/submit")
-    client.json(
+    approver.json(
         "POST",
         f"/liquidation-runs/{run['id']}/approve",
         {"observation": "Aceptación automatizada AWS TEST"},
@@ -416,7 +427,7 @@ def run_bulk(
         futures = [pool.submit(execute_once) for _ in range(2)]
         responses = [future.result(timeout=max_duration_seconds + 60) for future in futures]
     execution_seconds = time.monotonic() - execution_started
-    require(sorted(response.status for response in responses) == [200, 422],
+    require(sorted(response.status for response in responses) == [200, 409],
             f"Ejecución concurrente inesperada: {[response.status for response in responses]}")
     expect_run_rejection(next(response for response in responses if response.status != 200))
     executed = json.loads(next(response for response in responses if response.status == 200).body)
@@ -468,7 +479,7 @@ def run_bulk(
 
 
 def expect_run_rejection(response: HttpResponse) -> None:
-    require(response.status == 422, f"Se esperaba rechazo de negocio HTTP 422, recibido {response.status}")
+    require(response.status == 409, f"Se esperaba conflicto de estado HTTP 409, recibido {response.status}")
     try:
         code = json.loads(response.body).get("code")
     except (ValueError, AttributeError) as error:

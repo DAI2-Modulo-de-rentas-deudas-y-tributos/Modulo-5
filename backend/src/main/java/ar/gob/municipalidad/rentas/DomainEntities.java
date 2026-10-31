@@ -26,7 +26,7 @@ enum ExternalObligationType { PERMIT_FEE, COMMERCIAL_FINE, TRAFFIC_INFRACTION }
 enum ExternalObligationStatus { RECEIVED, PROCESSED, ERROR }
 enum IntegrationEventStatus { RECEIVED, PENDING, PROCESSED, IGNORED, PUBLISHED, FAILED, DEAD_LETTER }
 enum EventDirection { INBOUND, OUTBOUND }
-enum OutboxStatus { PENDING, PUBLISHED, FAILED, DEAD_LETTER }
+enum OutboxStatus { PENDING, LOCAL_ONLY, BROKER_CONFIRMED, PUBLISHED, FAILED, DEAD_LETTER }
 enum PaymentPlanStatus { ACTIVE, COMPLETED, EXPIRED, REFINANCED, CANCELLED }
 enum PaymentPlanRequestStatus { PENDING, PENDING_EXCEPTION_APPROVAL, GRANTED, REJECTED }
 enum PaymentPlanDebtStatus { ACTIVE, SETTLED, RELEASED }
@@ -39,7 +39,7 @@ enum AdjustmentStatus { PENDING_APPROVAL, APPROVED, REJECTED }
 enum LiquidationRunStatus { DRAFT, PENDING_APPROVAL, APPROVED, REJECTED, EXECUTED }
 enum LiquidationRunItemStatus { PENDING, VALID, ERROR, LIQUIDATED }
 enum TicketPriority { LOW, MEDIUM, HIGH }
-enum TicketCaseStatus { OPEN, IN_PROGRESS, WAITING_FOR_INFORMATION, COMPLETED, REJECTED }
+enum TicketCaseStatus { OPEN, IN_REVIEW, DUPLICATE, IN_PROGRESS, WAITING_FOR_INFORMATION, COMPLETED, REJECTED }
 enum TicketUpdateType { INTERNAL_NOTE, INFORMATION_REQUEST, RESOLUTION, REJECTION }
 enum SocialBenefitStatus { ACTIVE, SUSPENDED, EXPIRED, CANCELLED }
 enum ExemptionRequestStatus { PENDING, UNDER_REVIEW, DOCUMENTATION_REQUIRED, PENDING_RESOLUTION, APPROVED, REJECTED }
@@ -48,6 +48,7 @@ enum LiquidationComponentType { BASE, DISCOUNT, EXEMPTION, SOCIAL_BENEFIT, SURCH
 @Entity @Table(name="taxpayer_reference", uniqueConstraints=@UniqueConstraint(columnNames={"taxpayer_type","external_id"}))
 class TaxpayerReference {
     @Id @GeneratedValue(strategy=GenerationType.IDENTITY) public Long id;
+    @Column(name="canonical_citizen_id",unique=true) public UUID canonicalCitizenId;
     @Enumerated(EnumType.STRING) @Column(name="taxpayer_type", nullable=false) public TaxpayerType taxpayerType;
     @Column(name="external_id", nullable=false) public String externalId;
     public String dni; public String cuit;
@@ -61,6 +62,7 @@ class TaxpayerReference {
 @Entity @Table(name="tax_concept")
 class TaxConcept {
     @Id @GeneratedValue(strategy=GenerationType.IDENTITY) public Long id;
+    @Version @Column(name="lock_version",nullable=false) public long lockVersion;
     @Column(nullable=false, unique=true, updatable=false) public String code;
     @Column(nullable=false) public String name;
     public String description;
@@ -75,6 +77,7 @@ class TaxConcept {
 @Entity @Table(name="tax_configuration", uniqueConstraints=@UniqueConstraint(columnNames={"tax_concept_id","version"}))
 class TaxConfiguration {
     @Id @GeneratedValue(strategy=GenerationType.IDENTITY) public Long id;
+    @Version @Column(name="lock_version",nullable=false) public long lockVersion;
     @Column(name="tax_concept_id", nullable=false) public Long taxConceptId;
     @Column(nullable=false) public int version;
     @Enumerated(EnumType.STRING) @Column(name="calculation_type", nullable=false) public CalculationType calculationType;
@@ -88,6 +91,7 @@ class TaxConfiguration {
     @Column(name="valid_until") public LocalDate validUntil;
     @Enumerated(EnumType.STRING) @Column(nullable=false) public TaxConfigurationStatus status;
     @Column(name="created_by",nullable=false) public String createdBy;
+    @Column(name="submitted_by") public String submittedBy;
     @Column(name="approved_by") public String approvedBy;
     @Column(name="created_at",nullable=false) public OffsetDateTime createdAt;
     @Column(name="approved_at") public OffsetDateTime approvedAt;
@@ -97,6 +101,8 @@ class TaxConfiguration {
 @Entity @Table(name="liquidation",uniqueConstraints=@UniqueConstraint(columnNames={"taxpayer_id","tax_concept_id","period"}))
 class Liquidation {
     @Id @GeneratedValue(strategy=GenerationType.IDENTITY) public Long id;
+    @Column(name="integration_id",nullable=false,unique=true) public UUID integrationId;
+    @PrePersist void assignIntegrationId(){if(integrationId==null)integrationId=UUID.randomUUID();}
     @Column(name="taxpayer_id",nullable=false) public Long taxpayerId;
     @Column(name="tax_concept_id",nullable=false) public Long taxConceptId;
     @Column(name="tax_configuration_id",nullable=false) public Long taxConfigurationId;
@@ -125,6 +131,9 @@ class LiquidationComponent {
     @Column(name="source_id") public String sourceId;
     @Column(nullable=false) public String description;
     @Column(nullable=false,precision=19,scale=2) public BigDecimal amount;
+    @Column(name="source_benefit_id") public String sourceBenefitId;
+    @Column(name="social_rule_id") public Long socialRuleId;
+    @Column(name="social_rule_version") public Integer socialRuleVersion;
     protected LiquidationComponent() {}
 }
 
@@ -152,6 +161,8 @@ class ExternalObligation {
 @Entity @Table(name="debt")
 class Debt {
     @Id @GeneratedValue(strategy=GenerationType.IDENTITY) public Long id;
+    @Column(name="integration_id",nullable=false,unique=true) public UUID integrationId;
+    @PrePersist void assignIntegrationId(){if(integrationId==null)integrationId=UUID.randomUUID();}
     @Column(name="taxpayer_id",nullable=false) public Long taxpayerId;
     @Column(name="tax_concept_id",nullable=false) public Long taxConceptId;
     @Enumerated(EnumType.STRING) @Column(name="origin_type",nullable=false) public DebtOriginType originType;
@@ -174,6 +185,8 @@ class Payment {
     @Column(name="idempotency_key",length=128) public String idempotencyKey;
     @Column(name="idempotency_fingerprint",length=64) public String idempotencyFingerprint;
     @Id @GeneratedValue(strategy=GenerationType.IDENTITY) public Long id;
+    @Column(name="integration_id",nullable=false,unique=true) public UUID integrationId;
+    @PrePersist void assignIntegrationId(){if(integrationId==null)integrationId=UUID.randomUUID();}
     @Column(name="taxpayer_id",nullable=false) public Long taxpayerId;
     @Column(name="bill_id") public Long billId;
     @Enumerated(EnumType.STRING) @Column(name="payment_method",nullable=false) public PaymentMethod paymentMethod;
@@ -272,6 +285,7 @@ class PaymentPlanConfiguration {
 @Entity @Table(name="payment_plan_request")
 class PaymentPlanRequest {
     @Id @GeneratedValue(strategy=GenerationType.IDENTITY) public Long id;
+    @Column(name="integration_id",nullable=false,unique=true,updatable=false) public UUID integrationId;
     @Column(name="taxpayer_id",nullable=false) public Long taxpayerId;
     @Column(name="requested_installments",nullable=false) public int requestedInstallments;
     @Column(name="total_debt_at_request",nullable=false,precision=19,scale=2) public BigDecimal totalDebtAtRequest;
@@ -285,10 +299,12 @@ class PaymentPlanRequest {
     @Enumerated(EnumType.STRING) @Column(nullable=false) public PaymentPlanRequestStatus status;
     @Column(name="requested_by",nullable=false) public String requestedBy;
     @Column(name="requested_at",nullable=false) public OffsetDateTime requestedAt;
+    @Column(name="exception_submitted_by") public String exceptionSubmittedBy;
     @Column(name="resolved_by") public String resolvedBy;
     @Column(name="resolved_at") public OffsetDateTime resolvedAt;
     @Column(name="resolution_reason") public String resolutionReason;
     @Column(name="payment_plan_id") public Long paymentPlanId;
+    @PrePersist void assignIntegrationId(){if(integrationId==null)integrationId=UUID.randomUUID();}
     protected PaymentPlanRequest() {}
 }
 
@@ -411,6 +427,7 @@ class AuditEntry {
 @Entity @Table(name="payment_plan")
 class PaymentPlan {
     @Id @GeneratedValue(strategy=GenerationType.IDENTITY) public Long id;
+    @Column(name="integration_id",nullable=false,unique=true,updatable=false) public UUID integrationId;
     @Column(name="taxpayer_id",nullable=false) public Long taxpayerId;
     @Column(name="debt_id") public Long debtId;
     @Column(name="request_id") public Long requestId;
@@ -431,6 +448,7 @@ class PaymentPlan {
     @Column(name="completed_at") public OffsetDateTime completedAt;
     @Column(name="expired_at") public OffsetDateTime expiredAt;
     @Column(name="refinanced_at") public OffsetDateTime refinancedAt;
+    @PrePersist void assignIntegrationId(){if(integrationId==null)integrationId=UUID.randomUUID();}
     protected PaymentPlan() {}
 }
 
@@ -493,6 +511,7 @@ class RefinancingRequest {
     @Enumerated(EnumType.STRING) @Column(nullable=false) public RefinancingRequestStatus status;
     @Column(name="requested_by",nullable=false) public String requestedBy;
     @Column(name="requested_at",nullable=false) public OffsetDateTime requestedAt;
+    @Column(name="exception_submitted_by") public String exceptionSubmittedBy;
     @Column(name="resolved_by") public String resolvedBy;
     @Column(name="resolved_at") public OffsetDateTime resolvedAt;
     @Column(name="new_payment_plan_id") public Long newPaymentPlanId;
@@ -532,6 +551,7 @@ class LiquidationRun {
     @Column(name="estimated_total_amount",nullable=false,precision=19,scale=2) public BigDecimal estimatedTotalAmount;
     @Column(name="created_by",nullable=false) public String createdBy;
     @Column(name="created_at",nullable=false) public OffsetDateTime createdAt;
+    @Column(name="submitted_by") public String submittedBy;
     @Column(name="submitted_at") public OffsetDateTime submittedAt;
     @Column(name="resolved_by") public String resolvedBy;
     @Column(name="resolved_at") public OffsetDateTime resolvedAt;
@@ -562,7 +582,9 @@ class TicketCase {
     @Column(name="last_external_updated_at") public OffsetDateTime lastExternalUpdatedAt;
     @Column(name="taxpayer_id") public Long taxpayerId;
     @Column(name="external_citizen_id") public String externalCitizenId;
+    @Column(name="request_type") public String requestType;
     @Column(nullable=false) public String category;
+    @Column(name="subcategory") public String subcategory;
     @Column(nullable=false,columnDefinition="text") public String description;
     @Enumerated(EnumType.STRING) @Column(nullable=false) public TicketPriority priority;
     @Enumerated(EnumType.STRING) @Column(nullable=false) public TicketCaseStatus status;
@@ -592,13 +614,19 @@ class SocialBenefitReference {
     @Column(name="external_citizen_id",nullable=false) public String externalCitizenId;
     @Column(name="benefit_type",nullable=false) public String benefitType;
     @Column(name="external_status",nullable=false) public String externalStatus;
+    @Column(name="external_reason") public String externalReason;
+    @Column(name="resolution_status",nullable=false) public String resolutionStatus;
+    @Column(name="source_payload_hash",nullable=false,length=64) public String sourcePayloadHash;
+    @Column(name="last_correlation_id") public UUID lastCorrelationId;
+    @Column(name="received_at",nullable=false) public OffsetDateTime receivedAt;
+    @PrePersist void fillLegacyMetadata(){if(resolutionStatus==null)resolutionStatus="LEGACY";if(sourcePayloadHash==null)sourcePayloadHash="0".repeat(64);if(receivedAt==null)receivedAt=OffsetDateTime.now();}
     @Enumerated(EnumType.STRING) @Column(name="calculated_status",nullable=false) public SocialBenefitStatus calculatedStatus;
     @Column(name="external_application_id") public String externalApplicationId;
     @Column(name="external_program_id") public String externalProgramId;
     @Column(name="program_name") public String programName;
     @Column(name="benefits_payload",nullable=false,columnDefinition="text") public String benefitsPayload;
     @Column(name="discount_percentage",precision=5,scale=2) public BigDecimal discountPercentage;
-    @Column(name="valid_from",nullable=false) public LocalDate validFrom;
+    @Column(name="valid_from") public LocalDate validFrom;
     @Column(name="valid_until") public LocalDate validUntil;
     @Column(name="source_event_id",nullable=false) public UUID sourceEventId;
     @Column(name="external_source_event_id",nullable=false) public String externalSourceEventId;
@@ -632,6 +660,8 @@ class SocialBenefitTaxConcept {
 @Entity @Table(name="exemption_request")
 class ExemptionRequest {
     @Id @GeneratedValue(strategy=GenerationType.IDENTITY) public Long id;
+    @Column(name="integration_id",nullable=false,unique=true) public UUID integrationId;
+    @PrePersist void assignIntegrationId(){if(integrationId==null)integrationId=UUID.randomUUID();}
     @Column(name="taxpayer_id",nullable=false) public Long taxpayerId;
     @Column(name="tax_concept_id",nullable=false) public Long taxConceptId;
     @Column(nullable=false) public String reason;
@@ -666,6 +696,8 @@ class ExemptionRequestDocument {
 @Entity @Table(name="exemption")
 class Exemption {
     @Id @GeneratedValue(strategy=GenerationType.IDENTITY) public Long id;
+    @Column(name="integration_id",nullable=false,unique=true) public UUID integrationId;
+    @PrePersist void assignIntegrationId(){if(integrationId==null)integrationId=UUID.randomUUID();}
     @Column(name="request_id",nullable=false,unique=true) public Long requestId;
     @Column(name="taxpayer_id",nullable=false) public Long taxpayerId;
     @Column(name="tax_concept_id",nullable=false) public Long taxConceptId;

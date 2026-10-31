@@ -8,10 +8,13 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
+import jakarta.persistence.EntityManager;
+import com.fasterxml.jackson.databind.JsonNode;
 
 import java.math.BigDecimal;
 import java.time.*;
 import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.*;
 
@@ -31,6 +34,10 @@ class PaymentPlanFlowTests {
     @Autowired PaymentPlanRequestDebtController requestDebtController;
     @Autowired OutboxRepository outbox;
     @Autowired com.fasterxml.jackson.databind.ObjectMapper json;
+    @Autowired TaxpayerRepository taxpayers;
+    @Autowired ConfirmedIntegrationOutbox integrationOutbox;
+    @Autowired DeferredPaymentPlanReconciliation deferredPlanReconciliation;
+    @Autowired EntityManager entityManager;
 
     @BeforeEach void authenticate() {
         var authorities=List.of("RENTAS","SUPERVISOR","CASHIER").stream().map(x->new SimpleGrantedAuthority("ROLE_"+x)).toList();
@@ -73,7 +80,7 @@ class PaymentPlanFlowTests {
         assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("95.51");
 
         PaymentReversalRequest reversal=reversals.request(payment.id,"Prueba de reversión monetaria");
-        reversals.approve(reversal.id);
+        TestActorSupport.asApprover(() -> reversals.approve(reversal.id));
         reversals.execute(reversal.id);
 
         assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("100.01");
@@ -111,7 +118,7 @@ class PaymentPlanFlowTests {
         assertThat(installments.findById(down.id).orElseThrow().status).isEqualTo(InstallmentStatus.PAID);
         PaymentAllocation allocation=paymentsAllocation(payment.id);
         assertThat(allocation.principalApplied.add(allocation.interestApplied)).isEqualByComparingTo(allocation.amount);
-        PaymentReversalRequest reversal=reversals.request(payment.id,"Pago duplicado");reversals.approve(reversal.id);reversals.execute(reversal.id);
+        PaymentReversalRequest reversal=reversals.request(payment.id,"Pago duplicado");TestActorSupport.asApprover(() -> reversals.approve(reversal.id));reversals.execute(reversal.id);
         assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("100.00");
         assertThat(installments.findById(down.id).orElseThrow().outstandingAmount).isEqualByComparingTo(down.totalAmount);
     }
@@ -119,11 +126,11 @@ class PaymentPlanFlowTests {
     @Test void exceptionalInstallmentCountNeedsSupervisorApproval() {
         Debt debt=debt("PLAN-FLOW-3","PLAN-FLOW-CONCEPT-3");
         PaymentPlanRequest request=workflow.request(new ApiDtos.CreatePaymentPlanRequest(debt.taxpayerId,List.of(debt.id),8));
-        assertThatThrownBy(()->workflow.grant(request.id,null)).isInstanceOf(BusinessException.class).hasMessageContaining("aprobación");
+        assertThatThrownBy(()->TestActorSupport.asApprover(() -> workflow.grant(request.id,null))).isInstanceOf(BusinessException.class).hasMessageContaining("aprobación");
 
         workflow.submitException(request.id,new ApiDtos.SubmitPlanExceptionRequest("Situación extraordinaria"));
-        workflow.approveException(request.id,new ApiDtos.ApprovePlanExceptionRequest("Autorizado"));
-        workflow.grant(request.id,null);
+        TestActorSupport.asApprover(() -> workflow.approveException(request.id,new ApiDtos.ApprovePlanExceptionRequest("Autorizado")));
+        TestActorSupport.asApprover(() -> workflow.grant(request.id,null));
 
         assertThat(request.status).isEqualTo(PaymentPlanRequestStatus.GRANTED);
     }
@@ -134,7 +141,7 @@ class PaymentPlanFlowTests {
         assertThat(workflow.defaulted(org.springframework.data.domain.PageRequest.of(0,10))).extracting(x->x.id).contains(plan.id);
         PlanExpirationRequest expiration=workflow.requestExpiration(plan.id,new ApiDtos.CreatePlanExpirationRequest("Cuotas vencidas"));
 
-        workflow.approveExpiration(expiration.id,"Verificado");
+        TestActorSupport.asApprover(() -> workflow.approveExpiration(expiration.id,"Verificado"));
 
         assertThat(plans.findById(plan.id).orElseThrow().status).isEqualTo(PaymentPlanStatus.EXPIRED);
         assertThat(planDebts.findByPaymentPlanId(plan.id)).allMatch(x->x.status==PaymentPlanDebtStatus.RELEASED);
@@ -146,7 +153,7 @@ class PaymentPlanFlowTests {
         Debt debt=debt("PLAN-FLOW-5","PLAN-FLOW-CONCEPT-5"); PaymentPlan old=grant(debt,2);
         RefinancingRequest request=workflow.requestRefinancing(old.id,new ApiDtos.CreateRefinancingRequest(3));
 
-        workflow.grantRefinancing(request.id);
+        TestActorSupport.asApprover(() -> workflow.grantRefinancing(request.id));
 
         assertThat(plans.findById(old.id).orElseThrow().status).isEqualTo(PaymentPlanStatus.REFINANCED);
         assertThat(request.status).isEqualTo(RefinancingRequestStatus.GRANTED);
@@ -163,15 +170,91 @@ class PaymentPlanFlowTests {
         assertThatThrownBy(()->workflow.requestRefinancing(plan.id,new ApiDtos.CreateRefinancingRequest(3)))
             .isInstanceOfSatisfying(BusinessException.class,exception->assertThat(exception.code).isEqualTo("REFINANCING_ALREADY_PENDING"));
 
-        workflow.rejectRefinancing(first.id,"No corresponde");
+        TestActorSupport.asApprover(() -> workflow.rejectRefinancing(first.id,"No corresponde"));
         RefinancingRequest next=workflow.requestRefinancing(plan.id,new ApiDtos.CreateRefinancingRequest(3));
         assertThat(next.id).isNotEqualTo(first.id);
         assertThat(next.status).isEqualTo(RefinancingRequestStatus.PENDING);
     }
 
-    private PaymentPlan grant(Debt debt,int count){PaymentPlanRequest request=workflow.request(new ApiDtos.CreatePaymentPlanRequest(debt.taxpayerId,List.of(debt.id),count));workflow.grant(request.id,null);return plans.findById(request.paymentPlanId).orElseThrow();}
+    @Test void planAndRequestIntegrationUuidsSurviveReloadAndUpdates(){
+        Debt debt=debt("PLAN-UUID-STABLE","PLAN-UUID-STABLE-CONCEPT");
+        PaymentPlanRequest request=workflow.request(new ApiDtos.CreatePaymentPlanRequest(debt.taxpayerId,List.of(debt.id),2));
+        UUID requestUuid=request.integrationId;
+        entityManager.flush();entityManager.clear();
+        PaymentPlanRequest reloadedRequest=entityManager.find(PaymentPlanRequest.class,request.id);
+        reloadedRequest.exceptionReason="Actualización local";entityManager.flush();entityManager.clear();
+        assertThat(entityManager.find(PaymentPlanRequest.class,request.id).integrationId).isEqualTo(requestUuid);
+
+        TestActorSupport.asApprover(() -> workflow.grant(request.id,null));Long planId=entityManager.find(PaymentPlanRequest.class,request.id).paymentPlanId;
+        PaymentPlan plan=plans.findById(planId).orElseThrow();UUID planUuid=plan.integrationId;
+        entityManager.flush();entityManager.clear();
+        PaymentPlan reloadedPlan=entityManager.find(PaymentPlan.class,planId);
+        reloadedPlan.refinancingCount=1;entityManager.flush();entityManager.clear();
+        assertThat(entityManager.find(PaymentPlan.class,planId).integrationId).isEqualTo(planUuid);
+        assertThat(requestUuid).isNotNull();assertThat(planUuid).isNotNull();
+    }
+
+    @Test void outboundPlanEventsUsePersistentM5UuidsAndCanonicalCitizenForMultipleDebts() throws Exception {
+        Debt first=debt("PLAN-UUID-MULTI-1","PLAN-UUID-MULTI-CONCEPT-1");
+        TaxpayerReference taxpayer=taxpayers.findById(first.taxpayerId).orElseThrow();UUID canonical=UUID.randomUUID();taxpayer.canonicalCitizenId=canonical;
+        TaxConcept concept=catalog.createConcept(new ApiDtos.CreateTaxConceptRequest("PLAN-UUID-MULTI-CONCEPT-2","Plan UUID segundo",null,TaxConceptType.FEE,"M5"));
+        TaxConfiguration config=catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(concept.id,CalculationType.FIXED,null,new BigDecimal("50"),null,null,true,true,LocalDate.now().minusDays(1),null));catalog.submit(config.id);TestActorSupport.asApprover(() -> catalog.approve(config.id));
+        liquidations.create(new ApiDtos.LiquidationRequest(first.taxpayerId,concept.id,YearMonth.now().plusMonths(1).toString(),BigDecimal.ZERO,LocalDate.now().plusDays(30)));
+        Debt second=debts.findByTaxpayerId(first.taxpayerId).stream().filter(d->d.taxConceptId.equals(concept.id)).findFirst().orElseThrow();
+        PaymentPlanRequest request=workflow.request(new ApiDtos.CreatePaymentPlanRequest(first.taxpayerId,List.of(first.id,second.id),2));
+        OutboxEvent requested=outbox.findAll().stream().filter(e->e.eventType.equals("paymentPlanRequested")).findFirst().orElseThrow();
+        JsonNode envelope=json.readTree(requested.payload),data=envelope.path("data");
+        List<String> envelopeFields=new java.util.ArrayList<>();envelope.fieldNames().forEachRemaining(envelopeFields::add);
+        assertThat(envelopeFields).containsExactlyInAnyOrder("eventId","eventType","eventVersion","occurredAt","sourceModule","correlationId","causationId","data");
+        assertThat(envelope.path("sourceModule").asText()).isEqualTo("rentas");
+        assertThat(UUID.fromString(envelope.path("correlationId").asText())).isNotNull();assertThat(envelope.path("causationId").isNull()).isTrue();
+        assertThat(data.path("requestId").asText()).isEqualTo(request.integrationId.toString());
+        assertThat(data.path("citizenId").asText()).isEqualTo(canonical.toString());
+        assertThat(List.of(data.path("debtIds").get(0).asText(),data.path("debtIds").get(1).asText()))
+            .containsExactlyInAnyOrder(first.integrationId.toString(),second.integrationId.toString());
+        assertThat(data.path("totalDebt").decimalValue()).isEqualByComparingTo(request.totalDebtAtRequest);
+        assertThat(data.path("installments").intValue()).isEqualTo(request.requestedInstallments);
+        integrationOutbox.paymentPlanRequested(request);
+        assertThat(outbox.findAll().stream().filter(e->e.eventType.equals("paymentPlanRequested")).count()).isEqualTo(1);
+
+        TestActorSupport.asApprover(() -> workflow.grant(request.id,null));PaymentPlan plan=plans.findById(request.paymentPlanId).orElseThrow();
+        OutboxEvent status=outbox.findAll().stream().filter(e->e.eventType.equals("updatePaymentPlanStatus")).findFirst().orElseThrow();
+        JsonNode statusEnvelope=json.readTree(status.payload),statusData=statusEnvelope.path("data");
+        assertThat(statusEnvelope.path("correlationId").asText()).isEqualTo(envelope.path("correlationId").asText());
+        assertThat(statusEnvelope.path("causationId").asText()).isEqualTo(requested.id.toString());
+        assertThat(statusData.path("requestId").asText()).isEqualTo(request.integrationId.toString());
+        assertThat(statusData.path("citizenId").asText()).isEqualTo(canonical.toString());
+        assertThat(statusData.path("planId").asText()).isEqualTo(plan.integrationId.toString());
+        assertThat(statusData.path("status").asText()).isEqualTo("GRANTED");
+        assertThat(statusData.path("installments").intValue()).isEqualTo(plan.installmentCount);
+        assertThat(statusData.path("totalAmount").decimalValue()).isEqualByComparingTo(plan.totalPlanAmount);
+        assertThat(status.idempotencyKey).isEqualTo("outbound:updatePaymentPlanStatus:PaymentPlanRequest:"+request.integrationId);
+    }
+
+    @Test void rejectionHasNoPlanIdAndDeferredCanonicalIdentityCanBeReconciledOnce() throws Exception {
+        Debt debt=debt("PLAN-UUID-DEFERRED","PLAN-UUID-DEFERRED-CONCEPT");
+        PaymentPlanRequest request=workflow.request(new ApiDtos.CreatePaymentPlanRequest(debt.taxpayerId,List.of(debt.id),2));
+        assertThat(outbox.findAll().stream().noneMatch(e->e.eventType.equals("paymentPlanRequested"))).isTrue();
+        assertThat(outbox.findAll().stream().noneMatch(e->e.eventType.equals("updatePaymentPlanStatus"))).isTrue();
+        TaxpayerReference taxpayer=taxpayers.findById(debt.taxpayerId).orElseThrow();taxpayer.canonicalCitizenId=UUID.randomUUID();
+        deferredPlanReconciliation.reconcile(request.id);
+        assertThat(outbox.findAll().stream().filter(e->e.eventType.equals("paymentPlanRequested")).count()).isEqualTo(1);
+        deferredPlanReconciliation.reconcile(request.id);
+        assertThat(outbox.findAll().stream().filter(e->e.eventType.equals("paymentPlanRequested")).count()).isEqualTo(1);
+
+        PaymentPlanRequest rejected=workflow.request(new ApiDtos.CreatePaymentPlanRequest(debt.taxpayerId,List.of(debt.id),2));
+        TestActorSupport.asApprover(() -> workflow.rejectRequest(rejected.id,"Deuda no elegible"));
+        OutboxEvent status=outbox.findAll().stream().filter(e->e.eventType.equals("updatePaymentPlanStatus")&&e.aggregateId.equals(rejected.id.toString())).findFirst().orElseThrow();
+        JsonNode data=json.readTree(status.payload).path("data");
+        assertThat(data.path("requestId").asText()).isEqualTo(rejected.integrationId.toString());
+        assertThat(data.path("status").asText()).isEqualTo("REJECTED");
+        assertThat(data.path("reason").asText()).isEqualTo("Deuda no elegible");
+        assertThat(data.has("planId")).isFalse();assertThat(data.has("installments")).isFalse();assertThat(data.has("totalAmount")).isFalse();
+    }
+
+    private PaymentPlan grant(Debt debt,int count){PaymentPlanRequest request=workflow.request(new ApiDtos.CreatePaymentPlanRequest(debt.taxpayerId,List.of(debt.id),count));TestActorSupport.asApprover(() -> workflow.grant(request.id,null));return plans.findById(request.paymentPlanId).orElseThrow();}
     @Autowired PaymentAllocationRepository paymentAllocations;
     private PaymentAllocation paymentsAllocation(Long paymentId){return paymentAllocations.findByPaymentId(paymentId).get(0);}
     private Debt debt(String externalId,String conceptCode){return debt(externalId,conceptCode,"100");}
-    private Debt debt(String externalId,String conceptCode,String amount){TaxpayerReference taxpayer=catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(TaxpayerType.CITIZEN,externalId,"123",null,"Persona "+externalId));TaxConcept concept=catalog.createConcept(new ApiDtos.CreateTaxConceptRequest(conceptCode,conceptCode,null,TaxConceptType.FEE,"M5"));TaxConfiguration config=catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(concept.id,CalculationType.FIXED,null,new BigDecimal(amount),null,null,true,true,LocalDate.now().minusDays(1),null));catalog.submit(config.id);catalog.approve(config.id);liquidations.create(new ApiDtos.LiquidationRequest(taxpayer.id,concept.id,YearMonth.now().toString(),BigDecimal.ZERO,LocalDate.now().plusDays(30)));return debts.findByTaxpayerId(taxpayer.id).get(0);}
+    private Debt debt(String externalId,String conceptCode,String amount){TaxpayerReference taxpayer=catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(TaxpayerType.CITIZEN,externalId,"123",null,"Persona "+externalId));TaxConcept concept=catalog.createConcept(new ApiDtos.CreateTaxConceptRequest(conceptCode,conceptCode,null,TaxConceptType.FEE,"M5"));TaxConfiguration config=catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(concept.id,CalculationType.FIXED,null,new BigDecimal(amount),null,null,true,true,LocalDate.now().minusDays(1),null));catalog.submit(config.id);TestActorSupport.asApprover(() -> catalog.approve(config.id));liquidations.create(new ApiDtos.LiquidationRequest(taxpayer.id,concept.id,YearMonth.now().toString(),BigDecimal.ZERO,LocalDate.now().plusDays(30)));return debts.findByTaxpayerId(taxpayer.id).get(0);}
 }

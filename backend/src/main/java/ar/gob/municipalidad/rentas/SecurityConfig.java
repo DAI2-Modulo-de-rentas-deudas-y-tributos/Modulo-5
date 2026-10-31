@@ -12,7 +12,11 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
@@ -22,6 +26,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter;
 import org.springframework.stereotype.Component;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
@@ -54,7 +59,8 @@ class SecurityConfig {
     }
 
     @Bean SecurityFilterChain securityFilterChain(HttpSecurity http, DevIdentityFilter filter,
-            SecurityErrorResponseWriter errors) throws Exception {
+            SecurityErrorResponseWriter errors, Environment environment) throws Exception {
+        boolean production=environment.acceptsProfiles(Profiles.of("prod"));
         return http.csrf(csrf -> csrf.disable())
             .sessionManagement(session -> session.sessionCreationPolicy(org.springframework.security.config.http.SessionCreationPolicy.STATELESS))
             .exceptionHandling(securityErrors -> securityErrors
@@ -62,13 +68,20 @@ class SecurityConfig {
                     "UNAUTHENTICATED","Se requiere autenticación"))
                 .accessDeniedHandler((request,response,error) -> errors.write(request,response,403,
                     "ACCESS_DENIED","No tiene permisos para realizar esta operación")))
+            .headers(headers -> headers
+                .contentTypeOptions(Customizer.withDefaults())
+                .frameOptions(frame -> frame.deny())
+                .referrerPolicy(referrer -> referrer.policy(ReferrerPolicyHeaderWriter.ReferrerPolicy.NO_REFERRER)))
             .cors(Customizer.withDefaults())
-            .authorizeHttpRequests(auth -> auth
-                .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                .requestMatchers("/actuator/health", "/api/v1/health", "/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll()
+            .authorizeHttpRequests(auth -> {
+                auth.requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                    .requestMatchers("/actuator/health", "/api/v1/health").permitAll();
+                if (!production) auth.requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll();
+                auth
                 .requestMatchers(HttpMethod.POST, "/api/v1/dev-auth/login", "/api/v1/dev-auth/bootstrap").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/v1/**").authenticated()
-                .anyRequest().authenticated())
+                .anyRequest().authenticated();
+            })
             .addFilterBefore(filter, UsernamePasswordAuthenticationFilter.class)
             .build();
     }
@@ -77,8 +90,9 @@ class SecurityConfig {
 @Component
 class SecurityErrorResponseWriter {
     private final ObjectMapper json;
+    private final AuditService audit;
 
-    SecurityErrorResponseWriter(ObjectMapper json) { this.json=json; }
+    SecurityErrorResponseWriter(ObjectMapper json,AuditService audit) { this.json=json;this.audit=audit; }
 
     void write(HttpServletRequest request,HttpServletResponse response,int status,String code,String message)
             throws IOException {
@@ -89,14 +103,17 @@ class SecurityErrorResponseWriter {
         }
         response.setStatus(status);
         response.setCharacterEncoding("UTF-8");
-        response.setContentType("application/json");
+        response.setContentType(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
         response.setHeader(CorrelationIdFilter.HEADER,traceId);
+        if(status==403) audit.recordAccessDenied(request,code);
         json.writeValue(response.getOutputStream(),new ApiDtos.ErrorResponse(
-            java.time.OffsetDateTime.now(),status,code,message,request.getRequestURI(),traceId,null));
+            "about:blank",HttpStatus.valueOf(status).getReasonPhrase(),java.time.OffsetDateTime.now(),status,
+            message,request.getRequestURI(),code,message,request.getRequestURI(),traceId,null));
     }
 }
 
-record AuthenticatedIdentity(String userId, Long taxpayerId) {
+record AuthenticatedIdentity(String userId, Long taxpayerId, UUID integrationActorId) {
+    AuthenticatedIdentity(String userId, Long taxpayerId) { this(userId,taxpayerId,null); }
     @Override public String toString() { return userId; }
 }
 

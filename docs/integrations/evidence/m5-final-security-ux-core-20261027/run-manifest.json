@@ -1,0 +1,22 @@
+{
+  "postgresImage": "postgres:17.11-alpine",
+  "frontendPort": 51542,
+  "commit": "9719007643e39c7b18266ae9c6c35426da1b8265",
+  "infractionBId": "b11c2a43-5ecf-4e0f-86d5-324cea209210",
+  "rabbitImage": "rabbitmq:4.3-management",
+  "debtBId": 2,
+  "rabbitPort": 51545,
+  "infractionAId": "48e50ff8-fdb9-4cf2-b74f-41b4f1ea9d10",
+  "debtAId": 1,
+  "containerNames": [
+    "m5-postmerge-pg-5d6cd6d336d3",
+    "m5-postmerge-mq-5d6cd6d336d3"
+  ],
+  "testData": "sintética, creada en PostgreSQL efímero",
+  "result": "PASS",
+  "backendPort": 51541,
+  "taxpayerAId": 2,
+  "taxpayerBId": 3,
+  "branch": "feature/m5-final-security-ux-core",
+  "postgresPort": 51543
+}

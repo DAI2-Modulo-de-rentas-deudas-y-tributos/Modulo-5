@@ -11,6 +11,7 @@ import StatTile from "../../components/common/StatTile.jsx";
 import Alert from "../../components/ui/Alert.jsx";
 import useResource from "../../hooks/useResource.js";
 import useTaxpayerIndex from "../../hooks/useTaxpayerIndex.js";
+import useTaxConcepts from "../../hooks/useTaxConcepts.js";
 import { administrationService, debtService } from "../../services/rentasService.js";
 import { DEBT_ORIGIN_TYPES } from "../../config/catalogosDominio.js";
 import { formatCurrency, formatDate, labelFor } from "../../lib/format.js";
@@ -27,7 +28,6 @@ export default function DeudasPage() {
   const taxpayerId = searchParams.get("taxpayerId") ?? "";
   const [filters, setFilters] = useState({ status: "", originType: "" });
   const [feedback, setFeedback] = useState(null);
-  const [reporting, setReporting] = useState(null);
   const [lateCharge, setLateCharge] = useState(null);
   const [processing, setProcessing] = useState(false);
 
@@ -37,6 +37,7 @@ export default function DeudasPage() {
   );
   const { data: debts, loading, error, reload } = useResource(loader, []);
   const { nameOf, index } = useTaxpayerIndex();
+  const { concepts } = useTaxConcepts();
 
   const rows = debts ?? [];
   const totalOutstanding = rows.reduce((acc, d) => acc + d.outstandingAmount, 0);
@@ -46,24 +47,6 @@ export default function DeudasPage() {
 
   const onFilterChange = (name, value) =>
     setFilters((previous) => ({ ...previous, [name]: value }));
-
-  const onReportOverdue = async (debt) => {
-    setReporting(debt.id);
-    setFeedback(null);
-    try {
-      await debtService.reportOverdue(debt.id);
-      setFeedback({
-        variant: "success",
-        title: "Deuda informada a Desarrollo Social",
-        message: `Se publicó overdueDebt para la deuda #${debt.id}.`,
-      });
-      reload();
-    } catch (caught) {
-      setFeedback({ variant: "error", title: "No se pudo informar", message: caught.message });
-    } finally {
-      setReporting(null);
-    }
-  };
 
   const onPreviewLateCharge = async (debt) => {
     setFeedback(null);
@@ -98,15 +81,14 @@ export default function DeudasPage() {
       key: "origin",
       header: "Origen",
       render: (row) => (
-        <div className="flex flex-col">
-          <span className="text-neutral-700">{ORIGIN_LABELS[row.originType] ?? row.originType}</span>
-          <span className="text-[12px] text-neutral-400 tabular-nums">
-            {row.originType}:{row.originId}
-          </span>
-        </div>
+        <span className="text-neutral-700">{ORIGIN_LABELS[row.originType] ?? "Origen registrado"}</span>
       ),
     },
-    { key: "conceptCode", header: "Concepto" },
+    {
+      key: "conceptCode",
+      header: "Concepto",
+      render: (row) => concepts.find((concept) => concept.id === row.taxConceptId)?.name ?? "Concepto tributario",
+    },
     {
       key: "outstandingAmount",
       header: "Saldo",
@@ -127,18 +109,10 @@ export default function DeudasPage() {
         row.status === "OVERDUE" && (
           <div className="flex justify-end gap-2">
           <Button size="sm" variant="secondary" onClick={() => onPreviewLateCharge(row)}>Calcular recargo</Button>
-        {row.reportedToM8 ? (
-          <StatusBadge tone="info" label="Informada a M8" />
-        ) : (
-          <Button
-            size="sm"
-            variant="secondary"
-            loading={reporting === row.id}
-            onClick={() => onReportOverdue(row)}
-          >
-            Informar a M8
-          </Button>
-        )}
+        <StatusBadge
+          tone="info"
+          label={row.reportedToM8 ? "Aviso registrado" : "Notificación externa no disponible"}
+        />
           </div>
         ),
     },
@@ -188,7 +162,7 @@ export default function DeudasPage() {
 
       <Card
         title="Detalle de deudas"
-        description="La deuda vencida se informa a Desarrollo Social mediante el evento overdueDebt."
+        description="El aviso de vencimiento a Desarrollo Social depende de una integración externa todavía pendiente."
         actions={<Button size="sm" variant="primary" loading={processing} onClick={onProcessDueDates}>Procesar vencimientos</Button>}
       >
         <FilterBar

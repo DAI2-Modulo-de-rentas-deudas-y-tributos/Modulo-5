@@ -37,6 +37,7 @@ class SecurityTests {
     @Test void borrarLiquidacionDevuelve405ConMetodosPermitidos() throws Exception {
         mvc.perform(delete("/api/v1/liquidations/1").header("X-Demo-Session",demo.token(DemoRole.RENTAS)))
             .andExpect(status().isMethodNotAllowed())
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
             .andExpect(jsonPath("$.code").value("METHOD_NOT_ALLOWED"))
             .andExpect(header().string("Allow",org.hamcrest.Matchers.containsString("GET")));
     }
@@ -61,9 +62,16 @@ class SecurityTests {
     }
 
     @Test void auditorCannotWrite() throws Exception {
-        mvc.perform(post("/api/v1/tax-concepts").header("X-Demo-Session",demo.token(DemoRole.AUDITOR)).contentType(MediaType.APPLICATION_JSON)
+        String traceId="audit-denied-auditor-"+java.util.UUID.randomUUID();
+        mvc.perform(post("/api/v1/tax-concepts").header("X-Demo-Session",demo.token(DemoRole.AUDITOR)).header("X-Correlation-Id",traceId).contentType(MediaType.APPLICATION_JSON)
             .content("{\"code\":\"X\",\"name\":\"X\",\"type\":\"FEE\",\"originModule\":\"M5\"}"))
             .andExpect(status().isForbidden());
+        assertThat(audit.findAll().stream().filter(entry->traceId.equals(entry.correlationId)).toList()).singleElement().satisfies(entry -> {
+            assertThat(entry.entityType).isEqualTo("SecurityEvent");
+            assertThat(entry.action).isEqualTo("ACCESS_DENIED");
+            assertThat(entry.userRole).contains("AUDITOR");
+            assertThat(entry.newData).contains("/api/v1/tax-concepts").doesNotContain("X-Demo-Session");
+        });
     }
 
     @Test void rentasCanReachPaymentRegistrationFromItsOperationalScreen() throws Exception {
@@ -126,6 +134,58 @@ class SecurityTests {
             .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("INVALID_CREDENTIALS"));
         mvc.perform(get("/api/v1/dev-auth/me").header("X-Demo-Session",first.path("token").asText()))
             .andExpect(status().isUnauthorized());
+    }
+
+    @Test void demoLoginAndLogoutArePersistentlyAuditedWithoutCredentialMaterial() throws Exception {
+        DemoUser user=persist(DemoRole.RENTAS,null,true);
+        String body="{\"username\":\""+user.username+"\",\"password\":\""+DemoAuthSessions.PASSWORD+"\"}";
+        JsonNode login=json.readTree(mvc.perform(post("/api/v1/dev-auth/login").contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        String token=login.path("token").asText();
+        AuditEntry success=audit.findAll().stream().filter(entry->entry.action.equals("DEMO_LOGIN_SUCCEEDED")&&entry.userId.equals(user.integrationActorId.toString())).findFirst().orElseThrow();
+        assertThat(success.userRole).isEqualTo("RENTAS");
+        assertThat(success.newData).contains("SUCCESS").doesNotContain(token,DemoAuthSessions.PASSWORD);
+
+        String wrongPassword="wrong-password-not-for-audit";
+        mvc.perform(post("/api/v1/dev-auth/login").contentType(MediaType.APPLICATION_JSON)
+            .content("{\"username\":\""+user.username+"\",\"password\":\""+wrongPassword+"\"}"))
+            .andExpect(status().isUnauthorized());
+        AuditEntry failure=audit.findAll().stream().filter(entry->entry.action.equals("DEMO_LOGIN_FAILED")).findFirst().orElseThrow();
+        assertThat(failure.userId).isEqualTo("anonymous");
+        assertThat(failure.userRole).isEqualTo("ANONYMOUS");
+        assertThat(failure.newData).contains("INVALID_CREDENTIALS").doesNotContain(user.username,wrongPassword,DemoAuthSessions.PASSWORD,token);
+
+        mvc.perform(post("/api/v1/dev-auth/logout").header("X-Demo-Session",token)).andExpect(status().isNoContent());
+        AuditEntry logout=audit.findAll().stream().filter(entry->entry.action.equals("DEMO_LOGOUT_SUCCEEDED")&&entry.userId.equals(user.integrationActorId.toString())).findFirst().orElseThrow();
+        assertThat(logout.newData).contains("SUCCESS").doesNotContain(token,DemoAuthSessions.PASSWORD);
+    }
+
+    @Test void ownership403IsPersistedWithoutQueryStringOrSensitiveValues() throws Exception {
+        TaxpayerReference owner=taxpayer("SEC-AUDIT-OWNER");
+        TaxpayerReference other=taxpayer("SEC-AUDIT-OTHER");
+        String session=demo.token(DemoRole.TAXPAYER,owner.id);
+        String traceId="audit-denied-owner-"+java.util.UUID.randomUUID();
+        mvc.perform(get("/api/v1/taxpayers/{id}/summary?probe=secret-value",other.id).header("X-Demo-Session",session).header("X-Correlation-Id",traceId))
+            .andExpect(status().isForbidden());
+        AuditEntry denied=audit.findAll().stream().filter(entry->entry.action.equals("ACCESS_DENIED")&&traceId.equals(entry.correlationId)).findFirst().orElseThrow();
+        assertThat(denied.userId).isNotEqualTo("anonymous");
+        assertThat(denied.userRole).contains("TAXPAYER");
+        assertThat(denied.newData).contains("FORBIDDEN_OWNERSHIP","/api/v1/taxpayers").doesNotContain(other.id.toString(),"probe","secret-value",session);
+    }
+
+    @Test void apiSecurityHeadersAndSwaggerRemainUsable() throws Exception {
+        mvc.perform(get("/api/v1/health"))
+            .andExpect(status().isOk())
+            .andExpect(header().string("X-Content-Type-Options","nosniff"))
+            .andExpect(header().string("X-Frame-Options","DENY"))
+            .andExpect(header().string("Referrer-Policy","no-referrer"))
+            .andExpect(header().doesNotExist("Strict-Transport-Security"));
+        mvc.perform(get("/api/v1/health").secure(true))
+            .andExpect(status().isOk())
+            .andExpect(header().exists("Strict-Transport-Security"));
+        mvc.perform(get("/v3/api-docs"))
+            .andExpect(status().isOk())
+            .andExpect(header().string("Referrer-Policy","no-referrer"));
     }
 
     @Test void expiredAndRevokedSessionsAreRejected() throws Exception {
@@ -229,8 +289,17 @@ class SecurityTests {
         var paths=json.readTree(openApi).path("paths");int operations=0;for(var path=paths.fields();path.hasNext();)operations+=path.next().getValue().size();
         org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/tax-concepts").path("post").path("responses")
             .path("400").path("$ref").asText()).isEqualTo("#/components/responses/ApiError");
-        org.assertj.core.api.Assertions.assertThat(operations).isEqualTo(156);
-        org.assertj.core.api.Assertions.assertThat(paths.size()).isEqualTo(141);
+        org.assertj.core.api.Assertions.assertThat(operations).isEqualTo(165);
+        org.assertj.core.api.Assertions.assertThat(paths.size()).isEqualTo(149);
+        org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/integrations/deferred/exemptions/{requestId}/reconcile").has("post")).isTrue();
+        org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/integrations/deferred/payment-plans/{requestId}/reconcile").has("post")).isTrue();
+        org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/integrations/deferred/economic").has("get")).isTrue();
+        org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/integrations/deferred/economic/{deferralId}/reconcile").has("post")).isTrue();
+        org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/social-benefit-rules").has("get")).isTrue();
+        org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/social-benefit-rules").has("post")).isTrue();
+        org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/social-benefit-rules/{id}/submit").has("post")).isTrue();
+        org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/social-benefit-rules/{id}/approve").has("post")).isTrue();
+        org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/social-benefit-rules/{id}/disable").has("post")).isTrue();
         org.assertj.core.api.Assertions.assertThat(paths.has("/api/v1/payment-plan-requests/{id}/debts")).isTrue();
         org.assertj.core.api.Assertions.assertThat(paths.has("/api/v1/dashboards/supervisor")).isTrue();
         org.assertj.core.api.Assertions.assertThat(paths.has("/api/v1/dashboards/rentas")).isTrue();

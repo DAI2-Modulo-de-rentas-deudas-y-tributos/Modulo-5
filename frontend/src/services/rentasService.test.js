@@ -7,6 +7,7 @@ import {
   debtService,
   exemptionService,
   paymentService,
+  paymentPlanService,
   portalService,
 } from "./rentasService.js";
 import { instalarBackendFalso, pagina } from "../__tests__/fixtures/backendFalso.js";
@@ -35,7 +36,7 @@ describe("simulación de planes de pago", () => {
       },
     });
 
-    const simulacion = await portalService.simulatePaymentPlan({ taxpayerId: 123, debtIds: [3001], installments: 6 });
+    const simulacion = await paymentPlanService.simulate({ taxpayerId: 123, debtIds: [3001], installments: 6 });
 
     expect(simulacion).toMatchObject({ configurationVersion: 2, total: 120000, regularInstallmentAmount: 20000 });
     expect(backend.llamadas[0]).toMatchObject({

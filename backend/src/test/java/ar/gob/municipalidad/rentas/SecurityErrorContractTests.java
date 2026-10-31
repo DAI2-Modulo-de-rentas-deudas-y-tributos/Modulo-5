@@ -6,6 +6,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
@@ -15,6 +16,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.OffsetDateTime;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -81,15 +83,99 @@ class SecurityErrorContractTests {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{"))
             .andExpect(status().isBadRequest())
-            .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+            .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
             .andExpect(jsonPath("$.timestamp").exists())
             .andExpect(jsonPath("$.status").value(400))
+            .andExpect(jsonPath("$.type").value("about:blank"))
+            .andExpect(jsonPath("$.title").value("Bad Request"))
+            .andExpect(jsonPath("$.detail").exists())
+            .andExpect(jsonPath("$.instance").value("/api/v1/tax-concepts"))
             .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
             .andExpect(jsonPath("$.message").exists())
             .andExpect(jsonPath("$.path").value("/api/v1/tax-concepts"))
             .andExpect(jsonPath("$.details").value(org.hamcrest.Matchers.nullValue()))
             .andExpect(jsonPath("$.traceId").value("malformed-json-trace"))
+            .andExpect(jsonPath("$.type").value("about:blank"))
+            .andExpect(jsonPath("$.title").value("Bad Request"))
+            .andExpect(jsonPath("$.detail").value(org.hamcrest.Matchers.not(org.hamcrest.Matchers.emptyOrNullString())))
+            .andExpect(jsonPath("$.instance").value("/api/v1/tax-concepts"))
             .andExpect(header().string("X-Correlation-Id","malformed-json-trace"));
+    }
+
+    @Test void validationErrorUsesProblemJsonAndSafeFieldDetails() throws Exception {
+        mvc.perform(post("/api/v1/tax-concepts")
+                .header("X-Demo-Session",demo.token(DemoRole.RENTAS))
+                .header("X-Correlation-Id","validation-problem-trace")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"code\":\"\",\"name\":\"\",\"type\":\"FEE\",\"originModule\":\"M5\"}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+            .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+            .andExpect(jsonPath("$.traceId").value("validation-problem-trace"))
+            .andExpect(jsonPath("$.details.fieldErrors").isArray())
+            .andExpect(jsonPath("$.details.fieldErrors[0].field").exists())
+            .andExpect(jsonPath("$.details.fieldErrors[0].messages[0]").exists())
+            .andExpect(jsonPath("$.details.fieldErrors[0].rejectedValue").doesNotExist());
+    }
+
+    @Test void duplicateBusinessResourceReturnsConflictProblemDetails() throws Exception {
+        String token=demo.token(DemoRole.RENTAS);
+        String body="{\"code\":\"PROBLEM-"+java.util.UUID.randomUUID()+"\",\"name\":\"QA\",\"type\":\"FEE\",\"originModule\":\"M5\"}";
+        mvc.perform(post("/api/v1/tax-concepts").header("X-Demo-Session",token).contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isCreated());
+        mvc.perform(post("/api/v1/tax-concepts").header("X-Demo-Session",token)
+                .header("X-Correlation-Id","business-conflict-trace")
+                .contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isConflict())
+            .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+            .andExpect(jsonPath("$.type").value("about:blank"))
+            .andExpect(jsonPath("$.status").value(409))
+            .andExpect(jsonPath("$.code").value("TAX_CONCEPT_CODE_EXISTS"))
+            .andExpect(jsonPath("$.traceId").value("business-conflict-trace"));
+    }
+
+    @Test void methodNotAllowedRetainsProblemContentTypeAndAllowHeader() throws Exception {
+        mvc.perform(delete("/api/v1/tax-concepts")
+                .header("X-Demo-Session",demo.token(DemoRole.RENTAS)))
+            .andExpect(status().isMethodNotAllowed())
+            .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+            .andExpect(jsonPath("$.status").value(405))
+            .andExpect(jsonPath("$.title").value("Method Not Allowed"))
+            .andExpect(header().exists("Allow"));
+    }
+
+    @Test void notFoundErrorsUseProblemDetails() throws Exception {
+        mvc.perform(get("/api/v1/debts/9223372036854775807")
+                .header("X-Demo-Session",demo.token(DemoRole.RENTAS)))
+            .andExpect(status().isNotFound())
+            .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+            .andExpect(jsonPath("$.code").value("NOT_FOUND"))
+            .andExpect(jsonPath("$.detail").value("Deuda no encontrado"))
+            .andExpect(jsonPath("$.instance").value("/api/v1/debts/9223372036854775807"));
+    }
+
+    @Test void unexpectedErrorsUseProblemDetailsWithoutLeakingInternalMessages() {
+        MockHttpServletRequest request=new MockHttpServletRequest("GET","/api/v1/internal");
+        var response=new GlobalExceptionHandler().unexpected(new IllegalStateException("private sql detail"),request);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(500);
+        assertThat(response.getHeaders().getContentType()).isEqualTo(MediaType.APPLICATION_PROBLEM_JSON);
+        assertThat(response.getBody()).satisfies(error -> {
+            assertThat(error.type()).isEqualTo("about:blank");
+            assertThat(error.title()).isEqualTo("Internal Server Error");
+            assertThat(error.status()).isEqualTo(500);
+            assertThat(error.detail()).isEqualTo("Ocurrió un error interno");
+            assertThat(error.instance()).isEqualTo("/api/v1/internal");
+            assertThat(error.message()).doesNotContain("private sql detail");
+        });
+    }
+
+    @Test void rateLimitBusinessErrorsCanUseProblemDetails() {
+        MockHttpServletRequest request=new MockHttpServletRequest("POST","/api/v1/dev-auth/login");
+        var response=new GlobalExceptionHandler().business(new BusinessException("RATE_LIMITED","Espere antes de reintentar",429),request);
+        assertThat(response.getStatusCode().value()).isEqualTo(429);
+        assertThat(response.getHeaders().getContentType()).isEqualTo(MediaType.APPLICATION_PROBLEM_JSON);
+        assertThat(response.getBody().detail()).isEqualTo("Espere antes de reintentar");
     }
 
     @Test void openApiDocuments401And403WithTheSharedErrorSchema() throws Exception {
@@ -102,18 +188,31 @@ class SecurityErrorContractTests {
         org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/tax-concepts").path("post")
             .path("responses").path("403").path("$ref").asText())
             .isEqualTo("#/components/responses/ApiError");
+        org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/dev-auth/login").path("post")
+            .path("responses").path("429").path("$ref").asText())
+            .isEqualTo("#/components/responses/ApiError");
         var schema=document.path("components").path("schemas").path("ErrorResponse").path("properties");
-        for(String field:new String[]{"timestamp","status","code","message","path","traceId","details"})
+        var errorContent=document.path("components").path("responses").path("ApiError").path("content");
+        org.assertj.core.api.Assertions.assertThat(errorContent.has("application/problem+json")).isTrue();
+        var errorProperties=errorContent.path("application/problem+json").path("schema").path("$ref").asText();
+        org.assertj.core.api.Assertions.assertThat(errorProperties).isEqualTo("#/components/schemas/ErrorResponse");
+        for(String field:new String[]{"type","title","detail","instance","timestamp","status","code","message","path","traceId","details"})
             org.assertj.core.api.Assertions.assertThat(schema.has(field)).as("campo %s",field).isTrue();
+        org.assertj.core.api.Assertions.assertThat(document.path("components").path("responses").path("ApiError")
+            .path("content").has("application/problem+json")).isTrue();
     }
 
     private org.springframework.test.web.servlet.MvcResult assertSecurityError(
             org.springframework.test.web.servlet.ResultActions result,int statusCode,
             String code,String traceId) throws Exception {
         return result.andExpect(status().is(statusCode))
-            .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+            .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
             .andExpect(jsonPath("$.timestamp").exists())
             .andExpect(jsonPath("$.status").value(statusCode))
+            .andExpect(jsonPath("$.type").value("about:blank"))
+            .andExpect(jsonPath("$.title").exists())
+            .andExpect(jsonPath("$.detail").isNotEmpty())
+            .andExpect(jsonPath("$.instance").exists())
             .andExpect(jsonPath("$.code").value(code))
             .andExpect(jsonPath("$.message").isNotEmpty())
             .andExpect(jsonPath("$.path").exists())

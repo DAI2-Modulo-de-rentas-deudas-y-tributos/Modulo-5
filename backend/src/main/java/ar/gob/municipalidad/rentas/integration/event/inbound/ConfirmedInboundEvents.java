@@ -5,6 +5,8 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Positive;
 
 import java.math.BigDecimal;
@@ -44,27 +46,28 @@ public final class ConfirmedInboundEvents {
         String scope,LocalDate from,LocalDate until,@NotBlank String status) {}
 
     public record M2TicketUpdatedEvent(@NotNull UUID eventId,@NotBlank String eventType,
-        String eventVersion,@NotNull OffsetDateTime occurredAt,@NotBlank String sourceModule,
+        @NotBlank String eventVersion,@NotNull OffsetDateTime occurredAt,@NotBlank String sourceModule,
         UUID correlationId,UUID causationId,@NotNull @Valid M2TicketUpdatedData data) {}
-    public record M2TicketUpdatedData(@NotNull UUID ticketId,@NotBlank String publicId,UUID citizenId,boolean isAnonymous,
+    public record M2TicketUpdatedData(@NotNull UUID ticketId,@NotBlank String publicId,UUID citizenId,@NotNull Boolean isAnonymous,
         @NotBlank String responsibleAreaId,@NotBlank String updateType,@NotBlank String currentStatus,
-        @NotBlank String currentPriority,String publicMessage,JsonNode details,List<@NotNull @Valid M2Attachment> attachments,
+        @NotBlank String currentPriority,@Min(0) @Max(100) Integer progress,String publicMessage,JsonNode details,List<@NotNull @Valid M2Attachment> attachments,
         @NotNull OffsetDateTime updatedAt) {}
     public record M2Attachment(@NotBlank String fileName,@NotBlank String contentType,
-        @NotBlank String url,@NotNull Long sizeBytes) {}
+        @NotBlank String url,@Min(0) Long sizeBytes) {}
 
-    public record M8SocialBenefitUpdatedEvent(@NotBlank String eventId,@NotBlank String eventType,
-        @NotNull OffsetDateTime timestamp,@NotBlank String sourceModule,@NotNull @Valid M8SocialBenefitData payload) {}
-    public record M8SocialBenefitData(@NotBlank String benefitId,@NotBlank String citizenId,
-        @NotBlank String applicationId,@NotBlank String programId,@NotBlank String programName,
-        @NotEmpty List<@NotNull @Valid M8Benefit> benefits,@NotBlank String status,@NotNull LocalDate startDate,
+    public record M8SocialBenefitUpdatedEvent(@NotNull UUID eventId,@NotBlank String eventType,
+        @NotBlank String eventVersion,@NotNull OffsetDateTime occurredAt,@NotBlank String sourceModule,
+        UUID correlationId,UUID causationId,@NotNull @Valid M8SocialBenefitData data) {}
+    public record M8SocialBenefitData(@NotNull UUID benefitId,@NotNull UUID citizenId,
+        @NotNull UUID applicationId,@NotNull UUID programId,@NotBlank String programName,
+        @NotEmpty List<@NotNull @Valid M8Benefit> benefits,@NotBlank String status,String reason,LocalDate startDate,
         LocalDate endDate,@NotNull OffsetDateTime updatedAt) {}
     public record M8Benefit(@NotBlank String type,BigDecimal amount) {}
 
     public enum M7DebtorIdType { DNI, CUIT }
     public record M7InfractionConfirmedEvent(@NotNull UUID eventId,@NotBlank String eventType,
         @NotBlank String eventVersion,@NotNull OffsetDateTime occurredAt,@NotBlank String sourceModule,
-        UUID correlationId,UUID causationId,@NotNull @Valid M7InfractionData data) {
+        @NotNull UUID correlationId,UUID causationId,@NotNull @Valid M7InfractionData data) {
         public M7InfractionConfirmedEvent(UUID eventId,String eventType,OffsetDateTime occurredAt,
             String sourceModule,M7InfractionData data) {
             this(eventId,eventType,"1.0",occurredAt,sourceModule,null,null,data);

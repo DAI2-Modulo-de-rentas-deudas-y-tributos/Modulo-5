@@ -145,9 +145,9 @@ La prueba:
    un contribuyente inexistente para provocar un error controlado;
 2. repite el preview, compara importes con centavos, población, contadores y
    errores, y comprueba que no existan liquidaciones ni deudas del concepto;
-3. intenta ejecutar sin aprobar y exige HTTP 422 con `RUN_NOT_APPROVED`;
+3. intenta ejecutar sin aprobar y exige HTTP 409 con `RUN_NOT_APPROVED`;
 4. envía y aprueba el lote, y lanza **dos solicitudes de ejecución concurrentes**;
-5. exige exactamente un HTTP 200 y un HTTP 422 con `RUN_NOT_APPROVED`;
+5. exige exactamente un HTTP 200 y un HTTP 409 con `RUN_NOT_APPROVED`;
 6. consulta el estado persistido, cada ítem, sus importes y referencias, y exige
    exactamente una liquidación y una deuda por contribuyente válido;
 7. verifica que el ítem inválido siga en ERROR, conserve código/mensaje y no tenga

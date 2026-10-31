@@ -125,7 +125,7 @@ export default function EventosPage() {
         <StatTile
           label="Reintentando"
           value={retryingCount}
-          hint="Hasta 3 intentos antes de la DLQ"
+          hint="Core informa cuatro entregas totales: original y reintentos a los 5 s, 30 s y 2 min. Esta bitácora muestra estado local; no confirma la DLQ externa."
           iconName="RefreshCw"
         />
         <StatTile

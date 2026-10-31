@@ -31,16 +31,19 @@ class WebApiReadContractTests {
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper json;
     @Autowired TaxpayerRepository taxpayers;
+    @Autowired TaxConceptRepository concepts;
     @Autowired DebtRepository debts;
     @Autowired DemoUserRepository demoUsers;
     @Autowired PasswordEncoder encoder;
     @Autowired DemoAuthService demoAuth;
     private DemoAuthSessions demo;
     private String staff;
+    private String rentas;
 
     @BeforeEach void demoSessions() {
         demo=new DemoAuthSessions(demoUsers,taxpayers,encoder,demoAuth);
         staff=demo.token(DemoRole.SUPERVISOR);
+        rentas=demo.token(DemoRole.RENTAS);
     }
 
     @Test void collectionEndpointsExposeConsistentPagedContracts() throws Exception {
@@ -207,9 +210,10 @@ class WebApiReadContractTests {
         String validFrom=LocalDate.now().minusDays(1).toString();
         long configurationId=id(postJson("/api/v1/tax-configurations",
             "{\"taxConceptId\":"+conceptId+",\"calculationType\":\"FIXED\",\"fixedAmount\":100,"+
-                "\"partialPaymentAllowed\":true,\"paymentPlanAllowed\":true,\"validFrom\":\""+validFrom+"\"}",201));
-        patchJson("/api/v1/tax-configurations/"+configurationId,"{\"fixedAmount\":100.00}");
-        postJson("/api/v1/tax-configurations/"+configurationId+"/submit",null,200);
+                "\"partialPaymentAllowed\":true,\"paymentPlanAllowed\":true,\"validFrom\":\""+validFrom+"\"}",201,rentas));
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch("/api/v1/tax-configurations/"+configurationId)
+            .header("X-Demo-Session",rentas).contentType(MediaType.APPLICATION_JSON).content("{\"fixedAmount\":100.00}")).andExpect(status().isOk());
+        postJson("/api/v1/tax-configurations/"+configurationId+"/submit",null,200,rentas);
         postJson("/api/v1/tax-configurations/"+configurationId+"/approve",null,200);
         mvc.perform(withStaff(get("/api/v1/tax-configurations/{id}",configurationId))).andExpect(status().isOk())
             .andExpect(jsonPath("$.status").value("ACTIVE"));
@@ -224,7 +228,7 @@ class WebApiReadContractTests {
         Debt debt=debts.findByTaxpayerId(taxpayer.id).get(0);
 
         long adjustmentId=id(postJson("/api/v1/adjustments",
-            "{\"debtId\":"+debt.id+",\"type\":\"DISCOUNT\",\"amount\":0.01,\"reason\":\"Redondeo autorizado\"}",201));
+            "{\"debtId\":"+debt.id+",\"type\":\"DISCOUNT\",\"amount\":0.01,\"reason\":\"Redondeo autorizado\"}",201,rentas));
         postJson("/api/v1/adjustments/"+adjustmentId+"/approve",null,200);
         mvc.perform(withStaff(get("/api/v1/adjustments/{id}",adjustmentId))).andExpect(status().isOk())
             .andExpect(jsonPath("$.newDebtAmount").value(99.99));
@@ -252,20 +256,21 @@ class WebApiReadContractTests {
 
         String nextPeriod=YearMonth.now().plusMonths(1).toString();
         long runId=id(postJson("/api/v1/liquidation-runs","{\"taxConceptId\":"+conceptId+",\"period\":\""+nextPeriod+
-            "\",\"dueDate\":\""+due+"\",\"items\":[{\"taxpayerId\":"+taxpayer.id+",\"taxableBase\":0}]}",201));
+            "\",\"dueDate\":\""+due+"\",\"items\":[{\"taxpayerId\":"+taxpayer.id+",\"taxableBase\":0}]}",201,rentas));
         postJson("/api/v1/liquidation-runs/"+runId+"/preview",null,200);
-        postJson("/api/v1/liquidation-runs/"+runId+"/submit",null,200);
+        postJson("/api/v1/liquidation-runs/"+runId+"/submit",null,200,rentas);
         postJson("/api/v1/liquidation-runs/"+runId+"/approve",null,200);
         postJson("/api/v1/liquidation-runs/"+runId+"/execute",null,200);
         mvc.perform(withStaff(get("/api/v1/liquidation-runs/{id}",runId))).andExpect(status().isOk())
             .andExpect(jsonPath("$.run.status").value("EXECUTED")).andExpect(jsonPath("$.items.length()").value(1));
 
         Debt planDebt=debts.findByTaxpayerId(taxpayer.id).stream().filter(x->!x.id.equals(debt.id)).findFirst().orElseThrow();
-        long planConfigurationId=id(postJson("/api/v1/payment-plan-configurations",
+        JsonNode planConfigurationResponse=postJson("/api/v1/payment-plan-configurations",
             "{\"minimumInstallments\":2,\"maximumInstallments\":6,\"minimumDownPaymentPercentage\":10,"+
                 "\"interestRate\":12,\"graceDays\":0,\"maxOverdueInstallments\":0,"+
                 "\"partialInstallmentPaymentAllowed\":true,\"refinancingAllowed\":true,\"maxRefinancingCount\":2,"+
-                "\"validFrom\":\""+validFrom+"\",\"active\":true}",201));
+                "\"validFrom\":\""+validFrom+"\",\"active\":true}",201);
+        long planConfigurationId=planConfigurationResponse.path("id").asLong();
         mvc.perform(withStaff(get("/api/v1/payment-plan-configurations/{id}",planConfigurationId))).andExpect(status().isOk());
         String planBody="{\"taxpayerId\":"+taxpayer.id+",\"debtIds\":["+planDebt.id+"],\"installments\":2}";
         postJson("/api/v1/payment-plans/simulations",planBody,200);
@@ -279,7 +284,7 @@ class WebApiReadContractTests {
         mvc.perform(withStaff(get("/api/v1/payment-plan-requests/{id}",planRequestId))).andExpect(status().isOk())
             .andExpect(jsonPath("$.status").value("GRANTED"));
         mvc.perform(withStaff(get("/api/v1/payment-plans/{id}",planId))).andExpect(status().isOk())
-            .andExpect(jsonPath("$.configurationVersion").value(1));
+            .andExpect(jsonPath("$.configurationVersion").value(planConfigurationResponse.path("version").asInt()));
         mvc.perform(withStaff(get("/api/v1/payment-plans/{id}/installments",planId))).andExpect(status().isOk())
             .andExpect(jsonPath("$.length()").value(3));
         mvc.perform(withStaff(get("/api/v1/taxpayers/{id}/payment-plans",taxpayer.id))).andExpect(status().isOk())
@@ -298,6 +303,41 @@ class WebApiReadContractTests {
             .andExpect(jsonPath("$[0].correlationId").isNotEmpty());
         mvc.perform(withStaff(get("/api/v1/integrations/outbox"))).andExpect(status().isOk())
             .andExpect(jsonPath("$.content").isNotEmpty());
+    }
+
+    @Test void socialBenefitRuleApiUsesDtosAndValidatesPercentageBeforePersistence() throws Exception {
+        String url="/api/v1/social-benefit-rules";
+        TaxConcept concept=new TaxConcept();concept.code="SBR_DTO_TEST";concept.name=concept.code;concept.type=TaxConceptType.FEE;
+        concept.originModule="M5";concept.active=true;concept.createdAt=concept.updatedAt=OffsetDateTime.now();concepts.save(concept);
+        String invalid="{\"programId\":\"28d8ec18-9639-4d86-858a-b48c590ee702\",\"conceptCode\":\"SBR_DTO_TEST\",\"percentage\":150,\"validFrom\":\"2026-10-28\"}";
+        var error=mvc.perform(post(url).header("X-Demo-Session",rentas).contentType(MediaType.APPLICATION_JSON).content(invalid))
+            .andExpect(status().isBadRequest()).andReturn();
+        JsonNode errorBody=json.readTree(error.getResponse().getContentAsString());
+        assertThat(errorBody.path("code").asText()).isEqualTo("VALIDATION_ERROR");
+        assertThat(errorBody.path("details").path("fieldErrors").toString()).contains("percentage");
+
+        String valid="{\"programId\":\"28d8ec18-9639-4d86-858a-b48c590ee702\",\"conceptCode\":\"SBR_DTO_TEST\",\"percentage\":10,\"validFrom\":\"2026-10-28\"}";
+        JsonNode created=postJson(url,valid,201,rentas);
+        assertThat(created.path("status").asText()).isEqualTo("DRAFT");
+        assertThat(created.path("programId").asText()).isEqualTo("28d8ec18-9639-4d86-858a-b48c590ee702");
+        assertThat(created.has("approvedActorId")).isFalse();
+
+        String ruleId=created.path("id").asText();
+        JsonNode submitted=postJson(url+"/"+ruleId+"/submit","{}",200,rentas);
+        assertThat(submitted.path("status").asText()).isEqualTo("PENDING_APPROVAL");
+        JsonNode approved=postJson(url+"/"+ruleId+"/approve","{}",200,staff);
+        assertThat(approved.path("status").asText()).isEqualTo("APPROVED");
+        assertThat(approved.path("enabled").asBoolean()).isTrue();
+        JsonNode disabled=postJson(url+"/"+ruleId+"/disable","{}",200,staff);
+        assertThat(disabled.path("enabled").asBoolean()).isFalse();
+        assertThat(disabled.has("approvedActorId")).isFalse();
+
+        var listed=mvc.perform(get(url).header("X-Demo-Session",staff)).andExpect(status().isOk()).andReturn();
+        JsonNode list=json.readTree(listed.getResponse().getContentAsString());
+        JsonNode listedRule=java.util.stream.StreamSupport.stream(list.spliterator(),false)
+            .filter(item->item.path("id").asLong()==created.path("id").asLong()).findFirst().orElseThrow();
+        assertThat(listedRule.has("approvedActorId")).isFalse();
+        assertThat(listedRule.path("percentage").decimalValue()).isEqualByComparingTo("10.00");
     }
 
     private org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder withStaff(

@@ -90,7 +90,7 @@ export default function ContribuyenteAuditorDetallePage() {
               { label: "Situación", value: <StatusBadge status={taxpayer.status} /> },
               { label: "Referencia externa", value: taxpayer.externalRef },
               {
-                label: "Beneficio social (M8)",
+                label: "Beneficio social",
                 value:
                   taxpayer.benefit?.status === "ACTIVE"
                     ? `${formatPercentage(taxpayer.benefit.discountPercentage)} hasta ${formatDate(taxpayer.benefit.validUntil)}`

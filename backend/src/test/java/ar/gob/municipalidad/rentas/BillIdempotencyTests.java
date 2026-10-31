@@ -78,7 +78,7 @@ class BillIdempotencyTests {
     private Debt debtFor(Long taxpayerId,String suffix) {
         TaxConcept concept=catalog.createConcept(new ApiDtos.CreateTaxConceptRequest((suffix+UUID.randomUUID()).replace("-","_"),suffix,null,TaxConceptType.FEE,"M5"));
         TaxConfiguration configuration=catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(concept.id,CalculationType.FIXED,null,new BigDecimal("100"),null,null,true,true,LocalDate.now().minusDays(1),null));
-        catalog.submit(configuration.id);catalog.approve(configuration.id);
+        catalog.submit(configuration.id);TestActorSupport.asApprover(() -> catalog.approve(configuration.id));
         liquidations.create(new ApiDtos.LiquidationRequest(taxpayerId,concept.id,YearMonth.now().toString(),BigDecimal.ZERO,LocalDate.now().plusDays(30)));
         return debts.findByTaxpayerId(taxpayerId).stream().filter(debt->debt.taxConceptId.equals(concept.id)).findFirst().orElseThrow();
     }

@@ -61,7 +61,7 @@ class PaymentPlanConfigurationVersioningTests {
         assertThat(v2.createdBy).isEqualTo("configuration-tester");
         assertThat(v2.createdAt).isAfterOrEqualTo(v1.createdAt);
         assertThat(ApiResponses.of(configurations.findById(v1.id).orElseThrow())).isEqualTo(original);
-        assertThat(controller.planConfiguration(v1.id).interestRate()).isEqualByComparingTo("5");
+        assertThat(controller.planConfiguration(v1.id).getBody().interestRate()).isEqualByComparingTo("5");
     }
 
     @Test void existingPlanKeepsHistoricalConfigurationAndNewPlanUsesNewVersion() {
@@ -137,7 +137,7 @@ class PaymentPlanConfigurationVersioningTests {
 
     private PaymentPlan grant(Debt debt,int installments) {
         PaymentPlanRequest request=workflow.request(new ApiDtos.CreatePaymentPlanRequest(debt.taxpayerId,List.of(debt.id),installments));
-        workflow.grant(request.id,null);
+        TestActorSupport.asApprover(() -> workflow.grant(request.id,null));
         return plans.findById(request.paymentPlanId).orElseThrow();
     }
 
@@ -145,7 +145,7 @@ class PaymentPlanConfigurationVersioningTests {
         TaxpayerReference taxpayer=catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(TaxpayerType.CITIZEN,"PLAN-CONFIG-"+suffix,"20"+Math.abs(suffix.hashCode()),null,"Contribuyente "+suffix));
         TaxConcept concept=catalog.createConcept(new ApiDtos.CreateTaxConceptRequest("PLAN_CONFIG_"+suffix,"Concepto "+suffix,null,TaxConceptType.FEE,"M5"));
         TaxConfiguration tax=catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(concept.id,CalculationType.FIXED,null,new BigDecimal("100"),null,null,true,true,LocalDate.now().minusDays(1),null));
-        catalog.submit(tax.id);catalog.approve(tax.id);
+        catalog.submit(tax.id);TestActorSupport.asApprover(() -> catalog.approve(tax.id));
         liquidations.create(new ApiDtos.LiquidationRequest(taxpayer.id,concept.id,YearMonth.now().toString(),BigDecimal.ZERO,LocalDate.now().plusDays(30)));
         return debts.findByTaxpayerId(taxpayer.id).get(0);
     }
