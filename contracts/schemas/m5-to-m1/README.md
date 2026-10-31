@@ -57,4 +57,9 @@ Estado conocido: `exemptionRequested` y `paymentPlanRequested` ya están publica
 
 ## Entrega a Core/M1 y enlaces permanentes
 
-Estado: **propuesta técnica de M5; pendiente de ratificación de M1/Core y revisión posterior del PO**. Tras el commit publicado, los enlaces permanentes de los cuatro schemas se compartirán fijados al SHA completo de ese commit; no usar enlaces a `main` ni rutas locales.
+Estado: **propuesta técnica publicada en el Draft PR #81; Core/M1 todavía no ratificaron los contratos y el PO aún no los revisó**. Los enlaces siguientes apuntan al commit que contiene los cuatro schemas y no implican entrega, registro ni aceptación externa:
+
+- [exemptionRequested — schema de `data`](https://github.com/DAI2-Modulo-de-rentas-deudas-y-tributos/Modulo-5/blob/7fc76da994c2e2e429004d7576d7124ffdbaaf0a/contracts/schemas/m5-to-m1/exemptionRequested.data.schema.json)
+- [updateExemptionStatus — schema de `data`](https://github.com/DAI2-Modulo-de-rentas-deudas-y-tributos/Modulo-5/blob/7fc76da994c2e2e429004d7576d7124ffdbaaf0a/contracts/schemas/m5-to-m1/updateExemptionStatus.data.schema.json)
+- [paymentPlanRequested — schema de `data`](https://github.com/DAI2-Modulo-de-rentas-deudas-y-tributos/Modulo-5/blob/7fc76da994c2e2e429004d7576d7124ffdbaaf0a/contracts/schemas/m5-to-m1/paymentPlanRequested.data.schema.json)
+- [updatePaymentPlanStatus — schema de `data`](https://github.com/DAI2-Modulo-de-rentas-deudas-y-tributos/Modulo-5/blob/7fc76da994c2e2e429004d7576d7124ffdbaaf0a/contracts/schemas/m5-to-m1/updatePaymentPlanStatus.data.schema.json)
