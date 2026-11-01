@@ -10,6 +10,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
 
 interface EventPublisher { OutboxStatus publish(String eventType, String targetModule, String payload); }
 
@@ -60,15 +62,30 @@ class OutboxPublisher {
     private static final Logger log=LoggerFactory.getLogger(OutboxPublisher.class);
     private static final ObjectMapper payloadJson=new ObjectMapper();
     private final OutboxRepository repository; private final EventPublisher publisher;
-    private final boolean rabbitMode;
+    private final boolean rabbitMode,coreHttpMode;
+    private final Set<String> coreHttpAllowedEventTypes;
+    private final Set<UUID> coreHttpAllowedEventIds;
     @org.springframework.beans.factory.annotation.Autowired
     OutboxPublisher(OutboxRepository repository,EventPublisher publisher,
-        @org.springframework.beans.factory.annotation.Value("${rentas.broker-adapter:local-log}") String brokerAdapter){
-        this.repository=repository;this.publisher=publisher;this.rabbitMode="rabbitmq".equalsIgnoreCase(brokerAdapter);
+        @org.springframework.beans.factory.annotation.Value("${rentas.broker-adapter:local-log}") String brokerAdapter,
+        @org.springframework.beans.factory.annotation.Value("${rentas.core.http.allowed-event-types:}") String allowedEventTypes,
+        @org.springframework.beans.factory.annotation.Value("${rentas.core.http.allowed-event-ids:}") String allowedEventIds){
+        this.repository=repository;this.publisher=publisher;this.rabbitMode="rabbitmq".equalsIgnoreCase(brokerAdapter);this.coreHttpMode="core-http".equalsIgnoreCase(brokerAdapter);
+        this.coreHttpAllowedEventTypes=csv(allowedEventTypes);
+        this.coreHttpAllowedEventIds=csvUuids(allowedEventIds);
+        if(coreHttpMode&&(coreHttpAllowedEventTypes.isEmpty()||coreHttpAllowedEventIds.isEmpty()))
+            throw new IllegalStateException("CORE_HTTP_EVENT_ALLOWLIST_REQUIRED");
     }
-    OutboxPublisher(OutboxRepository repository,EventPublisher publisher){this(repository,publisher,"local-log");}
+    OutboxPublisher(OutboxRepository repository,EventPublisher publisher){this(repository,publisher,"local-log","","");}
+    OutboxPublisher(OutboxRepository repository,EventPublisher publisher,String brokerAdapter){this(repository,publisher,brokerAdapter,"","");}
     @Scheduled(fixedDelayString="${rentas.outbox-delay-ms:5000}")
-    @Transactional void publishPending(){for(OutboxEvent event:repository.findPublishable(org.springframework.data.domain.PageRequest.of(0,50))){
+    @Transactional void publishPending(){
+        var page=org.springframework.data.domain.PageRequest.of(0,coreHttpMode?1:50);
+        List<OutboxEvent> publishable=coreHttpMode
+            ?repository.findPublishableForCoreHttp(coreHttpAllowedEventTypes,coreHttpAllowedEventIds,page)
+            :repository.findPublishable(page);
+        for(OutboxEvent event:publishable){
+        if(coreHttpMode&&!authorizedCoreHttpEvent(event))continue;
         if("CORE".equals(event.targetModule)&&"overdueDebt".equals(event.eventType)){
             event.status=OutboxStatus.DEAD_LETTER;
             event.errorMessage="M8_V3_EVENT_NAME_REVIEW_REQUIRED: use debtOverdue";
@@ -99,7 +116,7 @@ class OutboxPublisher {
             event.errorMessage="M1_PLAN_CONTRACT_REVIEW_REQUIRED: invalid payment plan UUID payload";
             continue;
         }
-        List<OutboxStatus> accepted=rabbitMode?List.of(OutboxStatus.BROKER_CONFIRMED):List.of(OutboxStatus.PUBLISHED,OutboxStatus.LOCAL_ONLY,OutboxStatus.BROKER_CONFIRMED);
+        List<OutboxStatus> accepted=rabbitMode?List.of(OutboxStatus.BROKER_CONFIRMED):coreHttpMode?List.of(OutboxStatus.CORE_ACCEPTED):List.of(OutboxStatus.PUBLISHED,OutboxStatus.LOCAL_ONLY,OutboxStatus.BROKER_CONFIRMED);
         if("updateExemptionStatus".equals(event.eventType)
             &&!repository.existsByEventTypeAndAggregateTypeAndAggregateIdAndStatusIn("exemptionRequested",event.aggregateType,event.aggregateId,accepted))continue;
         if("updatePaymentPlanStatus".equals(event.eventType)
@@ -111,9 +128,15 @@ class OutboxPublisher {
                 log.info("INTERNAL_OUTBOX eventType={} targetModule={}",event.eventType,event.targetModule);
                 result=OutboxStatus.LOCAL_ONLY;
             }else result=publisher.publish(event.eventType,event.targetModule,event.payload);
-            event.status=result==OutboxStatus.BROKER_CONFIRMED?result:OutboxStatus.LOCAL_ONLY;
-            event.publishedAt=event.status==OutboxStatus.BROKER_CONFIRMED?OffsetDateTime.now():null;
+            event.status=result==OutboxStatus.BROKER_CONFIRMED||result==OutboxStatus.CORE_ACCEPTED?result:OutboxStatus.LOCAL_ONLY;
+            event.publishedAt=event.status==OutboxStatus.BROKER_CONFIRMED||event.status==OutboxStatus.CORE_ACCEPTED?OffsetDateTime.now():null;
             event.errorMessage=null;
+        }catch(CoreHttpPublishException ex){
+            event.retryCount++;
+            event.errorMessage=ex.code();
+            event.status=ex.retryable()&&event.retryCount<5?OutboxStatus.FAILED:OutboxStatus.DEAD_LETTER;
+            log.warn("OUTBOX Core HTTP attempt outboxId={} eventId={} eventType={} status={} failureCode={}",event.id,
+                OperationalLogSupport.uuidField(event.payload,"eventId"),event.eventType,event.status,ex.code());
         }catch(RuntimeException ex){
             event.retryCount++;
             event.errorMessage="CORE_BROKER_PUBLISH_FAILED";
@@ -124,6 +147,21 @@ class OutboxPublisher {
                 ex.getClass().getSimpleName(),OperationalLogSupport.sanitizedStackTrace(ex));
         }
     }}
+    private boolean authorizedCoreHttpEvent(OutboxEvent event){
+        if(!"CORE".equals(event.targetModule)||!coreHttpAllowedEventTypes.contains(event.eventType)
+            ||!coreHttpAllowedEventIds.contains(event.id))return false;
+        try{return event.id.toString().equals(payloadJson.readTree(event.payload).path("eventId").asText());}
+        catch(Exception ex){return false;}
+    }
+    private static Set<String> csv(String value){
+        if(value==null||value.isBlank())return Set.of();
+        return java.util.Arrays.stream(value.split(",")).map(String::trim).filter(part->!part.isEmpty()).collect(java.util.stream.Collectors.toUnmodifiableSet());
+    }
+    private static Set<UUID> csvUuids(String value){
+        if(value==null||value.isBlank())return Set.of();
+        try{return csv(value).stream().map(UUID::fromString).collect(java.util.stream.Collectors.toUnmodifiableSet());}
+        catch(IllegalArgumentException ex){throw new IllegalStateException("CORE_HTTP_EVENT_ALLOWLIST_INVALID");}
+    }
     private boolean validEconomicIdentifiers(OutboxEvent event){
         if(!"CORE".equals(event.targetModule)
             ||!java.util.Set.of("paymentRegistered","paymentReversed","debtSettled").contains(event.eventType))return true;

@@ -125,6 +125,27 @@ interface OutboxRepository extends JpaRepository<OutboxEvent,UUID> {
         order by created_at
         for update skip locked
         """,nativeQuery=true) List<OutboxEvent> findPublishable(Pageable pageable);
+    @Query(value="""
+        select * from outbox_event
+        where target_module='CORE'
+          and event_type in (:eventTypes)
+          and id in (:eventIds)
+          and (status='PENDING' or status='LOCAL_ONLY' or (status='FAILED' and (
+              last_attempt_at is null
+              or last_attempt_at <= current_timestamp - (
+                  case
+                      when retry_count <= 1 then 5
+                      when retry_count = 2 then 10
+                      when retry_count = 3 then 20
+                      else 40
+                  end * interval '1' second
+              )
+          )))
+        order by created_at
+        for update skip locked
+        """,nativeQuery=true)
+    List<OutboxEvent> findPublishableForCoreHttp(@Param("eventTypes") Collection<String> eventTypes,
+        @Param("eventIds") Collection<UUID> eventIds,Pageable pageable);
     boolean existsByIdempotencyKey(String idempotencyKey);
     Optional<OutboxEvent> findByIdempotencyKey(String idempotencyKey);
     Optional<OutboxEvent> findFirstByEventTypeAndAggregateTypeAndAggregateIdOrderByCreatedAtAsc(String eventType,String aggregateType,String aggregateId);

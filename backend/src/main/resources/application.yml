@@ -44,6 +44,13 @@ rentas:
   core.amqp.queue: ${CORE_RABBITMQ_QUEUE:q.rentas}
   core.amqp.confirm-timeout: ${CORE_RABBITMQ_CONFIRM_TIMEOUT:5s}
   core.amqp.consumer-enabled: ${CORE_RABBITMQ_CONSUMER_ENABLED:false}
+  core.http.base-url: ${CORE_HTTP_BASE_URL:}
+  core.http.module-secret: ${CORE_MODULE_SECRET:}
+  core.http.connect-timeout: ${CORE_HTTP_CONNECT_TIMEOUT:3s}
+  core.http.request-timeout: ${CORE_HTTP_REQUEST_TIMEOUT:10s}
+  core.http.token-expiry-skew: ${CORE_HTTP_TOKEN_EXPIRY_SKEW:PT30S}
+  core.http.allowed-event-types: ${CORE_HTTP_ALLOWED_EVENT_TYPES:}
+  core.http.allowed-event-ids: ${CORE_HTTP_ALLOWED_EVENT_IDS:}
   outbox-delay-ms: ${OUTBOX_DELAY_MS:5000}
   security.dev-mode: ${RENTAS_SECURITY_DEV_MODE:false}
   security.demo-bootstrap-password: ${RENTAS_DEMO_BOOTSTRAP_PASSWORD:}

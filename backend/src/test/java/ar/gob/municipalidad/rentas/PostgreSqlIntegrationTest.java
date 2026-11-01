@@ -51,6 +51,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import static org.assertj.core.api.Assertions.*;
 
@@ -914,6 +915,62 @@ class PostgreSqlIntegrationTest {
             assertThat(first.get(10,TimeUnit.SECONDS)+second.get(10,TimeUnit.SECONDS)).isEqualTo(1);
             assertThat(outbox.findById(event.id).orElseThrow().status).isEqualTo(OutboxStatus.PUBLISHED);
         } finally { pool.shutdownNow(); }
+    }
+
+    @Test void coreHttpQuerySelectsOnlyExplicitTypeAndEventIdIncludingPromotedLocalOnly() {
+        UUID allowedId=UUID.randomUUID(),acceptedId=UUID.randomUUID();
+        OutboxEvent allowed=coreHttpExemption(allowedId,OutboxStatus.LOCAL_ONLY);
+        OutboxEvent alreadyAccepted=coreHttpExemption(acceptedId,OutboxStatus.CORE_ACCEPTED);
+        OutboxEvent wrongType=coreHttpExemption(UUID.randomUUID(),OutboxStatus.LOCAL_ONLY);wrongType.eventType="paymentRegistered";
+        OutboxEvent wrongId=coreHttpExemption(UUID.randomUUID(),OutboxStatus.LOCAL_ONLY);
+        outbox.saveAllAndFlush(List.of(allowed,alreadyAccepted,wrongType,wrongId));
+
+        List<OutboxEvent> selected=new TransactionTemplate(transactionManager).execute(status->
+            outbox.findPublishableForCoreHttp(List.of("exemptionRequested"),List.of(allowedId,acceptedId),PageRequest.of(0,10)));
+
+        assertThat(selected).extracting(event->event.id).containsExactly(allowedId);
+    }
+
+    @Test void coreAcceptanceRolledBackLocallyRetriesSameEventIdForCoreDeduplication() throws Exception {
+        UUID eventId=UUID.randomUUID();OutboxEvent event=coreHttpExemption(eventId,OutboxStatus.LOCAL_ONLY);
+        outbox.saveAndFlush(event);List<String> deliveredPayloads=new ArrayList<>();AtomicInteger attempts=new AtomicInteger();
+        OutboxPublisher publisher=new OutboxPublisher(outbox,(type,target,payload)->{
+            attempts.incrementAndGet();deliveredPayloads.add(payload);return OutboxStatus.CORE_ACCEPTED;
+        },"core-http","exemptionRequested",eventId.toString());
+
+        new TransactionTemplate(transactionManager).execute(status->{publisher.publishPending();status.setRollbackOnly();return null;});
+        assertThat(outbox.findById(eventId).orElseThrow().status).isEqualTo(OutboxStatus.LOCAL_ONLY);
+        new TransactionTemplate(transactionManager).executeWithoutResult(status->publisher.publishPending());
+
+        assertThat(attempts).hasValue(2);
+        assertThat(deliveredPayloads).containsExactly(event.payload,event.payload);
+        assertThat(json.readTree(deliveredPayloads.get(0)).path("eventId").asText()).isEqualTo(eventId.toString());
+        assertThat(outbox.findById(eventId).orElseThrow().status).isEqualTo(OutboxStatus.CORE_ACCEPTED);
+    }
+
+    @Test void concurrentCoreHttpPublishersClaimAuthorizedOutboxRowOnlyOnce() throws Exception {
+        UUID eventId=UUID.randomUUID();OutboxEvent event=coreHttpExemption(eventId,OutboxStatus.LOCAL_ONLY);outbox.saveAndFlush(event);
+        AtomicInteger sends=new AtomicInteger();CountDownLatch ready=new CountDownLatch(2),start=new CountDownLatch(1);
+        OutboxPublisher publisher=new OutboxPublisher(outbox,(type,target,payload)->{
+            sends.incrementAndGet();try{Thread.sleep(250);}catch(InterruptedException ex){Thread.currentThread().interrupt();throw new IllegalStateException(ex);}
+            return OutboxStatus.CORE_ACCEPTED;
+        },"core-http","exemptionRequested",eventId.toString());
+        ExecutorService pool=Executors.newFixedThreadPool(2);
+        try {
+            var task=(Callable<Void>)()->{ready.countDown();start.await();new TransactionTemplate(transactionManager).executeWithoutResult(tx->publisher.publishPending());return null;};
+            Future<Void> first=pool.submit(task),second=pool.submit(task);assertThat(ready.await(5,TimeUnit.SECONDS)).isTrue();start.countDown();
+            first.get(10,TimeUnit.SECONDS);second.get(10,TimeUnit.SECONDS);
+            assertThat(sends).hasValue(1);
+            assertThat(outbox.findById(eventId).orElseThrow().status).isEqualTo(OutboxStatus.CORE_ACCEPTED);
+        } finally {pool.shutdownNow();}
+    }
+
+    private OutboxEvent coreHttpExemption(UUID eventId,OutboxStatus status){
+        OutboxEvent event=new OutboxEvent();event.id=eventId;event.eventType="exemptionRequested";event.targetModule="CORE";
+        event.aggregateType="ExemptionRequest";event.aggregateId=eventId.toString();event.payload="{\"eventId\":\""+eventId
+            +"\",\"eventType\":\"exemptionRequested\",\"eventVersion\":\"1.0\",\"occurredAt\":\"2026-10-31T12:30:00-03:00\",\"sourceModule\":\"rentas\",\"correlationId\":\""
+            +UUID.randomUUID()+"\",\"causationId\":null,\"data\":{\"requestId\":\""+eventId+"\",\"citizenId\":\""
+            +UUID.randomUUID()+"\"}}";event.status=status;event.retryCount=0;event.createdAt=OffsetDateTime.now();return event;
     }
 
     @Test void failedOutboxEventsUseProgressiveBackoffWithoutDelayingPendingEvents() {
