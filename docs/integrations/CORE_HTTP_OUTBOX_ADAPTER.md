@@ -23,18 +23,20 @@ El secret no debe guardarse en archivos versionados, argumentos visibles del pro
 
 - `LOCAL_ONLY`: el adaptador local no entregó el evento fuera de M5.
 - `BROKER_CONFIRMED`: RabbitMQ confirmó que aceptó el mensaje.
-- `CORE_ACCEPTED`: Core respondió 202, o 200 duplicado. Se acepta el 200 sin cuerpo porque el OpenAPI 2.0.0 describe ese status como duplicado pero no declara contenido; si devuelve JSON, el cliente exige `duplicate=true` y valida `eventId` cuando viene informado. Esto acredita aceptación/registro de Core, no entrega ni procesamiento de Ciudadanos M1.
+- `CORE_ACCEPTED`: Core respondió 202, o 200 duplicado. El OpenAPI 2.0.0 describe el 200 como duplicado, pero no define su cuerpo. El cliente acepta el 200 vacío descrito por OpenAPI; si recibe JSON, exige `duplicate=true` y valida `eventId` cuando viene informado. El cuerpo que devuelve el Core desplegado sigue pendiente de confirmación. Esto acredita aceptación/registro de Core, no entrega ni procesamiento de Ciudadanos M1.
 - 422 y 401/403 terminan en `DEAD_LETTER` con código técnico seguro; el payload y el `eventId` original permanecen en el registro de Outbox. Core no define un schema de respuesta 422, así que no se persiste su body no validado, que podría repetir datos del evento.
 - Timeout, 408, 429 y 5xx siguen la política existente: hasta cinco intentos y backoff de 5/10/20/40 segundos. Cada intento reutiliza el mismo JSON y `eventId`; el deduplicado de Core cubre una aceptación cuya respuesta se perdió.
 
 El estado terminal requiere intervención operativa antes de reintentar; este cambio no agrega una API de reencolado. Durante una llamada HTTP se mantiene el lock de una sola fila Outbox; `FOR UPDATE SKIP LOCKED` evita que dos workers publiquen simultáneamente la misma fila. Si Core acepta y M5 pierde la transacción antes del commit, la fila conserva su estado anterior y se reintenta con el mismo `eventId`; Core debe contestar como duplicado. La retención del lock queda limitada a una fila y a los timeouts de token/request configurados.
+
+La dependencia solicitud/resolución es deliberadamente estricta por adaptador: `core-http` libera `updateExemptionStatus` o `updatePaymentPlanStatus` sólo si la solicitud correspondiente está `CORE_ACCEPTED`; `local-log` usa sus estados locales y no cuenta `CORE_ACCEPTED` como publicación local. Cambiar a `local-log` mientras la solicitud está `CORE_ACCEPTED` deja la resolución pendiente, sin borrarla ni marcarla como entregada. Si la solicitud estaba `LOCAL_ONLY`, cambiar a `core-http` no habilita la resolución hasta que la solicitud exacta sea aceptada por Core. Al volver a `core-http`, la resolución puede continuar cuando su prerequisito tenga `CORE_ACCEPTED` y su propio ID/tipo se autorice explícitamente. Los cambios de adaptador no reinterpretan estados ni liberan una resolución basándose sólo en `LOCAL_ONLY`.
 
 ## Prueba controlada con Core/M1 — lunes 2/11
 
 No ejecutar hasta que Core y M1 habiliten el ambiente, entreguen el secret de máquina por un canal aprobado y M1 proporcione un ciudadano sintético con UUID canónico vinculado oficialmente. `citizenId` no se deriva de un ID numérico, DNI ni CUIT.
 
 1. En un entorno aislado, revisar el catálogo con el token de módulo autorizado mediante `GET /api/v1/event-types/{name}`, `GET /api/v1/publications` y `GET /api/v1/event-types/map`. Confirmar con Core las suscripciones de M1: M5 no tiene permiso para consultarlas ni cambia el catálogo. No registrar publicaciones ni cargar schemas desde M5.
-2. Mantener M5 en `local-log` mientras se crea una solicitud sintética real de exención; guardar `requestId`, UUID canónico, `eventId`, `correlationId`, `causationId` y hora desde Outbox. Verificar que `outbox_event.event_id` coincide con el `eventId` del envelope. Detener M5 antes de que cambie el adaptador.
+2. Mantener M5 en `local-log` mientras se crea una solicitud sintética real de exención; guardar `requestId`, UUID canónico, `correlationId`, `causationId` y hora desde Outbox. Leer `outbox_event.id` y el `eventId` del envelope persistido en `outbox_event.payload`; comprobar que ambos UUID coincidan. Usar el valor de `outbox_event.id` para `CORE_HTTP_ALLOWED_EVENT_IDS`. Detener M5 antes de que cambie el adaptador.
 3. Inyectar temporalmente `BROKER_ADAPTER=core-http`, `CORE_HTTP_BASE_URL`, `CORE_MODULE_SECRET`, los timeouts, `CORE_HTTP_ALLOWED_EVENT_TYPES=exemptionRequested` y `CORE_HTTP_ALLOWED_EVENT_IDS=<UUID exacto de Outbox>` en la configuración protegida del entorno de prueba. Reiniciar M5 y comprobar que la configuración no aparece en logs. Si el scheduler local ya marcó ese evento como `LOCAL_ONLY`, el ID exacto permite seleccionarlo; ningún otro `LOCAL_ONLY` se toma.
 4. Esperar `CORE_ACCEPTED` en M5. Registrar el status HTTP. Un 202 sólo significa aceptado/ruteado; un 200 duplicado confirma que Core ya conocía ese `eventId`.
 5. Consultar `GET /api/v1/events/{event_id}` con autorización operativa de Core. Guardar el registro, `eventId`, tipo, estado y estado de la entrega a M1. Si hay `correlationId`, consultar también `GET /api/v1/events/journey/{correlation_id}`.
@@ -44,7 +46,7 @@ No ejecutar hasta que Core y M1 habiliten el ambiente, entreguen el secret de m�
 
 ## Bloqueos y límites
 
-- El OpenAPI de Core 2.0.0 no define un schema de respuesta para HTTP 200 duplicado; el adaptador exige `duplicate=true` y valida `eventId` si la respuesta lo incluye.
+- El OpenAPI de Core 2.0.0 describe HTTP 200 como duplicado, pero no define contenido ni schema para esa respuesta. El cliente acepta el 200 vacío descrito por OpenAPI o un JSON con `duplicate=true` (y valida `eventId` si viene informado); Core debe confirmar el cuerpo efectivo antes de la prueba conjunta. No se verificó esta respuesta contra Core desplegado.
 - La API de lectura y permisos para consultar suscripciones deben confirmarse con Core; M1/Core deben aportar evidencia durable de procesamiento.
 - La correspondencia entre el `citizenId` Long del evento entrante M1 y el UUID canónico continúa pendiente de un contrato/fuente confiable de M1.
 - No se realizó ninguna llamada al Core desplegado, no se registró una publicación, no se ejecutó E2E y no se afirma `CORE_DELIVERED` ni `CONSUMER_ACK`.
