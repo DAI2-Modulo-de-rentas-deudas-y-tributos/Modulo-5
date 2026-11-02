@@ -71,7 +71,9 @@ cd infra/environments/prod && terraform init -backend=false && terraform validat
 - CI (`.github/workflows/ci.yml`): job `repository-structure` verifica que existan
   `frontend`, `backend`, `contracts`, `infra/environments/{dev,test,prod}` y `docs/adr`; job
   `terraform` corre fmt/validate; `ci-required` es el check final obligatorio — si se agregan
-  jobs con filtros por carpeta, deben seguir colgando de `ci-required`.
+  jobs con filtros por carpeta, deben seguir colgando de `ci-required`. El job `sonar` (SonarQube
+  Cloud, configurado en `sonar-project.properties`) usa la cobertura de JaCoCo, no cuelga de
+  `ci-required` y se omite si falta el secret `SONAR_TOKEN`.
 - Las decisiones arquitectónicas relevantes se documentan como ADR numerados en `docs/adr/`
   con contexto, decisión, alternativas y consecuencias.
 - Configuración por ambiente siempre por variables de entorno; nada de URLs ni credenciales
