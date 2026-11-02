@@ -6,26 +6,11 @@
  * RequestPaymentReversalRequest, etc. Toda la información viene del backend.
  */
 import { AUTH_MODE, request, ApiError } from "./apiClient.js";
+import { allPages } from "./apiCollection.js";
+import { debtDetailsService } from "./debtDetailsService.js";
 
 /** Los importes se redondean a centavos: el dinero nunca se muestra con ruido binario. */
 const round2 = (value) => Math.round(value * 100) / 100;
-
-/** Las fichas y sus totales deben incluir todas las páginas del backend. */
-async function allPages(path) {
-  const url = new URL(path, "https://rentas.local");
-  url.searchParams.set("size", "100");
-  const rows = [];
-  for (let page = 0; ; page += 1) {
-    url.searchParams.set("page", String(page));
-    const result = await request(`${url.pathname}${url.search}`);
-    if (!Array.isArray(result)) throw new ApiError("El servidor devolvió una colección inválida.", 502);
-    rows.push(...result);
-    if (!result.page || result.page.last || page + 1 >= result.page.totalPages) return rows;
-    if (result.page.number !== page || result.length === 0) {
-      throw new ApiError("No se pudo completar la consulta paginada.", 502);
-    }
-  }
-}
 
 const openDebts = (debts) => debts.filter((debt) => Number(debt.outstandingAmount) > 0 && !["CANCELLED", "SETTLED"].includes(debt.status));
 const debtTotals = (debts) => {
@@ -70,6 +55,9 @@ export const authService = {
     if (AUTH_MODE === "core") {
       throw new ApiError("La autenticación Core/JWT todavía no tiene un contrato integrado.", 503, null, "CORE_AUTH_PENDING");
     }
+    if (AUTH_MODE !== "demo") {
+      throw new ApiError("El modo de autenticación configurado no está habilitado.", 503, null, "AUTH_MODE_UNSUPPORTED");
+    }
     const result = await request("/api/v1/dev-auth/login", { method: "POST", body: { username, password }, requiresAuth: false });
     return mapDemoAuthSession(result);
   },
@@ -78,12 +66,15 @@ export const authService = {
     if (AUTH_MODE === "core") {
       throw new ApiError("La autenticación Core/JWT todavía no tiene un contrato integrado.", 503, null, "CORE_AUTH_PENDING");
     }
+    if (AUTH_MODE !== "demo") {
+      throw new ApiError("El modo de autenticación configurado no está habilitado.", 503, null, "AUTH_MODE_UNSUPPORTED");
+    }
     const user = await request("/api/v1/dev-auth/me");
     return mapDemoAuthSession({ token: sessionStorage.getItem("rentas.token"), user }).user;
   },
 
   async logout(token) {
-    if (AUTH_MODE === "core") return;
+    if (AUTH_MODE !== "demo") return;
     await request("/api/v1/dev-auth/logout", {
       method: "POST",
       ...(token ? { headers: { "X-Demo-Session": token } } : {}),
@@ -535,9 +526,19 @@ export const paymentReversalService = {
  * dos veces el mismo importe. La aplicación es una operación interna de M5.
  */
 export const creditBalanceService = {
-  async list({ taxpayerId = "", status = "" } = {}) {
-    const params = new URLSearchParams({ taxpayerId, status });
-    return request(`/api/v1/credit-balances?${params}`);
+  async list({ taxpayerId = "", status = "", onlyAvailable = false } = {}) {
+    // El contrato distingue AVAILABLE/PARTIALLY_USED; ACTIVE nunca es un estado del crédito.
+    const available = onlyAvailable || status === "ACTIVE";
+    const states = available ? ["AVAILABLE", "PARTIALLY_USED"] : [status];
+    const pages = await Promise.all(states.map((state) => {
+      const params = new URLSearchParams();
+      if (taxpayerId) params.set("taxpayerId", taxpayerId);
+      if (state) params.set("status", state);
+      return allPages(`/api/v1/credit-balances?${params}`);
+    }));
+    const rows = pages.flatMap((items, index) => available ? items.filter((item) => item.status === states[index]) : items);
+    const credits = [...new Map(rows.map((credit) => [credit.id, credit])).values()];
+    return available ? credits.filter((credit) => Number(credit.remainingAmount) > 0) : credits;
   },
 
   /** Deudas del contribuyente a las que se le puede aplicar el saldo. */
@@ -938,10 +939,6 @@ export const externalObligationService = {
     return request(`/api/v1/external-obligations?${params}`);
   },
 
-  async errors() {
-    return request("/api/v1/external-obligations/errors?size=100&sort=receivedAt,desc");
-  },
-
   async detail(id) {
     return request(`/api/v1/external-obligations/${id}`);
   },
@@ -1284,7 +1281,7 @@ export const auditService = {
    */
   async debtDetail(id) {
     const [debt, allocations, history] = await Promise.all([
-      request(`/api/v1/debts/${id}`),
+      debtDetailsService.detail(id, { includeExternalOrigin: true }),
       request(`/api/v1/payment-allocations?debtId=${id}&size=100`).catch(() => []),
       request(`/api/v1/audit/entities/Debt/${id}`).catch(() => []),
     ]);
@@ -1570,10 +1567,6 @@ export const portalService = {
     return allPages(`/api/v1/taxpayers/${taxpayerId}/payment-plans`);
   },
 
-  async planInstallments(planId) {
-    return request(`/api/v1/payment-plans/${planId}/installments`);
-  },
-
   // ---------------------------------------------------------------- Trámites
 
   /** Pedir financiar deudas en cuotas → publica paymentPlanRequested. */
@@ -1594,10 +1587,6 @@ export const portalService = {
       body: { debtId, paymentMethod, amount },
       headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {},
     });
-  },
-
-  async electronicPayment(paymentId) {
-    return request(`/api/v1/electronic-payments/${paymentId}`);
   },
 
   async paymentReceipt(paymentId) {
