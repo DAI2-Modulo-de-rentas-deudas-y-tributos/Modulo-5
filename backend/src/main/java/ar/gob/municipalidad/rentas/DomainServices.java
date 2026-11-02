@@ -89,6 +89,23 @@ class CatalogService {
         taxpayers.findByTaxpayerTypeAndExternalId(r.taxpayerType(),r.externalId()).ifPresent(x->{throw new BusinessException("TAXPAYER_ALREADY_EXISTS","La referencia del contribuyente ya existe",409);});
         TaxpayerReference x=new TaxpayerReference(); x.taxpayerType=r.taxpayerType(); x.externalId=r.externalId(); x.dni=r.dni(); x.cuit=r.cuit(); x.displayName=r.displayName(); x.externalStatus=TaxpayerStatus.ACTIVE; x.createdAt=x.updatedAt=OffsetDateTime.now(); return taxpayers.save(x);
     }
+    @Transactional ApiDtos.CanonicalCitizenLinkResponse linkCanonicalCitizen(Long taxpayerId,ApiDtos.LinkCanonicalCitizenRequest r) {
+        require(r!=null&&r.m1CitizenId()!=null&&r.m1CitizenId()>0&&r.canonicalCitizenId()!=null
+            &&r.confirmationReference()!=null&&!r.confirmationReference().isBlank()&&r.confirmationReference().length()<=200,
+            "INVALID_CANONICAL_CITIZEN_LINK","La confirmación M1 es incompleta o inválida");
+        TaxpayerReference taxpayer=taxpayers.findByIdForUpdate(taxpayerId).orElseThrow(()->notFound("Contribuyente"));
+        requireConflict(taxpayer.taxpayerType==TaxpayerType.CITIZEN,"TAXPAYER_NOT_CITIZEN","La referencia no es un ciudadano M1");
+        requireConflict(Objects.equals(taxpayer.externalId,String.valueOf(r.m1CitizenId())),"M1_CITIZEN_ID_MISMATCH","El ID M1 no coincide con la referencia recibida");
+        TaxpayerReference existing=taxpayers.findByCanonicalCitizenId(r.canonicalCitizenId()).orElse(null);
+        requireConflict(existing==null||existing.id.equals(taxpayer.id),"CANONICAL_CITIZEN_ID_ALREADY_LINKED","El UUID canónico ya está vinculado a otra referencia");
+        requireConflict(taxpayer.canonicalCitizenId==null||taxpayer.canonicalCitizenId.equals(r.canonicalCitizenId()),"CANONICAL_CITIZEN_LINK_CONFLICT","La referencia ya tiene otro UUID canónico");
+        if(taxpayer.canonicalCitizenId==null){
+            UUID previous=taxpayer.canonicalCitizenId;taxpayer.canonicalCitizenId=r.canonicalCitizenId();taxpayer.updatedAt=OffsetDateTime.now();taxpayers.save(taxpayer);
+            audit.recordSecurityEvent("CANONICAL_CITIZEN_ID_LINKED",identity.get().userId(),"SUPERVISOR",
+                new CanonicalCitizenLinkAuditData(taxpayer.id,taxpayer.externalId,previous,taxpayer.canonicalCitizenId,r.m1CitizenId(),r.confirmationReference()));
+        }
+        return new ApiDtos.CanonicalCitizenLinkResponse(taxpayer.id,r.m1CitizenId(),taxpayer.canonicalCitizenId);
+    }
     @Transactional TaxConcept createConcept(ApiDtos.CreateTaxConceptRequest r) {
         concepts.findByCode(r.code()).ifPresent(x->{throw new BusinessException("TAX_CONCEPT_CODE_EXISTS","El código del concepto ya existe",409);});
         TaxConcept x=new TaxConcept(); x.code=r.code(); x.name=r.name(); x.description=r.description(); x.type=r.type(); x.originModule=r.originModule(); x.active=true; x.createdAt=x.updatedAt=OffsetDateTime.now(); return concepts.save(x);
@@ -125,6 +142,8 @@ class CatalogService {
     static void requireConflict(boolean ok,String code,String message) { if(!ok) throw new BusinessException(code,message,409); }
     static void require(boolean ok,String code,String message) { if(!ok) throw new BusinessException(code,message,STATE_CONFLICT_CODES.contains(code)?409:422); }
 }
+
+record CanonicalCitizenLinkAuditData(Long taxpayerId,String externalId,UUID previousCanonicalCitizenId,UUID canonicalCitizenId,Long m1CitizenId,String confirmationReference) {}
 
 @Service
 class LiquidationService {

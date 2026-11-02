@@ -14,6 +14,8 @@ public final class ApiDtos {
     private ApiDtos() {}
 
     public record TaxpayerResponse(Long id,TaxpayerType taxpayerType,String externalId,String dni,String cuit,String displayName,TaxpayerStatus status,OffsetDateTime createdAt,OffsetDateTime updatedAt) {}
+    public record LinkCanonicalCitizenRequest(@NotNull @Positive Long m1CitizenId,@NotNull UUID canonicalCitizenId,@NotBlank @Pattern(regexp="[A-Za-z0-9._:/-]{1,200}") String confirmationReference) {}
+    public record CanonicalCitizenLinkResponse(Long taxpayerId,Long m1CitizenId,UUID canonicalCitizenId) {}
     public record TaxConceptResponse(Long id,String code,String name,String description,TaxConceptType type,String originModule,boolean active,OffsetDateTime createdAt,OffsetDateTime updatedAt) {}
     public record TaxConfigurationResponse(Long id,Long taxConceptId,int version,CalculationType calculationType,BigDecimal rate,BigDecimal fixedAmount,BigDecimal minimumAmount,BigDecimal maximumAmount,boolean partialPaymentAllowed,boolean paymentPlanAllowed,LocalDate validFrom,LocalDate validUntil,TaxConfigurationStatus status,String createdBy,String approvedBy,OffsetDateTime createdAt,OffsetDateTime approvedAt) {}
     public record DebtResponse(Long id,Long taxpayerId,Long taxConceptId,DebtOriginType originType,Long liquidationId,Long externalObligationId,BigDecimal originalAmount,BigDecimal currentAmount,BigDecimal outstandingBalance,LocalDate dueDate,DebtStatus status,boolean overdue,boolean inPaymentPlan,OffsetDateTime createdAt,OffsetDateTime updatedAt) {}
