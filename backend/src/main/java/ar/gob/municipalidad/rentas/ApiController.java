@@ -29,6 +29,7 @@ class ApiController {
 
     @GetMapping("/taxpayers") @PreAuthorize("hasAnyRole('RENTAS','SUPERVISOR','CASHIER','AUDITOR')") Page<ApiDtos.TaxpayerResponse> taxpayers(@RequestParam Map<String,String> f,Pageable p){return queries.list(taxpayers,TaxpayerReference.class,f,p).map(ApiResponses::of);}
     @GetMapping("/taxpayers/{id}") @PreAuthorize("hasAnyRole('RENTAS','SUPERVISOR','CASHIER','AUDITOR')") ApiDtos.TaxpayerResponse taxpayer(@PathVariable Long id){return ApiResponses.of(taxpayers.findById(id).orElseThrow(()->CatalogService.notFound("Contribuyente")));}
+    @PostMapping("/taxpayers/{id}/canonical-citizen-link") @PreAuthorize("hasRole('SUPERVISOR')") ApiDtos.CanonicalCitizenLinkResponse linkCanonicalCitizen(@PathVariable Long id,@Valid @RequestBody ApiDtos.LinkCanonicalCitizenRequest r,@RequestHeader(name="Idempotency-Key",required=false) String key){return idempotency.execute("POST:/taxpayers/{id}/canonical-citizen-link:"+id,key,r,ApiDtos.CanonicalCitizenLinkResponse.class,()->catalog.linkCanonicalCitizen(id,r));}
     @GetMapping("/taxpayers/{id}/summary") @PreAuthorize("hasAnyRole('RENTAS','SUPERVISOR','AUDITOR','TAXPAYER')") ApiDtos.TaxpayerSummaryResponse taxpayerSummary(@PathVariable Long id){return taxpayerQueries.summary(id);}
 
     @GetMapping("/tax-concepts") @PreAuthorize("hasAnyRole('RENTAS','SUPERVISOR','AUDITOR','TAXPAYER')") Page<ApiDtos.TaxConceptResponse> concepts(@RequestParam Map<String,String> f,Pageable p){return queries.list(concepts,TaxConcept.class,f,p).map(ApiResponses::of);}
