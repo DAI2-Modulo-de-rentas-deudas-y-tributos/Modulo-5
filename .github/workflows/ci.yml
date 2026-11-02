@@ -138,7 +138,6 @@ jobs:
     env:
       SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/rentas
       SPRING_DATASOURCE_USERNAME: rentas
-      APP_MODE: api
 
     steps:
       - name: Checkout

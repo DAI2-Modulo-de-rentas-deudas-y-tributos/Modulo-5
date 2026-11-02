@@ -82,7 +82,6 @@ variable "environment_variables" {
   validation {
     condition = alltrue([
       for name in keys(var.environment_variables) : !contains([
-        "APP_MODE",
         "CORS_ALLOWED_ORIGINS",
         "SPRING_DATASOURCE_URL",
         "SPRING_DATASOURCE_USERNAME",
