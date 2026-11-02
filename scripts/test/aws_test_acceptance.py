@@ -538,7 +538,15 @@ def approve_as_distinct_actor(requester: ApiClient, supervisor: ApiClient, path:
 
 
 def verify_self_approval_paths(actors: AcceptanceActors, taxpayer: dict[str, Any], run_id: str) -> dict[str, str]:
-    requester = actors.demo_admin or actors.rentas
+    requester = actors.demo_admin
+    if requester is None:
+        self_approval_token = os.getenv("TEST_API_SELF_APPROVAL_BEARER_TOKEN")
+        if not self_approval_token:
+            return {"status": "skipped", "reason": "Bearer externo sin una identidad autorizada para crear y autoaprobar; "
+                    "configurar TEST_API_SELF_APPROVAL_BEARER_TOKEN para probar SELF_APPROVAL_FORBIDDEN"}
+        require(self_approval_token != actors.supervisor.bearer_token,
+                "La identidad de autoaprobación debe ser distinta del supervisor que resuelve")
+        requester = ApiClient(actors.rentas.api_base_url, self_approval_token)
     processing_date = fiscal_today()
     suffix = run_id.replace("-", "")[-12:].upper()
     concept = requester.json("POST", "/tax-concepts", {
@@ -570,7 +578,7 @@ def verify_self_approval_paths(actors: AcceptanceActors, taxpayer: dict[str, Any
         {"observation": "Prueba automatizada de segregación"}, expected_status="APPROVED")
     executed = requester.json("POST", f"/liquidation-runs/{liquidation_run['id']}/execute")
     require(executed.get("status") == "EXECUTED", "El lote de verificación SOD no se ejecutó")
-    return {"taxConfiguration": "SELF_APPROVAL_FORBIDDEN then ACTIVE",
+    return {"status": "passed", "taxConfiguration": "SELF_APPROVAL_FORBIDDEN then ACTIVE",
             "liquidationRun": "SELF_APPROVAL_FORBIDDEN then APPROVED and EXECUTED"}
 
 

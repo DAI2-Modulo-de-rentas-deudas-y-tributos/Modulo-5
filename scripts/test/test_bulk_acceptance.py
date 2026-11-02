@@ -103,6 +103,21 @@ class BulkAcceptanceTests(unittest.TestCase):
         self.assertEqual(requester.request.call_count, 2)
         self.assertEqual(supervisor.json.call_count, 2)
 
+    def test_bearer_self_approval_is_explicitly_skipped_without_dual_authority_identity(self):
+        actors = Mock(demo_admin=None, rentas=ApiClient("https://example.invalid", "rentas"),
+                      supervisor=ApiClient("https://example.invalid", "supervisor"))
+        with patch.dict(os.environ, {}, clear=True):
+            result = verify_self_approval_paths(actors, {"id": 45}, "scenario")
+        self.assertEqual(result["status"], "skipped")
+        self.assertIn("TEST_API_SELF_APPROVAL_BEARER_TOKEN", result["reason"])
+
+    def test_bearer_self_approval_never_reuses_approver_identity(self):
+        actors = Mock(demo_admin=None, rentas=ApiClient("https://example.invalid", "rentas"),
+                      supervisor=ApiClient("https://example.invalid", "same"))
+        with patch.dict(os.environ, {"TEST_API_SELF_APPROVAL_BEARER_TOKEN": "same"}, clear=True):
+            with self.assertRaisesRegex(AcceptanceFailure, "distinta del supervisor"):
+                verify_self_approval_paths(actors, {"id": 45}, "scenario")
+
     def test_access_denied_is_not_reported_as_self_approval(self):
         with self.assertRaisesRegex(AcceptanceFailure, "antes de evaluar SELF_APPROVAL_FORBIDDEN"):
             from aws_test_acceptance import expect_self_approval_rejection
