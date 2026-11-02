@@ -52,7 +52,7 @@ entropía alta. Con las huellas registradas, gitleaks queda en 0 hallazgos.
 
 | Detector | Cantidad | Qué es |
 |---|---|---|
-| `JDBC` | 11 | URLs `jdbc:postgresql://<host>:<puerto>/rentas` **sin usuario ni contraseña** en `ci.yml`, `compose.yaml`, `backend/compose.yaml`, `application.yml`, `backend/.env.example`, `pit-scrum-807-probe.yml` y `qa/levantar-demo.sh`. El detector informa toda URL `jdbc:`; se comprobó replicando su expresión regular sobre el historial, que da exactamente esos 11 archivos y commits. |
+| `JDBC` | 11 | URLs JDBC de PostgreSQL (host, puerto y base `rentas`) **sin usuario ni contraseña** en `ci.yml`, `compose.yaml`, `backend/compose.yaml`, `application.yml`, `backend/.env.example`, `pit-scrum-807-probe.yml` y `qa/levantar-demo.sh`. El detector informa toda URL `jdbc:`; se comprobó replicando su expresión regular sobre el historial, que da exactamente esos 11 archivos y commits. |
 | `URI` | 2 | `frontend/src/lib/safeUrl.test.js:9`: URL de ejemplo con credenciales inventadas sobre el dominio reservado `example.test`, usada para probar que la aplicación **rechaza** URLs con credenciales. |
 
 Las URLs JDBC son configuración necesaria: siguen en `application.yml`, `ci.yml` y
