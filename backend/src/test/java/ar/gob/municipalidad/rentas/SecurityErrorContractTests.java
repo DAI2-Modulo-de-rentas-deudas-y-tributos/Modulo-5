@@ -156,7 +156,7 @@ class SecurityErrorContractTests {
 
     @Test void unexpectedErrorsUseProblemDetailsWithoutLeakingInternalMessages() {
         MockHttpServletRequest request=new MockHttpServletRequest("GET","/api/v1/internal");
-        var response=new GlobalExceptionHandler().unexpected(new IllegalStateException("private sql detail"),request);
+        var response=new GlobalExceptionHandler(null).unexpected(new IllegalStateException("private sql detail"),request);
 
         assertThat(response.getStatusCode().value()).isEqualTo(500);
         assertThat(response.getHeaders().getContentType()).isEqualTo(MediaType.APPLICATION_PROBLEM_JSON);
@@ -172,7 +172,7 @@ class SecurityErrorContractTests {
 
     @Test void rateLimitBusinessErrorsCanUseProblemDetails() {
         MockHttpServletRequest request=new MockHttpServletRequest("POST","/api/v1/dev-auth/login");
-        var response=new GlobalExceptionHandler().business(new BusinessException("RATE_LIMITED","Espere antes de reintentar",429),request);
+        var response=new GlobalExceptionHandler(null).business(new BusinessException("RATE_LIMITED","Espere antes de reintentar",429),request);
         assertThat(response.getStatusCode().value()).isEqualTo(429);
         assertThat(response.getHeaders().getContentType()).isEqualTo(MediaType.APPLICATION_PROBLEM_JSON);
         assertThat(response.getBody().detail()).isEqualTo("Espere antes de reintentar");

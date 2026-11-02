@@ -7,7 +7,14 @@
 import { adaptApiRequest, adaptApiResponse } from "./apiAdapters.js";
 import { notifySessionExpired } from "./sessionEvents.js";
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").trim().replace(/\/+$/, "");
+/** Quita las barras finales sin regex: `/\/+$/` tiene backtracking super-lineal. */
+function withoutTrailingSlashes(value) {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === "/") end -= 1;
+  return value.slice(0, end);
+}
+
+const API_BASE_URL = withoutTrailingSlashes((import.meta.env.VITE_API_BASE_URL ?? "").trim());
 
 export const AUTH_MODE = import.meta.env.VITE_AUTH_MODE ?? "mock";
 

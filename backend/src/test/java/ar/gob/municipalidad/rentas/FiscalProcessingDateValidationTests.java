@@ -46,7 +46,7 @@ class FiscalProcessingDateValidationTests {
         ReconciliationService reconciliations=mock(ReconciliationService.class);
         IdempotencyExecutor idempotency=new IdempotencyExecutor(){@Override public <T> T execute(String operation,String key,Object request,Class<T> responseType,java.util.function.Supplier<T> action){return action.get();}};
         FiscalProcessingController controller=new FiscalProcessingController(lateCharges,dueDates,reconciliations,dates,idempotency);
-        MockMvc mvc=MockMvcBuilders.standaloneSetup(controller).setControllerAdvice(new GlobalExceptionHandler()).build();
+        MockMvc mvc=MockMvcBuilders.standaloneSetup(controller).setControllerAdvice(new GlobalExceptionHandler(null)).build();
         String tomorrow=dates.today().plusDays(1).toString();
 
         mvc.perform(post("/api/v1/debts/123/late-charge-preview").contentType("application/json").content("{\"calculationDate\":\""+tomorrow+"\"}"))

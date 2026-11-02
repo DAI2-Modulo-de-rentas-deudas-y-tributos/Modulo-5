@@ -10,7 +10,7 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ProblemDetailsContractTests {
-    private final GlobalExceptionHandler handler = new GlobalExceptionHandler();
+    private final GlobalExceptionHandler handler = new GlobalExceptionHandler(null);
 
     @ParameterizedTest
     @ValueSource(ints = {404, 409, 412, 422, 429})
