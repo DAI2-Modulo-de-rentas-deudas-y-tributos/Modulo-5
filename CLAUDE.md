@@ -56,7 +56,7 @@ cd infra/environments/prod && terraform init -backend=false && terraform validat
   antes de generar código: un cambio de contrato no es una decisión local.
 - **Infra**: `infra/` es AWS solo por Terraform. `bootstrap/` (estado remoto S3 con
   `use_lockfile = true`, OIDC de GitHub, roles plan/deploy) se aplica una vez; `modules/` por
-  capacidad (network, database, ecs, edge, messaging, storage); `environments/dev`,
+  capacidad (network, security, database, ecs, edge, hosting); `environments/dev`,
   `environments/test` y `environments/prod` son composiciones con **estado remoto independiente** — no usar Terraform
   workspaces para representar ambientes. Región por defecto `us-east-2`, `project_name`
   `modulo-5-rentas`. No ejecutar `terraform apply` antes del bootstrap y la revisión del plan.
