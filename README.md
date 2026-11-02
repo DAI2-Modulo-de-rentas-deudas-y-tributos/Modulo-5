@@ -167,7 +167,7 @@ Esa garantía está cubierta por `ProductionSchemaIsolationTest` y
 
 El CI (`.github/workflows/ci.yml`) corre en cada PR y push a `develop` y `main`:
 tests de frontend y backend, validación de Terraform, arranque completo con
-`docker compose` y escaneo de secretos. El check `ci-required` exige que todos
+`docker compose`, escaneo de dependencias vulnerables (OSV-Scanner) y de secretos. El check `ci-required` exige que todos
 terminen bien y es el que bloquea el merge.
 
 ## Continuidad del traspaso técnico

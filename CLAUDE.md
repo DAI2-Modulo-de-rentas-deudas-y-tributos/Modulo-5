@@ -71,7 +71,8 @@ cd infra/environments/prod && terraform init -backend=false && terraform validat
   (`cd-prod.yml`, ADR 0003). Un deploy en curso no se cancela; de los commits que llegan
   mientras tanto solo se despliega el último. Perfil `prod`, sin modo demo.
 - CI (`.github/workflows/ci.yml`): jobs `frontend`, `backend`, `terraform` (fmt/validate),
-  `compose` (G1) y `secret-scan` (G6); `ci-required` es el check final obligatorio y falla si
+  `compose` (G1), `dependency-scan` (OSV-Scanner; excepciones con vencimiento en
+  `backend/osv-scanner.toml`) y `secret-scan` (G6); `ci-required` es el check final obligatorio y falla si
   alguno de sus `needs` no termina en `success` — un job nuevo debe agregarse a esa lista. El job `sonar` (SonarQube
   Cloud, configurado en `sonar-project.properties`) usa la cobertura de JaCoCo y Vitest, no cuelga de
   `ci-required` y se omite si falta el secret `SONAR_TOKEN`.
