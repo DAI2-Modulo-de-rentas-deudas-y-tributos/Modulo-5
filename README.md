@@ -17,6 +17,7 @@ un dataset alternativo de producción: todas las operaciones pasan por la API.
 
 - [Auditoría SOLID y patrones M5](docs/AUDITORIA_SOLID_M5.md)
 - [Criterios verificables de seguridad](docs/SEGURIDAD_CRITERIOS_ACEPTACION.md)
+- [Escaneo de secretos en el historial (G6)](docs/security/G6_ESCANEO_SECRETOS.md)
 - [Matriz de flujos frontend/backend](docs/M5_FLUJOS_FRONTEND_BACKEND_EVIDENCIA.md)
 - [Niveles y bloqueos de integración](docs/M5_NIVELES_INTEGRACION.md)
 - [Guía de exposición y demo segura](docs/GUIA_EXPOSICION_PATRONES_SEGURIDAD.md)

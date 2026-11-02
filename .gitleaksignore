@@ -1,0 +1,14 @@
+# Falsos positivos de gitleaks (regla generic-api-key), revisados uno por uno.
+# Justificación y evidencia: docs/security/G6_ESCANEO_SECRETOS.md. Formato: commit:archivo:regla:línea.
+# Agregar una huella sólo después de confirmar que el valor no es una credencial.
+
+# Clave de idempotencia de prueba: "m4-idempotency-" + UUID aleatorio.
+c2dabd8ea6145072ef30b2c3e32bfaa36a517e59:backend/src/test/java/ar/gob/municipalidad/rentas/ExternalPaymentEventsTests.java:generic-api-key:370
+ca01aed575c1053116db291087144b438c2014a1:backend/src/test/java/ar/gob/municipalidad/rentas/ExternalPaymentEventsTests.java:generic-api-key:145
+
+# Datos ficticios que el test comprueba que NO aparecen en los logs operativos.
+b59cea994e96d6645d72e08307fff9bbdfd48332:backend/src/test/java/ar/gob/municipalidad/rentas/OperationalLogPrivacyTests.java:generic-api-key:131
+c2dabd8ea6145072ef30b2c3e32bfaa36a517e59:backend/src/test/java/ar/gob/municipalidad/rentas/OperationalLogPrivacyTests.java:generic-api-key:131
+
+# Identificador público del proyecto en el análisis estático (clave de proyecto), no un token.
+6e8410315b220fa1d2070692378651851ad1386e:sonar-project.properties:generic-api-key:5
