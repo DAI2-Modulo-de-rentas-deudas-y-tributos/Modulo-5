@@ -90,7 +90,7 @@ export default function CaducidadesPage() {
 }
 
 function ExpirationModal({ item, supervisor, onClose, onDone }) {
-  const id = supervisor ? item.id : item.id;
+  const id = item.id;
   const loader = useCallback(
     () => supervisor ? planExpirationService.detail(id) : planExpirationService.defaultedDetail(id),
     [id, supervisor],

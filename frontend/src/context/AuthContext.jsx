@@ -45,7 +45,7 @@ export function AuthProvider({ children }) {
         if (!cancelled && generation === sessionGeneration.current) setInitializing(false);
       }
     }
-    restore();
+    void restore();
     return () => {
       cancelled = true;
     };
