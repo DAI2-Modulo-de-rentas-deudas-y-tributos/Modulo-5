@@ -11,12 +11,14 @@ con variantes nativas AMD64 y ARM64. Docker selecciona la arquitectura del equip
 no agregar `platform: linux/amd64` para un Mac con Apple Silicon.
 Se mantiene Java 17 y la ejecución con usuario sin privilegios.
 
-Con Docker Desktop iniciado, desde la raíz del repositorio (donde está
-`compose.yaml`), y con la configuración local de PostgreSQL ya preparada:
+El sistema completo (base, broker, backend, usuarios DEMO y frontend) se levanta
+desde la raíz del repositorio con `docker compose up -d --build`, siguiendo el
+[README principal](../README.md#levantar-el-sistema-completo). Para levantar sólo el
+backend con sus dependencias (PostgreSQL y RabbitMQ), con el `.env` ya completado:
 
 ```sh
-docker compose --profile application up -d --build postgres backend
-docker compose --profile application ps
+docker compose up -d --build backend
+docker compose ps -a
 docker compose logs --tail=100 backend
 curl --fail http://localhost:8080/actuator/health
 ```
@@ -24,8 +26,9 @@ curl --fail http://localhost:8080/actuator/health
 El healthcheck debe devolver `UP`. Si se configuró otro `BACKEND_PORT`,
 utilizar ese puerto. No hace falta instalar Java o Maven en el host para esta opción.
 La primera construcción descarga las imágenes y dependencias.
-No borrar volúmenes para resolver un problema de arquitectura o contraseña:
-una base ya inicializada conserva sus credenciales.
+Una base ya inicializada conserva sus credenciales: si se cambia una contraseña del
+`.env`, volver al valor anterior o, si los datos no importan, borrarlos con
+`docker compose down -v`.
 
 Para ejecutar Maven directamente en macOS, con JDK 17 instalado, usar desde
 `backend/`: `sh ./mvnw spring-boot:run` (no `mvnw.cmd` ni `npm run dev`).
@@ -35,15 +38,15 @@ Esta alternativa requiere configurar previamente la conexión a PostgreSQL.
 
 Requisitos: Docker Desktop, Git, y Node 20+ si el frontend corre fuera de Docker.
 
-Desde la raíz del repositorio, con Docker Desktop iniciado. Copiar `.env.example`
-a `.env` (no commitear el `.env` real) y poner `RENTAS_SECURITY_DEV_MODE=true`
-sólo en esa copia local:
+Desde la raíz del repositorio, con Docker Desktop iniciado y el `.env` completado
+(ver el README principal; no commitear el `.env` real). El backend de Compose ya
+corre con el login DEMO habilitado:
 
 ```sh
-docker compose --profile application up -d --build postgres backend
+docker compose up -d --build backend
 ```
 
-Frontend en otra terminal:
+Frontend con recarga en caliente, en otra terminal:
 
 ```sh
 cd frontend
@@ -61,7 +64,7 @@ VITE_API_BASE_URL=http://localhost:8080
 ```
 
 El primer SUPERVISOR se crea con `POST /api/v1/dev-auth/bootstrap` y el resto
-con `POST /api/v1/dev-auth/users`. El login emite un token opaco persistido en
+con `POST /api/v1/dev-auth/users`; con Compose lo hace solo el servicio `demo-setup`. El login emite un token opaco persistido en
 `demo_auth_session`; el frontend lo reenvía como `X-Demo-Session`.
 No hay usuarios hardcodeados en el runtime del frontend.
 
@@ -104,7 +107,7 @@ En macOS/Linux, con PostgreSQL ya disponible:
 ```shell
 export SPRING_PROFILES_ACTIVE=dev
 export RENTAS_SECURITY_DEV_MODE=true
-export RENTAS_DEMO_BOOTSTRAP_PASSWORD='una-clave-local'
+export RENTAS_DEMO_BOOTSTRAP_PASSWORD='<secreto-propio>'
 export CORS_ALLOWED_ORIGINS='http://localhost:5173,http://localhost:4173'
 ./mvnw spring-boot:run
 ```

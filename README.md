@@ -42,21 +42,82 @@ un dataset alternativo de producción: todas las operaciones pasan por la API.
 La rama `main` representa la versión estable. El desarrollo se realiza en ramas
 `feature/*` mediante pull requests hacia `develop`.
 
-## Desarrollo local
+## Levantar el sistema completo
 
-PostgreSQL puede iniciarse aun cuando el código de aplicación todavía no esté
-presente. Primero copie `.env.example` a `.env` y asigne un valor no vacío a
-`POSTGRES_PASSWORD`:
+Requisitos: Git y Docker Desktop (o Docker Engine con Compose v2) iniciado. No hace
+falta Java, Maven ni Node en el equipo. El primer arranque descarga imágenes y
+dependencias y compila backend y frontend: tarda varios minutos.
 
-```powershell
-docker compose up -d postgres
+1. Clonar el repositorio y, desde su raíz, crear el `.env` a partir del ejemplo:
+
+   ```shell
+   cp .env.example .env
+   ```
+
+   En PowerShell: `Copy-Item .env.example .env`.
+
+2. Abrir `.env` y completar las cuatro variables marcadas como **OBLIGATORIA**. Valen
+   valores propios cualquiera, de 8 o más caracteres, sin espacios, comillas ni barras
+   invertidas:
+
+   | Variable | Para qué se usa |
+   |---|---|
+   | `POSTGRES_PASSWORD` | Contraseña de la base PostgreSQL. |
+   | `RABBITMQ_PASSWORD` | Contraseña del broker RabbitMQ (usuario `m5-local`). |
+   | `RENTAS_DEMO_BOOTSTRAP_PASSWORD` | Secreto interno para crear el primer usuario. |
+   | `RENTAS_DEMO_USERS_PASSWORD` | Contraseña de ingreso de todos los usuarios de la tabla de abajo. |
+
+   El resto de las variables son opcionales y ya tienen valor. Si falta el `.env` o
+   alguna obligatoria, el arranque se corta con `Falta <VARIABLE> en .env`.
+
+3. Levantar todo con un único comando:
+
+   ```shell
+   docker compose up -d --build
+   ```
+
+   El comando termina cuando todos los servicios están listos. Si algo falla, indica
+   qué servicio; sus logs se ven con `docker compose logs <servicio>`.
+
+4. Abrir <http://localhost:5173> e ingresar con alguno de estos usuarios. La
+   contraseña de todos es el valor que se puso en `RENTAS_DEMO_USERS_PASSWORD`:
+
+   | Usuario | Perfil |
+   |---|---|
+   | `supervisor` | Supervisor (también opera como Personal de Rentas) |
+   | `rentas` | Personal de Rentas |
+   | `cajero` | Cajero |
+   | `auditor` | Auditor |
+   | `contribuyente` | Contribuyente, vinculado a "QA Ciudadano A" |
+
+Qué queda corriendo:
+
+| Servicio | Dirección | Notas |
+|---|---|---|
+| Frontend | <http://localhost:5173> | Build de producción; reenvía `/api` al backend. |
+| Backend | <http://localhost:8080/api/v1> | Swagger en <http://localhost:8080/swagger-ui.html>. |
+| PostgreSQL | `localhost:5432` | Base `rentas`, usuario `rentas`. |
+| RabbitMQ | <http://localhost:15672> | Usuario `m5-local`. Lo publicado por M5 queda en `q.m5.publicados`; la entrada es `q.rentas` y lo rechazado va a `q.rentas.dlq`. |
+
+Los contribuyentes ficticios salen de [`qa/seed-e2e-local.sql`](qa/seed-e2e-local.sql).
+Los usuarios y esos datos se crean solos en cada arranque, sólo si faltan, mediante
+los servicios `broker-setup` y `demo-setup` ([`scripts/compose/`](scripts/compose/)).
+
+Otros comandos útiles:
+
+```shell
+docker compose ps -a          # estado de cada servicio
+docker compose stop rabbitmq  # apagar el broker (prueba de resiliencia); volver con start
+docker compose down           # detener todo, conservando los datos
+docker compose down -v        # detener todo y borrar los datos (base y broker)
 ```
 
-Cuando el backend sea incorporado:
+Si se cambian las contraseñas del `.env` después del primer arranque, hay que borrar
+los datos con `docker compose down -v` antes de volver a levantar.
 
-```powershell
-docker compose --profile application up --build
-```
+Para desarrollar con recarga en caliente se puede levantar sólo la base
+(`docker compose up -d postgres`) y correr backend y frontend fuera de Docker; ver
+[`backend/README.md`](backend/README.md) y [`frontend/README.md`](frontend/README.md).
 
 ### Variables de entorno de integración
 

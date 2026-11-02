@@ -1,10 +1,12 @@
+# Sistema completo de M5 para uso local: `docker compose up -d --build` (ver README).
+# Las contraseñas salen del .env (copia de .env.example); sin ellas el arranque se corta.
 services:
   postgres:
     image: postgres:17-alpine
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-rentas}
       POSTGRES_USER: ${POSTGRES_USER:-rentas}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Definir POSTGRES_PASSWORD en .env o en el entorno}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Falta POSTGRES_PASSWORD en .env (copiar .env.example a .env y completarlo)}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
@@ -16,26 +18,97 @@ services:
       retries: 10
     restart: unless-stopped
 
+  # Broker local. En los ambientes reales el broker y su topología son de Core (M9).
+  rabbitmq:
+    image: rabbitmq:4.3-management
+    # Nombre de nodo fijo: los datos del broker sobreviven a `docker compose stop/start`.
+    hostname: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-m5-local}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Falta RABBITMQ_PASSWORD en .env (copiar .env.example a .env y completarlo)}
+    ports:
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+    restart: unless-stopped
+
+  broker-setup:
+    image: curlimages/curl:8.11.1
+    environment:
+      RABBITMQ_USER: ${RABBITMQ_USER:-m5-local}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Falta RABBITMQ_PASSWORD en .env (copiar .env.example a .env y completarlo)}
+    volumes:
+      - ./scripts/compose:/scripts:ro
+    entrypoint: ["sh", "/scripts/broker-setup.sh"]
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
   backend:
-    profiles:
-      - application
     build:
       context: ./backend
       dockerfile: Dockerfile
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-rentas}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-rentas}
-      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?Definir POSTGRES_PASSWORD en .env o en el entorno}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?Falta POSTGRES_PASSWORD en .env (copiar .env.example a .env y completarlo)}
       APP_MODE: api
+      BROKER_ADAPTER: rabbitmq
+      CORE_RABBITMQ_HOST: rabbitmq
+      CORE_RABBITMQ_USERNAME: ${RABBITMQ_USER:-m5-local}
+      CORE_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Falta RABBITMQ_PASSWORD en .env (copiar .env.example a .env y completarlo)}
+      CORE_RABBITMQ_CONSUMER_ENABLED: "true"
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:4173}
-      RENTAS_SECURITY_DEV_MODE: ${RENTAS_SECURITY_DEV_MODE:-false}
-      RENTAS_DEMO_BOOTSTRAP_PASSWORD: ${RENTAS_DEMO_BOOTSTRAP_PASSWORD:-}
+      # Stack local: el login DEMO es el único borde de identidad hasta integrar Core/JWT.
+      RENTAS_SECURITY_DEV_MODE: "true"
+      RENTAS_DEMO_BOOTSTRAP_PASSWORD: ${RENTAS_DEMO_BOOTSTRAP_PASSWORD:?Falta RENTAS_DEMO_BOOTSTRAP_PASSWORD en .env (copiar .env.example a .env y completarlo)}
       RENTAS_DEMO_SESSION_TTL: ${RENTAS_DEMO_SESSION_TTL:-PT8H}
     ports:
       - "${BACKEND_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      # Flyway aplica todas las migraciones en el primer arranque; en equipos lentos tarda.
+      start_period: 180s
     depends_on:
       postgres:
         condition: service_healthy
+      broker-setup:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  demo-setup:
+    image: postgres:17-alpine
+    environment:
+      PGHOST: postgres
+      PGDATABASE: ${POSTGRES_DB:-rentas}
+      PGUSER: ${POSTGRES_USER:-rentas}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Falta POSTGRES_PASSWORD en .env (copiar .env.example a .env y completarlo)}
+      RENTAS_DEMO_BOOTSTRAP_PASSWORD: ${RENTAS_DEMO_BOOTSTRAP_PASSWORD:?Falta RENTAS_DEMO_BOOTSTRAP_PASSWORD en .env (copiar .env.example a .env y completarlo)}
+      RENTAS_DEMO_USERS_PASSWORD: ${RENTAS_DEMO_USERS_PASSWORD:?Falta RENTAS_DEMO_USERS_PASSWORD en .env (copiar .env.example a .env y completarlo)}
+    volumes:
+      - ./scripts/compose:/scripts:ro
+      - ./qa/seed-e2e-local.sql:/seed/seed-e2e-local.sql:ro
+    entrypoint: ["sh", "/scripts/demo-setup.sh"]
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      API_PROXY_TARGET: http://backend:8080
+    ports:
+      - "${FRONTEND_PORT:-5173}:4173"
+    depends_on:
+      demo-setup:
+        condition: service_completed_successfully
     restart: unless-stopped
 
 volumes:
