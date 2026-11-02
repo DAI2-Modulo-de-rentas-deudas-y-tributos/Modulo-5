@@ -150,6 +150,16 @@ jobs:
       - name: Test and package backend
         run: mvn -B -ntp clean verify --file backend/pom.xml
 
+      - name: Upload Sonar inputs
+        uses: actions/upload-artifact@v6
+        with:
+          name: sonar-backend
+          path: |
+            backend/target/classes/
+            backend/target/site/jacoco/jacoco.xml
+          retention-days: 1
+          if-no-files-found: error
+
       - name: Setup Python for PDF acceptance
         uses: actions/setup-python@v6
         with:
@@ -231,6 +241,36 @@ jobs:
 
       - name: Build backend container image
         run: docker build --tag modulo-5-rentas-backend:${{ github.sha }} backend
+
+  # No cuelga de ci-required: el Quality Gate lo publica SonarQube Cloud como check propio del PR.
+  sonar:
+    name: sonar
+    needs: backend
+    runs-on: ubuntu-latest
+    env:
+      # Vacío en forks y en la llamada desde cd-prod.yml (no hereda secrets): ahí se omite el análisis.
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # Sonar necesita el historial completo para detectar el código nuevo.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download backend build
+        uses: actions/download-artifact@v8
+        with:
+          name: sonar-backend
+          path: backend/target
+
+      - name: Skip without SONAR_TOKEN
+        if: env.SONAR_TOKEN == ''
+        run: echo "::warning::SONAR_TOKEN no está configurado; se omite el análisis de SonarQube Cloud."
+
+      - name: SonarQube Cloud scan
+        if: env.SONAR_TOKEN != ''
+        uses: SonarSource/sonarqube-scan-action@v8
 
   terraform:
     name: terraform
