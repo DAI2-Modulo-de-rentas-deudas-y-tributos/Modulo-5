@@ -98,11 +98,12 @@ La etapa final agregó pruebas HTTP de filtros/DTO/componentes, concurrencia, fa
 .\mvnw.cmd clean verify
 ```
 
-Con Docker:
+Con Docker, desde la raíz del repositorio:
 
 ```powershell
 Copy-Item .env.example .env
 docker compose up -d postgres
+cd backend
 .\mvnw.cmd spring-boot:run
 ```
 
