@@ -66,6 +66,9 @@
         </plugin>
         <plugin>
             <groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId>
+            <!-- Las clases comparten la base de test: con orden fijo, tres corridas dan el mismo resultado
+                 en cualquier máquina (el orden por defecto depende del filesystem del runner). -->
+            <configuration><runOrder>alphabetical</runOrder></configuration>
             <executions><execution>
                 <id>domain-coverage-gate</id><phase>verify</phase><goals><goal>test</goal></goals>
                 <configuration>
