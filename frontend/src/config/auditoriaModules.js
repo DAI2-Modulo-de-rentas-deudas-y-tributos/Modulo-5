@@ -9,6 +9,10 @@
  */
 export const AUDITORIA_MODULES = [
   {
+    id: "eventos-salientes", path: "/auditor/eventos-salientes", label: "Eventos salientes",
+    iconName: "Send", description: "Estado, intentos y contenido de los envíos a otros módulos.",
+  },
+  {
     id: "contribuyentes",
     path: "/auditor/contribuyentes",
     label: "Contribuyentes",

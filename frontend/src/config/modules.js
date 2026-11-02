@@ -8,6 +8,10 @@
  */
 export const MODULES = [
   {
+    id: "eventos-salientes", path: "/rentas/eventos-salientes", label: "Eventos salientes",
+    iconName: "Send", description: "Consultá el estado y los intentos de envío a otros módulos.", roles: ["SUPERVISOR"],
+  },
+  {
     id: "contribuyentes",
     path: "/rentas/contribuyentes",
     label: "Contribuyentes",

@@ -7,6 +7,7 @@ import FilterBar from "../../components/common/FilterBar.jsx";
 import StatusBadge from "../../components/common/StatusBadge.jsx";
 import Button from "../../components/common/Button.jsx";
 import Modal from "../../components/common/Modal.jsx";
+import DebtDetailModal from "../../components/common/DebtDetailModal.jsx";
 import StatTile from "../../components/common/StatTile.jsx";
 import Alert from "../../components/ui/Alert.jsx";
 import useResource from "../../hooks/useResource.js";
@@ -29,6 +30,7 @@ export default function DeudasPage() {
   const [filters, setFilters] = useState({ status: "", originType: "" });
   const [feedback, setFeedback] = useState(null);
   const [lateCharge, setLateCharge] = useState(null);
+  const [selectedDebt, setSelectedDebt] = useState(null);
   const [processing, setProcessing] = useState(false);
 
   const loader = useCallback(
@@ -75,6 +77,7 @@ export default function DeudasPage() {
   };
 
   const columns = [
+    { key: "detail", header: "Detalle", render: (row) => <Button size="sm" variant="secondary" onClick={() => setSelectedDebt(row.id)}>Ver detalle</Button> },
     { key: "id", header: "N°", render: (row) => <span className="tabular-nums">#{row.id}</span> },
     { key: "taxpayer", header: "Contribuyente", render: (row) => nameOf(row.taxpayerId) },
     {
@@ -174,6 +177,7 @@ export default function DeudasPage() {
                 { value: "PENDING", label: labelFor("PENDING") },
                 { value: "OVERDUE", label: labelFor("OVERDUE") },
                 { value: "SETTLED", label: labelFor("SETTLED") },
+                { value: "CANCELLED", label: labelFor("CANCELLED") },
               ],
             },
             { name: "originType", label: "Origen", options: DEBT_ORIGIN_TYPES },
@@ -206,6 +210,7 @@ export default function DeudasPage() {
           <div><dt>{lateCharge.preview.applicationId != null ? "Total tras la aplicación" : "Total actualizado"}</dt><dd className="font-semibold">{formatCurrency(lateCharge.preview.updatedTotal)}</dd></div>
         </dl>
       </Modal>}
+      {selectedDebt && <DebtDetailModal debtId={selectedDebt} includeExternalOrigin onClose={() => setSelectedDebt(null)} />}
     </ModuleShell>
   );
 }
