@@ -17,7 +17,7 @@ from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -25,6 +25,7 @@ from urllib.parse import urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 MAX_PAGE_SIZE = 100
+BUENOS_AIRES_TZ = timezone(timedelta(hours=-3))
 
 
 @dataclass
@@ -36,6 +37,13 @@ class HttpResponse:
 
 class AcceptanceFailure(RuntimeError):
     pass
+
+
+@dataclass
+class AcceptanceActors:
+    rentas: ApiClient
+    supervisor: ApiClient
+    demo_admin: ApiClient | None
 
 
 class ApiClient:
@@ -111,6 +119,11 @@ def require(condition: bool, message: str) -> None:
         raise AcceptanceFailure(message)
 
 
+def fiscal_today() -> date:
+    """Buenos Aires uses UTC-3 without daylight-saving changes."""
+    return datetime.now(BUENOS_AIRES_TZ).date()
+
+
 def authenticate_demo(client: ApiClient) -> None:
     """Sólo para CI/local explícito; nunca inventa un contrato Core."""
     if client.bearer_token:
@@ -133,8 +146,29 @@ def demo_identity(client: ApiClient, role: str, taxpayer_id: int | None = None) 
     password = secrets.token_urlsafe(24)
     client.json("POST", "/dev-auth/users", {"username": username, "password": password,
                 "displayName": "QA " + role, "role": role, "taxpayerId": taxpayer_id}, expected=(201,))
-    session = client.json("POST", "/dev-auth/login", {"username": username, "password": password})["token"]
+    login = client.json("POST", "/dev-auth/login", {"username": username, "password": password})
+    require(login.get("user", {}).get("role") == role, f"La identidad DEMO no quedó en el rol {role}")
+    session = login["token"]
     return ApiClient(client.api_base_url, None, session)
+
+
+def prepare_acceptance_actors(client: ApiClient) -> AcceptanceActors:
+    if client.bearer_token:
+        rentas_token = os.getenv("TEST_API_RENTAS_BEARER_TOKEN")
+        supervisor_token = os.getenv("TEST_API_SUPERVISOR_BEARER_TOKEN")
+        require(bool(rentas_token and supervisor_token),
+                "La aceptación con Bearer requiere TEST_API_RENTAS_BEARER_TOKEN y "
+                "TEST_API_SUPERVISOR_BEARER_TOKEN de dos identidades autorizadas distintas")
+        require(rentas_token != supervisor_token,
+                "RENTAS y SUPERVISOR deben usar tokens distintos; no se reutiliza un token para simular dos personas")
+        return AcceptanceActors(ApiClient(client.api_base_url, rentas_token),
+                                ApiClient(client.api_base_url, supervisor_token), None)
+
+    admin = client.json("GET", "/dev-auth/me")
+    require({"RENTAS", "SUPERVISOR"}.issubset(set(admin.get("authorities", []))),
+            "La sesión DEMO inicial debe tener autoridades RENTAS y SUPERVISOR para crear y verificar identidades")
+    return AcceptanceActors(demo_identity(client, "RENTAS"),
+                            demo_identity(client, "SUPERVISOR"), client)
 
 
 def page_total(page: dict[str, Any]) -> int:
@@ -196,8 +230,9 @@ def check_health(client: ApiClient) -> dict[str, Any]:
     return payload
 
 
-def create_active_concept(client: ApiClient, label: str, run_id: str,
-                          amount: str = "100.00") -> dict[str, Any]:
+def create_active_concept(client: ApiClient, supervisor: ApiClient, label: str, run_id: str,
+                          amount: str = "100.00", processing_date: date | None = None) -> dict[str, Any]:
+    processing_date = processing_date or fiscal_today()
     suffix = run_id.replace("-", "")[-12:].upper()
     concept = client.json(
         "POST",
@@ -223,13 +258,13 @@ def create_active_concept(client: ApiClient, label: str, run_id: str,
             "maximumAmount": None,
             "partialPaymentAllowed": True,
             "paymentPlanAllowed": True,
-            "validFrom": (date.today() - timedelta(days=1)).isoformat(),
+            "validFrom": (processing_date - timedelta(days=1)).isoformat(),
             "validUntil": None,
         },
         expected=(201,),
     )
     client.json("POST", f"/tax-configurations/{configuration['id']}/submit")
-    approved = client.json("POST", f"/tax-configurations/{configuration['id']}/approve")
+    approved = supervisor.json("POST", f"/tax-configurations/{configuration['id']}/approve")
     require(approved.get("status") == "ACTIVE", "La configuración de QA no quedó activa")
     return concept
 
@@ -277,18 +312,21 @@ def validate_pdf(document: HttpResponse, bill: dict[str, Any], debts: list[dict[
 
 def run_pdf(
     client: ApiClient,
+    supervisor: ApiClient,
+    demo_admin: ApiClient | None,
     taxpayers: list[dict[str, Any]],
     output_dir: Path,
     run_id: str,
 ) -> dict[str, Any]:
+    processing_date = fiscal_today()
     taxpayer = taxpayers[0]
-    due_date = (date.today() + timedelta(days=30)).isoformat()
+    due_date = (processing_date + timedelta(days=30)).isoformat()
     selected = []
     for index, amount in enumerate(("100.25", "250.50")):
-        concept = create_active_concept(client, f"PDF{index}", run_id, amount)
+        concept = create_active_concept(client, supervisor, f"PDF{index}", run_id, amount, processing_date)
         liquidation = client.json("POST", "/liquidations", {
             "taxpayerId": taxpayer["id"], "taxConceptId": concept["id"],
-            "period": date.today().strftime("%Y-%m"), "taxableBase": "0.00", "dueDate": due_date,
+            "period": processing_date.strftime("%Y-%m"), "taxableBase": "0.00", "dueDate": due_date,
         }, expected=(201,))
         debts = client.json("GET", "/debts", query={"taxpayerId": taxpayer["id"],
             "taxConceptId": concept["id"], "page": 0, "size": 100}).get("content", [])
@@ -301,7 +339,7 @@ def run_pdf(
     for count in (1, 2):
         bill = client.json("POST", "/bills", {
             "taxpayerId": taxpayer["id"], "debtIds": [debt["id"] for debt in selected[:count]],
-            "dueDate": (date.today() + timedelta(days=10)).isoformat(),
+            "dueDate": (processing_date + timedelta(days=10)).isoformat(),
         }, expected=(201,))
         expected_debts = [{"debtId": debt["id"], "amountAtIssue": debt["outstandingBalance"]}
                           for debt in selected[:count]]
@@ -324,15 +362,15 @@ def run_pdf(
     missing = client.request("GET", "/bills/9223372036854775807/document", expected=(404,))
     require(not missing.body.startswith(b"%PDF-"), "Una boleta inexistente devolvió un PDF")
 
-    authorization: dict[str, Any] = {"status": "skipped", "reason": "Bearer: requiere identidades QA adicionales; cubierto en CI"}
-    if not client.bearer_token:
+    authorization: dict[str, Any] = {"status": "skipped", "reason": "Bearer externo: este runner no crea sesiones DEMO para casos de ownership"}
+    if demo_admin is not None:
         require(len(taxpayers) >= 2, "La validación de autorización requiere dos contribuyentes proyectados")
-        owner = demo_identity(client, "TAXPAYER", taxpayer["id"])
+        owner = demo_identity(demo_admin, "TAXPAYER", taxpayer["id"])
         validate_pdf(owner.request("GET", path), bill, expected_debts)
         stranger = taxpayers[1]
-        for identity, status in ((demo_identity(client, "AUDITOR"), 403),
+        for identity, status in ((demo_identity(demo_admin, "AUDITOR"), 403),
                                  (ApiClient(client.api_base_url, None), 401),
-                                 (demo_identity(client, "TAXPAYER", stranger["id"]), 403)):
+                                 (demo_identity(demo_admin, "TAXPAYER", stranger["id"]), 403)):
             denied = identity.request("GET", path, expected=(status,))
             require(not denied.body.startswith(b"%PDF-"), "Una identidad sin permisos recibió el PDF")
         authorization = {"status": "passed", "mode": "opaque-demo-session", "owner": "passed", "deniedCases": 3}
@@ -342,15 +380,17 @@ def run_pdf(
 
 def run_bulk(
     client: ApiClient,
+    supervisor: ApiClient,
     taxpayers: list[dict[str, Any]],
     bulk_size: int,
     max_duration_seconds: int,
     run_id: str,
 ) -> dict[str, Any]:
+    processing_date = fiscal_today()
     require(bulk_size in (10, 50, 200), "bulk-size debe ser 10, 50 o 200 contribuyentes válidos")
     require(len({taxpayer['id'] for taxpayer in taxpayers}) >= bulk_size,
             f"Se necesitan {bulk_size} contribuyentes distintos; hay {len(taxpayers)}. No se sustituye volumen real por errores.")
-    concept = create_active_concept(client, "BULK", run_id)
+    concept = create_active_concept(client, supervisor, "BULK", run_id, processing_date=processing_date)
     valid_taxpayers = list({taxpayer["id"]: taxpayer for taxpayer in taxpayers}.values())[:bulk_size]
     items = [
         {"taxpayerId": taxpayer["id"], "taxableBase": "0.00"}
@@ -373,8 +413,8 @@ def run_bulk(
         "/liquidation-runs",
         {
             "taxConceptId": concept["id"],
-            "period": date.today().strftime("%Y-%m"),
-            "dueDate": (date.today() + timedelta(days=30)).isoformat(),
+            "period": processing_date.strftime("%Y-%m"),
+            "dueDate": (processing_date + timedelta(days=30)).isoformat(),
             "items": items,
         },
         expected=(201,),
@@ -400,11 +440,9 @@ def run_bulk(
     expect_run_rejection(client.request("POST", f"/liquidation-runs/{run['id']}/execute", expected=None))
 
     client.json("POST", f"/liquidation-runs/{run['id']}/submit")
-    client.json(
-        "POST",
-        f"/liquidation-runs/{run['id']}/approve",
-        {"observation": "Aceptación automatizada AWS TEST"},
-    )
+    approval = {"observation": "Aceptación automatizada AWS TEST"}
+    approved = supervisor.json("POST", f"/liquidation-runs/{run['id']}/approve", approval)
+    require(approved.get("status") == "APPROVED", "La aprobación del lote de QA no quedó APPROVED")
     # Dos solicitudes del mismo lote salen juntas: sólo una puede confirmar.
     gate = Barrier(2)
     def execute_once():
@@ -416,7 +454,7 @@ def run_bulk(
         futures = [pool.submit(execute_once) for _ in range(2)]
         responses = [future.result(timeout=max_duration_seconds + 60) for future in futures]
     execution_seconds = time.monotonic() - execution_started
-    require(sorted(response.status for response in responses) == [200, 422],
+    require(sorted(response.status for response in responses) == [200, 409],
             f"Ejecución concurrente inesperada: {[response.status for response in responses]}")
     expect_run_rejection(next(response for response in responses if response.status != 200))
     executed = json.loads(next(response for response in responses if response.status == 200).body)
@@ -468,12 +506,80 @@ def run_bulk(
 
 
 def expect_run_rejection(response: HttpResponse) -> None:
-    require(response.status == 422, f"Se esperaba rechazo de negocio HTTP 422, recibido {response.status}")
+    require(response.status == 409, f"Se esperaba conflicto HTTP 409, recibido {response.status}")
     try:
         code = json.loads(response.body).get("code")
     except (ValueError, AttributeError) as error:
         raise AcceptanceFailure("El rechazo no contiene un error JSON de negocio") from error
     require(code == "RUN_NOT_APPROVED", f"Error de negocio inesperado: {code}")
+
+
+def expect_self_approval_rejection(response: HttpResponse) -> None:
+    require(response.status == 403, f"La autoaprobación debía devolver HTTP 403, recibió {response.status}")
+    try:
+        code = json.loads(response.body).get("code")
+    except (ValueError, AttributeError) as error:
+        raise AcceptanceFailure("El rechazo de autoaprobación no contiene un error JSON") from error
+    if code == "ACCESS_DENIED":
+        raise AcceptanceFailure(
+            "La identidad de prueba no tiene autoridad SUPERVISOR; el backend rechazó por permisos "
+            "antes de evaluar SELF_APPROVAL_FORBIDDEN")
+    require(code == "SELF_APPROVAL_FORBIDDEN", f"Código de autoaprobación inesperado: {code}")
+
+
+def approve_as_distinct_actor(requester: ApiClient, supervisor: ApiClient, path: str,
+                              payload: Any | None = None, expected_status: str | None = None) -> dict[str, Any]:
+    expect_self_approval_rejection(requester.request("POST", path, payload, expected=None))
+    approved = supervisor.json("POST", path, payload)
+    if expected_status is not None:
+        require(approved.get("status") == expected_status,
+                f"La aprobación de {path} quedó en {approved.get('status')}, se esperaba {expected_status}")
+    return approved
+
+
+def verify_self_approval_paths(actors: AcceptanceActors, taxpayer: dict[str, Any], run_id: str) -> dict[str, str]:
+    requester = actors.demo_admin
+    if requester is None:
+        self_approval_token = os.getenv("TEST_API_SELF_APPROVAL_BEARER_TOKEN")
+        if not self_approval_token:
+            return {"status": "skipped", "reason": "Bearer externo sin una identidad autorizada para crear y autoaprobar; "
+                    "configurar TEST_API_SELF_APPROVAL_BEARER_TOKEN para probar SELF_APPROVAL_FORBIDDEN"}
+        require(self_approval_token != actors.supervisor.bearer_token,
+                "La identidad de autoaprobación debe ser distinta del supervisor que resuelve")
+        requester = ApiClient(actors.rentas.api_base_url, self_approval_token)
+    processing_date = fiscal_today()
+    suffix = run_id.replace("-", "")[-12:].upper()
+    concept = requester.json("POST", "/tax-concepts", {
+        "code": f"QA_SOD_{suffix}", "name": f"QA segregación {suffix}",
+        "description": "Dato efímero para comprobar segregación de funciones",
+        "type": "FEE", "originModule": "M5",
+    }, expected=(201,))
+    configuration = requester.json("POST", "/tax-configurations", {
+        "taxConceptId": concept["id"], "calculationType": "FIXED", "rate": None,
+        "fixedAmount": "1.00", "minimumAmount": None, "maximumAmount": None,
+        "partialPaymentAllowed": True, "paymentPlanAllowed": True,
+        "validFrom": (processing_date - timedelta(days=1)).isoformat(), "validUntil": None,
+    }, expected=(201,))
+    requester.json("POST", f"/tax-configurations/{configuration['id']}/submit")
+    approve_as_distinct_actor(
+        requester, actors.supervisor,
+        f"/tax-configurations/{configuration['id']}/approve", expected_status="ACTIVE")
+
+    liquidation_run = requester.json("POST", "/liquidation-runs", {
+        "taxConceptId": concept["id"], "period": processing_date.strftime("%Y-%m"),
+        "dueDate": (processing_date + timedelta(days=30)).isoformat(),
+        "items": [{"taxpayerId": taxpayer["id"], "taxableBase": "0.00"}],
+    }, expected=(201,))
+    requester.json("POST", f"/liquidation-runs/{liquidation_run['id']}/preview")
+    requester.json("POST", f"/liquidation-runs/{liquidation_run['id']}/submit")
+    approve_as_distinct_actor(
+        requester, actors.supervisor,
+        f"/liquidation-runs/{liquidation_run['id']}/approve",
+        {"observation": "Prueba automatizada de segregación"}, expected_status="APPROVED")
+    executed = requester.json("POST", f"/liquidation-runs/{liquidation_run['id']}/execute")
+    require(executed.get("status") == "EXECUTED", "El lote de verificación SOD no se ejecutó")
+    return {"status": "passed", "taxConfiguration": "SELF_APPROVAL_FORBIDDEN then ACTIVE",
+            "liquidationRun": "SELF_APPROVAL_FORBIDDEN then APPROVED and EXECUTED"}
 
 
 def validate_bulk_items(detail: dict[str, Any], taxpayers: set[int], executed: bool) -> dict[int, Decimal]:
@@ -557,13 +663,17 @@ def main() -> int:
     try:
         results["health"] = check_health(client)
         authenticate_demo(client)
-        taxpayers = load_taxpayers(client)
+        actors = prepare_acceptance_actors(client)
+        taxpayers = load_taxpayers(actors.rentas)
         results["dataset"] = {"availableTaxpayers": len(taxpayers)}
+        results["segregationOfDuties"] = verify_self_approval_paths(actors, taxpayers[0], run_id)
         if args.scenario in ("pdf", "all"):
-            results["pdf"] = run_pdf(client, taxpayers, output_dir, run_id)
+            results["pdf"] = run_pdf(actors.rentas, actors.supervisor, actors.demo_admin,
+                                     taxpayers, output_dir, run_id)
         if args.scenario in ("bulk", "all"):
             results["bulk"] = run_bulk(
-                client,
+                actors.rentas,
+                actors.supervisor,
                 taxpayers,
                 args.bulk_size,
                 args.max_duration_seconds,
