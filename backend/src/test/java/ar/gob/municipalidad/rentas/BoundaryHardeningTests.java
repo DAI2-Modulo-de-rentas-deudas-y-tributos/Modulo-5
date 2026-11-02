@@ -48,7 +48,7 @@ class BoundaryHardeningTests {
     }
 
     @Test void infrastructureErrorsAreTranslatedWithoutLeakingTechnicalDetails() throws Exception {
-        GlobalExceptionHandler handler=new GlobalExceptionHandler();MockHttpServletRequest request=new MockHttpServletRequest("POST","/api/v1/payments");
+        GlobalExceptionHandler handler=new GlobalExceptionHandler(null);MockHttpServletRequest request=new MockHttpServletRequest("POST","/api/v1/payments");
         var integrity=handler.integrity(new DataIntegrityViolationException("secret SQL constraint"),request);
         assertThat(integrity.getStatusCode().value()).isEqualTo(409);
         assertThat(integrity.getBody().message()).doesNotContain("SQL","secret");

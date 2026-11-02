@@ -32,7 +32,9 @@ class BusinessException extends RuntimeException {
 @RestControllerAdvice
 class GlobalExceptionHandler {
     private static final Logger log=LoggerFactory.getLogger(GlobalExceptionHandler.class);
-    @org.springframework.beans.factory.annotation.Autowired(required=false) private AuditService audit;
+    private final AuditService audit;
+    // Opcional: los tests con MockMvc standalone no levantan AuditService.
+    GlobalExceptionHandler(@org.springframework.lang.Nullable AuditService audit) { this.audit=audit; }
     @ExceptionHandler(BusinessException.class)
     ResponseEntity<ApiDtos.ErrorResponse> business(BusinessException ex, HttpServletRequest request) {
         if(ex.status==403&&audit!=null) audit.recordAccessDenied(request,ex.code);

@@ -101,7 +101,7 @@ class OperationalLogPrivacyTests {
             HttpServletRequest request = mock(HttpServletRequest.class);
             when(request.getRequestURI()).thenReturn("/api/v1/payments");
 
-            new GlobalExceptionHandler().unexpected(
+            new GlobalExceptionHandler(null).unexpected(
                 new IllegalStateException("DNI=" + DNI + " CUIT=" + CUIT + " card=" + PAYMENT_DATA), request);
 
             assertSafeLogs(logs, "traceId=correlation-demo-123", "exceptionType=IllegalStateException");
