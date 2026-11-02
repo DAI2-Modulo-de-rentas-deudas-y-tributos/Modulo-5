@@ -16,72 +16,8 @@ permissions:
   contents: read
 
 jobs:
-  application-detection:
-    name: application-detection
-    runs-on: ubuntu-latest
-    outputs:
-      frontend-ready: ${{ steps.detect.outputs.frontend-ready }}
-      backend-ready: ${{ steps.detect.outputs.backend-ready }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Detect application manifests
-        id: detect
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          frontend_ready=false
-          backend_ready=false
-
-          if [[ -f frontend/package.json ]]; then
-            if [[ ! -f frontend/package-lock.json ]]; then
-              echo "frontend/package.json exists but package-lock.json is missing."
-              exit 1
-            fi
-            frontend_ready=true
-          fi
-
-          if [[ -f backend/pom.xml ]]; then
-            backend_ready=true
-          fi
-
-          echo "frontend-ready=${frontend_ready}" >> "${GITHUB_OUTPUT}"
-          echo "backend-ready=${backend_ready}" >> "${GITHUB_OUTPUT}"
-          echo "Frontend ready: ${frontend_ready}"
-          echo "Backend ready: ${backend_ready}"
-
-  repository-structure:
-    name: repository-structure
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Validate DevOps paths
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -d frontend
-          test -d backend
-          test -f backend/Dockerfile
-          test -f compose.yaml
-          test -f amplify.yml
-          test -d contracts
-          test -d infra/environments/dev
-          test -d infra/environments/test
-          test -d infra/environments/prod
-          test -d docs/adr
-
   frontend:
     name: frontend
-    needs: application-detection
-    if: needs.application-detection.outputs.frontend-ready == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -118,8 +54,6 @@ jobs:
 
   backend:
     name: backend
-    needs: application-detection
-    if: needs.application-detection.outputs.backend-ready == 'true'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -425,12 +359,12 @@ jobs:
           terraform init -backend=false
           terraform validate
 
+  # Único check obligatorio del ruleset: cualquier job que no termine en success (incluido
+  # skipped o cancelled) lo hace fallar. Un job nuevo sólo cuenta si se agrega a `needs`.
   ci-required:
     name: ci-required
     if: always()
     needs:
-      - application-detection
-      - repository-structure
       - frontend
       - backend
       - terraform
@@ -439,33 +373,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Verify required jobs
-        shell: bash
         env:
-          DETECTION_RESULT: ${{ needs.application-detection.result }}
-          STRUCTURE_RESULT: ${{ needs.repository-structure.result }}
-          FRONTEND_RESULT: ${{ needs.frontend.result }}
-          BACKEND_RESULT: ${{ needs.backend.result }}
-          TERRAFORM_RESULT: ${{ needs.terraform.result }}
-          COMPOSE_RESULT: ${{ needs.compose.result }}
-          SECRET_SCAN_RESULT: ${{ needs.secret-scan.result }}
+          NEEDS: ${{ toJSON(needs) }}
         run: |
-          set -euo pipefail
-
-          if [[ "$DETECTION_RESULT" != "success" \
-            || "$STRUCTURE_RESULT" != "success" \
-            || "$TERRAFORM_RESULT" != "success" \
-            || "$COMPOSE_RESULT" != "success" \
-            || "$SECRET_SCAN_RESULT" != "success" ]]; then
-            echo "A required DevOps check failed."
-            exit 1
-          fi
-
-          if [[ "$FRONTEND_RESULT" != "success" && "$FRONTEND_RESULT" != "skipped" ]]; then
-            echo "Frontend CI failed."
-            exit 1
-          fi
-
-          if [[ "$BACKEND_RESULT" != "success" && "$BACKEND_RESULT" != "skipped" ]]; then
-            echo "Backend CI failed."
-            exit 1
-          fi
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<< "${NEEDS}"
+          jq -e 'all(.[]; .result == "success")' <<< "${NEEDS}" > /dev/null

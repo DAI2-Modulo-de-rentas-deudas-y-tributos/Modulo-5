@@ -70,10 +70,9 @@ cd infra/environments/prod && terraform init -backend=false && terraform validat
 - `prod` es **persistente** y sigue a `main`: cada merge o commit corre el CI y despliega
   (`cd-prod.yml`, ADR 0003). Un deploy en curso no se cancela; de los commits que llegan
   mientras tanto solo se despliega el último. Perfil `prod`, sin modo demo.
-- CI (`.github/workflows/ci.yml`): job `repository-structure` verifica que existan
-  `frontend`, `backend`, `contracts`, `infra/environments/{dev,test,prod}` y `docs/adr`; job
-  `terraform` corre fmt/validate; `ci-required` es el check final obligatorio — si se agregan
-  jobs con filtros por carpeta, deben seguir colgando de `ci-required`. El job `sonar` (SonarQube
+- CI (`.github/workflows/ci.yml`): jobs `frontend`, `backend`, `terraform` (fmt/validate),
+  `compose` (G1) y `secret-scan` (G6); `ci-required` es el check final obligatorio y falla si
+  alguno de sus `needs` no termina en `success` — un job nuevo debe agregarse a esa lista. El job `sonar` (SonarQube
   Cloud, configurado en `sonar-project.properties`) usa la cobertura de JaCoCo y Vitest, no cuelga de
   `ci-required` y se omite si falta el secret `SONAR_TOKEN`.
 - Las decisiones arquitectónicas relevantes se documentan como ADR numerados en `docs/adr/`

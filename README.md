@@ -165,9 +165,10 @@ Esa garantía está cubierta por `ProductionSchemaIsolationTest` y
 
 ## Automatización
 
-El CI siempre valida la estructura DevOps y Terraform. Los jobs de frontend y
-backend se activan automáticamente cuando detectan `package.json`/lockfile o
-`pom.xml`, respectivamente.
+El CI (`.github/workflows/ci.yml`) corre en cada PR y push a `develop` y `main`:
+tests de frontend y backend, validación de Terraform, arranque completo con
+`docker compose` y escaneo de secretos. El check `ci-required` exige que todos
+terminen bien y es el que bloquea el merge.
 
 ## Continuidad del traspaso técnico
 
