@@ -16,6 +16,14 @@ output "availability_zones" {
 output "public_subnet_ids" {
   description = "IDs de las subredes públicas, en el orden de availability_zones."
   value       = [for zone in var.availability_zones : aws_subnet.public[zone].id]
+
+  # El ALB y las tareas Fargate mapean IPs públicas: deben crearse después del
+  # Internet Gateway y destruirse antes, o el detach del IGW falla con
+  # DependencyViolation ("has some mapped public address(es)").
+  depends_on = [
+    aws_route.public_ipv4,
+    aws_route_table_association.public
+  ]
 }
 
 output "database_subnet_ids" {

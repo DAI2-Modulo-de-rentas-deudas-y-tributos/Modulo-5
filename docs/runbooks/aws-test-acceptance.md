@@ -82,11 +82,13 @@ Mientras TEST conserve el modo DEMO, el runner obtiene sesiones opacas mediante
 `TEST_DEMO_USERNAME`, `TEST_DEMO_PASSWORD` y `RENTAS_DEMO_BOOTSTRAP_PASSWORD`;
 este último debe coincidir con el secreto inyectado al backend desde Secrets Manager.
 
-Cuando Core/Auth entregue OIDC, definir el secret TEST_API_BEARER_TOKEN en el environment test. Si ese secret existe, el runner usa Authorization Bearer y deja de enviar los headers de desarrollo. El token debe representar un usuario de QA con roles RENTAS, SUPERVISOR y CASHIER.
-Con Bearer, las pruebas que requieren cambiar de identidad se registran como
-`skipped` explícitamente: harán falta tokens de titular, otro titular y auditor
-para ejecutarlas en AWS. Los casos de autorización sí se ejecutan en CI con
-Spring Security, sin confiar en roles o identidades enviados por el navegador.
+Con autenticación Bearer, definir `TEST_API_BEARER_TOKEN` para las comprobaciones iniciales y dos credenciales autorizadas para las operaciones de cada rol: `TEST_API_RENTAS_BEARER_TOKEN` y `TEST_API_SUPERVISOR_BEARER_TOKEN`. Deben corresponder a identidades distintas; el flujo de aprobación entre ellas comprueba la segregación de funciones. El runner rechaza la reutilización del mismo token, y la aprobación efectiva debe pasar la regla del backend. `TEST_API_SELF_APPROVAL_BEARER_TOKEN` es opcional: habilita la prueba explícita de autoaprobación; si falta, esa subprueba queda reportada como omitida. Nunca usar el mismo token para simular dos actores.
+Con Bearer, los casos que requieren identidades de contribuyentes (titular y
+otro titular) o auditor se registran como `skipped` explícitamente hasta que el
+environment disponga de credenciales separadas para esos roles. La segregación
+RENTAS/SUPERVISOR se valida mediante la aprobación real del backend; tokens
+distintos por sí solos no prueban que sean personas distintas. La prueba
+explícita de autoaprobación también requiere el token opcional indicado arriba.
 
 Nunca guardar tokens en el repositorio ni imprimirlos en los logs.
 
@@ -145,9 +147,9 @@ La prueba:
    un contribuyente inexistente para provocar un error controlado;
 2. repite el preview, compara importes con centavos, población, contadores y
    errores, y comprueba que no existan liquidaciones ni deudas del concepto;
-3. intenta ejecutar sin aprobar y exige HTTP 422 con `RUN_NOT_APPROVED`;
+3. intenta ejecutar sin aprobar y exige HTTP 409 con `RUN_NOT_APPROVED`;
 4. envía y aprueba el lote, y lanza **dos solicitudes de ejecución concurrentes**;
-5. exige exactamente un HTTP 200 y un HTTP 422 con `RUN_NOT_APPROVED`;
+5. exige exactamente un HTTP 200 y un HTTP 409 con `RUN_NOT_APPROVED`;
 6. consulta el estado persistido, cada ítem, sus importes y referencias, y exige
    exactamente una liquidación y una deuda por contribuyente válido;
 7. verifica que el ítem inválido siga en ERROR, conserve código/mensaje y no tenga

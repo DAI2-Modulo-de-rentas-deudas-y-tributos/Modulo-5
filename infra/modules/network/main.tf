@@ -65,9 +65,11 @@ resource "aws_route" "public_ipv4" {
 }
 
 resource "aws_route_table_association" "public" {
-  for_each = aws_subnet.public
+  # Claves estáticas: `terraform import` evalúa la config con el estado vacío y
+  # no puede iterar sobre aws_subnet.public (falla "Invalid for_each argument").
+  for_each = local.public_subnets
 
-  subnet_id      = each.value.id
+  subnet_id      = aws_subnet.public[each.key].id
   route_table_id = aws_route_table.public.id
 }
 
@@ -81,8 +83,10 @@ resource "aws_route_table" "database" {
 }
 
 resource "aws_route_table_association" "database" {
-  for_each = aws_subnet.database
+  # Claves estáticas: `terraform import` evalúa la config con el estado vacío y
+  # no puede iterar sobre aws_subnet.database (falla "Invalid for_each argument").
+  for_each = local.database_subnets
 
-  subnet_id      = each.value.id
+  subnet_id      = aws_subnet.database[each.key].id
   route_table_id = aws_route_table.database.id
 }

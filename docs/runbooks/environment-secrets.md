@@ -10,7 +10,7 @@ se guardan en Git, en variables `VITE_*` ni como valores de Terraform.
 | --- | --- | --- |
 | Local | `.env`, creado desde `.env.example` | Solo en `.env`, ignorado por Git |
 | DEV | `infra/environments/dev` y variables del GitHub Environment `dev` | AWS Secrets Manager |
-| TEST | `infra/environments/test` y variables del GitHub Environment `test` | AWS Secrets Manager; `TEST_API_BEARER_TOKEN` opcional en GitHub |
+| TEST | `infra/environments/test` y variables del GitHub Environment `test` | AWS Secrets Manager; el runner de aceptación puede usar `TEST_API_BEARER_TOKEN`, `TEST_API_RENTAS_BEARER_TOKEN` y `TEST_API_SUPERVISOR_BEARER_TOKEN`; `TEST_API_SELF_APPROVAL_BEARER_TOKEN` es opcional |
 | PROD | `infra/environments/prod` y variables del GitHub Environment `prod` | AWS Secrets Manager; nunca secretos `RENTAS_DEMO_*` |
 
 La contraseña de RDS es generada y rotada por RDS. ECS recibe usuario y contraseña
