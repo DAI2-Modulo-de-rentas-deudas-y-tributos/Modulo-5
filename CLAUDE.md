@@ -543,11 +543,7 @@ export default function StepIndicatorGeneric({
                   className={`text-[12px] transition-colors ${
                     hideLabelsOnMobile ? "hidden sm:inline" : "inline"
                   } ${
-                    isCurrent
-                      ? "font-semibold"
-                      : isCompleted
-                        ? "font-normal"
-                        : "font-normal"
+                    isCurrent ? "font-semibold" : "font-normal"
                   }`}
                   style={{
                     color: isCompleted
