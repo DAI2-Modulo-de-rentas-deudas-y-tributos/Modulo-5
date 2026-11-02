@@ -21,7 +21,8 @@ docker compose up -d postgres     # PostgreSQL 17 local (copiar antes .env.examp
 # Frontend (React + Vite) — desde frontend/
 npm install
 npm run dev                       # http://localhost:5173
-npm test                          # vitest run, lo que corre el CI
+npm test                          # vitest run
+npm run test:coverage             # vitest con cobertura (lcov para Sonar), lo que corre el CI
 npm test -- src/services/rentasService.test.js   # un archivo
 npm test -- -t "cancela la deuda"                # un test puntual
 npm run build                     # dist/ — lo que publica Amplify
@@ -72,7 +73,7 @@ cd infra/environments/prod && terraform init -backend=false && terraform validat
   `frontend`, `backend`, `contracts`, `infra/environments/{dev,test,prod}` y `docs/adr`; job
   `terraform` corre fmt/validate; `ci-required` es el check final obligatorio — si se agregan
   jobs con filtros por carpeta, deben seguir colgando de `ci-required`. El job `sonar` (SonarQube
-  Cloud, configurado en `sonar-project.properties`) usa la cobertura de JaCoCo, no cuelga de
+  Cloud, configurado en `sonar-project.properties`) usa la cobertura de JaCoCo y Vitest, no cuelga de
   `ci-required` y se omite si falta el secret `SONAR_TOKEN`.
 - Las decisiones arquitectónicas relevantes se documentan como ADR numerados en `docs/adr/`
   con contexto, decisión, alternativas y consecuencias.

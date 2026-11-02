@@ -23,7 +23,8 @@ export default defineConfig({
     testTimeout: 15000,
     coverage: {
       provider: "v8",
-      reporter: ["text", "html", "lcov"],
+      // lcov con rutas desde la raíz del repo (frontend/src/...), que es donde las busca SonarQube Cloud.
+      reporter: ["text", "html", ["lcov", { projectRoot: ".." }]],
       include: ["src/**/*.{js,jsx}"],
       exclude: ["src/**/*.{test,spec}.{js,jsx}", "src/**/__tests__/**", "src/test/**"],
     },
