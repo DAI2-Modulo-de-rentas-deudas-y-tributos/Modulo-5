@@ -58,6 +58,7 @@ El estado `PUBLISHED` significa únicamente que el adaptador local escribió
 en el log; **no prueba entrega ni aceptación por Core o M2**. El código obtiene
 el UUID persistente del empleado desde la sesión del backend y guarda por
 separado `requestType`, `category` y `subcategory`, pero requiere el esquema
-preparado en `backend/migration-proposals/`, fuera de Flyway: no se aplica solo
-y no debe desplegarse el código contra la base anterior. La equivalencia entre
+de `V24__m2_v1_78_identity_and_routing.sql` (`db/migration-postgresql`), que
+Flyway aplica al arrancar: no debe desplegarse sin la aprobación descripta en
+`backend/migration-proposals/M8_STAGE_1_README.md`. La equivalencia entre
 el `citizenId` UUID de M2 y el ID numérico de M1 sigue pendiente.

@@ -1,8 +1,14 @@
 # M5–M8, etapa 1: estado de migraciones y condición de despliegue
 
-**Estado verificado en la rama de integración:** V24, V25 y V26 están en `src/main/resources/db/migration-postgresql`, y `application.yml` y `application-prod.yml` incluyen esa ubicación con Flyway habilitado. Por lo tanto, el arranque del backend intenta aplicar automáticamente las migraciones pendientes. Esto contradice los comentarios `PROPOSAL ONLY` de V25/V26 y el comentario de prueba de V24. Las copias de SQL en esta carpeta son sólo documentación; no cambian ni desactivan la ubicación activa.
+**Estado verificado en la rama de integración:** V24, V25 y V26 están en `src/main/resources/db/migration-postgresql`, y `application.yml` y `application-prod.yml` incluyen esa ubicación con Flyway habilitado. Por lo tanto, el arranque del backend intenta aplicar automáticamente las migraciones pendientes. Esto contradice los comentarios `PROPOSAL ONLY` de V25/V26 y el comentario de prueba de V24. El SQL vive sólo en esa ubicación activa; esta carpeta conserva únicamente este documento.
 
 No iniciar el backend contra una base compartida ni cambiar unilateralmente la política de Flyway. La aprobación explícita del PO sobre la autoaplicación de V24–V26 es condición para merge y despliegue. No se ejecutó SQL en la base real `rentas`.
+
+## V24 — identidad y ruteo M2 v1.78
+
+- No modifica `demo_user.id` (`BIGINT`): cada usuario previo recibe exactamente un UUID nuevo y persistido, que no se regenera en reinicios. En prod V18 elimina `demo_user`, por eso esa parte sólo se aplica si la tabla existe.
+- No modifica `ticket_case.id` (`BIGINT`), `external_ticket_id` ni datos legados. Las columnas nuevas son anulables porque hay tickets históricos sin snapshot `ROUTED` completo.
+- Recupera desde el último `ROUTED` oficial procesado y sólo corrige `category` cuando conserva el `requestType` del adaptador anterior o el marcador de ausencia M2; cualquier otro valor se preserva. Los tickets legados `source_module=M2` no se tocan.
 
 ## V25 — identificadores propios de M5
 

@@ -4,7 +4,7 @@ Estado: **propuesta local; no ejecutada en GitHub ni publicada** (2026-10-29). P
 
 ## Archivos propuestos
 
-- `.github/workflows/pit-scrum-807-probe.yml`: push restringido a `codex/scrum-807-pit-actions`, con marcador obligatorio en el mensaje del último commit (`[run-pit-probe]`). Mantiene `workflow_dispatch` como opción futura.
+- `.github/workflows/pit-scrum-807-probe.yml`: push restringido a `codex/scrum-807-pit-actions`, con marcador obligatorio en el mensaje del último commit (`[run-pit-probe]`). Mantiene `workflow_dispatch` como opción futura. **No se incluye en `develop`**: se agrega sólo en la rama experimental, recuperándolo con `git show 149d79a:.github/workflows/pit-scrum-807-probe.yml`.
 - `.github/scripts/pit_scrum807_pom.py`: genera un POM descartable y valida que no cambió el gate base.
 
 No se modifica `backend/pom.xml`, el workflow `CI`, ni otro workflow. El script exige que el perfil siga declarando exactamente las 14 clases aprobadas, `mutationThreshold=60`, mutadores predeterminados (sin `<mutators>`) y ninguna lista `targetTests`. Si detecta una diferencia, falla antes de PIT.

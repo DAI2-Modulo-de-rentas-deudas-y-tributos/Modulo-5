@@ -1,4 +1,4 @@
--- Test-only H2 equivalent. The production SQL remains in migration-proposals until approved.
+-- Test-only H2 equivalent of db/migration-postgresql/V26__m8_social_benefits_and_rules.sql.
 ALTER TABLE social_benefit_reference ALTER COLUMN valid_from DROP NOT NULL;
 ALTER TABLE social_benefit_reference ADD COLUMN external_reason VARCHAR(255);
 ALTER TABLE social_benefit_reference ADD COLUMN resolution_status VARCHAR(40) NOT NULL DEFAULT 'LEGACY';

@@ -23,9 +23,9 @@ foreach ($file in $files) {
     if (-not (Test-Json -LiteralPath $file.FullName -SchemaFile $schemaPath -ErrorAction Stop)) {
         throw "El ejemplo no valida: $($file.Name)"
     }
-    $event = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json -AsHashtable
-    if (-not $eventIds.Add($event.eventId)) { throw "eventId duplicado: $($event.eventId)" }
-    if ($event.data.originType -eq 'TRAFFIC_FINE' -and $event.data.originId -ne $event.data.infractionId) {
+    $proposedEvent = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json -AsHashtable
+    if (-not $eventIds.Add($proposedEvent.eventId)) { throw "eventId duplicado: $($proposedEvent.eventId)" }
+    if ($proposedEvent.data.originType -eq 'TRAFFIC_FINE' -and $proposedEvent.data.originId -ne $proposedEvent.data.infractionId) {
         throw "originId e infractionId difieren: $($file.Name)"
     }
 }
