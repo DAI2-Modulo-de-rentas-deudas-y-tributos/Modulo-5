@@ -118,15 +118,16 @@ lsof -nP -iTCP:8080 -sTCP:LISTEN
 curl --fail http://localhost:8080/actuator/health
 ```
 
-En PowerShell con Docker Compose:
+En PowerShell con Docker Compose, desde la raíz del repositorio:
 
 ```powershell
 Copy-Item .env.example .env
 docker compose up -d postgres
+cd backend
 .\mvnw.cmd spring-boot:run -Dspring-boot.run.profiles=dev
 ```
 
-O backend y base juntos:
+O backend y base juntos, también desde la raíz:
 
 ```powershell
 docker compose --profile application up -d --build postgres backend
@@ -152,10 +153,11 @@ Docker Compose lee `.env` automáticamente. Una ejecución directa mediante Mave
 | `POSTGRES_USER` | Usuario de PostgreSQL creado por Compose. | No; default local `rentas`. |
 | `POSTGRES_PASSWORD` | Contraseña de PostgreSQL y del backend dentro de Compose. | Sí para Compose; guardar como secreto. |
 | `POSTGRES_PORT` | Puerto de PostgreSQL publicado en el host. | No; default `5432`. |
+| `BACKEND_PORT` | Puerto del backend publicado en el host por Compose. | No; default `8080`. |
 | `DB_URL` | URL JDBC cuando Spring Boot se ejecuta directamente. | No si aplica el default local; configurar fuera de local. |
 | `DB_USER` | Usuario JDBC cuando Spring Boot se ejecuta directamente. | No si aplica el default local; configurar fuera de local. |
 | `DB_PASSWORD` | Contraseña JDBC cuando Spring Boot se ejecuta directamente. | Sí para una base que exija autenticación; guardar como secreto. |
-| `SERVER_PORT` | Puerto HTTP directo o puerto publicado por Compose. | No; default `8080`. |
+| `SERVER_PORT` | Puerto HTTP cuando Spring Boot se ejecuta directamente. | No; default `8080`. |
 | `CORS_ALLOWED_ORIGINS` | Orígenes web exactos separados por coma; sin comodines. | No para same-origin; necesario si frontend y API usan orígenes distintos. |
 | `OUTBOX_DELAY_MS` | Intervalo entre ciclos de publicación del Outbox. | No; default `5000`. |
 | `BROKER_ADAPTER` | Selector reservado del adaptador; hoy sólo existe `local-log`. | No; default `local-log`. |

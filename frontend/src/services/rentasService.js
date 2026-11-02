@@ -12,7 +12,7 @@ const round2 = (value) => Math.round(value * 100) / 100;
 
 /** Las fichas y sus totales deben incluir todas las páginas del backend. */
 async function allPages(path) {
-  const url = new URL(path, "http://rentas.local");
+  const url = new URL(path, "https://rentas.local");
   url.searchParams.set("size", "100");
   const rows = [];
   for (let page = 0; ; page += 1) {

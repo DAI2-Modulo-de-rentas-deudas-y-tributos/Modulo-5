@@ -20,7 +20,7 @@ export function pageItems(value) {
   return rows;
 }
 
-const urlOf = (path) => new URL(path, "http://adapter.local");
+const urlOf = (path) => new URL(path, "https://adapter.local");
 const daysUntil = (date) => {
   if (!date) return null;
   const today = new Date();
