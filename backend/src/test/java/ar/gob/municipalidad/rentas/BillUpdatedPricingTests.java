@@ -37,6 +37,7 @@ class BillUpdatedPricingTests {
     @Autowired LateChargeService lateCharges;
     @Autowired LateChargeRuleRepository rules;
     @Autowired LateChargeApplicationRepository applications;
+    @Autowired FiscalProcessingDatePolicy fiscalDates;
     @Autowired AdjustmentRepository adjustments;
     @Autowired DebtRepository debts;
     @Autowired BillRepository bills;
@@ -92,7 +93,8 @@ class BillUpdatedPricingTests {
     }
 
     @Test void overdueDebtShowsPendingChargesWithoutMutatingAnythingOnRepeatedReads() {
-        Debt debt=debt("PENDING-LATE");debt.dueDate=LocalDate.now().minusDays(5);debts.saveAndFlush(debt);Bill bill=bill(debt);rule("PENDING-RULE","10","1");
+        LocalDate processingDate=fiscalDates.today();
+        Debt debt=debt("PENDING-LATE");debt.dueDate=processingDate.minusDays(5);debts.saveAndFlush(debt);Bill bill=bill(debt);rule("PENDING-RULE","10","1");
         long applicationCount=applications.count(),adjustmentCount=adjustments.count();BigDecimal current=debt.currentAmount,outstanding=debt.outstandingBalance;
 
         ApiDtos.BillDetailResponse first=billing.pricingDetail(bill.id);ApiDtos.BillDetailResponse second=billing.pricingDetail(bill.id);
@@ -108,12 +110,13 @@ class BillUpdatedPricingTests {
     }
 
     @Test void appliedLateChargeIsExplainedButNotQuotedAgainForSameDate() {
-        Debt debt=debt("APPLIED-LATE");debt.dueDate=LocalDate.now().minusDays(5);debts.saveAndFlush(debt);
+        LocalDate processingDate=fiscalDates.today();
+        Debt debt=debt("APPLIED-LATE");debt.dueDate=processingDate.minusDays(5);debts.saveAndFlush(debt);
         Bill bill=bill(debt);
         // Keep issuance and adjustment distinct even when the database rounds timestamps.
         bill.createdAt=bill.createdAt.minusMinutes(1);bills.saveAndFlush(bill);
         rule("APPLIED-RULE","10","1");
-        lateCharges.apply(debt.id,LocalDate.now());
+        lateCharges.apply(debt.id,processingDate);
 
         ApiDtos.BillDebtPricingResponse price=billing.pricingDetail(bill.id).pricingDetails().get(0);
 

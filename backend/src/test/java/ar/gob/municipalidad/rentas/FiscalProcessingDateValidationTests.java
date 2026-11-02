@@ -27,6 +27,19 @@ class FiscalProcessingDateValidationTests {
             .isInstanceOfSatisfying(BusinessException.class,ex->{assertThat(ex.code).isEqualTo("FUTURE_DATE_NOT_ALLOWED");assertThat(ex.status).isEqualTo(422);});
     }
 
+    @Test void utcCalendarDateCanBeTomorrowWhileBuenosAiresStillUsesToday(){
+        Instant boundary=Instant.parse("2026-11-02T02:30:00Z");
+        FiscalProcessingDatePolicy policy=new FiscalProcessingDatePolicy(Clock.fixed(boundary,BUENOS_AIRES));
+        LocalDate fiscalDate=policy.today();
+        LocalDate utcDate=LocalDate.now(Clock.fixed(boundary,ZoneId.of("UTC")));
+
+        assertThat(utcDate).isEqualTo(LocalDate.of(2026,11,2));
+        assertThat(fiscalDate).isEqualTo(LocalDate.of(2026,11,1));
+        policy.requireNotFuture(fiscalDate);
+        assertThatThrownBy(()->policy.requireNotFuture(utcDate))
+            .isInstanceOfSatisfying(BusinessException.class,ex->{assertThat(ex.code).isEqualTo("FUTURE_DATE_NOT_ALLOWED");assertThat(ex.status).isEqualTo(422);});
+    }
+
     @Test void futureRequestsReturn422BeforeCallingEconomicServices() throws Exception {
         LateChargeService lateCharges=mock(LateChargeService.class);
         DueDateService dueDates=mock(DueDateService.class);
