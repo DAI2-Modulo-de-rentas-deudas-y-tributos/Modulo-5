@@ -110,9 +110,23 @@ Qué queda corriendo:
 | PostgreSQL | `localhost:5432` | Base `rentas`, usuario `rentas`. |
 | RabbitMQ | <http://localhost:15672> | Usuario `m5-local`. Lo publicado por M5 queda en `q.m5.publicados`; la entrada es `q.rentas` y lo rechazado va a `q.rentas.dlq`. |
 
-Los contribuyentes ficticios salen de [`qa/seed-e2e-local.sql`](qa/seed-e2e-local.sql).
-Los usuarios y esos datos se crean solos en cada arranque, sólo si faltan, mediante
-los servicios `broker-setup` y `demo-setup` ([`scripts/compose/`](scripts/compose/)).
+### Datos de demostración
+
+No hay datos mock: todo sale de PostgreSQL. En el primer arranque, `demo-setup` deja la base
+lista para recorrer el flujo principal, cargando los datos por la API como lo haría el personal:
+
+| Qué | Detalle |
+|---|---|
+| Contribuyentes | QA Ciudadano A y QA Ciudadano B (ciudadanos) y QA Organización M4, de [`qa/seed-e2e-local.sql`](qa/seed-e2e-local.sql). |
+| Configuración de tributos | `ABL` (0,15 % de la valuación, mínimo $5.000), `TASA_SERVICIOS` (fija, $12.000) y `PATENTE` (0,4 % de la valuación), vigentes desde el 1 de enero del año anterior. Las carga `rentas` y las aprueba `supervisor`. |
+| Plan de pagos | Una configuración de 2 a 12 cuotas, con 10 % de anticipo mínimo e `interestRate` 2.5. |
+| Deudas | 6 liquidaciones del mes anterior (una de ABL de dos meses atrás para QA Ciudadano A, ya vencida). Las fechas se calculan al arrancar. |
+| Boleta | Una boleta de QA Ciudadano A (el usuario `contribuyente`) con sus dos deudas por vencer. |
+
+La deuda vencida figura pendiente hasta procesar los vencimientos (**Rentas → Deudas → Procesar
+vencimientos**), que es un paso de la demo. Los usuarios, la topología del broker y estos datos
+los crean los servicios `broker-setup` y `demo-setup` ([`scripts/compose/`](scripts/compose/)),
+sólo si faltan: las deudas y la boleta se cargan una vez y no se repiten en los arranques siguientes.
 
 Otros comandos útiles:
 
