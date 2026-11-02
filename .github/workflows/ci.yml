@@ -250,6 +250,56 @@ jobs:
       - name: Build backend container image
         run: docker build --tag modulo-5-rentas-backend:${{ github.sha }} backend
 
+  # Condición G1: el sistema completo levanta desde un clon limpio siguiendo sólo el README.
+  compose:
+    name: compose
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Sin .env el arranque se corta con un mensaje claro
+        shell: bash
+        run: |
+          set -euo pipefail
+          if docker compose config --quiet 2> "${RUNNER_TEMP}/compose-error.txt"; then
+            echo "docker compose config debía fallar sin .env."
+            exit 1
+          fi
+          grep "Falta .* en .env" "${RUNNER_TEMP}/compose-error.txt"
+
+      - name: Completar el .env como indica el README
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp .env.example .env
+          for name in POSTGRES_PASSWORD RABBITMQ_PASSWORD RENTAS_DEMO_BOOTSTRAP_PASSWORD RENTAS_DEMO_USERS_PASSWORD; do
+            value="$(openssl rand -hex 16)"
+            echo "::add-mask::${value}"
+            grep --quiet "^${name}=$" .env
+            sed -i "s/^${name}=$/${name}=${value}/" .env
+          done
+
+      - name: Levantar el sistema con el comando del README
+        run: docker compose up -d --build
+
+      - name: Verificar el sistema como indica el README
+        run: sh scripts/compose/smoke-test.sh
+
+      - name: Un segundo arranque reutiliza los datos sin fallar
+        run: |
+          docker compose up -d
+          sh scripts/compose/smoke-test.sh
+
+      - name: Estado y logs de los servicios
+        if: always()
+        run: |
+          docker compose ps -a
+          docker compose logs --no-color --tail=200
+
   # No cuelga de ci-required: el Quality Gate lo publica SonarQube Cloud como check propio del PR.
   sonar:
     name: sonar
@@ -332,6 +382,7 @@ jobs:
       - frontend
       - backend
       - terraform
+      - compose
     runs-on: ubuntu-latest
     steps:
       - name: Verify required jobs
@@ -342,12 +393,14 @@ jobs:
           FRONTEND_RESULT: ${{ needs.frontend.result }}
           BACKEND_RESULT: ${{ needs.backend.result }}
           TERRAFORM_RESULT: ${{ needs.terraform.result }}
+          COMPOSE_RESULT: ${{ needs.compose.result }}
         run: |
           set -euo pipefail
 
           if [[ "$DETECTION_RESULT" != "success" \
             || "$STRUCTURE_RESULT" != "success" \
-            || "$TERRAFORM_RESULT" != "success" ]]; then
+            || "$TERRAFORM_RESULT" != "success" \
+            || "$COMPOSE_RESULT" != "success" ]]; then
             echo "A required DevOps check failed."
             exit 1
           fi

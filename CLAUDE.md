@@ -16,7 +16,8 @@ commits y comentarios.
 ## Comandos
 
 ```shell
-docker compose up -d postgres     # PostgreSQL 17 local (copiar antes .env.example a .env)
+docker compose up -d --build      # sistema completo: base, RabbitMQ, backend, usuarios DEMO y frontend (G1)
+docker compose up -d postgres     # sólo PostgreSQL 17 (copiar antes .env.example a .env)
 
 # Frontend (React + Vite) — desde frontend/
 npm install

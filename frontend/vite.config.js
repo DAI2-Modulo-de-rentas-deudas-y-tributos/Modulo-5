@@ -6,8 +6,8 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     port: 5173,
-    // Proxy sólo de desarrollo: evita ampliar CORS mientras la URL de deployment no existe.
-    proxy: { "/api": { target: "http://localhost:8080", changeOrigin: true } },
+    // Proxy local (también lo usa `vite preview` en compose.yaml): evita ampliar CORS.
+    proxy: { "/api": { target: process.env.API_PROXY_TARGET ?? "http://localhost:8080", changeOrigin: true } },
   },
   test: {
     // jsdom sólo para las pruebas de UI; las de dominio no necesitan DOM.
