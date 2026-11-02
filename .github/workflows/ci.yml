@@ -286,24 +286,13 @@ jobs:
       - name: Levantar el sistema con el comando del README
         run: docker compose up -d --build
 
-      - name: Ingresar con cada usuario DEMO a través del frontend
-        shell: bash
-        run: |
-          set -euo pipefail
-          # `up -d` vuelve cuando el contenedor del frontend arranca, no cuando ya escucha.
-          index="$(curl --fail --silent --show-error --retry 30 --retry-delay 2 --retry-all-errors http://localhost:5173/)"
-          grep --quiet 'id="root"' <<< "${index}"
-          password="$(sed -n 's/^RENTAS_DEMO_USERS_PASSWORD=//p' .env)"
-          for user in supervisor rentas cajero auditor contribuyente; do
-            login="$(curl --fail --silent --show-error --header "Content-Type: application/json" \
-              --data "{\"username\":\"${user}\",\"password\":\"${password}\"}" \
-              http://localhost:5173/api/v1/dev-auth/login)"
-            grep --quiet '"token"' <<< "${login}"
-            echo "Ingreso correcto: ${user}"
-          done
+      - name: Verificar el sistema como indica el README
+        run: sh scripts/compose/smoke-test.sh
 
       - name: Un segundo arranque reutiliza los datos sin fallar
-        run: docker compose up -d
+        run: |
+          docker compose up -d
+          sh scripts/compose/smoke-test.sh
 
       - name: Estado y logs de los servicios
         if: always()

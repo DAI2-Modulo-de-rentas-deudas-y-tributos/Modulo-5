@@ -92,6 +92,13 @@ dependencias y compila backend y frontend: tarda varios minutos.
    | `auditor` | Auditor |
    | `contribuyente` | Contribuyente, vinculado a "QA Ciudadano A" |
 
+5. Opcional: comprobar que el frontend responde y que los cinco usuarios ingresan, con
+   el mismo chequeo que corre el CI (en Windows, desde Git Bash):
+
+   ```shell
+   sh scripts/compose/smoke-test.sh
+   ```
+
 Qué queda corriendo:
 
 | Servicio | Dirección | Notas |
