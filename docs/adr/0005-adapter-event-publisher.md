@@ -1,7 +1,7 @@
 # ADR 0005: Adapter para publicar eventos de integración
 
-- Estado: aceptado para los adaptadores locales disponibles
-- Fecha: 2026-10-27
+- Estado: HTTP opt-in preparado; activación operativa pendiente
+- Fecha: 2026-10-31
 
 ## Contexto
 
@@ -12,34 +12,38 @@ con confirmación del broker.
 
 ## Decisión
 
-`EventPublisher` es el puerto que consume el servicio de Outbox. `LocalLogEventPublisher`
-y `RabbitMqEventPublisher` son adaptadores para ese puerto: el primero deja el
-evento en estado local y el segundo traduce la publicación al cliente AMQP,
-espera publisher confirm y considera el retorno obligatorio. El adaptador se
-selecciona por `BROKER_ADAPTER`; `local-log` es el valor seguro predeterminado.
+`EventPublisher` es el puerto que consume el servicio de Outbox. `LocalLogEventPublisher`,
+`RabbitMqEventPublisher` y el adaptador HTTP opt-in son adaptadores para ese puerto:
+el primero deja el evento en estado local, RabbitMQ espera publisher confirm y el
+retorno obligatorio, y HTTP solicita un token de módulo y publica el envelope ya
+persistido en Core. El selector sigue siendo `BROKER_ADAPTER`; `local-log` es el
+valor seguro predeterminado.
 
-No se añade un adaptador HTTP para Core/M9: faltan el OpenAPI vigente,
-esquemas de requests/responses, autenticación de módulo, claims y ciclo de
-renovación. Crear uno ahora implicaría inventar el contrato.
+El adaptador HTTP sigue el OpenAPI Core 2.0.0 proporcionado para esta integración.
+HTTP 202 y 200 con `duplicate=true` quedan como `CORE_ACCEPTED`, distinto de
+`BROKER_CONFIRMED`; ninguno demuestra procesamiento por M1. El adaptador permanece
+desactivado por defecto y aún requiere prueba operativa conjunta con Core/M1.
 
 ## Evidencia
 
 - Puerto: `backend/src/main/java/ar/gob/municipalidad/rentas/EventPublisher.java`.
 - Adaptador RabbitMQ: `RabbitMqEventPublisher.java`.
+- Adaptador HTTP Core: `CoreHttpEventPublisher.java` (opt-in; tests con servidor loopback).
 - Adaptador local: `IntegrationServices.java` (`LocalLogEventPublisher`).
 - Selección/configuración: `application.yml` y `IntegrationServices.java`.
 - Pruebas de confirm/return/falla: `RabbitMqEventPublisherTests.java`.
 
 El publicador conserva el envelope persistido; no transforma contratos por
 consumidor. `LOCAL_ONLY` sólo confirma la ruta local; `BROKER_CONFIRMED`
-confirma el broker; ninguno prueba `CORE_ACCEPTED` ni `CONSUMER_ACK`.
+confirma el broker; `CORE_ACCEPTED` acredita aceptación de Core. Ninguno prueba
+`CONSUMER_ACK`.
 
 ## Alternativas
 
 - Acoplar Outbox al `RabbitTemplate`: descartado porque mezcla el caso de uso
   con transporte.
-- Crear cliente HTTP Core ahora: descartado por falta del contrato y de
-  credenciales/claims verificables.
+- Activar HTTP por defecto: descartado porque la operación depende de credenciales,
+  permisos y coordinación de entrega que deben habilitarse explícitamente.
 - Agregar otra capa de wrappers: descartado; `EventPublisher` ya cumple el
   puerto y los adaptadores existentes implementan el límite de integración.
 
