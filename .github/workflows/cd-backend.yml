@@ -212,7 +212,7 @@ jobs:
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Show ECS diagnostics on failure
-        if: failure()
+        if: ${{ failure() && inputs.environment == 'dev' }}
         shell: bash
         run: |
           # Collect only operational metadata before DEV terraform-destroy.
