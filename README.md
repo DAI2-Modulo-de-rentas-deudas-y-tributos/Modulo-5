@@ -93,7 +93,8 @@ dependencias y compila backend y frontend: tarda varios minutos.
    | `auditor` | Auditor |
    | `contribuyente` | Contribuyente, vinculado a "QA Ciudadano A" |
 
-5. Opcional: comprobar que el frontend responde y que los cinco usuarios ingresan, con
+5. Opcional: comprobar que el frontend responde con sus cabeceras de seguridad (CSP,
+   `X-Frame-Options`, `nosniff`, `Referrer-Policy`) y que los cinco usuarios ingresan, con
    el mismo chequeo que corre el CI (en Windows, desde Git Bash):
 
    ```shell

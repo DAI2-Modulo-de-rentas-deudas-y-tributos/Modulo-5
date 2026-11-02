@@ -270,12 +270,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          latest="$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/gitleaks/gitleaks/releases/latest)"
+          latest="$(curl --proto '=https' --tlsv1.2 -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/gitleaks/gitleaks/releases/latest)"
           version="${latest##*/v}"
           base="https://github.com/gitleaks/gitleaks/releases/download/v${version}"
           cd "${RUNNER_TEMP}"
-          curl -fsSLO "${base}/gitleaks_${version}_linux_x64.tar.gz"
-          curl -fsSLO "${base}/gitleaks_${version}_checksums.txt"
+          curl --proto '=https' --tlsv1.2 -fsSLO "${base}/gitleaks_${version}_linux_x64.tar.gz"
+          curl --proto '=https' --tlsv1.2 -fsSLO "${base}/gitleaks_${version}_checksums.txt"
           sha256sum --check --ignore-missing "gitleaks_${version}_checksums.txt"
           tar -xzf "gitleaks_${version}_linux_x64.tar.gz" gitleaks
           cd "${GITHUB_WORKSPACE}"
