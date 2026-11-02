@@ -64,7 +64,8 @@ class FilteredApiTests {
         mvc.perform(get("/api/v1/taxpayers").header("X-Demo-Session",session).param("q","\\"))
             .andExpect(status().isOk()).andExpect(jsonPath("$.page.totalElements").value(1))
             .andExpect(jsonPath("$.content[0].id").value(backslash.id));
-        mvc.perform(get("/api/v1/taxpayers").header("X-Demo-Session",session).param("q","111"))
+        // Sin dígitos: otros tests dejan contribuyentes con DNI aleatorio que pueden contener "111".
+        mvc.perform(get("/api/v1/taxpayers").header("X-Demo-Session",session).param("q","Filtro Uno"))
             .andExpect(status().isOk()).andExpect(jsonPath("$.page.totalElements").value(1))
             .andExpect(jsonPath("$.content[0].id").value(taxpayer.id));
     }
