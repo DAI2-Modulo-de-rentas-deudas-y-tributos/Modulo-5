@@ -300,6 +300,59 @@ jobs:
           docker compose ps -a
           docker compose logs --no-color --tail=200
 
+  # Condición G6: la cátedra escanea en vivo todo el historial con gitleaks / trufflehog.
+  # Se usa la última versión de cada herramienta, como la instalaría alguien hoy. Los hallazgos
+  # se publican como anotaciones sin el valor; los falsos positivos están en .gitleaksignore y
+  # justificados en docs/security/G6_ESCANEO_SECRETOS.md.
+  secret-scan:
+    name: secret-scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # Historial completo de todas las ramas: ambas herramientas recorren `git log --all`.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Gitleaks (bloquea cualquier hallazgo nuevo)
+        shell: bash
+        run: |
+          set -euo pipefail
+          latest="$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/gitleaks/gitleaks/releases/latest)"
+          version="${latest##*/v}"
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${version}"
+          cd "${RUNNER_TEMP}"
+          curl -fsSLO "${base}/gitleaks_${version}_linux_x64.tar.gz"
+          curl -fsSLO "${base}/gitleaks_${version}_checksums.txt"
+          sha256sum --check --ignore-missing "gitleaks_${version}_checksums.txt"
+          tar -xzf "gitleaks_${version}_linux_x64.tar.gz" gitleaks
+          cd "${GITHUB_WORKSPACE}"
+
+          status=0
+          "${RUNNER_TEMP}/gitleaks" git --redact --no-banner \
+            --report-format json --report-path "${RUNNER_TEMP}/gitleaks.json" . || status=$?
+          jq '[.[] | {RuleID, File, Commit, Line: .StartLine, Fingerprint}]' "${RUNNER_TEMP}/gitleaks.json" \
+            | jq -r --arg tool "gitleaks ${version}" -f .github/scripts/secret-annotations.jq
+          exit "${status}"
+
+      - name: Trufflehog (informativo; resultados no verificados documentados)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # trufflehog lee las ramas locales: se crea una por cada rama remota.
+          git for-each-ref --format='%(refname:short)' refs/remotes/origin \
+            | grep -v -e '^origin$' -e '/HEAD$' \
+            | while read -r ref; do git branch --force "${ref#origin/}" "${ref}" 2> /dev/null || true; done
+
+          # Sin verificación: no envía los candidatos a servicios externos para probarlos.
+          docker run --rm --user "$(id -u):$(id -g)" --volume "${PWD}:/repo:ro" \
+            trufflesecurity/trufflehog:latest git file:///repo \
+            --no-verification --no-update --json > "${RUNNER_TEMP}/trufflehog.jsonl"
+          jq -s '[.[] | .SourceMetadata.Data.Git as $git | {RuleID: .DetectorName, File: $git.file, Commit: $git.commit, Line: $git.line}]' \
+            "${RUNNER_TEMP}/trufflehog.jsonl" \
+            | jq -r --arg tool trufflehog -f .github/scripts/secret-annotations.jq
+
   # No cuelga de ci-required: el Quality Gate lo publica SonarQube Cloud como check propio del PR.
   sonar:
     name: sonar
@@ -383,6 +436,7 @@ jobs:
       - backend
       - terraform
       - compose
+      - secret-scan
     runs-on: ubuntu-latest
     steps:
       - name: Verify required jobs
@@ -394,13 +448,15 @@ jobs:
           BACKEND_RESULT: ${{ needs.backend.result }}
           TERRAFORM_RESULT: ${{ needs.terraform.result }}
           COMPOSE_RESULT: ${{ needs.compose.result }}
+          SECRET_SCAN_RESULT: ${{ needs.secret-scan.result }}
         run: |
           set -euo pipefail
 
           if [[ "$DETECTION_RESULT" != "success" \
             || "$STRUCTURE_RESULT" != "success" \
             || "$TERRAFORM_RESULT" != "success" \
-            || "$COMPOSE_RESULT" != "success" ]]; then
+            || "$COMPOSE_RESULT" != "success" \
+            || "$SECRET_SCAN_RESULT" != "success" ]]; then
             echo "A required DevOps check failed."
             exit 1
           fi
