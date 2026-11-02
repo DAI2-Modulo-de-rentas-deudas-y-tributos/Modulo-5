@@ -163,7 +163,7 @@ Docker Compose lee `.env` automáticamente. Una ejecución directa mediante Mave
 | `SERVER_PORT` | Puerto HTTP cuando Spring Boot se ejecuta directamente. | No; default `8080`. |
 | `CORS_ALLOWED_ORIGINS` | Orígenes web exactos separados por coma; sin comodines. | No para same-origin; necesario si frontend y API usan orígenes distintos. |
 | `OUTBOX_DELAY_MS` | Intervalo entre ciclos de publicación del Outbox. | No; default `5000`. |
-| `BROKER_ADAPTER` | Selector reservado del adaptador; hoy sólo existe `local-log`. | No; default `local-log`. |
+| `BROKER_ADAPTER` | Adaptador de publicación del Outbox: `local-log`, `rabbitmq` o `core-http`. | No; default `local-log`. |
 | `RENTAS_SECURITY_DEV_MODE` | Habilita identidad y endpoints DEMO/DEV. | No; default `false`. Prohibido en producción. |
 | `RENTAS_DEMO_BOOTSTRAP_PASSWORD` | Secreto de `POST /api/v1/dev-auth/bootstrap` para el primer SUPERVISOR. | No; sin default. Secreto local/CI efímero. |
 | `RENTAS_DEMO_SESSION_TTL` | TTL de las sesiones DEMO persistidas. | No; default `PT8H`. |

@@ -55,7 +55,6 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-rentas}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-rentas}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?Falta POSTGRES_PASSWORD en .env (copiar .env.example a .env y completarlo)}
-      APP_MODE: api
       BROKER_ADAPTER: rabbitmq
       CORE_RABBITMQ_HOST: rabbitmq
       CORE_RABBITMQ_USERNAME: ${RABBITMQ_USER:-m5-local}

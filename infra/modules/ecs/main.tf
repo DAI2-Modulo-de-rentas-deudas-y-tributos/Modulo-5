@@ -1,7 +1,6 @@
 locals {
   backend_environment_variables = merge(
     {
-      APP_MODE               = "api"
       CORS_ALLOWED_ORIGINS   = join(",", var.cors_allowed_origins)
       SPRING_DATASOURCE_URL  = "jdbc:postgresql://${var.database_address}:${var.database_port}/${var.database_name}"
       SPRING_PROFILES_ACTIVE = var.spring_profiles_active

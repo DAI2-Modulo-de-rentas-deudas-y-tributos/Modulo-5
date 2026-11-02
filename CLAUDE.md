@@ -56,7 +56,7 @@ cd infra/environments/prod && terraform init -backend=false && terraform validat
   antes de generar código: un cambio de contrato no es una decisión local.
 - **Infra**: `infra/` es AWS solo por Terraform. `bootstrap/` (estado remoto S3 con
   `use_lockfile = true`, OIDC de GitHub, roles plan/deploy) se aplica una vez; `modules/` por
-  capacidad (network, database, ecs, edge, messaging, storage); `environments/dev`,
+  capacidad (network, security, database, ecs, edge, hosting); `environments/dev`,
   `environments/test` y `environments/prod` son composiciones con **estado remoto independiente** — no usar Terraform
   workspaces para representar ambientes. Región por defecto `us-east-2`, `project_name`
   `modulo-5-rentas`. No ejecutar `terraform apply` antes del bootstrap y la revisión del plan.
@@ -70,10 +70,10 @@ cd infra/environments/prod && terraform init -backend=false && terraform validat
 - `prod` es **persistente** y sigue a `main`: cada merge o commit corre el CI y despliega
   (`cd-prod.yml`, ADR 0003). Un deploy en curso no se cancela; de los commits que llegan
   mientras tanto solo se despliega el último. Perfil `prod`, sin modo demo.
-- CI (`.github/workflows/ci.yml`): job `repository-structure` verifica que existan
-  `frontend`, `backend`, `contracts`, `infra/environments/{dev,test,prod}` y `docs/adr`; job
-  `terraform` corre fmt/validate; `ci-required` es el check final obligatorio — si se agregan
-  jobs con filtros por carpeta, deben seguir colgando de `ci-required`. El job `sonar` (SonarQube
+- CI (`.github/workflows/ci.yml`): jobs `frontend`, `backend`, `terraform` (fmt/validate),
+  `compose` (G1), `dependency-scan` (OSV-Scanner; excepciones con vencimiento en
+  `backend/osv-scanner.toml`) y `secret-scan` (G6); `ci-required` es el check final obligatorio y falla si
+  alguno de sus `needs` no termina en `success` — un job nuevo debe agregarse a esa lista. El job `sonar` (SonarQube
   Cloud, configurado en `sonar-project.properties`) usa la cobertura de JaCoCo y Vitest, no cuelga de
   `ci-required` y se omite si falta el secret `SONAR_TOKEN`.
 - Las decisiones arquitectónicas relevantes se documentan como ADR numerados en `docs/adr/`
