@@ -43,11 +43,11 @@ Backend: `backend/src/main/java/ar/gob/municipalidad/rentas/`.
 
 - Modelos: `DomainEntities.java`, `FullStackEntities.java`.
 - Liquidación/pagos/planes: `DomainServices.java`, `PaymentPlanPrincipalLedger.java`, `PlanWorkflowService.java`, `EventosDeDominio.java`, `OutboxEventosDeDominio.java`.
-- Contratos entrantes: `integration/event/inbound/ConfirmedInboundEvents.java`.
-- Contratos salientes: `integration/event/outbound/ConfirmedOutboundEvents.java`.
-- Consumidores: `integration/consumer/ConfirmedIntegrationConsumers.java`, `integration/consumer/CoreM4Consumer.java`.
-- Productor/outbox: `integration/producer/ConfirmedIntegrationOutbox.java`.
-- Conciliaciones: `integration/producer/DeferredExemptionReconciliation.java`, `integration/producer/DeferredEconomicReconciliation.java`.
+- Contratos entrantes: `ConfirmedInboundEvents.java`.
+- Contratos salientes: `ConfirmedOutboundEvents.java`.
+- Consumidores: `ConfirmedIntegrationConsumers.java`, `CoreM4Consumer.java`.
+- Productor/outbox: `ConfirmedIntegrationOutbox.java`.
+- Conciliaciones: `DeferredExemptionReconciliation.java`, `DeferredEconomicReconciliation.java`.
 - Publisher de prueba (sin broker real): `IntegrationServices.java`.
 - Repositorios: `Repositories.java`; docs: `backend/INTEGRATION_CONTRACTS.md`, `contracts/events/README.md`.
 - Flyway PostgreSQL: `backend/src/main/resources/db/migration-postgresql/V24__m2_v1_78_identity_and_routing.sql`, `V25__m8_owned_integration_ids.sql`, `V26__m8_social_benefits_and_rules.sql`.

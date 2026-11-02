@@ -19,7 +19,7 @@ Persistir la intención saliente en la tabla Outbox dentro del mismo límite tra
 
 - `backend/src/main/java/ar/gob/municipalidad/rentas/EventosDeDominio.java`: interfaz de eventos del dominio.
 - `backend/src/main/java/ar/gob/municipalidad/rentas/OutboxEventosDeDominio.java`: adaptador que serializa eventos del dominio en registros `OutboxEvent` pendientes.
-- `backend/src/main/java/ar/gob/municipalidad/rentas/integration/producer/ConfirmedIntegrationOutbox.java`: prepara eventos de integración, UUID M5 e idempotencia; persiste snapshots diferidos cuando falta información externa.
+- `backend/src/main/java/ar/gob/municipalidad/rentas/ConfirmedIntegrationOutbox.java`: prepara eventos de integración, UUID M5 e idempotencia; persiste snapshots diferidos cuando falta información externa.
 - `backend/src/main/java/ar/gob/municipalidad/rentas/IntegrationServices.java`: procesa Outbox, aplica validaciones/reintentos y actualiza estado local.
 - `backend/src/test/java/ar/gob/municipalidad/rentas/DomainEventOutboxTransactionTests.java`, `EconomicOutboxGuardTests.java` y `PhysicalRestartEconomicEventTest.java`: cubren rollback, guardas de contrato y recuperación local después de reiniciar el proceso, según el test ejecutado.
 
