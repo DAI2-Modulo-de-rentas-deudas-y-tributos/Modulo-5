@@ -2,6 +2,25 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
+// Mismas cabeceras que publica Amplify (infra/modules/hosting, SCRUM-798), para el stack local de
+// compose.yaml. connect-src 'self' porque la API llega por el proxy; HSTS no aplica sobre http.
+// Sólo en `vite preview`: el servidor de desarrollo inyecta scripts inline que la CSP bloquearía.
+const securityHeaders = {
+  "Content-Security-Policy": [
+    "default-src 'self'",
+    "connect-src 'self'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com",
+    "img-src 'self' data:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "frame-ancestors 'none'",
+  ].join("; "),
+  "X-Frame-Options": "DENY",
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "strict-origin-when-cross-origin",
+};
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
@@ -9,6 +28,7 @@ export default defineConfig({
     // Proxy local (también lo usa `vite preview` en compose.yaml): evita ampliar CORS.
     proxy: { "/api": { target: process.env.API_PROXY_TARGET ?? "http://localhost:8080", changeOrigin: true } },
   },
+  preview: { headers: securityHeaders },
   test: {
     // jsdom sólo para las pruebas de UI; las de dominio no necesitan DOM.
     environment: "jsdom",
