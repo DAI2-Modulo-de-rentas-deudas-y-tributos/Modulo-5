@@ -290,12 +290,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --silent http://localhost:5173/ | grep --quiet 'id="root"'
+          # `up -d` vuelve cuando el contenedor del frontend arranca, no cuando ya escucha.
+          index="$(curl --fail --silent --show-error --retry 30 --retry-delay 2 --retry-all-errors http://localhost:5173/)"
+          grep --quiet 'id="root"' <<< "${index}"
           password="$(sed -n 's/^RENTAS_DEMO_USERS_PASSWORD=//p' .env)"
           for user in supervisor rentas cajero auditor contribuyente; do
-            curl --fail --silent --header "Content-Type: application/json" \
+            login="$(curl --fail --silent --show-error --header "Content-Type: application/json" \
               --data "{\"username\":\"${user}\",\"password\":\"${password}\"}" \
-              http://localhost:5173/api/v1/dev-auth/login | grep --quiet '"token"'
+              http://localhost:5173/api/v1/dev-auth/login)"
+            grep --quiet '"token"' <<< "${login}"
             echo "Ingreso correcto: ${user}"
           done
 

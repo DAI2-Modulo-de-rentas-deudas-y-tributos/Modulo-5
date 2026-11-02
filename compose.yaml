@@ -106,6 +106,12 @@ services:
       API_PROXY_TARGET: http://backend:8080
     ports:
       - "${FRONTEND_PORT:-5173}:4173"
+    # `vite preview` empieza a escuchar unos segundos después de que arranca el contenedor.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:4173/"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
     depends_on:
       demo-setup:
         condition: service_completed_successfully

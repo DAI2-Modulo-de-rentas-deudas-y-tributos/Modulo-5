@@ -76,8 +76,10 @@ dependencias y compila backend y frontend: tarda varios minutos.
    docker compose up -d --build
    ```
 
-   El comando termina cuando todos los servicios están listos. Si algo falla, indica
-   qué servicio; sus logs se ven con `docker compose logs <servicio>`.
+   El comando termina cuando la base, el broker, el backend y los usuarios están
+   listos; el frontend responde unos segundos después (`docker compose ps` lo muestra
+   `healthy`). Si algo falla, indica qué servicio; sus logs se ven con
+   `docker compose logs <servicio>`.
 
 4. Abrir <http://localhost:5173> e ingresar con alguno de estos usuarios. La
    contraseña de todos es el valor que se puso en `RENTAS_DEMO_USERS_PASSWORD`:
