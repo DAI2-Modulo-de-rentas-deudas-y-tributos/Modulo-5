@@ -19,6 +19,7 @@ class FullStackFeatureTests {
     @Autowired DebtRepository debts;@Autowired LateChargeRuleRepository rules;@Autowired LateChargeService lateCharges;
     @Autowired DueDateService dueDates;@Autowired AdjustmentRepository adjustments;@Autowired PaymentRepository payments;
     @Autowired ReconciliationService reconciliations;@Autowired ElectronicReconciliationItemRepository reconciliationItems;
+    @Autowired FiscalProcessingDatePolicy fiscalDates;
 
     @BeforeEach void authenticate(){SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("supervisor.test",null),null,List.of(new SimpleGrantedAuthority("ROLE_SUPERVISOR"))));}
     @AfterEach void clear(){SecurityContextHolder.clearContext();}
@@ -40,13 +41,14 @@ class FullStackFeatureTests {
     }
 
     @Test void lateChargePreviewConfirmationAndDailyProcessingAreIdempotent(){
-        Debt debt=debt(taxpayer("LATE-1","30111223"),new BigDecimal("100.00"),LocalDate.now().minusDays(10));rule();
-        var preview=lateCharges.preview(debt.id,LocalDate.now());assertThat(preview.surchargeAmount()).isEqualByComparingTo("2.00");assertThat(preview.interestAmount()).isEqualByComparingTo("1.00");assertThat(preview.applied()).isFalse();
-        var applied=lateCharges.apply(debt.id,LocalDate.now());var duplicatePreview=lateCharges.preview(debt.id,LocalDate.now());var duplicate=lateCharges.apply(debt.id,LocalDate.now());
+        LocalDate processingDate=fiscalDates.today();
+        Debt debt=debt(taxpayer("LATE-1","30111223"),new BigDecimal("100.00"),processingDate.minusDays(10));rule();
+        var preview=lateCharges.preview(debt.id,processingDate);assertThat(preview.surchargeAmount()).isEqualByComparingTo("2.00");assertThat(preview.interestAmount()).isEqualByComparingTo("1.00");assertThat(preview.applied()).isFalse();
+        var applied=lateCharges.apply(debt.id,processingDate);var duplicatePreview=lateCharges.preview(debt.id,processingDate);var duplicate=lateCharges.apply(debt.id,processingDate);
         assertThat(applied.applied()).isTrue();assertThat(duplicatePreview.applicationId()).isEqualTo(applied.applicationId());
         assertThat(duplicatePreview.totalAdjustment()).isEqualByComparingTo("3.00");assertThat(duplicatePreview.updatedTotal()).isEqualByComparingTo("103.00");
         assertThat(duplicate.applied()).isFalse();assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("103.00");assertThat(adjustments.count()).isEqualTo(2);
-        var first=dueDates.process(LocalDate.now());var again=dueDates.process(LocalDate.now());assertThat(again.id()).isEqualTo(first.id());assertThat(again.skippedAlreadyProcessed()).isGreaterThanOrEqualTo(1);
+        var first=dueDates.process(processingDate);var again=dueDates.process(processingDate);assertThat(again.id()).isEqualTo(first.id());assertThat(again.skippedAlreadyProcessed()).isGreaterThanOrEqualTo(1);
     }
 
     @Test void reconciliationPersistsStatusesAndManualResolution(){
