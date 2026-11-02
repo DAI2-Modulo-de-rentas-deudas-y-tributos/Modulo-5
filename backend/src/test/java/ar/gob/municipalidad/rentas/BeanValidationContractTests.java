@@ -103,8 +103,9 @@ class BeanValidationContractTests {
             LocalDate.now(),LocalDate.now().plusDays(1),List.of(new ApiDtos.SubmitDocumentationRequest(" ","DNI",null)));
         var envelope=new ApiDtos.EventEnvelope<>(UUID.randomUUID(),"ticketUpdated",OffsetDateTime.now(),"M2",
             new ApiDtos.TicketEventData(null,null,null,null,null,null));
-        var invalidBenefits=new ConfirmedInboundEvents.M8SocialBenefitData("benefit","citizen","application",
-            "program","Programa",Arrays.asList((ConfirmedInboundEvents.M8Benefit)null),"ACTIVE",
+        var invalidBenefits=new ConfirmedInboundEvents.M8SocialBenefitData(UUID.randomUUID(),UUID.randomUUID(),
+            UUID.randomUUID(),UUID.randomUUID(),UUID.randomUUID(),"Programa",UUID.randomUUID()," ",
+            "Exención",null,"APPROVED",null,
             LocalDate.now(),null,OffsetDateTime.now());
 
         Set<String> exemptionPaths=validator.validate(exemption).stream()
@@ -116,7 +117,7 @@ class BeanValidationContractTests {
 
         assertThat(exemptionPaths).contains("documents[0].externalDocumentId");
         assertThat(eventPaths).contains("data.ticketId");
-        assertThat(benefitPaths).contains("benefits[0].<list element>");
+        assertThat(benefitPaths).contains("type");
     }
 
     @Test void patchDtosKeepOmittedFieldsOptionalButValidateProvidedValues() {

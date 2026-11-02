@@ -51,7 +51,7 @@ export default function ContribuyentesPage() {
     { key: "status", header: "Situación", render: (row) => <StatusBadge status={row.status} /> },
     {
       key: "benefit",
-      header: "Beneficio M8",
+      header: "Beneficio social",
       render: (row) =>
         row.benefit?.status === "ACTIVE" ? (
           <StatusBadge tone="success" label={`${row.benefit.discountPercentage}% desc.`} />
@@ -66,12 +66,12 @@ export default function ContribuyentesPage() {
       label="Padrón"
       title="Contribuyentes"
       highlight="del municipio"
-      description="Ciudadanos y organizaciones replicados desde el Módulo 1. Consulta de sólo lectura."
+      description="Ciudadanos y organizaciones recibidos desde el sistema de Ciudadanos. Consulta de sólo lectura."
       breadcrumb={[{ id: "contribuyentes", label: "Contribuyentes" }]}
     >
       {error && <Alert variant="error" title="No pudimos cargar el padrón">{error}</Alert>}
 
-      <Alert variant="info" title="Datos administrados por el Módulo 1">
+      <Alert variant="info" title="Datos administrados por Ciudadanos">
         Altas, bajas y modificaciones se resuelven en Ciudadanos. Rentas mantiene una réplica
         local actualizada por eventos y la usa sólo para vincular deudas y pagos.
       </Alert>
@@ -105,7 +105,7 @@ export default function ContribuyentesPage() {
           loading={loading}
           emptyIconName="UserSearch"
           emptyTitle="Sin coincidencias"
-          emptyDescription="Revisá el documento ingresado o esperá a que M1 replique el alta."
+          emptyDescription="Revisá el documento ingresado o esperá a que se actualice el padrón ciudadano."
           onRowClick={setSelected}
         />
       </Card>
@@ -147,7 +147,7 @@ function TaxpayerDetailModal({ taxpayer, onClose }) {
         <Field label="Situación" value={labelFor(taxpayer.status)} />
         <Field label="Referencia externa" value={taxpayer.externalRef} />
         <Field
-          label="Beneficio social (M8)"
+          label="Beneficio social"
           value={
             taxpayer.benefit?.status === "ACTIVE"
               ? `${taxpayer.benefit.discountPercentage}% hasta ${formatDate(taxpayer.benefit.validUntil)}`
@@ -158,11 +158,11 @@ function TaxpayerDetailModal({ taxpayer, onClose }) {
 
       {taxpayer.status === "BLOCKED" && (
         <Alert variant="error" title="Contribuyente bloqueado">
-          M1 informó un bloqueo. No emitas nuevas boletas hasta que se regularice.
+          El sistema de identidad ciudadana informó un bloqueo. No emitas nuevas boletas hasta que se regularice.
         </Alert>
       )}
       {taxpayer.status === "DECEASED" && (
-        <Alert variant="info" title="Fallecimiento informado por M1">
+        <Alert variant="info" title="Fallecimiento informado al padrón">
           Las deudas continúan vigentes, pero deben tramitarse con los herederos.
         </Alert>
       )}

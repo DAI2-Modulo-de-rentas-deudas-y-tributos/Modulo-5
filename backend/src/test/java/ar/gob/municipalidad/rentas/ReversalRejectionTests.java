@@ -68,6 +68,7 @@ class ReversalRejectionTests {
         Debt debt = debt("REJECT-WITH-REASON");
         Payment payment = pay(debt);
         PaymentReversalRequest request = reversals.request(payment.id, "Motivo original de solicitud");
+        SecurityContextHolder.clearContext();
 
         mvc.perform(post("/api/v1/payment-reversals/{id}/reject", request.id)
                 .header("X-Demo-Session", supervisorSession)
@@ -100,9 +101,10 @@ class ReversalRejectionTests {
         Payment payment = pay(debt);
         PaymentReversalRequest request = reversals.request(payment.id, "Motivo original");
 
-        assertThatThrownBy(() -> reversals.reject(request.id, "   "))
+        assertThatThrownBy(() -> TestActorSupport.asApprover(() -> reversals.reject(request.id, "   ")))
             .isInstanceOfSatisfying(BusinessException.class,
                 exception -> assertThat(exception.code).isEqualTo("INVALID_REQUEST"));
+        SecurityContextHolder.clearContext();
         mvc.perform(post("/api/v1/payment-reversals/{id}/reject", request.id)
                 .header("X-Demo-Session", supervisorSession)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -123,7 +125,7 @@ class ReversalRejectionTests {
         Payment payment = pay(debt);
         PaymentReversalRequest request = reversals.request(payment.id, "Pago duplicado");
 
-        PaymentReversalRequest approved = reversals.approve(request.id);
+        PaymentReversalRequest approved = TestActorSupport.asApprover(() -> reversals.approve(request.id));
 
         assertThat(approved.status).isEqualTo(PaymentReversalStatus.APPROVED);
         assertThat(approved.resolutionReason).isNull();
@@ -157,7 +159,7 @@ class ReversalRejectionTests {
             concept.id, CalculationType.FIXED, null, new BigDecimal("100"), null, null, true, true,
             LocalDate.now().minusDays(1), null));
         catalog.submit(configuration.id);
-        catalog.approve(configuration.id);
+        TestActorSupport.asApprover(() -> catalog.approve(configuration.id));
         liquidations.create(new ApiDtos.LiquidationRequest(
             taxpayer.id, concept.id, YearMonth.now().toString(), BigDecimal.ZERO, LocalDate.now().plusDays(30)));
         return debts.findByTaxpayerId(taxpayer.id).get(0);

@@ -59,7 +59,7 @@ class BackendFinalCleanupTests {
         long billsBefore=bills.count(),linksBefore=billDebts.count();BigDecimal balance=debt.outstandingBalance;
 
         assertThatThrownBy(()->billing.create(new ApiDtos.CreateBillRequest(taxpayer.id,List.of(debt.id),LocalDate.now().plusDays(10))))
-            .isInstanceOfSatisfying(BusinessException.class,error->{assertThat(error.code).isEqualTo("TAXPAYER_BLOCKED");assertThat(error.status).isEqualTo(422);});
+            .isInstanceOfSatisfying(BusinessException.class,error->{assertThat(error.code).isEqualTo("TAXPAYER_BLOCKED");assertThat(error.status).isEqualTo(409);});
         assertThat(bills.count()).isEqualTo(billsBefore);assertThat(billDebts.count()).isEqualTo(linksBefore);
         assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo(balance);
 
@@ -67,7 +67,7 @@ class BackendFinalCleanupTests {
         mvc.perform(post("/api/v1/bills").header("X-Demo-Session",session)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"taxpayerId\":"+taxpayer.id+",\"debtIds\":["+debt.id+"],\"dueDate\":\""+LocalDate.now().plusDays(10)+"\"}"))
-            .andExpect(status().isUnprocessableEntity()).andExpect(jsonPath("$.code").value("TAXPAYER_BLOCKED"));
+            .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("TAXPAYER_BLOCKED"));
         assertThat(bills.count()).isEqualTo(billsBefore);assertThat(billDebts.count()).isEqualTo(linksBefore);
     }
 
@@ -81,7 +81,7 @@ class BackendFinalCleanupTests {
     @Test void liquidationDetailExposesDebtOriginHistoryAndAdjustments() throws Exception {
         Debt debt=liquidatedDebt("LIQUIDATION-DETAIL");
         AdjustmentRequest adjustment=adjustments.create(new ApiDtos.CreateAdjustmentRequest(debt.id,AdjustmentType.SURCHARGE,new BigDecimal("12.50"),"Recargo documentado"));
-        adjustments.approve(adjustment.id,"Aprobado para auditoría");
+        TestActorSupport.asApprover(() -> adjustments.approve(adjustment.id,"Aprobado para auditoría"));
 
         String session=demo.token(DemoRole.AUDITOR);SecurityContextHolder.clearContext();
         mvc.perform(get("/api/v1/liquidations/{id}",debt.liquidationId).header("X-Demo-Session",session))
@@ -155,7 +155,7 @@ class BackendFinalCleanupTests {
     private Debt liquidatedDebt(String suffix) {
         TaxpayerReference taxpayer=taxpayer(suffix,TaxpayerStatus.ACTIVE);TaxConcept concept=concept("CONCEPT_"+suffix);
         TaxConfiguration configuration=catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(concept.id,CalculationType.FIXED,null,new BigDecimal("100"),null,null,true,true,LocalDate.now().minusDays(1),null));
-        catalog.submit(configuration.id);catalog.approve(configuration.id);
+        catalog.submit(configuration.id);TestActorSupport.asApprover(() -> catalog.approve(configuration.id));
         liquidations.create(new ApiDtos.LiquidationRequest(taxpayer.id,concept.id,YearMonth.now().toString(),BigDecimal.ZERO,LocalDate.now().plusDays(30)));
         return debts.findByTaxpayerId(taxpayer.id).get(0);
     }

@@ -276,7 +276,7 @@ function adaptRow(path, row) {
   if (/^\/api\/v1\/taxpayers(?:\/\d+)?$/.test(pathname)) return { ...row, type: row.taxpayerType, documentType: row.dni ? "DNI" : "CUIT", document: row.dni ?? row.cuit, name: row.displayName };
   return row;
 }
-function indicators(v = {}) { return { date: new Date().toISOString().slice(0, 10), contribuyentes: 0, liquidaciones: 0, deudas: v.debt?.openCount ?? 0, boletas: 0, pagos: v.collection?.paymentCount ?? 0, planes: 0, exenciones: 0, tickets: 0, eventos: 0, totalOverdueAmount: v.delinquency?.overdueAmount ?? 0, unallocatedPayments: v.collection?.unallocatedAmount ?? 0, recentActivity: [] }; }
+function indicators(v = {}) { return { date: new Date().toISOString().slice(0, 10), contribuyentes: 0, liquidaciones: 0, deudas: v.debt?.openCount ?? 0, boletas: 0, pagos: v.collection?.paymentCount ?? 0, planes: 0, exenciones: 0, tickets: 0, eventos: 0, totalOverdueAmount: v.delinquency?.overdueAmount ?? 0, unallocatedPaymentAmount: v.collection?.unallocatedAmount ?? 0, recentActivity: [] }; }
 
 function auditDashboard(v = {}) {
   return {

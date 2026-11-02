@@ -169,7 +169,7 @@ class PdfDownloadTests {
             concept.id, CalculationType.FIXED, null, new BigDecimal("100.25"), null, null,
             true, true, LocalDate.now().minusDays(1), null));
         catalog.submit(configuration.id);
-        catalog.approve(configuration.id);
+        TestActorSupport.asApprover(() -> catalog.approve(configuration.id));
         for (int index = 0; index < count; index++) {
             liquidations.create(new ApiDtos.LiquidationRequest(taxpayer.id, concept.id,
                 YearMonth.now().plusMonths(index).toString(), BigDecimal.ZERO, LocalDate.now().plusDays(30)));

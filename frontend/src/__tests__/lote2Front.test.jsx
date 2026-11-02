@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "../App.jsx";
+import { portalService } from "../services/rentasService.js";
 import { ingresarComoAgente, ingresarComoContribuyente } from "./helpers/ingresar.js";
 import { instalarBackendFalso, pagina } from "./fixtures/backendFalso.js";
 
@@ -116,6 +117,96 @@ describe("lote 2 de tareas frontend", () => {
     await user.click(screen.getByRole("button", { name: /confirmar y pagar/i }));
     expect(await screen.findByText(/pago aprobado/i)).toBeDefined();
     expect(screen.getByText("REC-2026-9005")).toBeDefined();
+  });
+
+  it("no repite un pago confirmado si falla la consulta posterior del comprobante", async () => {
+    const backend = instalarBackendFalso({
+      "POST /api/v1/electronic-payments/preview": { debtId: 3001, requestedAmount: 85000, payableAmount: 85000, approved: true, message: "Pago disponible" },
+      "POST /api/v1/electronic-payments": { id: 4, paymentId: 9005, taxpayerId: 123, debtId: 3001, amount: 85000, status: "APPROVED", gatewayReference: "SIM-OK", createdAt: "2026-09-20T11:00:00-03:00" },
+      "GET /api/v1/payments/{id}/receipt": new Response(JSON.stringify({ message: "Recibo temporalmente no disponible" }), { status: 503, headers: { "content-type": "application/json" } }),
+    });
+    render(<App />);
+    await ingresarComoContribuyente(user);
+    await user.click(await screen.findByRole("link", { name: /^pago electrónico$/i }));
+    await user.click((await screen.findAllByRole("button", { name: /elegir/i }))[0]);
+    await user.click(screen.getByRole("button", { name: /revisar pago/i }));
+    await user.click(await screen.findByRole("button", { name: /confirmar y pagar/i }));
+
+    expect(await screen.findByText(/pago aprobado/i)).toBeDefined();
+    expect(await screen.findByText(/el pago se confirmó, pero no pudimos cargar el comprobante/i)).toBeDefined();
+    expect(screen.queryByRole("button", { name: /confirmar y pagar/i })).toBeNull();
+    expect(backend.llamadas.filter((call) => call.metodo === "POST" && call.ruta === "/api/v1/electronic-payments")).toHaveLength(1);
+  });
+
+  it("espera el comprobante antes de habilitar otro pago", async () => {
+    let resolverComprobante;
+    vi.spyOn(portalService, "paymentReceipt").mockImplementation(() => new Promise((resolve) => { resolverComprobante = resolve; }));
+    instalarBackendFalso({
+      "POST /api/v1/electronic-payments/preview": { debtId: 3001, requestedAmount: 85000, payableAmount: 85000, approved: true, message: "Pago disponible" },
+      "POST /api/v1/electronic-payments": { id: 4, paymentId: 9005, taxpayerId: 123, debtId: 3001, amount: 85000, status: "APPROVED", gatewayReference: "SIM-OK", createdAt: "2026-09-20T11:00:00-03:00" },
+    });
+    render(<App />);
+    await ingresarComoContribuyente(user);
+    await user.click(await screen.findByRole("link", { name: /^pago electrónico$/i }));
+    await user.click((await screen.findAllByRole("button", { name: /elegir/i }))[0]);
+    await user.click(screen.getByRole("button", { name: /revisar pago/i }));
+    await user.click(await screen.findByRole("button", { name: /confirmar y pagar/i }));
+    expect(await screen.findByText(/pago aprobado/i)).toBeDefined();
+    const nuevoPago = screen.getByRole("button", { name: /realizar otro pago/i });
+    expect(nuevoPago.disabled).toBe(true);
+
+    resolverComprobante({ receiptNumber: "REC-9005", amount: 85000, paidAt: "2026-09-20T11:00:00-03:00", paymentId: 9005 });
+    expect(await screen.findByText("REC-9005")).toBeDefined();
+    expect(nuevoPago.disabled).toBe(false);
+  });
+
+  it("genera una nueva clave al iniciar otro pago después de una operación confirmada", async () => {
+    const backend = instalarBackendFalso({
+      "POST /api/v1/electronic-payments/preview": { debtId: 3001, requestedAmount: 85000, payableAmount: 85000, approved: true, message: "Pago disponible" },
+      "POST /api/v1/electronic-payments": { id: 4, paymentId: 9005, taxpayerId: 123, debtId: 3001, amount: 85000, status: "APPROVED", gatewayReference: "SIM-OK", createdAt: "2026-09-20T11:00:00-03:00" },
+      "GET /api/v1/payments/{id}/receipt": { paymentId: 9005, receiptNumber: "REC-2026-9005", amount: 85000, paidAt: "2026-09-20T11:00:00-03:00" },
+    });
+    render(<App />);
+    await ingresarComoContribuyente(user);
+    await user.click(await screen.findByRole("link", { name: /^pago electrónico$/i }));
+    await user.click((await screen.findAllByRole("button", { name: /elegir/i }))[0]);
+    await user.click(screen.getByRole("button", { name: /revisar pago/i }));
+    await user.click(await screen.findByRole("button", { name: /confirmar y pagar/i }));
+    await user.click(await screen.findByRole("button", { name: /realizar otro pago/i }));
+    await user.click((await screen.findAllByRole("button", { name: /elegir/i }))[0]);
+    await user.click(screen.getByRole("button", { name: /revisar pago/i }));
+    await user.click(await screen.findByRole("button", { name: /confirmar y pagar/i }));
+
+    const paymentPosts = backend.mock.calls.filter(([url, options]) => String(url).includes("/api/v1/electronic-payments") && options.method === "POST" && !String(url).includes("/preview"));
+    expect(paymentPosts).toHaveLength(2);
+    expect(paymentPosts[0][1].headers["Idempotency-Key"]).not.toBe(paymentPosts[1][1].headers["Idempotency-Key"]);
+  });
+
+  it("reutiliza la clave de idempotencia al reintentar el mismo pago electrónico", async () => {
+    let intentos = 0;
+    const backend = instalarBackendFalso({
+      "POST /api/v1/electronic-payments/preview": { debtId: 3001, requestedAmount: 85000, payableAmount: 85000, approved: true, message: "Pago disponible" },
+      "POST /api/v1/electronic-payments": () => {
+        intentos += 1;
+        return intentos === 1
+          ? new Response(JSON.stringify({ message: "Respuesta temporalmente no disponible" }), { status: 503, headers: { "content-type": "application/json" } })
+          : { id: 4, paymentId: 9005, taxpayerId: 123, debtId: 3001, amount: 85000, status: "APPROVED", gatewayReference: "SIM-OK", createdAt: "2026-09-20T11:00:00-03:00" };
+      },
+      "GET /api/v1/payments/{id}/receipt": { paymentId: 9005, receiptNumber: "REC-2026-9005", amount: 85000, paidAt: "2026-09-20T11:00:00-03:00" },
+    });
+    render(<App />);
+    await ingresarComoContribuyente(user);
+    await user.click(await screen.findByRole("link", { name: /^pago electrónico$/i }));
+    await user.click((await screen.findAllByRole("button", { name: /elegir/i }))[0]);
+    await user.click(screen.getByRole("button", { name: /revisar pago/i }));
+    await user.click(await screen.findByRole("button", { name: /confirmar y pagar/i }));
+    expect(await screen.findByText("Respuesta temporalmente no disponible")).toBeDefined();
+    await user.click(screen.getByRole("button", { name: /confirmar y pagar/i }));
+
+    expect(await screen.findByText(/pago aprobado/i)).toBeDefined();
+    const paymentPosts = backend.mock.calls.filter(([url, options]) => String(url).includes("/api/v1/electronic-payments") && options.method === "POST" && !String(url).includes("/preview"));
+    expect(paymentPosts).toHaveLength(2);
+    expect(paymentPosts[0][1].headers["Idempotency-Key"]).toBe(paymentPosts[1][1].headers["Idempotency-Key"]);
   });
 
   it("el Contribuyente ve sus beneficios y el saldo utilizado", async () => {

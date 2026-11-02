@@ -1,0 +1,19 @@
+{
+  "eventId": "68c353a5-1f9d-4096-a7f4-d468b60e9b88",
+  "eventType": "paymentRegistered",
+  "eventVersion": "1.0",
+  "occurredAt": "2026-10-26T11:00:00-03:00",
+  "sourceModule": "rentas",
+  "correlationId": "ca16af37-771a-4912-8e6a-1919c341a113",
+  "causationId": null,
+  "data": {
+    "paymentId": "633ee23f-3e91-4fd0-91e8-81fcb163e91d",
+    "debtId": "91d91a42-3b08-4645-a89d-b65220eb69b4",
+    "originType": "TRAFFIC_FINE",
+    "originId": "b63caa31-b8e1-4981-8348-ce40c0cb4490",
+    "infractionId": "b63caa31-b8e1-4981-8348-ce40c0cb4490",
+    "amountApplied": 100000.00,
+    "paidAt": "2026-10-26T11:00:00-03:00",
+    "remainingBalance": 0.00
+  }
+}

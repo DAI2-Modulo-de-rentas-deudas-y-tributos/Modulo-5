@@ -20,6 +20,7 @@ class OutboxEventosDeDominio implements EventosDeDominio {
     }
 
     @Override public void deudaSaldada(Debt deuda) { integracion.debtSettled(deuda); }
+    @Override public void deudaSaldada(Debt deuda, PaymentAllocation imputacion) { integracion.debtSettled(deuda, imputacion); }
 
     @Override public void deudaAjustada(Debt deuda, AdjustmentRequest ajuste) {
         guardar("debtAdjusted", "Debt", deuda.id, new DeudaAjustada(deuda.id, ajuste.id));

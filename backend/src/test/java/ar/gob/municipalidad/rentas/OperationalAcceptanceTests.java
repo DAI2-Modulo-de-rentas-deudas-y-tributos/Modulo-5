@@ -132,7 +132,7 @@ class OperationalAcceptanceTests {
             assertThat(liquidationRepository.count()).isEqualTo(beforePreview);
 
             runs.submit(run.id);
-            runs.approve(run.id, "Aceptación automática");
+            TestActorSupport.asApprover(() -> runs.approve(run.id, "Aceptación automática"));
             runs.execute(run.id);
 
             ApiDtos.LiquidationRunDetail executed = runs.detail(run.id);
@@ -219,6 +219,6 @@ class OperationalAcceptanceTests {
             )
         );
         catalog.submit(configuration.id);
-        catalog.approve(configuration.id);
+        TestActorSupport.asApprover(() -> catalog.approve(configuration.id));
     }
 }

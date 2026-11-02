@@ -112,6 +112,14 @@ describe("API adapters", () => {
     expect(indicators).toMatchObject({ totalCollected: 260, pendingDebt: 160, overdueDebt: 0, delinquencyRate: 0, byPeriod: [], byConcept: [] });
   });
 
+  it("names the unallocated dashboard value as an amount, not a payment count", () => {
+    const indicators = adaptApiResponse("/api/v1/dashboard/metrics", "/api/v1/indicators/summary", {
+      collection: { paymentCount: 3, unallocatedAmount: 1250.5 },
+    });
+    expect(indicators.unallocatedPaymentAmount).toBe(1250.5);
+    expect(indicators).not.toHaveProperty("unallocatedPayments");
+  });
+
   it("adapts audit rows and safe concept/liquidation presentation fields", () => {
     const audit = adaptApiResponse("/api/v1/audit/trail", "/api/v1/audit?size=100", {
       content: [{ id: 1, userId: "agent", userRole: "ROLE_RENTAS", entityType: "Debt", entityId: "2", occurredAt: "2026-09-01T10:00:00Z" }],

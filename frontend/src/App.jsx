@@ -1,10 +1,8 @@
+import { lazy, Suspense } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext.jsx";
 import ProtectedRoute from "./routes/ProtectedRoute.jsx";
-import RentasLayout from "./components/layout/RentasLayout.jsx";
-import CajaLayout from "./components/layout/CajaLayout.jsx";
-import AuditoriaLayout from "./components/layout/AuditoriaLayout.jsx";
-import PortalLayout from "./components/layout/PortalLayout.jsx";
+import AreaLayout from "./components/layout/AreaLayout.jsx";
 import { homePathForRole } from "./config/workspaces.js";
 import LoginPage from "./pages/LoginPage.jsx";
 import DashboardPage from "./pages/DashboardPage.jsx";
@@ -43,7 +41,6 @@ import DeudasAuditorPage from "./pages/auditoria/DeudasAuditorPage.jsx";
 import DeudaDetallePage from "./pages/auditoria/DeudaDetallePage.jsx";
 import PagosAuditorPage from "./pages/auditoria/PagosAuditorPage.jsx";
 import PagoDetallePage from "./pages/auditoria/PagoDetallePage.jsx";
-import ReversionDetallePage from "./pages/auditoria/ReversionDetallePage.jsx";
 import PlanesAuditorPage from "./pages/auditoria/PlanesAuditorPage.jsx";
 import PlanDetallePage from "./pages/auditoria/PlanDetallePage.jsx";
 import ExencionesAuditorPage from "./pages/auditoria/ExencionesAuditorPage.jsx";
@@ -51,7 +48,6 @@ import ExencionDetallePage from "./pages/auditoria/ExencionDetallePage.jsx";
 import TicketsAuditorPage from "./pages/auditoria/TicketsAuditorPage.jsx";
 import TicketDetallePage from "./pages/auditoria/TicketDetallePage.jsx";
 import IntegracionesPage from "./pages/auditoria/IntegracionesPage.jsx";
-import IntegracionDetallePage from "./pages/auditoria/IntegracionDetallePage.jsx";
 import AuditoriaPage from "./pages/auditoria/AuditoriaPage.jsx";
 import AuditoriaDetallePage from "./pages/auditoria/AuditoriaDetallePage.jsx";
 import IndicadoresPage from "./pages/auditoria/IndicadoresPage.jsx";
@@ -66,6 +62,9 @@ import PagoElectronicoPage from "./pages/portal/PagoElectronicoPage.jsx";
 import BeneficiosPortalPage from "./pages/portal/BeneficiosPortalPage.jsx";
 import RefinanciacionPortalPage from "./pages/portal/RefinanciacionPortalPage.jsx";
 
+const ReversionDetallePage = lazy(() => import("./pages/auditoria/ReversionDetallePage.jsx"));
+const IntegracionDetallePage = lazy(() => import("./pages/auditoria/IntegracionDetallePage.jsx"));
+
 /**
  * Rutas de las dos áreas de trabajo del módulo.
  *
@@ -79,11 +78,12 @@ export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
+        <Suspense fallback={<div role="status" className="p-6 text-sm text-neutral-500">Cargando pantalla…</div>}>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
 
           <Route element={<ProtectedRoute roles={["PERSONAL", "SUPERVISOR"]} />}>
-            <Route path="/rentas" element={<RentasLayout />}>
+            <Route path="/rentas" element={<AreaLayout area="rentas" />}>
               <Route index element={<DashboardPage />} />
               <Route path="contribuyentes" element={<ContribuyentesPage />} />
               <Route path="tributos" element={<ConfiguracionTributosPage />} />
@@ -111,7 +111,7 @@ export default function App() {
           </Route>
 
           <Route element={<ProtectedRoute roles={["CAJERO"]} />}>
-            <Route path="/caja" element={<CajaLayout />}>
+            <Route path="/caja" element={<AreaLayout area="caja" />}>
               <Route index element={<CajaDashboardPage />} />
               <Route path="cobros" element={<CobrosPage />} />
               <Route path="contribuyentes" element={<ContribuyentesCajaPage />} />
@@ -124,7 +124,7 @@ export default function App() {
           </Route>
 
           <Route element={<ProtectedRoute roles={["AUDITOR"]} />}>
-            <Route path="/auditor" element={<AuditoriaLayout />}>
+            <Route path="/auditor" element={<AreaLayout area="auditoria" />}>
               <Route index element={<AuditorDashboardPage />} />
               <Route path="contribuyentes" element={<ContribuyentesAuditorPage />} />
               <Route path="contribuyentes/:taxpayerId" element={<ContribuyenteAuditorDetallePage />} />
@@ -156,7 +156,7 @@ export default function App() {
           </Route>
 
           <Route element={<ProtectedRoute roles={["CONTRIBUYENTE"]} />}>
-            <Route path="/portal" element={<PortalLayout />}>
+            <Route path="/portal" element={<AreaLayout area="portal" />}>
               <Route index element={<InicioPage />} />
               <Route path="deudas" element={<MisDeudasPage />} />
               <Route path="boletas" element={<MisBoletasPage />} />
@@ -175,6 +175,7 @@ export default function App() {
           <Route path="/" element={<HomeRedirect />} />
           <Route path="*" element={<HomeRedirect />} />
         </Routes>
+        </Suspense>
       </BrowserRouter>
     </AuthProvider>
   );

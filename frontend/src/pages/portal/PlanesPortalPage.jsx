@@ -7,7 +7,7 @@ import Modal from "../../components/common/Modal.jsx";
 import Button from "../../components/common/Button.jsx";
 import Alert from "../../components/ui/Alert.jsx";
 import useResource from "../../hooks/useResource.js";
-import { portalService } from "../../services/rentasService.js";
+import { paymentPlanService, portalService } from "../../services/rentasService.js";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { formatCurrency, formatDate, formatPercentage } from "../../lib/format.js";
 
@@ -184,7 +184,7 @@ function RequestPlanModal({ taxpayerId, onClose, onDone }) {
     setSimulating(true);
     setSimulationError(null);
     Promise.all(INSTALLMENT_CHOICES.map((n) =>
-      portalService.simulatePaymentPlan({ taxpayerId, debtIds: selectedIds, installments: n }),
+      paymentPlanService.simulate({ taxpayerId, debtIds: selectedIds, installments: n }),
     )).then((results) => {
       if (!active) return;
       setAlternativas(results.map((result) => ({

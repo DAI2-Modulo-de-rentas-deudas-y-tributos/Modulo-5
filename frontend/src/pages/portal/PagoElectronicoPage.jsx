@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
 import Card from "../../components/common/Card.jsx";
 import DataTable from "../../components/common/DataTable.jsx";
@@ -16,6 +16,15 @@ const METHODS = [
   { value: "CARD", label: "Tarjeta" },
   { value: "DIGITAL_WALLET", label: "Billetera virtual / QR" },
 ];
+const PAYMENT_INTENT_STORAGE_KEY = "rentas.electronicPaymentIntent";
+
+function readPaymentIntent() {
+  try {
+    return JSON.parse(sessionStorage.getItem(PAYMENT_INTENT_STORAGE_KEY) ?? "null");
+  } catch {
+    return null;
+  }
+}
 
 export default function PagoElectronicoPage() {
   const { user } = useAuth();
@@ -28,8 +37,10 @@ export default function PagoElectronicoPage() {
   const [preview, setPreview] = useState(null);
   const [result, setResult] = useState(null);
   const [receipt, setReceipt] = useState(null);
+  const [receiptError, setReceiptError] = useState(null);
   const [working, setWorking] = useState(false);
   const [submitError, setSubmitError] = useState(null);
+  const paymentIntent = useRef(null);
 
   const selectDebt = (debt) => {
     setSelected(debt);
@@ -37,6 +48,7 @@ export default function PagoElectronicoPage() {
     setPreview(null);
     setResult(null);
     setReceipt(null);
+    setReceiptError(null);
   };
 
   const previewPayment = async () => {
@@ -59,16 +71,31 @@ export default function PagoElectronicoPage() {
     setWorking(true);
     setSubmitError(null);
     try {
+      const fingerprint = JSON.stringify([selected.id, method, preview.payableAmount]);
+      if (!paymentIntent.current || paymentIntent.current.fingerprint !== fingerprint) {
+        const storedIntent = readPaymentIntent();
+        paymentIntent.current = storedIntent?.fingerprint === fingerprint
+          ? storedIntent
+          : { fingerprint, idempotencyKey: crypto.randomUUID() };
+        sessionStorage.setItem(PAYMENT_INTENT_STORAGE_KEY, JSON.stringify(paymentIntent.current));
+      }
       const payment = await portalService.createElectronicPayment({
         debtId: selected.id,
         paymentMethod: method,
         amount: preview.payableAmount,
-        idempotencyKey: crypto.randomUUID(),
+        idempotencyKey: paymentIntent.current.idempotencyKey,
       });
-      const issuedReceipt = payment.status === "APPROVED" ? await portalService.paymentReceipt(payment.paymentId) : null;
       setResult(payment);
-      setReceipt(issuedReceipt);
+      paymentIntent.current = null;
+      sessionStorage.removeItem(PAYMENT_INTENT_STORAGE_KEY);
       reload();
+      if (payment.status === "APPROVED") {
+        try {
+          setReceipt(await portalService.paymentReceipt(payment.paymentId));
+        } catch {
+          setReceiptError("El pago se confirmó, pero no pudimos cargar el comprobante. Podés consultarlo en Mis pagos.");
+        }
+      }
     } catch (caught) {
       setSubmitError(caught.message);
     } finally {
@@ -94,6 +121,7 @@ export default function PagoElectronicoPage() {
             <Alert variant={result.status === "APPROVED" ? "success" : "error"} title={result.status === "APPROVED" ? "Pago aprobado" : "Pago rechazado"}>
               Operación {result.gatewayReference} · {formatCurrency(result.amount)}.
             </Alert>
+            {receiptError && <Alert variant="error" title="Comprobante no disponible">{receiptError}</Alert>}
             <FieldGrid columns={3} items={[
               { label: "Pago", value: `#${result.paymentId}` },
               { label: "Estado", value: <StatusBadge status={result.status} /> },
@@ -102,7 +130,7 @@ export default function PagoElectronicoPage() {
               { label: "Importe", value: formatCurrency(receipt?.amount ?? result.amount) },
               { label: "Referencia", value: result.gatewayReference },
             ]} />
-            <Button variant="secondary" onClick={() => { setSelected(null); setPreview(null); setResult(null); setReceipt(null); }}>Realizar otro pago</Button>
+            <Button variant="secondary" disabled={working} onClick={() => { setSelected(null); setPreview(null); setResult(null); setReceipt(null); setReceiptError(null); }}>Realizar otro pago</Button>
           </div>
         </Card>
       ) : (

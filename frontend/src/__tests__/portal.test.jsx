@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "../App.jsx";
 import { PORTAL_MODULES } from "../config/portalModules.js";
+import { portalService } from "../services/rentasService.js";
 import { instalarBackendFalso } from "./fixtures/backendFalso.js";
 
 /**
@@ -28,6 +29,7 @@ describe("portal del contribuyente", () => {
 
   afterEach(() => {
     cleanup();
+    vi.restoreAllMocks();
     sessionStorage.clear();
     window.history.pushState({}, "", "/");
     vi.unstubAllGlobals();
@@ -71,6 +73,23 @@ describe("portal del contribuyente", () => {
     expect(screen.queryByRole("button", { name: /registrar pago/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /emitir boleta/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /reversar/i })).toBeNull();
+  });
+
+  it("un doble clic rápido en pago electrónico envía una sola solicitud", async () => {
+    vi.spyOn(portalService, "debts").mockResolvedValue([{ id: 818, conceptName: "ABL", outstandingAmount: 100, status: "PENDING", inPaymentPlan: false }]);
+    vi.spyOn(portalService, "previewElectronicPayment").mockResolvedValue({ debtId: 818, requestedAmount: 100, payableAmount: 100, approved: true, message: "Pago disponible" });
+    let confirmar;
+    const registrar = vi.spyOn(portalService, "createElectronicPayment").mockImplementation(() => new Promise((resolve) => { confirmar = resolve; }));
+    vi.spyOn(portalService, "paymentReceipt").mockResolvedValue({ receiptNumber: "REC-QA", amount: 100 });
+    await loginAsContribuyente(user);
+    await user.click(screen.getByRole("link", { name: /^pago electrónico$/i }));
+    await user.click(await screen.findByRole("button", { name: /^elegir$/i }));
+    await user.click(screen.getByRole("button", { name: /revisar pago/i }));
+    await user.dblClick(await screen.findByRole("button", { name: /confirmar y pagar/i }));
+    expect(screen.getByRole("button", { name: /confirmar y pagar/i }).disabled).toBe(true);
+    expect(registrar).toHaveBeenCalledTimes(1);
+    await act(async () => { confirmar({ id: 92, paymentId: 92, amount: 100, status: "APPROVED", gatewayReference: "SIM-QA", createdAt: new Date().toISOString() }); });
+    expect(await screen.findByText(/pago aprobado/i)).toBeDefined();
   });
 
   it("no da acceso a las areas internas del municipio", async () => {

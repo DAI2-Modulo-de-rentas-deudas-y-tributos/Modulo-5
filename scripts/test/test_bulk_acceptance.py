@@ -1,17 +1,128 @@
 """Regresiones del runner: no confundir errores técnicos o población inválida con éxito."""
 import copy
 import json
+import os
 import unittest
 from decimal import Decimal
-from unittest.mock import Mock
+from datetime import date, datetime, timezone
+from unittest.mock import Mock, patch
 
 from aws_test_acceptance import (
-    AcceptanceFailure, HttpResponse, expect_run_rejection, get_all_pages,
-    load_taxpayers, run_bulk, validate_bulk_economics, validate_bulk_items,
+    AcceptanceFailure, ApiClient, HttpResponse, approve_as_distinct_actor, create_active_concept,
+    expect_run_rejection, fiscal_today, get_all_pages, load_taxpayers,
+    prepare_acceptance_actors, run_bulk, validate_bulk_economics, validate_bulk_items,
+    verify_self_approval_paths,
 )
 
 
 class BulkAcceptanceTests(unittest.TestCase):
+    def test_buenos_aires_fiscal_date_is_used_at_utc_day_boundary(self):
+        from aws_test_acceptance import BUENOS_AIRES_TZ
+
+        with patch("aws_test_acceptance.datetime") as clock:
+            instant = datetime(2026, 11, 2, 0, 30, tzinfo=timezone.utc)
+            clock.now.side_effect = lambda zone: instant.astimezone(zone)
+            self.assertEqual(fiscal_today(), date(2026, 11, 1))
+            clock.now.assert_called_once_with(BUENOS_AIRES_TZ)
+
+    def test_bearer_acceptance_requires_two_distinct_role_tokens(self):
+        client = ApiClient("https://example.invalid/api/v1", "general-token")
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(AcceptanceFailure, "TEST_API_RENTAS_BEARER_TOKEN"):
+                prepare_acceptance_actors(client)
+        with patch.dict(os.environ, {"TEST_API_RENTAS_BEARER_TOKEN": "same",
+                                     "TEST_API_SUPERVISOR_BEARER_TOKEN": "same"}, clear=True):
+            with self.assertRaisesRegex(AcceptanceFailure, "tokens distintos"):
+                prepare_acceptance_actors(client)
+        with patch.dict(os.environ, {"TEST_API_RENTAS_BEARER_TOKEN": "rentas-token",
+                                     "TEST_API_SUPERVISOR_BEARER_TOKEN": "supervisor-token"}, clear=True):
+            actors = prepare_acceptance_actors(client)
+            self.assertEqual(actors.rentas.bearer_token, "rentas-token")
+            self.assertEqual(actors.supervisor.bearer_token, "supervisor-token")
+            self.assertIsNone(actors.demo_admin)
+
+    def test_demo_acceptance_creates_rentas_and_supervisor_sessions_from_supervisor(self):
+        client = Mock()
+        client.bearer_token = None
+        client.api_base_url = "http://localhost:8080/api/v1"
+        client.json.return_value = {"authorities": ["RENTAS", "SUPERVISOR"]}
+        rentas = ApiClient(client.api_base_url, None, "rentas-session")
+        supervisor = ApiClient(client.api_base_url, None, "supervisor-session")
+        with patch("aws_test_acceptance.demo_identity", side_effect=[rentas, supervisor]) as create:
+            actors = prepare_acceptance_actors(client)
+        self.assertIs(actors.rentas, rentas)
+        self.assertIs(actors.supervisor, supervisor)
+        self.assertIs(actors.demo_admin, client)
+        self.assertEqual([call.args[1] for call in create.call_args_list], ["RENTAS", "SUPERVISOR"])
+
+    def test_approval_requires_exact_self_approval_403_then_supervisor_success(self):
+        requester = Mock()
+        supervisor = Mock()
+        requester.request.return_value = HttpResponse(
+            403, {}, b'{"code":"SELF_APPROVAL_FORBIDDEN"}')
+        supervisor.json.return_value = {"status": "ACTIVE"}
+        result = approve_as_distinct_actor(
+            requester, supervisor, "/tax-configurations/7/approve", expected_status="ACTIVE")
+        self.assertEqual(result["status"], "ACTIVE")
+        requester.request.assert_called_once_with(
+            "POST", "/tax-configurations/7/approve", None, expected=None)
+        supervisor.json.assert_called_once_with("POST", "/tax-configurations/7/approve", None)
+
+    def test_approval_rejects_other_errors_or_unexpected_supervisor_status(self):
+        for response in (HttpResponse(200, {}, b'{"status":"ACTIVE"}'),
+                         HttpResponse(403, {}, b'{"code":"FORBIDDEN"}')):
+            requester = Mock()
+            requester.request.return_value = response
+            with self.subTest(response=response), self.assertRaises(AcceptanceFailure):
+                approve_as_distinct_actor(requester, Mock(), "/approve")
+
+        requester = Mock()
+        requester.request.return_value = HttpResponse(403, {}, b'{"code":"SELF_APPROVAL_FORBIDDEN"}')
+        supervisor = Mock()
+        supervisor.json.return_value = {"status": "PENDING_APPROVAL"}
+        with self.assertRaisesRegex(AcceptanceFailure, "se esperaba ACTIVE"):
+            approve_as_distinct_actor(requester, supervisor, "/approve", expected_status="ACTIVE")
+
+    def test_http_self_approval_probes_both_workflows_then_approves_and_executes(self):
+        requester = Mock()
+        requester.demo_session = "requester"
+        requester.bearer_token = None
+        requester.api_base_url = "http://localhost/api/v1"
+        requester.json.side_effect = [
+            {"id": 1}, {"id": 2}, None, {"id": 3}, None, None, {"status": "EXECUTED"},
+        ]
+        requester.request.return_value = HttpResponse(403, {}, b'{"code":"SELF_APPROVAL_FORBIDDEN"}')
+        supervisor = Mock()
+        supervisor.json.side_effect = [{"status": "ACTIVE"}, {"status": "APPROVED"}]
+        actors = Mock(demo_admin=requester, rentas=Mock(), supervisor=supervisor)
+
+        result = verify_self_approval_paths(actors, {"id": 45}, "scenario-123456789012")
+
+        self.assertEqual(result["taxConfiguration"], "SELF_APPROVAL_FORBIDDEN then ACTIVE")
+        self.assertEqual(result["liquidationRun"], "SELF_APPROVAL_FORBIDDEN then APPROVED and EXECUTED")
+        self.assertEqual(requester.request.call_count, 2)
+        self.assertEqual(supervisor.json.call_count, 2)
+
+    def test_bearer_self_approval_is_explicitly_skipped_without_dual_authority_identity(self):
+        actors = Mock(demo_admin=None, rentas=ApiClient("https://example.invalid", "rentas"),
+                      supervisor=ApiClient("https://example.invalid", "supervisor"))
+        with patch.dict(os.environ, {}, clear=True):
+            result = verify_self_approval_paths(actors, {"id": 45}, "scenario")
+        self.assertEqual(result["status"], "skipped")
+        self.assertIn("TEST_API_SELF_APPROVAL_BEARER_TOKEN", result["reason"])
+
+    def test_bearer_self_approval_never_reuses_approver_identity(self):
+        actors = Mock(demo_admin=None, rentas=ApiClient("https://example.invalid", "rentas"),
+                      supervisor=ApiClient("https://example.invalid", "same"))
+        with patch.dict(os.environ, {"TEST_API_SELF_APPROVAL_BEARER_TOKEN": "same"}, clear=True):
+            with self.assertRaisesRegex(AcceptanceFailure, "distinta del supervisor"):
+                verify_self_approval_paths(actors, {"id": 45}, "scenario")
+
+    def test_access_denied_is_not_reported_as_self_approval(self):
+        with self.assertRaisesRegex(AcceptanceFailure, "antes de evaluar SELF_APPROVAL_FORBIDDEN"):
+            from aws_test_acceptance import expect_self_approval_rejection
+            expect_self_approval_rejection(HttpResponse(403, {}, b'{"code":"ACCESS_DENIED"}'))
+
     def test_taxpayers_liquidations_and_debts_are_read_in_pages_of_at_most_100(self):
         client = Mock()
 
@@ -83,19 +194,27 @@ class BulkAcceptanceTests(unittest.TestCase):
         client = Mock()
         for taxpayers in ([{"id": 1}], [{"id": 1}] * 200):
             with self.assertRaisesRegex(AcceptanceFailure, "contribuyentes distintos"):
-                run_bulk(client, taxpayers, 50, 120, "qa")
+                run_bulk(client, Mock(), taxpayers, 50, 120, "qa")
         client.json.assert_not_called()
         client.request.assert_not_called()
 
+    def test_configuration_is_approved_by_a_different_supervisor(self):
+        client, approver = Mock(), Mock()
+        client.json.side_effect = [{"id": 7}, {"id": 8}, {"status": "PENDING_APPROVAL"}]
+        approver.json.return_value = {"status": "ACTIVE"}
+        create_active_concept(client, approver, "QA", "run")
+        self.assertNotIn("/tax-configurations/8/approve", [call.args[1] for call in client.json.call_args_list])
+        approver.json.assert_called_once_with("POST", "/tax-configurations/8/approve")
+
     def test_only_the_expected_business_rejection_counts_as_idempotency(self):
         correct = json.dumps({"code": "RUN_NOT_APPROVED"}).encode()
-        expect_run_rejection(HttpResponse(422, {}, correct))
-        for status in (200, 401, 403, 404, 409, 500, 502, 503):
+        expect_run_rejection(HttpResponse(409, {}, correct))
+        for status in (200, 401, 403, 404, 422, 500, 502, 503):
             with self.subTest(status=status), self.assertRaises(AcceptanceFailure):
                 expect_run_rejection(HttpResponse(status, {}, correct))
         for body in (b'{}', b'{"code":"OTHER_ERROR"}', b'<html>Error</html>'):
             with self.assertRaises(AcceptanceFailure):
-                expect_run_rejection(HttpResponse(422, {}, body))
+                expect_run_rejection(HttpResponse(409, {}, body))
 
     def test_preview_and_execution_preserve_decimal_amounts_and_partial_error(self):
         expected = {1: Decimal("100.25"), 2: Decimal("200.50")}

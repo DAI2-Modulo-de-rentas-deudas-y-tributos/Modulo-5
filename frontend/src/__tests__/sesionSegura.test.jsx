@@ -24,15 +24,18 @@ describe("ciclo de sesión verificado por backend", () => {
   it.each([401, 403])("limpia token y perfil si /me responde %s", async (status) => {
     sessionStorage.setItem("rentas.token", "token-fixture");
     sessionStorage.setItem("rentas.user", JSON.stringify({ role: "SUPERVISOR" }));
+    sessionStorage.setItem("rentas.electronicPaymentIntent", JSON.stringify({ fingerprint: "fixture", idempotencyKey: "fixture-key" }));
     vi.spyOn(authService, "me").mockRejectedValue({ status });
     render(<AuthProvider><Estado /></AuthProvider>);
     await screen.findByText("sin sesión");
     expect(sessionStorage.getItem("rentas.token")).toBeNull();
     expect(sessionStorage.getItem("rentas.user")).toBeNull();
+    expect(sessionStorage.getItem("rentas.electronicPaymentIntent")).toBeNull();
   });
 
   it("un /me tardío no restaura una sesión después del logout", async () => {
     sessionStorage.setItem("rentas.token", "token-fixture");
+    sessionStorage.setItem("rentas.electronicPaymentIntent", JSON.stringify({ fingerprint: "fixture", idempotencyKey: "fixture-key" }));
     let resolver;
     vi.spyOn(authService, "me").mockImplementation(() => new Promise((resolve) => { resolver = resolve; }));
     const logout = vi.spyOn(authService, "logout").mockResolvedValue();
@@ -42,6 +45,7 @@ describe("ciclo de sesión verificado por backend", () => {
     expect(logout).toHaveBeenCalledOnce();
     expect(screen.getByText("sin sesión")).toBeDefined();
     expect(sessionStorage.getItem("rentas.user")).toBeNull();
+    expect(sessionStorage.getItem("rentas.electronicPaymentIntent")).toBeNull();
   });
 
   it("revoca el token recién emitido cuando el usuario eligió otra puerta", async () => {

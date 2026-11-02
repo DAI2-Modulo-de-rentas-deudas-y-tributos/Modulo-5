@@ -54,7 +54,7 @@ class FilteredQueryService {
         List<Predicate> predicates=new ArrayList<>();
         query.forEach((parameter,value)->{
             if(TRANSPORT.contains(parameter)||value==null||value.isBlank())return;
-            if(parameter.equals("q")){String pattern="%"+value.toLowerCase(Locale.ROOT)+"%";predicates.add(cb.or(definition.search.stream().map(field->cb.like(cb.lower(root.get(field)),pattern)).toArray(Predicate[]::new)));return;}
+            if(parameter.equals("q")){String escaped=value.toLowerCase(Locale.ROOT).replace("\\","\\\\").replace("%","\\%").replace("_","\\_");String pattern="%"+escaped+"%";predicates.add(cb.or(definition.search.stream().map(field->cb.like(cb.lower(root.get(field)),pattern,'\\')).toArray(Predicate[]::new)));return;}
             if(parameter.equals("from")||parameter.equals("to")){Path<?> path=root.get(definition.dateField);Comparable<?> converted=(Comparable<?>)rangeValue(value,path.getJavaType(),parameter.equals("to"));predicates.add(parameter.equals("from")?cb.greaterThanOrEqualTo((Expression)path,(Comparable)converted):cb.lessThanOrEqualTo((Expression)path,(Comparable)converted));return;}
             String field=definition.aliases.getOrDefault(parameter,parameter);Path<?> path=root.get(field);
             if(type==Debt.class&&parameter.equals("status")&&value.equalsIgnoreCase("OVERDUE")){predicates.add(cb.and(cb.lessThan(root.get("dueDate"),LocalDate.now()),cb.greaterThan(root.get("outstandingBalance"),java.math.BigDecimal.ZERO)));return;}

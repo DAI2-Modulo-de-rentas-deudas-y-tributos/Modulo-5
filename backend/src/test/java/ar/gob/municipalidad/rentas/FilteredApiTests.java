@@ -25,7 +25,7 @@ class FilteredApiTests {
 
     @BeforeEach void setup(){
         SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("api-test",null),null,List.of(new SimpleGrantedAuthority("ROLE_RENTAS"))));
-        taxpayer=catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(TaxpayerType.CITIZEN,"FILTER-1","111",null,"Filtro Uno"));concept=catalog.createConcept(new ApiDtos.CreateTaxConceptRequest("FILTER_FEE","Filtro",null,TaxConceptType.FEE,"M5"));TaxConfiguration configuration=catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(concept.id,CalculationType.FIXED,null,new BigDecimal("100"),null,null,true,true,LocalDate.now().minusDays(1),null));catalog.submit(configuration.id);catalog.approve(configuration.id);liquidations.create(new ApiDtos.LiquidationRequest(taxpayer.id,concept.id,YearMonth.now().toString(),BigDecimal.ZERO,LocalDate.now().plusDays(10)));
+        taxpayer=catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(TaxpayerType.CITIZEN,"FILTER-1","111",null,"Filtro Uno"));concept=catalog.createConcept(new ApiDtos.CreateTaxConceptRequest("FILTER_FEE","Filtro",null,TaxConceptType.FEE,"M5"));TaxConfiguration configuration=catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(concept.id,CalculationType.FIXED,null,new BigDecimal("100"),null,null,true,true,LocalDate.now().minusDays(1),null));catalog.submit(configuration.id);TestActorSupport.asApprover(() -> catalog.approve(configuration.id));liquidations.create(new ApiDtos.LiquidationRequest(taxpayer.id,concept.id,YearMonth.now().toString(),BigDecimal.ZERO,LocalDate.now().plusDays(10)));
         session=new DemoAuthSessions(demoUsers,taxpayers,encoder,demoAuth).token(DemoRole.RENTAS);
     }
     @AfterEach void clear(){SecurityContextHolder.clearContext();}
@@ -48,6 +48,26 @@ class FilteredApiTests {
             .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("INVALID_FILTER_VALUE"));
         mvc.perform(get("/api/v1/debts").header("X-Demo-Session",session).param("taxpayerId","not-a-number"))
             .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("INVALID_FILTER_VALUE"));
+    }
+
+    @Test void taxpayerSearchTreatsLikeWildcardsAsLiteralCharacters() throws Exception {
+        TaxpayerReference percent=catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(TaxpayerType.CITIZEN,"FILTER-PERCENT","123%45",null,"Literal % Uno"));
+        TaxpayerReference underscore=catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(TaxpayerType.CITIZEN,"FILTER_UNDERSCORE","123_45",null,"Literal _ Dos"));
+        TaxpayerReference backslash=catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(TaxpayerType.CITIZEN,"FILTER\\BACKSLASH","123\\45",null,"Literal \\ Tres"));
+
+        mvc.perform(get("/api/v1/taxpayers").header("X-Demo-Session",session).param("q","%"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.page.totalElements").value(1))
+            .andExpect(jsonPath("$.content[0].id").value(percent.id));
+        mvc.perform(get("/api/v1/taxpayers").header("X-Demo-Session",session).param("q","_"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.page.totalElements").value(1))
+            .andExpect(jsonPath("$.content[0].id").value(underscore.id));
+        mvc.perform(get("/api/v1/taxpayers").header("X-Demo-Session",session).param("q","\\"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.page.totalElements").value(1))
+            .andExpect(jsonPath("$.content[0].id").value(backslash.id));
+        // Sin dígitos: otros tests dejan contribuyentes con DNI aleatorio que pueden contener "111".
+        mvc.perform(get("/api/v1/taxpayers").header("X-Demo-Session",session).param("q","Filtro Uno"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.page.totalElements").value(1))
+            .andExpect(jsonPath("$.content[0].id").value(taxpayer.id));
     }
 
 }

@@ -75,8 +75,7 @@ export default function PlanesAuditorPage() {
       )}
 
       <Alert variant="info" title="Resolución y situación son cosas distintas">
-        La <strong>resolución</strong> es lo que viajó en <code>updatePaymentPlanStatus</code>{" "}
-        (otorgado o rechazado). La <strong>situación</strong> es el ciclo interno posterior:
+        La <strong>resolución</strong> indica si el plan fue otorgado o rechazado. La <strong>situación</strong> es el ciclo posterior:
         vigente, cumplido o incumplido.
       </Alert>
 

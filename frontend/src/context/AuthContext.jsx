@@ -1,11 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { authService } from "../services/rentasService.js";
 import { ApiError, AUTH_MODE } from "../services/apiClient.js";
+import { onSessionExpired } from "../services/sessionEvents.js";
 
 const AuthContext = createContext(null);
 
 const SESSION_KEY = "rentas.user";
 const TOKEN_KEY = "rentas.token";
+const PAYMENT_INTENT_KEY = "rentas.electronicPaymentIntent";
 
 function hasStoredToken() {
   if (AUTH_MODE === "core") return false;
@@ -16,6 +18,19 @@ export function AuthProvider({ children }) {
   const sessionGeneration = useRef(0);
   const [user, setUser] = useState(null);
   const [initializing, setInitializing] = useState(hasStoredToken);
+  const [sessionNotice, setSessionNotice] = useState(null);
+
+  useEffect(() => onSessionExpired((token) => {
+    if (sessionStorage.getItem(TOKEN_KEY) !== token) return;
+    ++sessionGeneration.current;
+    sessionStorage.removeItem(TOKEN_KEY);
+    sessionStorage.removeItem(SESSION_KEY);
+    setUser(null);
+    setInitializing(false);
+    setSessionNotice("Tu sesión venció. Ingresá nuevamente para continuar.");
+  }), []);
+
+  const dismissSessionNotice = useCallback(() => setSessionNotice(null), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -40,6 +55,7 @@ export function AuthProvider({ children }) {
         if (cancelled || generation !== sessionGeneration.current) return;
         sessionStorage.removeItem(TOKEN_KEY);
         sessionStorage.removeItem(SESSION_KEY);
+        sessionStorage.removeItem(PAYMENT_INTENT_KEY);
         setUser(null);
       } finally {
         if (!cancelled && generation === sessionGeneration.current) setInitializing(false);
@@ -70,6 +86,7 @@ export function AuthProvider({ children }) {
     sessionStorage.setItem(SESSION_KEY, JSON.stringify(profile));
     setUser(profile);
     setInitializing(false);
+    setSessionNotice(null);
     return { profile, accepted: true };
   }, []);
 
@@ -79,8 +96,10 @@ export function AuthProvider({ children }) {
     // Cerrar localmente antes de esperar la red evita restauraciones tardías.
     sessionStorage.removeItem(TOKEN_KEY);
     sessionStorage.removeItem(SESSION_KEY);
+    sessionStorage.removeItem(PAYMENT_INTENT_KEY);
     setUser(null);
     setInitializing(false);
+    setSessionNotice(null);
     if (token) await authService.logout(token);
   }, []);
 
@@ -88,13 +107,15 @@ export function AuthProvider({ children }) {
     () => ({
       user,
       initializing,
+      sessionNotice,
+      dismissSessionNotice,
       login,
       logout,
       isAuthenticated: Boolean(user),
       hasRole: (...roles) => Boolean(user) && roles.includes(user.role),
       isSupervisor: user?.role === "SUPERVISOR",
     }),
-    [user, initializing, login, logout],
+    [user, initializing, sessionNotice, dismissSessionNotice, login, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

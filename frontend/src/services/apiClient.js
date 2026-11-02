@@ -5,6 +5,7 @@
  * nunca hardcodeada. Toda la información proviene del backend: no hay dataset local.
  */
 import { adaptApiRequest, adaptApiResponse } from "./apiAdapters.js";
+import { notifySessionExpired } from "./sessionEvents.js";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").trim().replace(/\/+$/, "");
 
@@ -28,19 +29,23 @@ export function authHeaders() {
   return { "X-Demo-Session": token };
 }
 
-export async function request(path, { method = "GET", body, signal, responseType, headers } = {}) {
+export async function request(path, { method = "GET", body, signal, responseType, headers, requiresAuth = true } = {}) {
   const adapted = adaptApiRequest(path, { method, body, signal });
+  const requestHeaders = {
+    ...(responseType === "blob" ? { Accept: "application/pdf" } : {}),
+    ...(adapted.options.body === undefined ? {} : { "Content-Type": "application/json" }),
+    ...(requiresAuth ? authHeaders() : {}),
+    ...headers,
+  };
+  const sessionToken = new Headers(requestHeaders).get("X-Demo-Session");
   const response = await fetch(`${API_BASE_URL}${adapted.path}`, {
     method: adapted.options.method,
     signal: adapted.options.signal,
-    headers: {
-      ...(responseType === "blob" ? { Accept: "application/pdf" } : {}),
-      ...(adapted.options.body === undefined ? {} : { "Content-Type": "application/json" }),
-      ...authHeaders(),
-      ...headers,
-    },
+    headers: requestHeaders,
     body: adapted.options.body === undefined ? undefined : JSON.stringify(adapted.options.body),
   });
+
+  if (response.status === 401 && requiresAuth && sessionToken) notifySessionExpired(sessionToken);
 
   const contentType = response.headers.get("content-type") ?? "";
   if (response.ok && responseType === "blob") {
@@ -77,7 +82,7 @@ export async function request(path, { method = "GET", body, signal, responseType
 
   if (!response.ok) {
     throw new ApiError(
-      payload?.message ?? "No se pudo completar la operación.",
+      payload?.message ?? payload?.detail ?? "No se pudo completar la operación.",
       response.status,
       payload,
       payload?.code,

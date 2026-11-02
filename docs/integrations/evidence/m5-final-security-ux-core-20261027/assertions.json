@@ -1,0 +1,227 @@
+{
+  "commit": "9719007643e39c7b18266ae9c6c35426da1b8265",
+  "app": {
+    "api": "http://127.0.0.1:51541",
+    "web": "http://127.0.0.1:51542",
+    "browser": "Microsoft Edge (Playwright channel msedge)"
+  },
+  "syntheticFixture": {
+    "taxpayerAId": 2,
+    "taxpayerBId": 3,
+    "debtAId": 1,
+    "debtBId": 2,
+    "infractionAId": "48e50ff8-fdb9-4cf2-b74f-41b4f1ea9d10",
+    "infractionBId": "b11c2a43-5ecf-4e0f-86d5-324cea209210",
+    "initialAmount": 1000,
+    "paidAmount": 250,
+    "remainingAmount": 750,
+    "paymentId": 1,
+    "paymentIntegrationId": "deed67d5-0a3e-4bec-83c2-6833cbcb8c64",
+    "allocationId": 1,
+    "outboxEventId": "992dc572-8262-4dfe-959c-9b763da5c17a",
+    "brokerMessageId": "992dc572-8262-4dfe-959c-9b763da5c17a"
+  },
+  "assertions": [
+    {
+      "name": "A consulta su propia deuda existente",
+      "result": "PASS",
+      "detail": {
+        "http": 200,
+        "debtId": 1
+      }
+    },
+    {
+      "name": "B consulta su propia deuda existente",
+      "result": "PASS",
+      "detail": {
+        "http": 200,
+        "debtId": 2
+      }
+    },
+    {
+      "name": "Fixture A no tiene pagos anteriores",
+      "result": "PASS",
+      "detail": {
+        "priorPayments": 0
+      }
+    },
+    {
+      "name": "El mismo eventId M7 repetido no duplica la deuda B",
+      "result": "PASS",
+      "detail": {
+        "debtCount": 1
+      }
+    },
+    {
+      "name": "Portal A muestra saldo inicial 1.000",
+      "result": "PASS",
+      "detail": {
+        "debtId": 1
+      }
+    },
+    {
+      "name": "La primera respuesta se perdió después del commit del backend",
+      "result": "PASS",
+      "detail": {
+        "backendStatus": "APPROVED"
+      }
+    },
+    {
+      "name": "Reintento usa la misma Idempotency-Key y body",
+      "result": "PASS",
+      "detail": {
+        "retryCount": 1
+      }
+    },
+    {
+      "name": "Reintento devuelve el Payment ya creado",
+      "result": "PASS",
+      "detail": {
+        "paymentId": 1
+      }
+    },
+    {
+      "name": "La referencia de la operación se conserva en el UI",
+      "result": "PASS"
+    },
+    {
+      "name": "Refresco Portal A refleja saldo 750",
+      "result": "PASS",
+      "detail": {
+        "debtId": 1
+      }
+    },
+    {
+      "name": "Sesión independiente CASHIER refleja saldo 750 y pago 250",
+      "result": "PASS",
+      "detail": {
+        "taxpayerId": 2
+      }
+    },
+    {
+      "name": "Sesión independiente RENTAS refleja la misma deuda en 750",
+      "result": "PASS",
+      "detail": {
+        "debtId": 1
+      }
+    },
+    {
+      "name": "Rentas presenta origen y concepto en lenguaje funcional",
+      "result": "PASS"
+    },
+    {
+      "name": "Área AUDITOR inicia en su portal de consulta de sólo lectura",
+      "result": "PASS"
+    },
+    {
+      "name": "Panel del Supervisor no expone estados de base de datos",
+      "result": "PASS"
+    },
+    {
+      "name": "Área SUPERVISOR carga su panel y la bandeja de supervisión",
+      "result": "PASS"
+    },
+    {
+      "name": "Payment persiste una sola vez en PostgreSQL",
+      "result": "PASS",
+      "detail": {
+        "paymentId": 1,
+        "count": 1
+      }
+    },
+    {
+      "name": "Existe una sola imputación de 250 a la deuda A",
+      "result": "PASS",
+      "detail": {
+        "count": 1,
+        "amount": "250"
+      }
+    },
+    {
+      "name": "Payment amount y allocated_amount son 250",
+      "result": "PASS"
+    },
+    {
+      "name": "A no consulta deuda existente de B",
+      "result": "PASS",
+      "detail": {
+        "http": 403,
+        "code": "FORBIDDEN_OWNERSHIP"
+      }
+    },
+    {
+      "name": "B no consulta deuda existente de A",
+      "result": "PASS",
+      "detail": {
+        "http": 403,
+        "code": "FORBIDDEN_OWNERSHIP"
+      }
+    },
+    {
+      "name": "403 no expone campos/importes económicos",
+      "result": "PASS"
+    },
+    {
+      "name": "Las denegaciones IDOR no cambian deudas/pagos/imputaciones",
+      "result": "PASS"
+    },
+    {
+      "name": "Supervisor puede consultar Outbox de la prueba",
+      "result": "PASS"
+    },
+    {
+      "name": "El Outbox incluye paymentRegistered asociado al pago externo M7",
+      "result": "PASS",
+      "detail": {
+        "targetModule": "CORE"
+      }
+    },
+    {
+      "name": "Outbox informa BROKER_CONFIRMED (no ACK de Core)",
+      "result": "PASS",
+      "detail": {
+        "status": "BROKER_CONFIRMED"
+      }
+    },
+    {
+      "name": "Rabbit aislado recibió el evento del Outbox",
+      "result": "PASS",
+      "detail": {
+        "messageCount": 1
+      }
+    },
+    {
+      "name": "Rabbit conserva eventId como message_id estable",
+      "result": "PASS"
+    },
+    {
+      "name": "Envelope saliente mantiene exactamente ocho campos",
+      "result": "PASS"
+    },
+    {
+      "name": "Reintento idempotente no duplicó el evento publicado",
+      "result": "PASS"
+    },
+    {
+      "name": "No hubo errores JavaScript/recursos no esperados (excluye 404 favicon y reset inducido)",
+      "result": "PASS",
+      "detail": {
+        "pageErrors": 0,
+        "consoleErrors": [],
+        "resourceErrors": []
+      }
+    }
+  ],
+  "jsErrors": {
+    "pageErrors": 0,
+    "unexpectedConsoleErrors": [],
+    "resourceErrors": []
+  },
+  "versions": {
+    "node": "22.20.0",
+    "playwright": "1.64.1",
+    "postgres": "17.11-alpine",
+    "rabbitmq": "4.3-management"
+  },
+  "result": "PASS"
+}

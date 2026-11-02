@@ -22,5 +22,33 @@ class IndicatorTests {
     @AfterEach void clear(){SecurityContextHolder.clearContext();}
     // Los indicadores son globales y otras clases commitean pagos en la misma base (en CI, PostgreSQL),
     // asi que se compara contra la linea base previa y no contra una base vacia.
-    @Test void indicatorsAndTaxpayerSummaryUseConfirmedEconomicData(){ApiDtos.IndicatorSummaryResponse before=indicators.summary(null,null);BigDecimal todayBefore=indicators.collection(LocalDate.now(),LocalDate.now()).confirmedAmount();BigDecimal futureBefore=indicators.collection(LocalDate.now().plusDays(1),null).confirmedAmount();TaxpayerReference taxpayer=catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(TaxpayerType.CITIZEN,"IND-1","123",null,"Indicadores"));TaxConcept concept=catalog.createConcept(new ApiDtos.CreateTaxConceptRequest("IND-CONCEPT","Indicador",null,TaxConceptType.FEE,"M5"));TaxConfiguration c=catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(concept.id,CalculationType.FIXED,null,new BigDecimal("100"),null,null,true,true,LocalDate.now().minusDays(1),null));catalog.submit(c.id);catalog.approve(c.id);liquidations.create(new ApiDtos.LiquidationRequest(taxpayer.id,concept.id,YearMonth.now().toString(),BigDecimal.ZERO,LocalDate.now().minusDays(1)));Debt debt=debts.findByTaxpayerId(taxpayer.id).get(0);payments.register(new ApiDtos.RegisterPaymentRequest(taxpayer.id,PaymentMethod.CASH,new BigDecimal("40"),List.of(new ApiDtos.AllocationRequest(debt.id,new BigDecimal("40")))));ApiDtos.IndicatorSummaryResponse result=indicators.summary(null,null);assertThat(result.collection().confirmedAmount().subtract(before.collection().confirmedAmount())).isEqualByComparingTo("40.00");assertThat(indicators.collection(LocalDate.now(),LocalDate.now()).confirmedAmount().subtract(todayBefore)).isEqualByComparingTo("40.00");assertThat(indicators.collection(LocalDate.now().plusDays(1),null).confirmedAmount()).isEqualByComparingTo(futureBefore);assertThat(result.debt().outstandingAmount().subtract(before.debt().outstandingAmount())).isEqualByComparingTo("60.00");assertThat(result.delinquency().overdueDebtCount()-before.delinquency().overdueDebtCount()).isEqualTo(1);assertThat(taxpayerQueries.summary(taxpayer.id).outstandingDebt()).isEqualByComparingTo("60.00");}
+    @Test void indicatorsAndTaxpayerSummaryUseConfirmedEconomicData(){
+        LocalDate today=LocalDate.now();
+        ApiDtos.IndicatorSummaryResponse before=indicators.summary(null,null);
+        BigDecimal todayBefore=indicators.collection(today,today).confirmedAmount();
+        BigDecimal futureBefore=indicators.collection(today.plusDays(1),null).confirmedAmount();
+
+        TaxpayerReference taxpayer=catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(TaxpayerType.CITIZEN,"IND-1","123",null,"Indicadores"));
+        TaxConcept concept=catalog.createConcept(new ApiDtos.CreateTaxConceptRequest("IND-CONCEPT","Indicador",null,TaxConceptType.FEE,"M5"));
+        TaxConfiguration c=catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(concept.id,CalculationType.FIXED,null,new BigDecimal("100"),null,null,true,true,today.minusDays(1),null));
+        catalog.submit(c.id);TestActorSupport.asApprover(() -> catalog.approve(c.id));
+        liquidations.create(new ApiDtos.LiquidationRequest(taxpayer.id,concept.id,YearMonth.now().toString(),BigDecimal.ZERO,today.minusDays(1)));
+        Debt debt=debts.findByTaxpayerId(taxpayer.id).get(0);
+        payments.register(new ApiDtos.RegisterPaymentRequest(taxpayer.id,PaymentMethod.CASH,new BigDecimal("40"),List.of(new ApiDtos.AllocationRequest(debt.id,new BigDecimal("40")))));
+
+        ApiDtos.IndicatorSummaryResponse result=indicators.summary(null,null);
+        assertThat(result.collection().paymentCount()).isEqualTo(before.collection().paymentCount()+1);
+        assertThat(result.collection().confirmedAmount()).isEqualByComparingTo(before.collection().confirmedAmount().add(new BigDecimal("40.00")));
+        assertThat(result.collection().allocatedAmount()).isEqualByComparingTo(before.collection().allocatedAmount().add(new BigDecimal("40.00")));
+        assertThat(result.collection().unallocatedAmount()).isEqualByComparingTo(before.collection().unallocatedAmount());
+        assertThat(indicators.collection(today,today).confirmedAmount()).isEqualByComparingTo(todayBefore.add(new BigDecimal("40.00")));
+        assertThat(indicators.collection(today.plusDays(1),null).confirmedAmount()).isEqualByComparingTo(futureBefore);
+        assertThat(result.debt().debtCount()).isEqualTo(before.debt().debtCount()+1);
+        assertThat(result.debt().openCount()).isEqualTo(before.debt().openCount()+1);
+        assertThat(result.debt().originalAmount()).isEqualByComparingTo(before.debt().originalAmount().add(new BigDecimal("100.00")));
+        assertThat(result.debt().outstandingAmount()).isEqualByComparingTo(before.debt().outstandingAmount().add(new BigDecimal("60.00")));
+        assertThat(result.delinquency().overdueDebtCount()).isEqualTo(before.delinquency().overdueDebtCount()+1);
+        assertThat(result.delinquency().overdueAmount()).isEqualByComparingTo(before.delinquency().overdueAmount().add(new BigDecimal("60.00")));
+        assertThat(taxpayerQueries.summary(taxpayer.id).outstandingDebt()).isEqualByComparingTo("60.00");
+    }
 }

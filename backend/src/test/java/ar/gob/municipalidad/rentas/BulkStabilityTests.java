@@ -157,7 +157,7 @@ class BulkStabilityTests {
         runs.preview(fixture.runId());
         runs.submit(fixture.runId());
         businessError(() -> runs.execute(fixture.runId()), "RUN_NOT_APPROVED");
-        runs.reject(fixture.runId(), "QA: rechazo controlado");
+        TestActorSupport.asApprover(() -> runs.reject(fixture.runId(), "QA: rechazo controlado"));
         businessError(() -> runs.execute(fixture.runId()), "RUN_NOT_APPROVED");
         assertThat(liquidationRepository.count()).isEqualTo(before);
         assertThat(debts.count()).isEqualTo(debtCount);
@@ -208,7 +208,7 @@ class BulkStabilityTests {
         } finally { pool.shutdownNow(); }
     }
 
-    private void approve(Fixture fixture) { runs.submit(fixture.runId()); runs.approve(fixture.runId(), "QA"); }
+    private void approve(Fixture fixture) { runs.submit(fixture.runId()); TestActorSupport.asApprover(() -> runs.approve(fixture.runId(), "QA")); }
 
     private Fixture fixture(int valid, int invalid) {
         return tx(() -> {
@@ -236,7 +236,7 @@ class BulkStabilityTests {
             TaxConfiguration config = catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(
                 concept, CalculationType.FIXED, null, new BigDecimal(amount), null, null,
                 true, true, LocalDate.now().minusDays(1), null));
-            catalog.submit(config.id); catalog.approve(config.id);
+            catalog.submit(config.id); TestActorSupport.asApprover(() -> catalog.approve(config.id));
             return config;
         });
     }

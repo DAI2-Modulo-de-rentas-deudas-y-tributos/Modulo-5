@@ -18,7 +18,7 @@ class AdjustmentDomainEventsTests {
         EventosDeDominio events=mock(EventosDeDominio.class);
         AdjustmentRequest request=new AdjustmentRequest();request.id=17L;request.debtId=29L;request.status=AdjustmentStatus.PENDING_APPROVAL;request.type=AdjustmentType.DISCOUNT;request.amount=new BigDecimal("10.00");
         Debt debt=new Debt();debt.id=29L;debt.currentAmount=new BigDecimal("100.00");debt.outstandingBalance=new BigDecimal("100.00");debt.status=DebtStatus.PENDING;
-        when(adjustments.findById(17L)).thenReturn(Optional.of(request));
+        when(adjustments.findByIdForUpdate(17L)).thenReturn(Optional.of(request));
         when(debts.findByIdForUpdate(29L)).thenReturn(Optional.of(debt));
         when(identity.get()).thenReturn(new AuthenticatedIdentity("supervisor",null));
 

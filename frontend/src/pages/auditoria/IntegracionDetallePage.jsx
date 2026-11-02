@@ -10,7 +10,7 @@ import FieldGrid from "../../components/auditoria/FieldGrid.jsx";
 import HistoryTimeline from "../../components/auditoria/HistoryTimeline.jsx";
 import useResource from "../../hooks/useResource.js";
 import { auditService } from "../../services/rentasService.js";
-import { MODULE_LABELS } from "../../config/etiquetasModulos.js";
+import { EVENT_LABELS, MODULE_LABELS } from "../../config/etiquetasModulos.js";
 import { formatDateTime } from "../../lib/format.js";
 
 /**
@@ -46,7 +46,7 @@ export default function IntegracionDetallePage() {
 
   const breadcrumb = [
     { id: "integraciones", label: "Integraciones", path: "/auditor/integraciones" },
-    { id: "detalle", label: event?.eventType ?? "Evento" },
+    { id: "detalle", label: EVENT_LABELS[event?.eventType] ?? "Evento" },
   ];
 
   if (error || !event) {
@@ -68,7 +68,7 @@ export default function IntegracionDetallePage() {
   return (
     <ModuleShell
       label="Auditoría"
-      title={event.eventType}
+      title={EVENT_LABELS[event.eventType] ?? "Evento de integración"}
       description={`${MODULE_LABELS[event.sourceModule] ?? event.sourceModule} → ${MODULE_LABELS[event.destinationModule] ?? event.destinationModule}`}
       breadcrumb={breadcrumb}
       homePath="/auditor"
@@ -80,13 +80,11 @@ export default function IntegracionDetallePage() {
         </Alert>
       )}
 
-      <Card title="Datos del evento">
+      <Card title="Resumen de la operación">
         <div className="px-5 py-4">
           <FieldGrid
-            columns={4}
+            columns={3}
             items={[
-              { label: "Event ID", value: <span className="tabular-nums">{event.eventId}</span>, span: 2 },
-              { label: "Tipo", value: event.eventType },
               { label: "Estado", value: <StatusBadge status={event.status} /> },
               {
                 label: "Módulo origen",
@@ -96,7 +94,7 @@ export default function IntegracionDetallePage() {
                 label: "Módulo destino",
                 value: MODULE_LABELS[event.destinationModule] ?? event.destinationModule,
               },
-              { label: "Fecha de recepción", value: formatDateTime(event.occurredAt) },
+              { label: "Fecha", value: formatDateTime(event.occurredAt) },
               {
                 label: "Fecha de procesamiento",
                 value: event.processedAt ? formatDateTime(event.processedAt) : null,
@@ -107,13 +105,21 @@ export default function IntegracionDetallePage() {
         </div>
       </Card>
 
-      <Card title="Payload" description="El campo `data` del envelope común, tal como viajó.">
-        <div className="px-5 py-4">
-          <pre className="overflow-x-auto rounded-lg border border-neutral-200 bg-neutral-50 p-4 text-[12px] leading-relaxed text-neutral-700">
+      <details className="rounded-xl border border-neutral-200 bg-white shadow-sm">
+        <summary className="cursor-pointer px-5 py-4 text-[13px] font-semibold text-[#0F2C59]">Detalles técnicos</summary>
+        <div className="border-t border-neutral-100 px-5 py-4">
+          <FieldGrid columns={2} items={[
+            { label: "Identificador del evento", value: <span className="break-all tabular-nums">{event.eventId}</span> },
+            { label: "Tipo técnico", value: event.eventType },
+            { label: "Código de origen", value: event.sourceModule },
+            { label: "Código de destino", value: event.destinationModule },
+          ]} />
+          <h2 className="mt-5 text-[12px] font-semibold text-neutral-600">Datos recibidos</h2>
+          <pre className="mt-2 overflow-x-auto rounded-lg border border-neutral-200 bg-neutral-50 p-4 text-[12px] leading-relaxed text-neutral-700">
             {formatearPayload(event.payload)}
           </pre>
         </div>
-      </Card>
+      </details>
 
       <Card title="Resultado" description="Qué generó el evento dentro de Rentas.">
         <div className="px-5 py-4">

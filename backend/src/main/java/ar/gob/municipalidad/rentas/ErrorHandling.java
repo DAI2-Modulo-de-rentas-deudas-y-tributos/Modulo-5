@@ -24,16 +24,22 @@ import java.util.TreeMap;
 import java.util.UUID;
 
 class BusinessException extends RuntimeException {
-    final String code; final int status;
-    BusinessException(String code, String message, int status) { super(message); this.code=code; this.status=status; }
+    final String code; final int status; final Integer retryAfterSeconds;
+    BusinessException(String code, String message, int status) { this(code,message,status,null); }
+    BusinessException(String code, String message, int status,Integer retryAfterSeconds) { super(message); this.code=code; this.status=status; this.retryAfterSeconds=retryAfterSeconds; }
 }
 
 @RestControllerAdvice
 class GlobalExceptionHandler {
     private static final Logger log=LoggerFactory.getLogger(GlobalExceptionHandler.class);
+    @org.springframework.beans.factory.annotation.Autowired(required=false) private AuditService audit;
     @ExceptionHandler(BusinessException.class)
     ResponseEntity<ApiDtos.ErrorResponse> business(BusinessException ex, HttpServletRequest request) {
-        return response(ex.status, ex.code, ex.getMessage(), request);
+        if(ex.status==403&&audit!=null) audit.recordAccessDenied(request,ex.code);
+        ResponseEntity<ApiDtos.ErrorResponse> error=response(ex.status, ex.code, ex.getMessage(), request);
+        if(ex.retryAfterSeconds==null) return error;
+        HttpHeaders headers=new HttpHeaders();headers.set(HttpHeaders.RETRY_AFTER,Integer.toString(ex.retryAfterSeconds));headers.setContentType(MediaType.APPLICATION_PROBLEM_JSON);
+        return new ResponseEntity<>(error.getBody(),headers,HttpStatus.valueOf(ex.status));
     }
     @ExceptionHandler(MethodArgumentNotValidException.class)
     ResponseEntity<ApiDtos.ErrorResponse> validation(MethodArgumentNotValidException ex, HttpServletRequest request) {
@@ -61,12 +67,14 @@ class GlobalExceptionHandler {
     }
     @ExceptionHandler(AccessDeniedException.class)
     ResponseEntity<ApiDtos.ErrorResponse> accessDenied(AccessDeniedException ex,HttpServletRequest request) {
+        if(audit!=null) audit.recordAccessDenied(request,"ACCESS_DENIED");
         return response(403,"ACCESS_DENIED","No tiene permisos para realizar esta operación",request);
     }
     @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
     ResponseEntity<ApiDtos.ErrorResponse> methodNotAllowed(HttpRequestMethodNotSupportedException ex,HttpServletRequest request) {
         ResponseEntity<ApiDtos.ErrorResponse> error=response(405,"METHOD_NOT_ALLOWED","El método solicitado no está permitido para este recurso",request);
         HttpHeaders headers=new HttpHeaders();
+        headers.putAll(error.getHeaders());
         if(ex.getSupportedHttpMethods()!=null) headers.setAllow(ex.getSupportedHttpMethods());
         return new ResponseEntity<>(error.getBody(),headers,HttpStatus.METHOD_NOT_ALLOWED);
     }
@@ -76,14 +84,16 @@ class GlobalExceptionHandler {
     }
     @ExceptionHandler(Exception.class)
     ResponseEntity<ApiDtos.ErrorResponse> unexpected(Exception ex,HttpServletRequest request) {
-        String traceId=traceId();log.error("Unexpected API error traceId={} exceptionType={}",traceId,ex.getClass().getSimpleName());
+        String traceId=traceId();log.error("Unexpected API error traceId={} exceptionType={}",traceId,ex.getClass().getSimpleName(),OperationalLogSupport.sanitizedStackTrace(ex));
         return response(500,"INTERNAL_ERROR","Ocurrió un error interno",request,traceId,null);
     }
     private ResponseEntity<ApiDtos.ErrorResponse> response(int status, String code, String message, HttpServletRequest request) {
         return response(status,code,message,request,traceId(),null);
     }
     private ResponseEntity<ApiDtos.ErrorResponse> response(int status,String code,String message,HttpServletRequest request,String traceId,Object details) {
-        return ResponseEntity.status(status).body(new ApiDtos.ErrorResponse(OffsetDateTime.now(),status,code,message,request.getRequestURI(),traceId,details));
+        return ResponseEntity.status(status).contentType(MediaType.APPLICATION_PROBLEM_JSON)
+            .body(new ApiDtos.ErrorResponse("about:blank",HttpStatus.valueOf(status).getReasonPhrase(),OffsetDateTime.now(),status,
+                message,request.getRequestURI(),code,message,request.getRequestURI(),traceId,details));
     }
     private String traceId(){String traceId=MDC.get("traceId");return traceId==null?UUID.randomUUID().toString():traceId;}
 }

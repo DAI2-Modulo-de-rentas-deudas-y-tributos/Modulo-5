@@ -131,7 +131,7 @@ class PercentageBenefitRegressionTests {
             concept.id, CalculationType.PERCENTAGE, new BigDecimal("2.0000"), null, null, null,
             true, true, LocalDate.now().minusDays(1), null));
         catalog.submit(configuration.id);
-        catalog.approve(configuration.id);
+        TestActorSupport.asApprover(() -> catalog.approve(configuration.id));
         return new Fixture(taxpayer, concept, period, LocalDate.now().plusDays(10));
     }
 

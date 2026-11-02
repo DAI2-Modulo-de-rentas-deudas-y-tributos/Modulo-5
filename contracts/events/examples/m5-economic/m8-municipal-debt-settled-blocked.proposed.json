@@ -1,0 +1,19 @@
+{
+  "eventId": "2a4fd82a-6be0-4b14-bb18-c25df8b60478",
+  "eventType": "debtSettled",
+  "eventVersion": "1.0",
+  "occurredAt": "2026-10-26T13:00:00-03:00",
+  "sourceModule": "rentas",
+  "correlationId": null,
+  "causationId": null,
+  "data": {
+    "debtId": "653d9e79-2cd1-4ec1-8ada-845374f6903d",
+    "citizenId": "2808fa6c-1e50-4f71-a46e-ca444458924b",
+    "conceptCode": "TASA_SERVICIOS",
+    "originType": "MUNICIPAL_TAX",
+    "originId": "d53f7338-269c-428f-89a5-03eda40a9be7",
+    "settledAt": "2026-10-26T13:00:00-03:00",
+    "remainingBalance": 0.00,
+    "outstandingBalance": 0.00
+  }
+}

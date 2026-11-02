@@ -13,7 +13,6 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
-import com.fasterxml.jackson.databind.ObjectMapper;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -27,14 +26,13 @@ class ProductionSchemaIsolationTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired ApplicationContext context;
     @Autowired MockMvc mvc;
-    @Autowired ObjectMapper json;
 
     @DynamicPropertySource
     static void productionDatabase(DynamicPropertyRegistry registry) {
         registry.add("spring.datasource.url", () -> "jdbc:h2:mem:production-schema;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE");
         registry.add("spring.datasource.username", () -> "sa");
         registry.add("spring.datasource.password", () -> "");
-        registry.add("spring.flyway.locations", () -> "classpath:db/migration,classpath:db/migration-production");
+        registry.add("spring.flyway.locations", () -> "classpath:db/migration,classpath:db/migration-production,classpath:db/migration-production-test-h2,classpath:db/migration-m8-test-h2");
     }
 
     @Test
@@ -48,6 +46,19 @@ class ProductionSchemaIsolationTest {
             "select count(*) from flyway_schema_history where version='18' and success", Integer.class)).isOne();
         assertThat(jdbc.queryForObject(
             "select count(*) from flyway_schema_history where version='19' and success", Integer.class)).isOne();
+        assertThat(jdbc.queryForObject(
+            "select count(*) from flyway_schema_history where version='24' and success", Integer.class)).isOne();
+        assertThat(jdbc.queryForObject(
+            "select count(*) from flyway_schema_history where version='25' and success", Integer.class)).isOne();
+        assertThat(jdbc.queryForObject(
+            "select count(*) from flyway_schema_history where version='26' and success", Integer.class)).isOne();
+        assertThat(jdbc.queryForObject(
+            "select count(*) from flyway_schema_history where version='27' and success", Integer.class)).isOne();
+        assertThat(jdbc.queryForObject(
+            "select count(*) from flyway_schema_history where version='28' and success", Integer.class)).isOne();
+        assertThat(jdbc.queryForList(
+            "select column_name from information_schema.columns where table_name='ticket_case'", String.class))
+            .contains("request_type", "subcategory");
         assertThat(jdbc.queryForList(
             "select column_name from information_schema.columns where table_name='payment_reversal_request'", String.class))
             .contains("resolution_reason");
@@ -59,16 +70,13 @@ class ProductionSchemaIsolationTest {
     }
 
     @Test
-    void productionDoesNotExposeDemoAuthHttpRoutesOrOpenApiOperations() throws Exception {
+    void productionDoesNotExposeDemoAuthHttpRoutesOrOpenApiDocumentation() throws Exception {
         mvc.perform(post("/api/v1/dev-auth/login").contentType(MediaType.APPLICATION_JSON).content("{}"))
             .andExpect(status().isNotFound());
         mvc.perform(post("/api/v1/dev-auth/bootstrap").contentType(MediaType.APPLICATION_JSON).content("{}"))
             .andExpect(status().isNotFound());
-        var paths=json.readTree(mvc.perform(get("/v3/api-docs")).andExpect(status().isOk())
-            .andReturn().getResponse().getContentAsString()).path("paths");
-        assertThat(paths.has("/api/v1/dev-auth/login")).isFalse();
-        assertThat(paths.has("/api/v1/dev-auth/bootstrap")).isFalse();
-        assertThat(paths.has("/api/v1/dev-auth/users")).isFalse();
+        mvc.perform(get("/v3/api-docs")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/swagger-ui/index.html")).andExpect(status().isUnauthorized());
     }
 
     @Test
@@ -86,7 +94,7 @@ class ProductionSchemaIsolationTest {
         assertThat(upgrade.queryForObject("select count(*) from demo_user", Integer.class)).isOne();
 
         Flyway production = Flyway.configure().dataSource(url, "sa", "")
-            .locations("classpath:db/migration", "classpath:db/migration-production").load();
+            .locations("classpath:db/migration", "classpath:db/migration-production", "classpath:db/migration-production-test-h2", "classpath:db/migration-m8-test-h2").load();
         production.migrate();
         production.validate();
 
@@ -98,5 +106,18 @@ class ProductionSchemaIsolationTest {
             "select count(*) from flyway_schema_history where version='18' and success", Integer.class)).isOne();
         assertThat(upgrade.queryForObject(
             "select count(*) from flyway_schema_history where version='19' and success", Integer.class)).isOne();
+        assertThat(upgrade.queryForObject(
+            "select count(*) from flyway_schema_history where version='24' and success", Integer.class)).isOne();
+        assertThat(upgrade.queryForObject(
+            "select count(*) from flyway_schema_history where version='25' and success", Integer.class)).isOne();
+        assertThat(upgrade.queryForObject(
+            "select count(*) from flyway_schema_history where version='26' and success", Integer.class)).isOne();
+        assertThat(upgrade.queryForObject(
+            "select count(*) from flyway_schema_history where version='27' and success", Integer.class)).isOne();
+        assertThat(upgrade.queryForObject(
+            "select count(*) from flyway_schema_history where version='28' and success", Integer.class)).isOne();
+        assertThat(upgrade.queryForList(
+            "select column_name from information_schema.columns where table_name='ticket_case'", String.class))
+            .contains("request_type", "subcategory");
     }
 }

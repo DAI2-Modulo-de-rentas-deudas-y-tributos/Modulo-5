@@ -59,13 +59,9 @@ export default function DataTable({
             {rows.map((row) => (
               <tr
                 key={rowKey(row)}
-                onClick={onRowClick ? () => onRowClick(row) : undefined}
-                tabIndex={onRowClick ? 0 : undefined}
-                onKeyDown={onRowClick ? (event) => {
-                  if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) {
-                    event.preventDefault();
-                    onRowClick(row);
-                  }
+                onClick={onRowClick ? (event) => {
+                  if (event.target.closest("button, a, input, select, textarea")) return;
+                  onRowClick(row);
                 } : undefined}
                 className={`border-b border-neutral-100 last:border-0 transition-colors hover:bg-neutral-50/70 ${
                   onRowClick ? "cursor-pointer" : ""
@@ -81,6 +77,16 @@ export default function DataTable({
                     } ${column.className ?? ""}`}
                   >
                     {column.render ? column.render(row) : row[column.key]}
+                    {onRowClick && column === columns[0] && (
+                      <button
+                        type="button"
+                        className="sr-only focus:not-sr-only focus:relative focus:z-10 focus:ml-2 focus:rounded focus:border focus:border-blue-700 focus:bg-white focus:px-2 focus:py-1 focus:text-blue-800 focus:shadow"
+                        onClick={() => onRowClick(row)}
+                        aria-label="Activar fila"
+                      >
+                        Abrir
+                      </button>
+                    )}
                   </td>
                 ))}
               </tr>

@@ -35,7 +35,7 @@ class M2TicketEventTests {
     @Autowired DemoUserRepository demoUsers; @Autowired TaxpayerRepository taxpayers;
     @Autowired PasswordEncoder encoder; @Autowired DemoAuthService demoAuth;
 
-    @Test void simulaCreacionActualizacionEIdempotenciaYPermiteTomarElTicket() throws Exception {
+    @Test void simulaElAdaptadorLegadoSinPublicarUnEventoCoreInvalido() throws Exception {
         UUID createdId=UUID.randomUUID();
         String created="""
             {"eventId":"%s","eventType":"ticketCreated","occurredAt":"2026-09-03T10:00:00-03:00","sourceModule":"M2","data":{"ticketId":1001,"citizenId":123,"category":"RENTAS","description":"El pago no aparece imputado","priority":"HIGH"}}
@@ -47,6 +47,9 @@ class M2TicketEventTests {
             .andExpect(status().isAccepted());
 
         TicketCase ticket=tickets.findByExternalTicketId("1001").orElseThrow();
+        assertThat(ticket.category).isEqualTo("RENTAS");
+        assertThat(ticket.requestType).isNull();
+        assertThat(ticket.subcategory).isNull();
         assertThat(processed.existsByExternalEventId(createdId.toString())).isTrue();
         assertThat(eventLog.findFirstByExternalEventIdOrderByIdDesc(createdId.toString()).orElseThrow().status).isEqualTo(IntegrationEventStatus.PROCESSED);
 
@@ -62,7 +65,7 @@ class M2TicketEventTests {
 
         mvc.perform(post("/api/v1/tickets/{id}/assign",ticket.id).header("X-Demo-Session",new DemoAuthSessions(demoUsers,taxpayers,encoder,demoAuth).token(DemoRole.RENTAS)))
             .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("IN_PROGRESS"));
-        assertThat(outbox.findAll()).anyMatch(x->x.eventType.equals("updateTicketStatus")&&x.targetModule.equals("PLATFORM"));
+        assertThat(outbox.findAll()).noneMatch(x->x.eventType.equals("updateTicketStatus"));
     }
 
     @Test void reintentaUnEventoFallidoHastaEnviarloALaColaDeErrores() {
