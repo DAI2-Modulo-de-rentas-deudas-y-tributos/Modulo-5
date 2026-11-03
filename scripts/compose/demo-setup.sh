@@ -92,6 +92,14 @@ $(sql "SELECT to_char(now() - interval '2 months', 'YYYY-MM'),
               to_char(now() + interval '10 days', 'YYYY-MM-DD')" | tr '|' ' ')
 EOF
 
+# Conceptos de M4 (Habilitaciones): sin ellos sus tasas y multas quedan pendientes al consumirse.
+ensure_concept() { # código nombre tipo
+  [ -n "$(concept "$1")" ] \
+    || api "$RENTAS_TOKEN" tax-concepts "{\"code\":\"$1\",\"name\":\"$2\",\"type\":\"$3\",\"originModule\":\"M4\"}" > /dev/null
+}
+ensure_concept PERMIT_FEE "Tasa de habilitación comercial" FEE
+ensure_concept COMMERCIAL_FINE "Multa comercial" FINE
+
 ensure_configuration ABL '"calculationType":"PERCENTAGE","rate":0.15,"minimumAmount":5000'
 ensure_configuration TASA_SERVICIOS '"calculationType":"FIXED","fixedAmount":12000'
 ensure_configuration PATENTE '"calculationType":"PERCENTAGE","rate":0.4'

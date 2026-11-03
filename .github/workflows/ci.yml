@@ -255,6 +255,10 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
+      # Eje C: mensaje duplicado, mensaje inválido a la DLQ y broker caído sin perder eventos.
+      - name: Pruebas de resiliencia de la mensajería
+        run: sh scripts/compose/resilience-test.sh
+
       # Eje B: todas las operaciones contra el OpenAPI publicado, con datos válidos e inválidos.
       - name: Pruebas de contrato contra el OpenAPI (Schemathesis)
         run: sh scripts/compose/contract-test.sh
