@@ -1,8 +1,8 @@
 # SCRUM-793 — Solicitud de decisión para cuatro CVE residuales
 
-**Estado:** material preparado para revisión; ninguno de los cuatro CVE se declara corregido ni aceptado. No se modificó código ni dependencias como parte de este documento. Fecha de preparación: 2026-10-29.
+**Estado:** material preparado para revisión; ninguno de los cuatro CVE residuales 2026 se declara corregido ni aceptado. Fecha de actualización: 2026-11-03. La verificación descrita corresponde a la candidata local `codex/m5-final-close-20261103`, basada en `origin/develop` `ffc9038be5bae15b3bb93724198124b6bf0048d3`; no es una aprobación de Seguridad ni evidencia de producción.
 
-La evaluación de esta ronda parte de `integration/m5-final-develop-20261028` en `8f8dfc5aaa89a05af59231ca1a55bb5faaa61c60`, más los cambios locales sin commit del gate de cobertura y esta decisión. La última ejecución de `clean verify` terminó correctamente con Temurin 17.0.20.1: 569 tests, 0 fallas, 0 errores y 0 omitidos; JaCoCo global 91,44% líneas (2533/2770) y 66,70% ramas (1743/2613). El gate específico del dominio registró 98,54% líneas (472/479) y 72,71% ramas (634/872) sobre 19 clases de las 14 familias. PostgreSQL Testcontainers 17.11 y migraciones efímeras hasta V31 pasaron. Esta solicitud complementa el escaneo actualizado y no sustituye la decisión formal del responsable de Seguridad.
+La ejecución actual de `./mvnw.cmd clean verify` terminó correctamente con Temurin 17.0.20.1: 843 pruebas, 0 fallas, 0 errores y 0 omitidas, más el test de gate de dominio. JaCoCo global: 92,86% líneas (3029/3262) y 72,67% ramas (2420/3330). El gate específico del dominio registró 98,54% líneas (472/479) y 73,51% ramas (641/872) sobre 19 clases de las 14 familias. PostgreSQL Testcontainers 17.11, RabbitMQ 4.3 efímero y migraciones efímeras hasta V31 pasaron. Un `dependency:tree` actual confirma Spring Framework/WebMVC 6.2.19, Spring Data JPA 3.5.13, Spring AMQP 3.2.12 y Spring Security 6.5.11. Esta comprobación de versiones no sustituye un escaneo SCA del SHA final ni la decisión formal del responsable de Seguridad.
 
 ## Alcance original de SCRUM-793
 
@@ -12,7 +12,7 @@ Las correcciones OSS de 2025 son Spring Security `6.5.5` o superior dentro de la
 
 ## Base técnica y clasificación
 
-Las versiones corresponden al árbol Maven documentado para la candidata: Spring Framework/WebMVC `6.2.19`, Spring Data JPA `3.5.13` y Spring AMQP `3.2.12` (compile/runtime, transitivas administradas por Spring Boot `3.5.16`). Las cuatro versiones están dentro de los rangos afectados de sus avisos oficiales. La matriz separa la presencia de una versión vulnerable de evidencia de precondiciones en la aplicación; ausencia de una ruta observada reduce aplicabilidad actual, pero no corrige el componente.
+Las versiones corresponden al árbol Maven medido en esta candidata: Spring Framework/WebMVC `6.2.19`, Spring Data JPA `3.5.13` y Spring AMQP `3.2.12` (compile/runtime, transitivas administradas por Spring Boot `3.5.16`); Spring Security está en `6.5.11`. Las tres primeras versiones siguen dentro del rango afectado de los cuatro avisos 2026. Security 6.5.11 supera las versiones OSS corregidas de CVE-2025-41248, y Framework 6.2.19 supera el fix OSS 6.2.11 de CVE-2025-41249. La matriz separa la presencia de versiones afectadas de la evidencia sobre precondiciones en la aplicación; no hallar una ruta de explotación no corrige el componente.
 
 | CVE | Dependencia y severidad del mantenedor | Precondición publicada | Evidencia revisada en M5 | Mitigación observable y riesgo residual | Decisión requerida |
 |---|---|---|---|---|---|
