@@ -1,0 +1,77 @@
+name: Mutation testing
+
+# Eje B: mutation score de PIT >= 60 % sobre las 14 clases de dominio (perfil mutation-testing del
+# pom). Corre aparte del CI porque con toda la suite tarda bastante más que los 15 minutos de su
+# límite: semanalmente, al crear un tag de release y a pedido. El reporte queda como artefacto.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1" # lunes 03:00 (Argentina)
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mutation-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  pit:
+    name: pit
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: rentas
+          POSTGRES_USER: rentas
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rentas -d rentas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/rentas
+      SPRING_DATASOURCE_USERNAME: rentas
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Java
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+          cache-dependency-path: backend/pom.xml
+
+      - name: PIT sobre el dominio (falla si el score queda debajo de 60 %)
+        run: mvn -B -ntp -P mutation-testing test-compile org.pitest:pitest-maven:mutationCoverage --file backend/pom.xml
+
+      - name: Mutation score en el resumen del run
+        if: always()
+        shell: bash
+        run: |
+          report=backend/target/pit-reports/mutations.xml
+          [ -f "$report" ] || exit 0
+          total=$(grep -c '<mutation ' "$report")
+          killed=$(grep -c "status='KILLED'\|status='TIMED_OUT'\|status='MEMORY_ERROR'" "$report" || true)
+          echo "### PIT: $killed de $total mutantes detectados ($(( 100 * killed / total )) %)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publicar el reporte de PIT
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pit-report
+          path: backend/target/pit-reports
+          retention-days: 30
+          if-no-files-found: ignore
