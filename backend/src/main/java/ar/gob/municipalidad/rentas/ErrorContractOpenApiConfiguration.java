@@ -23,7 +23,7 @@ class ErrorContractOpenApiConfiguration {
                 .content(new Content().addMediaType("application/problem+json",new MediaType()
                     .schema(new Schema<>().$ref("#/components/schemas/ErrorResponse")))));
             if(openApi.getPaths()!=null)openApi.getPaths().forEach((pathName,path) -> path.readOperations().forEach(operation -> {
-                for(String status:new String[]{"400","401","403","404","405","409","422","500"})
+                for(String status:new String[]{"400","401","403","404","405","409","415","422","500"})
                     operation.getResponses().putIfAbsent(status,new ApiResponse().$ref("#/components/responses/ApiError"));
                 if(pathName.equals("/api/v1/dev-auth/login")||pathName.equals("/api/v1/dev-auth/bootstrap"))
                     operation.getResponses().putIfAbsent("429",new ApiResponse().$ref("#/components/responses/ApiError"));
@@ -42,7 +42,19 @@ class ErrorContractOpenApiConfiguration {
                     &&(operation.getParameters()==null||operation.getParameters().stream().noneMatch(p->"Idempotency-Key".equalsIgnoreCase(p.getName()))))
                     operation.addParametersItem(new Parameter().name("Idempotency-Key").in("header").required(false).description("Clave opcional para reintentos; misma clave y cuerpo repite la respuesta, distinto cuerpo produce 409.").schema(new StringSchema().maxLength(128)));
             }));
+            // Jackson serializa como null las propiedades opcionales sin valor: el contrato lo declara.
+            openApi.getComponents().getSchemas().values().forEach(this::allowNullInOptionalProperties);
         };
+    }
+
+    private void allowNullInOptionalProperties(Schema<?> schema){
+        if(schema.getItems()!=null)allowNullInOptionalProperties(schema.getItems());
+        if(schema.getProperties()==null)return;
+        schema.getProperties().forEach((name,property) -> {
+            boolean required=schema.getRequired()!=null&&schema.getRequired().contains(name);
+            if(!required&&property.getTypes()!=null)property.addType("null");
+            allowNullInOptionalProperties(property);
+        });
     }
 
     private boolean isReadOnlyCalculation(String pathName){
