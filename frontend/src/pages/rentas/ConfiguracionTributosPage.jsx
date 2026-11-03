@@ -80,7 +80,7 @@ export default function ConfiguracionTributosPage() {
         row.activeVersion ? (
           <span className="tabular-nums">v{row.activeVersion.version}</span>
         ) : (
-          <span className="text-neutral-300">—</span>
+          <span className="text-neutral-500">—</span>
         ),
     },
     {
@@ -92,7 +92,7 @@ export default function ConfiguracionTributosPage() {
         ) : row.draftVersion ? (
           <StatusBadge status="DRAFT" />
         ) : (
-          <span className="text-neutral-300">—</span>
+          <span className="text-neutral-500">—</span>
         ),
     },
     { key: "status", header: "Estado", render: (row) => <StatusBadge status={row.status} /> },
@@ -620,7 +620,7 @@ function VersionsModal({ code, onClose }) {
                       ? formatPercentage(row.rate)
                       : labelFor(row.calculationType)
                   ) : (
-                    <span className="text-neutral-300">—</span>
+                    <span className="text-neutral-500">—</span>
                   ),
               },
               { key: "status", header: "Estado", render: (row) => <StatusBadge status={row.status} /> },

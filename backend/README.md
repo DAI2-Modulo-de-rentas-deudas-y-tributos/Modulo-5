@@ -167,10 +167,11 @@ Docker Compose lee `.env` automáticamente. Una ejecución directa mediante Mave
 | `RENTAS_SECURITY_DEV_MODE` | Habilita identidad y endpoints DEMO/DEV. | No; default `false`. Prohibido en producción. |
 | `RENTAS_DEMO_BOOTSTRAP_PASSWORD` | Secreto de `POST /api/v1/dev-auth/bootstrap` para el primer SUPERVISOR. | No; sin default. Secreto local/CI efímero. |
 | `RENTAS_DEMO_SESSION_TTL` | TTL de las sesiones DEMO persistidas. | No; default `PT8H`. |
+| `RENTAS_M4_DUEDAYS_PERMITFEE` / `RENTAS_M4_DUEDAYS_COMMERCIALFINE` | Plazo M5, en días, para las tasas y multas que llegan de M4. Sin él, esos eventos quedan `FAILED` con `M4_DUE_DATE_POLICY_PENDING`. | No; Compose usa 14 y 7. |
 
 Las variables de descarga del Maven Wrapper (`MVNW_REPOURL`, `MVNW_USERNAME`, `MVNW_PASSWORD`, `MAVEN_USER_HOME` y `MVNW_VERBOSE`) son opcionales y pertenecen a la herramienta de build, no a la configuración de ejecución de M5. `MVNW_PASSWORD`, si se usa con un repositorio Maven privado, debe configurarse como secreto de CI o del entorno local.
 
-Core/JWT todavía no tiene propiedades ni variables implementadas. El broker real tampoco: no existen aún variables para bootstrap servers, tópicos, ACK, DLQ, schemas o credenciales. Se agregarán sólo cuando sus contratos y su implementación estén definidos.
+Core/JWT todavía no tiene propiedades ni variables implementadas. Con `BROKER_ADAPTER=rabbitmq`, el backend publica y consume por RabbitMQ con las variables `CORE_RABBITMQ_*` (host, puerto, usuario, contraseña, vhost, exchange `muni.inbox` y cola `q.rentas`); en Compose apuntan al RabbitMQ local, no al de Core. Conectar el broker real del Módulo 9 requiere sus credenciales y, si las exige, agregar TLS (`amqps`), que hoy no está configurable.
 
 ## Seguridad
 

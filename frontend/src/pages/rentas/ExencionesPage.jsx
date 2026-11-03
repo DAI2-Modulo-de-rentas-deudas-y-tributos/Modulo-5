@@ -64,7 +64,7 @@ export default function ExencionesPage() {
         row.hasSocialBenefit ? (
           <StatusBadge tone="success" label="Activo" />
         ) : (
-          <span className="text-neutral-300">—</span>
+          <span className="text-neutral-500">—</span>
         ),
     },
     {
@@ -77,7 +77,7 @@ export default function ExencionesPage() {
             {row.attachments.length}
           </span>
         ) : (
-          <span className="text-neutral-300">—</span>
+          <span className="text-neutral-500">—</span>
         ),
     },
     { key: "status", header: "Estado", render: (row) => <StatusBadge status={row.status} /> },
@@ -88,7 +88,7 @@ export default function ExencionesPage() {
         row.status === "REQUESTED" ? (
           <StatusBadge status={row.internalStatus} />
         ) : (
-          <span className="text-neutral-300">—</span>
+          <span className="text-neutral-500">—</span>
         ),
     },
     {

@@ -50,7 +50,7 @@ export default function TicketsAuditorPage() {
         row.escalated ? (
           <StatusBadge tone="danger" label="Sí" />
         ) : (
-          <span className="text-neutral-300">No</span>
+          <span className="text-neutral-500">No</span>
         ),
     },
   ];

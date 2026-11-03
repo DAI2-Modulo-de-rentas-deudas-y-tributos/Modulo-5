@@ -27,6 +27,7 @@ npm run test:coverage             # vitest con cobertura (lcov para Sonar), lo q
 npm test -- src/services/rentasService.test.js   # un archivo
 npm test -- -t "cancela la deuda"                # un test puntual
 npm run build                     # dist/ — lo que publica Amplify
+sh scripts/compose/e2e-test.sh    # (desde la raíz) E2E con Playwright contra el stack de Compose
 
 # Terraform — lo que valida el CI; ejecutar desde la raíz / cada ambiente
 terraform fmt -check -recursive infra
@@ -75,7 +76,10 @@ cd infra/environments/prod && terraform init -backend=false && terraform validat
   `backend/osv-scanner.toml`) y `secret-scan` (G6); `ci-required` es el check final obligatorio y falla si
   alguno de sus `needs` no termina en `success` — un job nuevo debe agregarse a esa lista. El job `sonar` (SonarQube
   Cloud, configurado en `sonar-project.properties`) usa la cobertura de JaCoCo y Vitest, no cuelga de
-  `ci-required` y se omite si falta el secret `SONAR_TOKEN`.
+  `ci-required` y se omite si falta el secret `SONAR_TOKEN`. El job `compose` además corre, sobre el
+  stack levantado, las E2E de Playwright, la resiliencia del broker y Schemathesis (`scripts/compose/`).
+  PIT (`mutation.yml`), k6 y ZAP (`no-funcionales.yml`) y la suite 3 veces (`estabilidad.yml`) no
+  entran en los 15 minutos del pipeline: corren semanalmente, con tags `v*` y a pedido.
 - Las decisiones arquitectónicas relevantes se documentan como ADR numerados en `docs/adr/`
   con contexto, decisión, alternativas y consecuencias.
 - Configuración por ambiente siempre por variables de entorno; nada de URLs ni credenciales

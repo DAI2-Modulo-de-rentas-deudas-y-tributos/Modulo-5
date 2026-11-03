@@ -70,7 +70,7 @@ export default function InicioPage() {
         row.billId ? (
           <span className="tabular-nums text-neutral-600">#{row.billId}</span>
         ) : (
-          <span className="text-neutral-300">Sin emitir</span>
+          <span className="text-neutral-500">Sin emitir</span>
         ),
     },
   ];

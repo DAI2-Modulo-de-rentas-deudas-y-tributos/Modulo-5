@@ -58,7 +58,7 @@ export default function StepIndicatorGeneric({
                       ? "#6b7280"
                       : isCurrent
                         ? "#1f2937"
-                        : "#9ca3af",
+                        : "#6b7280",
                   }}
                 >
                   {step.label}

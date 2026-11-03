@@ -6,17 +6,22 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.dao.ConcurrencyFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.InvalidDataAccessApiUsageException;
+import org.springframework.data.mapping.PropertyReferenceException;
 import org.springframework.http.*;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.web.firewall.RequestRejectedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
+import org.springframework.web.multipart.MultipartException;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -55,9 +60,23 @@ class GlobalExceptionHandler {
             .map(entry -> Map.<String,Object>of("field",entry.getKey(),"messages",entry.getValue())).toList();
         return response(400,"VALIDATION_ERROR",message,request,traceId(),Map.of("fieldErrors",errors));
     }
-    @ExceptionHandler({HttpMessageNotReadableException.class,MethodArgumentTypeMismatchException.class,MissingServletRequestParameterException.class})
+    @ExceptionHandler({HttpMessageNotReadableException.class,MethodArgumentTypeMismatchException.class,MissingServletRequestParameterException.class,RequestRejectedException.class,MultipartException.class})
     ResponseEntity<ApiDtos.ErrorResponse> malformed(Exception ex,HttpServletRequest request) {
         return response(400,"INVALID_REQUEST","La solicitud no tiene un formato válido",request);
+    }
+    // Un parámetro mal codificado (p. ej. sort=%) falla al resolver los argumentos del controlador:
+    // es un error del cliente. Cualquier otra IllegalArgumentException sigue siendo un error interno.
+    @ExceptionHandler(IllegalArgumentException.class)
+    ResponseEntity<ApiDtos.ErrorResponse> illegalArgument(IllegalArgumentException ex,HttpServletRequest request) {
+        boolean resolvingArguments=Arrays.stream(ex.getStackTrace())
+            .anyMatch(frame -> frame.getClassName().endsWith(".HandlerMethodArgumentResolverComposite"));
+        return resolvingArguments?malformed(ex,request):unexpected(ex,request);
+    }
+    // Un orden por una propiedad inexistente (sort=foo) llega al repositorio y falla ahí: es un error del cliente.
+    @ExceptionHandler({PropertyReferenceException.class,InvalidDataAccessApiUsageException.class})
+    ResponseEntity<ApiDtos.ErrorResponse> invalidSort(RuntimeException ex,HttpServletRequest request) {
+        boolean clientSort=ex instanceof PropertyReferenceException||request.getParameter("sort")!=null;
+        return clientSort?response(400,"INVALID_SORT","El criterio de orden no es válido",request):unexpected(ex,request);
     }
     @ExceptionHandler(DataIntegrityViolationException.class)
     ResponseEntity<ApiDtos.ErrorResponse> integrity(DataIntegrityViolationException ex,HttpServletRequest request) {
@@ -86,6 +105,12 @@ class GlobalExceptionHandler {
     }
     @ExceptionHandler(Exception.class)
     ResponseEntity<ApiDtos.ErrorResponse> unexpected(Exception ex,HttpServletRequest request) {
+        // Excepciones estándar de Spring MVC que ya traen un estado de cliente (415, ruta con id vacío, etc.).
+        if(ex instanceof org.springframework.web.ErrorResponse standard&&standard.getStatusCode().is4xxClientError()){
+            int status=standard.getStatusCode().value();
+            return status==415?response(415,"UNSUPPORTED_MEDIA_TYPE","El tipo de contenido no es compatible con este recurso",request)
+                :response(status,"INVALID_REQUEST","La solicitud no tiene un formato válido",request);
+        }
         String traceId=traceId();log.error("Unexpected API error traceId={} exceptionType={}",traceId,ex.getClass().getSimpleName(),OperationalLogSupport.sanitizedStackTrace(ex));
         return response(500,"INTERNAL_ERROR","Ocurrió un error interno",request,traceId,null);
     }

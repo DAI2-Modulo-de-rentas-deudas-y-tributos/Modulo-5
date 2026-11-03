@@ -15,7 +15,7 @@ export default function FieldGrid({ items = [], columns = 2 }) {
               {item.label}
             </dt>
             <dd className="mt-0.5 text-[13px] text-neutral-700 break-words">
-              {item.value ?? <span className="text-neutral-300">—</span>}
+              {item.value ?? <span className="text-neutral-500">—</span>}
             </dd>
           </div>
         ))}

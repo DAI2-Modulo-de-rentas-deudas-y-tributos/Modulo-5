@@ -66,7 +66,7 @@ export default function PlanesPortalPage() {
         row.downPayment > 0 ? (
           formatCurrency(row.downPayment)
         ) : (
-          <span className="text-neutral-300">Sin anticipo</span>
+          <span className="text-neutral-500">Sin anticipo</span>
         ),
     },
     {

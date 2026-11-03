@@ -83,7 +83,7 @@ export default function MisDeudasPage() {
             #{row.billId}
           </button>
         ) : (
-          <span className="text-neutral-300">Sin emitir</span>
+          <span className="text-neutral-500">Sin emitir</span>
         ),
     },
     {
@@ -94,7 +94,7 @@ export default function MisDeudasPage() {
         row.planRequestId ? (
           <StatusBadge tone="info" label={`En plan #${row.planRequestId}`} />
         ) : (
-          <span className="text-neutral-300">—</span>
+          <span className="text-neutral-500">—</span>
         ),
     },
   ];

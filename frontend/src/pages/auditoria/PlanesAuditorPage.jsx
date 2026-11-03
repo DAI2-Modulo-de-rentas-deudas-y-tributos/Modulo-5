@@ -53,7 +53,7 @@ export default function PlanesAuditorPage() {
         row.lifecycle ? (
           <StatusBadge status={row.lifecycle} />
         ) : (
-          <span className="text-neutral-300">—</span>
+          <span className="text-neutral-500">—</span>
         ),
     },
   ];

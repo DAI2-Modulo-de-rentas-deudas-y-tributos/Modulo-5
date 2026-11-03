@@ -92,7 +92,7 @@ export default function PagosCajaPage() {
         row.registeredBy ? (
           (agents.find((a) => a.value === row.registeredBy)?.label ?? row.registeredBy)
         ) : (
-          <span className="text-neutral-300">Canal digital</span>
+          <span className="text-neutral-500">Canal digital</span>
         ),
     },
     { key: "paidAt", header: "Fecha", render: (row) => formatDateTime(row.paidAt) },
@@ -101,7 +101,7 @@ export default function PagosCajaPage() {
       header: "Situación",
       render: (row) =>
         row.wasOverdue === null || row.wasOverdue === undefined ? (
-          <span className="text-neutral-300">—</span>
+          <span className="text-neutral-500">—</span>
         ) : (
           <StatusBadge
             tone={row.wasOverdue ? "danger" : "success"}

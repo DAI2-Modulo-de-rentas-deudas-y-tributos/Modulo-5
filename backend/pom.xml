@@ -109,6 +109,13 @@
                         <param>ar.gob.municipalidad.rentas.ReversalService*</param>
                         <param>ar.gob.municipalidad.rentas.DueDateProcessor*</param>
                     </targetClasses>
+                    <!-- No pasan bajo el agente de PIT aunque la suite normal los corre en verde:
+                         DomainCoverageGate lee el reporte de JaCoCo y PdfDownloadTests renderiza PDF. -->
+                    <excludedTestClasses>
+                        <param>ar.gob.municipalidad.rentas.DomainCoverageGate</param>
+                        <param>ar.gob.municipalidad.rentas.PdfDownloadTests</param>
+                    </excludedTestClasses>
+                    <outputFormats><param>HTML</param><param>XML</param></outputFormats>
                     <mutationThreshold>60</mutationThreshold>
                     <threads>4</threads>
                     <timeoutConstant>60000</timeoutConstant>
