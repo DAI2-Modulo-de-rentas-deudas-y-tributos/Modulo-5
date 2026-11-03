@@ -255,6 +255,19 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
+      # Eje B: todas las operaciones contra el OpenAPI publicado, con datos válidos e inválidos.
+      - name: Pruebas de contrato contra el OpenAPI (Schemathesis)
+        run: sh scripts/compose/contract-test.sh
+
+      - name: Publicar el reporte de Schemathesis
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: schemathesis-report
+          path: schemathesis-report
+          retention-days: 14
+          if-no-files-found: ignore
+
       - name: Estado y logs de los servicios
         if: always()
         run: |

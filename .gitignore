@@ -82,3 +82,6 @@ estado-tareas-front.csv
 # Playwright (pruebas E2E)
 frontend/playwright-report/
 frontend/test-results/
+
+# Schemathesis (pruebas de contrato)
+schemathesis-report/
