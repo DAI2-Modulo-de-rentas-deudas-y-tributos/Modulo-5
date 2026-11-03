@@ -78,3 +78,7 @@ artifacts/qa-test/
 
 # Seguimiento personal de avance, no del proyecto
 estado-tareas-front.csv
+
+# Playwright (pruebas E2E)
+frontend/playwright-report/
+frontend/test-results/

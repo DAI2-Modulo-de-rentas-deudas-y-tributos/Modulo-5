@@ -185,6 +185,9 @@ tests de frontend y backend, validación de Terraform, arranque completo con
 `docker compose`, escaneo de dependencias vulnerables (OSV-Scanner) y de secretos. El check `ci-required` exige que todos
 terminen bien y es el que bloquea el merge.
 
+Sobre el sistema levantado por `docker compose`, el CI también corre las pruebas de punta a punta
+con Playwright, que incluyen accesibilidad y responsive ([frontend/e2e/README.md](frontend/e2e/README.md)).
+
 ## Continuidad del traspaso técnico
 
 La documentación del Product Owner está versionada en [`docs/handoff/`](docs/handoff/).

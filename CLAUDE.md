@@ -27,6 +27,7 @@ npm run test:coverage             # vitest con cobertura (lcov para Sonar), lo q
 npm test -- src/services/rentasService.test.js   # un archivo
 npm test -- -t "cancela la deuda"                # un test puntual
 npm run build                     # dist/ — lo que publica Amplify
+E2E_DEMO_PASSWORD=<del .env> npx playwright test   # E2E contra el stack de Compose (frontend/e2e)
 
 # Terraform — lo que valida el CI; ejecutar desde la raíz / cada ambiente
 terraform fmt -check -recursive infra
