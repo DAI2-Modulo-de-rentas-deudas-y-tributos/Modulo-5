@@ -939,6 +939,10 @@ export const externalObligationService = {
     return request(`/api/v1/external-obligations?${params}`);
   },
 
+  async errors() {
+    return request("/api/v1/external-obligations/errors?size=100&sort=receivedAt,desc");
+  },
+
   async detail(id) {
     return request(`/api/v1/external-obligations/${id}`);
   },
@@ -1567,6 +1571,10 @@ export const portalService = {
     return allPages(`/api/v1/taxpayers/${taxpayerId}/payment-plans`);
   },
 
+  async planInstallments(planId) {
+    return request(`/api/v1/payment-plans/${planId}/installments`);
+  },
+
   // ---------------------------------------------------------------- Trámites
 
   /** Pedir financiar deudas en cuotas → publica paymentPlanRequested. */
@@ -1587,6 +1595,10 @@ export const portalService = {
       body: { debtId, paymentMethod, amount },
       headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {},
     });
+  },
+
+  async electronicPayment(paymentId) {
+    return request(`/api/v1/electronic-payments/${paymentId}`);
   },
 
   async paymentReceipt(paymentId) {

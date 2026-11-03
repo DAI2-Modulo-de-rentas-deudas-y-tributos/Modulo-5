@@ -49,6 +49,21 @@ describe("aplicación de un saldo a favor", () => {
 
     expect(await creditBalanceService.list({ taxpayerId: 123 })).toEqual([]);
   });
+
+  it("traduce el filtro heredado ACTIVE a estados reales y omite créditos agotados", async () => {
+    instalarBackendFalso({
+      "GET /api/v1/credit-balances": pagina([
+        { id: 1, status: "AVAILABLE", originalAmount: 100, availableAmount: 100, createdAt: "2026-11-01T10:00:00-03:00" },
+        { id: 2, status: "PARTIALLY_USED", originalAmount: 100, availableAmount: 30, createdAt: "2026-11-01T10:00:00-03:00" },
+        { id: 3, status: "USED", originalAmount: 100, availableAmount: 0, createdAt: "2026-11-01T10:00:00-03:00" },
+      ]),
+    });
+
+    const credits = await creditBalanceService.list({ status: "ACTIVE" });
+
+    expect(credits.map((credit) => credit.id)).toEqual([1, 2]);
+    expect(credits[1]).toMatchObject({ amount: 100, remainingAmount: 30, generatedAt: "2026-11-01T10:00:00-03:00" });
+  });
 });
 
 describe("ajuste de deuda", () => {

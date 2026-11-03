@@ -20,12 +20,6 @@ const STATES = {
 };
 const badge = (status) => <StatusBadge status={status} label={STATES[status] ?? status}
   tone={["FAILED", "DEAD_LETTER"].includes(status) ? "danger" : undefined} />;
-function readablePayload(payload) {
-  if (payload == null) return "Sin contenido informado.";
-  try { return JSON.stringify(typeof payload === "string" ? JSON.parse(payload) : payload, null, 2); }
-  catch { return String(payload); }
-}
-
 export default function OutboxPage() {
   const { user } = useAuth();
   const loader = useCallback(() => integrationOutboxService.list(), []);
@@ -53,7 +47,7 @@ export default function OutboxPage() {
   return <ModuleShell label="Integraciones" title="Eventos salientes" description="Estado de los envíos a otros módulos y resultado de cada intento."
     homePath={homePathForRole(user.role)}
     breadcrumb={[{ id: "outbox", label: "Eventos salientes" }]}>
-    <Alert variant="info" title="Reenvío manual no disponible">Los reintentos automáticos los gestiona el sistema. El estado «Solo local» no confirma recepción en otro módulo.</Alert>
+    <Alert variant="info" title="Reenvío manual no disponible">Los reintentos automáticos los gestiona el sistema. «Solo local» no confirma recepción; «Aceptado por Core» o «Confirmado por broker» tampoco confirman procesamiento por el consumidor.</Alert>
     <Card title="Bandeja de envíos" actions={<Button variant="secondary" loading={loading} onClick={reload}>Actualizar</Button>}>
       <FilterBar searchValue={filters.query} searchPlaceholder="Evento, destino o referencia…" onSearchChange={(value) => changeFilter("query", value)}
         filters={[{ name: "status", label: "Estado", options: Object.entries(STATES).map(([value, label]) => ({ value, label })) }]}
@@ -79,7 +73,7 @@ export default function OutboxPage() {
           <div><dt className="text-neutral-500">Reintentos</dt><dd>{selected.retryCount}</dd></div>
         </dl>
         {selected.errorMessage && <Alert variant="error" title="Último error">{selected.errorMessage}</Alert>}
-        <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-neutral-50 p-4 text-xs">{readablePayload(selected.payload)}</pre>
+        <p className="text-sm text-neutral-500">El detalle técnico completo del payload no se muestra en esta pantalla.</p>
       </div>
     </Modal>}
   </ModuleShell>;
