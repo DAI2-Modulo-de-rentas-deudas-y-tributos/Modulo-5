@@ -1,7 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// Escenarios de punta a punta contra el sistema levantado con `docker compose up -d --build`.
-// Los datos los carga `demo-setup`; ver frontend/e2e/README.md.
+// Escenarios de punta a punta contra el sistema levantado con `docker compose up -d --build`,
+// con los datos que carga `demo-setup`. Se corren con scripts/compose/e2e-test.sh.
 export default defineConfig({
   testDir: "./e2e",
   testMatch: "**/*.e2e.js",

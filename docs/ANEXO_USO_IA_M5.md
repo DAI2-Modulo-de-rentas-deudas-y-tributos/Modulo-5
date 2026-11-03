@@ -34,48 +34,6 @@ Para completar un registro literal de las etapas anteriores, el equipo debe apor
 - Se aclararon textos de interfaz sobre DLQ y reversiones para distinguir la política de cuatro entregas comunicada por M9 del estado local y de la entrega externa aún no verificada.
 - Se conservó el límite entre `BROKER_CONFIRMED` local y la entrega/aceptación externa de Core, que no fue verificada.
 
-## Claude Code — sesión del PO del 02 y 03/11/2026
-
-**Herramienta:** Claude Code (aplicación de escritorio), modelo Claude Opus 5.5. Los commits que
-produjo llevan `Co-Authored-By: Claude Opus 5.5` y se publicaron con la identidad Git del PO, que
-los revisó y es responsable de explicarlos.
-
-**Prompts representativos (literales del PO):**
-
-> “revisa si el proyecto cumple con las condiciones de este documento”
->
-> “planifica un orden para implementar todo lo que queda implementar en el proyecto respecto a los requisitos del documento”
-
-| Objetivo | Qué se aceptó | Cómo se verificó |
-|---|---|---|
-| G1: sistema completo con un comando | `compose.yaml` con RabbitMQ, backend, frontend y usuarios/datos DEMO; `.env.example` comentado; corte con mensaje si falta una variable. | Job `compose` del CI desde clon limpio; arranque local desde cero (412 s). |
-| G6: secretos en el historial | gitleaks bloqueante y trufflehog informativo en el CI; `.gitleaksignore` con las huellas de 5 falsos positivos; `docs/security/G6_ESCANEO_SECRETOS.md`. | Escaneo del historial completo en el CI; huellas calculadas en local y confirmadas por el CI. |
-| SCRUM-818 | Exclusión de `UserDetailsServiceAutoConfiguration` para que Spring no imprima una contraseña. | El test nuevo falla sin el arreglo y pasa con él; el log del backend ya no la muestra. |
-| Ejes A–D | E2E con Playwright y axe, Schemathesis, resiliencia del broker, PIT, k6, ZAP y estabilidad (ver `README.md`, Automatización). | Cada script se corrió contra el stack local antes de subirlo; el CI del PR #101. |
-
-**Diagnósticos incorrectos de la IA y cómo se detectaron:**
-
-1. **G6:** afirmó que los 11 hallazgos JDBC de trufflehog eran contraseñas reales. Al replicar la
-   regex de trufflehog sobre esos commits se vio que eran URLs sin credenciales. Se corrigió antes de
-   reescribir el historial y el PO decidió documentar en lugar de reescribir.
-2. **Pruebas de contrato:** la primera corrida de Schemathesis dio 401 en 164 operaciones y parecía
-   un problema de autenticación del backend. La causa era que Schemathesis llamaba a
-   `POST /dev-auth/logout` con la sesión de la prueba; se excluyó `dev-auth`.
-3. **ZAP:** concluyó que el escaneo activo había perdido la sesión. Era un artefacto de Git Bash en
-   Windows (`curl` no podía escribir en `/dev/null`, código 23); los últimos requests autenticados
-   del escaneo respondían 200.
-
-**Qué se descartó:** reescribir el historial de Git por G6; correr PIT en cada PR (no entra en los
-15 minutos del pipeline; quedó en un workflow semanal).
-
-### Plan de IA para la 4.ª entrega (propuesta a validar por el equipo)
-
-| Herramienta | Objetivo medible | Riesgo que controla |
-|---|---|---|
-| Claude Code como revisor de cada PR (`/code-review`) | 0 bugs Blocker/Critical nuevos en SonarCloud al mergear. | Defectos que los tests no cubren; cada hallazgo se acepta sólo con un test que lo reproduzca. |
-| Generación de escenarios Gherkin desde las HU, revisados por QA | ≥ 40 % de casos negativos o de borde en la especificación. | Huecos en la matriz de trazabilidad. |
-| Triage asistido de los reportes de PIT y Schemathesis | Mutantes sobrevivientes del dominio clasificados en menos de una semana. | Tests que pasan aunque se borre el código que dicen probar. |
-
 ## Usos históricos conocidos, no disponibles como transcripción
 
 El historial visible del proyecto contiene varias etapas de trabajo asistido sobre UUID económicos, validación local PostgreSQL, RabbitMQ, PR apilados, seguridad, patrones y auditoría de portales. En este anexo se registran sólo como **categorías resumidas** porque no existe una exportación completa que permita verificar prompt, respuesta, fecha y archivos de cada turno:
