@@ -176,9 +176,9 @@ public final class ApiDtos {
     public record EventEnvelope<T>(@NotNull UUID eventId, @NotBlank String eventType,
         @NotNull OffsetDateTime occurredAt, @NotBlank String sourceModule, @NotNull @Valid T data) {}
     public record InfractionData(@NotBlank String externalReferenceId, @NotNull TaxpayerType taxpayerType,
-        @NotBlank String taxpayerExternalId, @NotNull @Positive BigDecimal amount, @NotNull LocalDate dueDate) {}
+        @NotBlank String taxpayerExternalId, @NotNull @Positive @CurrencyAmount BigDecimal amount, @NotNull LocalDate dueDate) {}
     public record ExternalObligationData(@NotBlank String externalReferenceId,@NotNull TaxpayerType taxpayerType,
-        @NotBlank String taxpayerExternalId,@NotNull @Positive BigDecimal amount,@NotNull LocalDate dueDate) {}
+        @NotBlank String taxpayerExternalId,@NotNull @Positive @CurrencyAmount BigDecimal amount,@NotNull LocalDate dueDate) {}
     public record TaxpayerEventData(@NotNull TaxpayerType taxpayerType,@NotBlank String externalId,String dni,String cuit,
         @NotBlank String displayName,@NotNull TaxpayerStatus status) {}
     public record TicketEventData(@NotNull @Positive Long ticketId,@Positive Long citizenId,String category,

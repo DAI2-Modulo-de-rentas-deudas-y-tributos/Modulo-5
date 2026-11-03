@@ -19,11 +19,11 @@ public final class CoreM4Events {
         UUID causationId,@NotNull @Valid T data) {}
 
     public record PermitFeeGeneratedData(@NotBlank String id,@NotBlank String permitApplicationId,
-        @NotBlank String establishmentId,@NotBlank @Pattern(regexp="\\d{11}") String cuit,@NotNull @Positive BigDecimal amount,
+        @NotBlank String establishmentId,@NotBlank @Pattern(regexp="\\d{11}") String cuit,@NotNull @Positive @CurrencyAmount BigDecimal amount,
         @NotBlank String currency) {}
 
     public record CommercialFineGeneratedData(@NotBlank String id,@NotBlank String establishmentId,
-        @NotBlank String actId,@NotBlank @Pattern(regexp="\\d{11}") String cuit,@NotNull @Positive BigDecimal amount,
+        @NotBlank String actId,@NotBlank @Pattern(regexp="\\d{11}") String cuit,@NotNull @Positive @CurrencyAmount BigDecimal amount,
         @NotBlank String currency,@NotBlank String reason,@NotNull OffsetDateTime decidedAt,
         @NotBlank String externalRef,String sourceViolationId,String sourceModule,String decision) {
         CommercialFineGeneratedData(String id,String establishmentId,String actId,String cuit,BigDecimal amount,

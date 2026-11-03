@@ -188,6 +188,46 @@ class BeanValidationContractTests {
         assertThat(payments.count()).isEqualTo(before);
     }
 
+    @Test void validatesMoneyScaleOnInboundModuleContractsWithoutChangingTheirShapes() {
+        var external=new ApiDtos.ExternalObligationData("M7-1",TaxpayerType.CITIZEN,"citizen-1",
+            new BigDecimal("12.345"),LocalDate.now());
+        var legacyInfraction=new ApiDtos.InfractionData("M7-2",TaxpayerType.CITIZEN,"citizen-1",
+            new BigDecimal("12.345"),LocalDate.now());
+        assertThat(validator.validate(external)).extracting(error->error.getPropertyPath().toString())
+            .contains("amount");
+        assertThat(validator.validate(legacyInfraction)).extracting(error->error.getPropertyPath().toString())
+            .contains("amount");
+        assertThat(validator.validate(new ApiDtos.ExternalObligationData("M7-1",TaxpayerType.CITIZEN,"citizen-1",
+            new BigDecimal("12.3400"),LocalDate.now()))).isEmpty();
+
+        var m7Data=new ConfirmedInboundEvents.M7InfractionData(UUID.randomUUID(),"citizen-1",
+            ConfirmedInboundEvents.M7DebtorIdType.DNI,"AA111AA","TEST",OffsetDateTime.now(),
+            new BigDecimal("12.345"),List.of(),new BigDecimal("12.34"),"INS-1",
+            new ConfirmedInboundEvents.M7Location("Calle","Esquina",new BigDecimal("-34.60"),new BigDecimal("-58.40")));
+        var m7Event=new ConfirmedInboundEvents.M7InfractionConfirmedEvent(UUID.randomUUID(),"infractionConfirmed",
+            "1.0",OffsetDateTime.now(),"transito",UUID.randomUUID(),null,m7Data);
+        assertThat(validator.validate(m7Event)).extracting(error->error.getPropertyPath().toString())
+            .contains("data.baseAmount");
+
+        var m4Data=new CoreM4Events.PermitFeeGeneratedData("FEE-1","PA-1","EST-1","30712345678",
+            new BigDecimal("12.345"),"ARS");
+        var m4Event=new CoreM4Events.Envelope<>(UUID.randomUUID(),"permitFeeGenerated","1.0",OffsetDateTime.now(),
+            "habilitaciones",UUID.randomUUID(),null,m4Data);
+        assertThat(validator.validate(m4Event)).extracting(error->error.getPropertyPath().toString())
+            .contains("data.amount");
+
+        var preliminary=new PreliminaryM4Events.Envelope<>("M4","permitFeeGenerated",
+            new PreliminaryM4Events.PermitFeeGeneratedData("FEE-2","PA-2","EST-2",new BigDecimal("12.345")));
+        assertThat(validator.validate(preliminary)).extracting(error->error.getPropertyPath().toString())
+            .contains("data.amount");
+
+        var m8Data=new ConfirmedInboundEvents.M8SocialBenefitData(UUID.randomUUID(),UUID.randomUUID(),UUID.randomUUID(),
+            UUID.randomUUID(),UUID.randomUUID(),"Programa",UUID.randomUUID(),"Asignación","Beneficio",
+            new BigDecimal("12.345"),"APPROVED",null,LocalDate.now(),null,OffsetDateTime.now());
+        assertThat(validator.validate(m8Data)).extracting(error->error.getPropertyPath().toString())
+            .contains("amount");
+    }
+
     @Test void invalidLiquidationFormatReturns400BeforePersistence() throws Exception {
         long before=liquidations.count();
         mvc.perform(post("/api/v1/liquidations")
