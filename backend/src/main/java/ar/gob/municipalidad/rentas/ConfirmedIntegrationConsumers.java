@@ -31,18 +31,29 @@ class ConfirmedM1Consumer {
     }
     private TaxpayerReference consumeCitizen(ConfirmedInboundEvents.M1CitizenUpdatedData data,NormalizedIntegrationEvent normalized,Object raw){
         CatalogService.require("citizenUpdated".equals(normalized.eventType()),"UNSUPPORTED_EVENT_TYPE","Se esperaba citizenUpdated");
-        String externalId=data.citizenId().toString();Optional<TaxpayerReference> existing=taxpayers.findByTaxpayerTypeAndExternalId(TaxpayerType.CITIZEN,externalId);
+        UUID canonicalId=data.citizenId();String externalId=canonicalId.toString();
+        Optional<TaxpayerReference> byCanonical=taxpayers.findByTaxpayerTypeAndCanonicalCitizenId(TaxpayerType.CITIZEN,canonicalId);
+        Optional<TaxpayerReference> byExternalId=taxpayers.findByTaxpayerTypeAndExternalId(TaxpayerType.CITIZEN,externalId);
+        CatalogService.require(byCanonical.isEmpty()||byExternalId.isEmpty()||byCanonical.get().id.equals(byExternalId.get().id),
+            "CITIZEN_REFERENCE_CONFLICT","El UUID canónico y el ID externo apuntan a referencias distintas");
+        Optional<TaxpayerReference> existing=byCanonical.isPresent()?byCanonical:byExternalId;
         if(inbox.processed(normalized.eventId()))return existing.orElse(null);
         IntegrationEventLog log=inbox.receive(normalized,raw);
         TaxpayerReference taxpayer;
         switch(data.updateType()){
-            case "REGISTERED"->{var details=json.convertValue(data.details(),ConfirmedInboundEvents.M1CitizenRegisteredDetails.class);taxpayer=existing.orElseGet(TaxpayerReference::new);if(taxpayer.id==null){taxpayer.taxpayerType=TaxpayerType.CITIZEN;taxpayer.externalId=externalId;taxpayer.createdAt=OffsetDateTime.now();}taxpayer.dni=details.dni();taxpayer.cuit=details.cuil();taxpayer.displayName=(details.name()+" "+details.lastname()).trim();taxpayer.externalStatus=TaxpayerStatus.ACTIVE;taxpayer.updatedAt=OffsetDateTime.now();taxpayers.save(taxpayer);}
-            case "BLOCKED"->{json.convertValue(data.details(),ConfirmedInboundEvents.M1CitizenBlockedDetails.class);taxpayer=existing.orElseThrow(()->new BusinessException("TAXPAYER_REFERENCE_NOT_FOUND","No existe la referencia local del ciudadano",422));taxpayer.externalStatus=TaxpayerStatus.BLOCKED;taxpayer.updatedAt=OffsetDateTime.now();}
-            case "DECEASED"->{json.convertValue(data.details(),ConfirmedInboundEvents.M1CitizenDeceasedDetails.class);taxpayer=existing.orElseThrow(()->new BusinessException("TAXPAYER_REFERENCE_NOT_FOUND","No existe la referencia local del ciudadano",422));taxpayer.externalStatus=TaxpayerStatus.DECEASED;taxpayer.updatedAt=OffsetDateTime.now();}
-            case "ADDRESS_UPDATED"->{taxpayer=existing.orElseThrow(()->new BusinessException("TAXPAYER_REFERENCE_NOT_FOUND","No existe la referencia local del ciudadano",422));}
+            case "REGISTERED"->{var details=json.convertValue(data.details(),ConfirmedInboundEvents.M1CitizenRegisteredDetails.class);taxpayer=existing.orElseGet(TaxpayerReference::new);if(taxpayer.id==null){taxpayer.taxpayerType=TaxpayerType.CITIZEN;taxpayer.externalId=externalId;taxpayer.createdAt=OffsetDateTime.now();}requireCanonicalIdentity(taxpayer,canonicalId);taxpayer.dni=details.dni();taxpayer.cuit=details.cuil();taxpayer.displayName=(details.name()+" "+details.lastname()).trim();taxpayer.externalStatus=TaxpayerStatus.ACTIVE;taxpayer.updatedAt=OffsetDateTime.now();taxpayers.save(taxpayer);}
+            case "BLOCKED"->{json.convertValue(data.details(),ConfirmedInboundEvents.M1CitizenBlockedDetails.class);taxpayer=existing.orElseThrow(()->new BusinessException("TAXPAYER_REFERENCE_NOT_FOUND","No existe la referencia local del ciudadano",422));requireCanonicalIdentity(taxpayer,canonicalId);taxpayer.externalStatus=TaxpayerStatus.BLOCKED;taxpayer.updatedAt=OffsetDateTime.now();}
+            case "DECEASED"->{json.convertValue(data.details(),ConfirmedInboundEvents.M1CitizenDeceasedDetails.class);taxpayer=existing.orElseThrow(()->new BusinessException("TAXPAYER_REFERENCE_NOT_FOUND","No existe la referencia local del ciudadano",422));requireCanonicalIdentity(taxpayer,canonicalId);taxpayer.externalStatus=TaxpayerStatus.DECEASED;taxpayer.updatedAt=OffsetDateTime.now();}
+            case "ADDRESS_UPDATED"->{taxpayer=existing.orElseThrow(()->new BusinessException("TAXPAYER_REFERENCE_NOT_FOUND","No existe la referencia local del ciudadano",422));requireCanonicalIdentity(taxpayer,canonicalId);}
             default->throw new BusinessException("UNSUPPORTED_UPDATE_TYPE","Actualización de ciudadano no soportada",422);
         }
         inbox.complete(normalized,log);return taxpayer;
+    }
+
+    private void requireCanonicalIdentity(TaxpayerReference taxpayer,UUID canonicalId){
+        CatalogService.require(taxpayer.canonicalCitizenId==null||taxpayer.canonicalCitizenId.equals(canonicalId),
+            "CANONICAL_CITIZEN_LINK_CONFLICT","La referencia ya tiene otro UUID canónico");
+        taxpayer.canonicalCitizenId=canonicalId;
     }
 
     @Transactional TaxpayerReference consumeOrganization(ConfirmedInboundEvents.M1OrganizationRegisteredEvent event){

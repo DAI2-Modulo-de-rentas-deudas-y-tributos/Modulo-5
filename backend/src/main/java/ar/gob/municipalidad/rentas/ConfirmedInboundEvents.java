@@ -29,7 +29,7 @@ public final class ConfirmedInboundEvents {
     public record M1CitizenUpdatedEvent(@NotBlank String eventId,@NotNull OffsetDateTime occurredAt,
         @NotBlank String eventType,@NotNull @Valid Producer producer,@NotBlank String subject,
         @NotNull @Valid M1CitizenUpdatedData data) {}
-    public record M1CitizenUpdatedData(@NotNull Long citizenId,@NotBlank String updateType,
+    public record M1CitizenUpdatedData(@NotNull UUID citizenId,@NotBlank String updateType,
         @NotNull JsonNode details,@NotNull @Valid UpdatedBy updatedBy) {}
     public record UpdatedBy(@NotBlank String type,String id) {}
     public record M1CitizenRegisteredDetails(@NotBlank String dni,@NotBlank String cuil,@NotBlank String name,

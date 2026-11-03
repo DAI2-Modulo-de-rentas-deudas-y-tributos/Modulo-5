@@ -1,7 +1,6 @@
 package ar.gob.municipalidad.rentas;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -43,7 +42,6 @@ class CanonicalCitizenLinkTests {
     @Autowired DemoUserRepository users;
     @Autowired PasswordEncoder encoder;
     @Autowired DemoAuthService demoAuth;
-    @Autowired CoreInboundEventDispatcher inbound;
 
     private TaxpayerReference citizen;
     private DemoAuthSessions sessions;
@@ -146,19 +144,6 @@ class CanonicalCitizenLinkTests {
     }
 
     @Test void linkedOwnerCreatesOneLocalLogExemptionEventWithStableIdentifiers() throws Exception {
-        taxpayers.delete(citizen);
-        taxpayers.flush();
-        ObjectNode incoming=json.createObjectNode();
-        incoming.put("eventId",UUID.randomUUID().toString());incoming.put("eventType","citizenUpdated");
-        incoming.put("eventVersion","1.0");incoming.put("occurredAt",OffsetDateTime.now().toString());
-        incoming.put("sourceModule","ciudadanos");incoming.put("correlationId",UUID.randomUUID().toString());incoming.putNull("causationId");
-        ObjectNode data=incoming.putObject("data");data.put("citizenId",4);data.put("updateType","REGISTERED");
-        ObjectNode details=data.putObject("details");details.put("dni","00000000");details.put("cuil","20000000004");
-        details.put("name","Synthetic");details.put("lastname","Citizen");details.put("birthdate","1990-01-01");details.put("state","ACTIVE");details.putNull("address");
-        data.putObject("updatedBy").put("type","SYSTEM").put("id","M1-TEST");
-        inbound.dispatch(json.writeValueAsString(incoming));
-        citizen=taxpayers.findByTaxpayerTypeAndExternalId(TaxpayerType.CITIZEN,"4").orElseThrow();
-
         mvc.perform(post("/api/v1/taxpayers/{id}/canonical-citizen-link",citizen.id)
                 .header("X-Demo-Session",sessions.token(DemoRole.SUPERVISOR))
                 .contentType(MediaType.APPLICATION_JSON).content(linkRequest(4,CANONICAL_ID,"M1-CASE-TEST-001")))

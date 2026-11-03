@@ -327,26 +327,17 @@ class PostgreSqlIntegrationTest {
     @Autowired LiquidationRunService bulkRuns;
     @Autowired ExemptionRequestRepository exemptionRequests;
 
-    @Test void m1RegisteredCitizenCanBeLinkedAndExemptionOutboxIsStableOnPostgreSql() throws Exception {
+    @Test void m1RegisteredCanonicalCitizenCreatesStableExemptionOutboxOnPostgreSql() throws Exception {
         UUID incomingEventId=UUID.randomUUID(),canonicalId=UUID.fromString("f398dbcb-a2b4-49af-a724-3529c6ddd0f6");
         JsonNode incoming=json.readTree("""
             {"eventId":"%s","eventType":"citizenUpdated","eventVersion":"1.0","occurredAt":"2026-11-02T12:00:00-03:00","sourceModule":"ciudadanos","correlationId":"%s","causationId":null,
-             "data":{"citizenId":4,"updateType":"REGISTERED","details":{"dni":"00000000","cuil":"20000000004","name":"Synthetic","lastname":"Citizen","birthdate":"1990-01-01","state":"ACTIVE","address":null},"updatedBy":{"type":"SYSTEM","id":"M1-TEST"}}}
-            """.formatted(incomingEventId,UUID.randomUUID()));
+             "data":{"citizenId":"%s","updateType":"REGISTERED","details":{"dni":"00000000","cuil":"20000000004","name":"Synthetic","lastname":"Citizen","birthdate":"1990-01-01","state":"ACTIVE","address":null},"updatedBy":{"type":"SYSTEM","id":"M1-TEST"}}}
+            """.formatted(incomingEventId,UUID.randomUUID(),canonicalId));
         inbound.dispatch(json.writeValueAsString(incoming));
-        TaxpayerReference citizen=taxpayers.findByTaxpayerTypeAndExternalId(TaxpayerType.CITIZEN,"4").orElseThrow();
+        TaxpayerReference citizen=taxpayers.findByTaxpayerTypeAndCanonicalCitizenId(TaxpayerType.CITIZEN,canonicalId).orElseThrow();
+        assertThat(citizen.externalId).isEqualTo(canonicalId.toString());
         DemoAuthSessions sessions=new DemoAuthSessions(demoUsers,taxpayers,passwordEncoder,demoAuthService);
-        String link=json.writeValueAsString(new ApiDtos.LinkCanonicalCitizenRequest(4L,canonicalId,"M1-CASE-TEST-PG"));
-        ApiDtos.LinkCanonicalCitizenRequest linkRequest=new ApiDtos.LinkCanonicalCitizenRequest(4L,canonicalId,"M1-CASE-TEST-PG");
-        assertThat(runTogether(()->{catalog.linkCanonicalCitizen(citizen.id,linkRequest);return null;},
-            ()->{catalog.linkCanonicalCitizen(citizen.id,linkRequest);return null;})).containsOnlyNulls();
-        String supervisor=sessions.token(DemoRole.SUPERVISOR),linkKey="canonical-link-"+UUID.randomUUID();
-        for(int i=0;i<2;i++) mvc.perform(post("/api/v1/taxpayers/{id}/canonical-citizen-link",citizen.id)
-                .header("X-Demo-Session",supervisor).header("Idempotency-Key",linkKey)
-                .contentType(MediaType.APPLICATION_JSON).content(link))
-            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk());
         assertThat(taxpayers.findById(citizen.id).orElseThrow().canonicalCitizenId).isEqualTo(canonicalId);
-        assertThat(auditoria.findAll().stream().filter(entry->entry.action.equals("CANONICAL_CITIZEN_ID_LINKED"))).hasSize(1);
 
         TaxConcept concept=catalog.createConcept(new ApiDtos.CreateTaxConceptRequest(
             "PG_CANONICAL_LINK_"+UUID.randomUUID().toString().replace("-", ""),"Synthetic E2E",null,TaxConceptType.FEE,"M5"));
