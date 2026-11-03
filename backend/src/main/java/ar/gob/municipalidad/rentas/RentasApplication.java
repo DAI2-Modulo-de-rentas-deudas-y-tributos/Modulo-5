@@ -2,6 +2,7 @@ package ar.gob.municipalidad.rentas;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.data.web.config.EnableSpringDataWebSupport;
 import org.springframework.data.web.config.PageableHandlerMethodArgumentResolverCustomizer;
@@ -16,7 +17,7 @@ import static org.springframework.data.web.config.EnableSpringDataWebSupport.Pag
 
 @EnableScheduling
 @EnableSpringDataWebSupport(pageSerializationMode=VIA_DTO)
-@SpringBootApplication
+@SpringBootApplication(exclude = UserDetailsServiceAutoConfiguration.class)
 public class RentasApplication {
     public static void main(String[] args) { SpringApplication.run(RentasApplication.class, args); }
 
