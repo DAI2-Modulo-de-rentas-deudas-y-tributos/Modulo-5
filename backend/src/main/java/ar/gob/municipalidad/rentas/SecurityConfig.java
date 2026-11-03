@@ -1,6 +1,7 @@
 package ar.gob.municipalidad.rentas;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.aopalliance.intercept.MethodInvocation;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -10,6 +11,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.ApplicationContext;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.core.env.Environment;
@@ -21,6 +23,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.authorization.method.PreAuthorizeAuthorizationManager;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -28,11 +31,17 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter;
 import org.springframework.stereotype.Component;
+import org.springframework.web.method.HandlerMethod;
+import org.springframework.web.servlet.HandlerInterceptor;
+import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
+import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
+import java.lang.reflect.AccessibleObject;
+import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
@@ -41,6 +50,35 @@ import java.util.UUID;
 @EnableMethodSecurity
 class SecurityConfig {
     @Bean PasswordEncoder passwordEncoder() { return new BCryptPasswordEncoder(); }
+
+    @Bean WebMvcConfigurer authorizeControllerBeforeBodyBinding(ApplicationContext context,
+            SecurityErrorResponseWriter errors) {
+        var authorization=new PreAuthorizeAuthorizationManager();
+        authorization.setApplicationContext(context);
+        HandlerInterceptor interceptor=new HandlerInterceptor() {
+            @Override public boolean preHandle(HttpServletRequest request,HttpServletResponse response,Object handler) throws Exception {
+            if (!(handler instanceof HandlerMethod mapped)) return true;
+            HandlerMethod resolved=mapped.createWithResolvedBean();
+            Method method=resolved.getMethod();
+            MethodInvocation invocation=new MethodInvocation() {
+                @Override public Method getMethod() { return method; }
+                @Override public Object[] getArguments() { return new Object[method.getParameterCount()]; }
+                @Override public Object getThis() { return resolved.getBean(); }
+                @Override public AccessibleObject getStaticPart() { return method; }
+                @Override public Object proceed() { throw new UnsupportedOperationException(); }
+            };
+            var decision=authorization.check(() -> SecurityContextHolder.getContext().getAuthentication(),invocation);
+            if (decision==null||decision.isGranted()) return true;
+            errors.write(request,response,403,"ACCESS_DENIED","No tiene permisos para realizar esta operación");
+            return false;
+            }
+        };
+        return new WebMvcConfigurer() {
+            @Override public void addInterceptors(InterceptorRegistry registry) {
+                registry.addInterceptor(interceptor).addPathPatterns("/api/v1/**");
+            }
+        };
+    }
 
     @Bean CorsConfigurationSource corsConfigurationSource(@Value("${rentas.cors.allowed-origins:}") String origins) {
         UrlBasedCorsConfigurationSource source=new UrlBasedCorsConfigurationSource();
