@@ -313,6 +313,7 @@ class PostgreSqlIntegrationTest {
     @Autowired IdempotencyService idempotencyService;
     @Autowired AdjustmentService adjustmentService;
     @Autowired ConfirmedM8Consumer coreM8;
+    @Autowired CoreInboundEventDispatcher inbound;
     @Autowired SocialBenefitRepository socialBenefits;
     @Autowired SocialBenefitEventHistoryRepository socialBenefitHistory;
     @Autowired LateChargeRuleRepository lateChargeRules;
@@ -324,6 +325,50 @@ class PostgreSqlIntegrationTest {
     @Autowired TaxConfigurationRepository taxConfigurations;
     @Autowired ReconciliationService reconciliations;
     @Autowired LiquidationRunService bulkRuns;
+    @Autowired ExemptionRequestRepository exemptionRequests;
+
+    @Test void m1RegisteredCanonicalCitizenCreatesStableExemptionOutboxOnPostgreSql() throws Exception {
+        UUID incomingEventId=UUID.randomUUID(),canonicalId=UUID.fromString("f398dbcb-a2b4-49af-a724-3529c6ddd0f6");
+        JsonNode incoming=json.readTree("""
+            {"eventId":"%s","eventType":"citizenUpdated","eventVersion":"1.0","occurredAt":"2026-11-02T12:00:00-03:00","sourceModule":"ciudadanos","correlationId":"%s","causationId":null,
+             "data":{"citizenId":"%s","updateType":"REGISTERED","details":{"dni":"00000000","cuil":"20000000004","name":"Synthetic","lastname":"Citizen","birthdate":"1990-01-01","state":"ACTIVE","address":null},"updatedBy":{"type":"SYSTEM","id":"M1-TEST"}}}
+            """.formatted(incomingEventId,UUID.randomUUID(),canonicalId));
+        inbound.dispatch(json.writeValueAsString(incoming));
+        TaxpayerReference citizen=taxpayers.findByTaxpayerTypeAndCanonicalCitizenId(TaxpayerType.CITIZEN,canonicalId).orElseThrow();
+        assertThat(citizen.externalId).isEqualTo(canonicalId.toString());
+        DemoAuthSessions sessions=new DemoAuthSessions(demoUsers,taxpayers,passwordEncoder,demoAuthService);
+        assertThat(taxpayers.findById(citizen.id).orElseThrow().canonicalCitizenId).isEqualTo(canonicalId);
+
+        TaxConcept concept=catalog.createConcept(new ApiDtos.CreateTaxConceptRequest(
+            "PG_CANONICAL_LINK_"+UUID.randomUUID().toString().replace("-", ""),"Synthetic E2E",null,TaxConceptType.FEE,"M5"));
+        LocalDate today=LocalDate.now();
+        var request=new ApiDtos.CreateExemptionRequest(citizen.id,concept.id,"Synthetic integration test",new BigDecimal("50.00"),today,today.plusYears(1));
+        String requestKey="exemption-"+UUID.randomUUID(),taxpayer=sessions.token(DemoRole.TAXPAYER,citizen.id);
+        for(int i=0;i<2;i++) mvc.perform(post("/api/v1/exemption-requests").header("X-Demo-Session",taxpayer)
+                .header("Idempotency-Key",requestKey).contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsBytes(request)))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isCreated());
+
+        ExemptionRequest created=exemptionRequests.findByTaxpayerId(citizen.id,PageRequest.of(0,20)).getContent().stream()
+            .filter(item->item.taxConceptId.equals(concept.id)).findFirst().orElseThrow();
+        List<OutboxEvent> events=outbox.findAll().stream().filter(event->event.eventType.equals("exemptionRequested")
+            &&event.aggregateId.equals(created.id.toString())).toList();
+        assertThat(events).hasSize(1);
+        JsonNode envelope=json.readTree(events.get(0).payload);
+        assertThat(events.get(0).id.toString()).isEqualTo(envelope.path("eventId").asText());
+        assertThat(envelope.path("eventType").asText()).isEqualTo("exemptionRequested");
+        assertThat(envelope.path("eventVersion").asText()).isEqualTo("1.0");
+        assertThat(envelope.path("sourceModule").asText()).isEqualTo("rentas");
+        assertThat(envelope.path("correlationId").asText()).isEqualTo(created.integrationId.toString());
+        assertThat(envelope.path("data").path("requestId").asText()).isEqualTo(created.integrationId.toString());
+        assertThat(envelope.path("data").path("citizenId").asText()).isEqualTo(canonicalId.toString());
+        assertThat(envelope.path("data").path("conceptCode").asText()).isEqualTo(concept.code);
+        assertThat(envelope.path("data").path("reason").asText()).isEqualTo(request.reason());
+        assertThat(envelope.path("data").path("requestedPercentage").decimalValue()).isEqualByComparingTo(request.percentage());
+        assertThat(envelope.path("data").path("requestedFrom").asText()).isEqualTo(request.validFrom().toString());
+        assertThat(envelope.path("data").path("requestedUntil").asText()).isEqualTo(request.validUntil().toString());
+        assertThat(OffsetDateTime.parse(envelope.path("occurredAt").asText()).getOffset()).isNotNull();
+        assertThat(envelope.path("causationId").isNull()).isTrue();
+    }
 
     @AfterEach void clearSecurity(){SecurityContextHolder.clearContext();}
 
@@ -507,8 +552,9 @@ class PostgreSqlIntegrationTest {
             if(hasKey) covered++;
         }
         assertThat(paths.path("/api/v1/tickets/{id}/return").path("post").isMissingNode()).isFalse();
-        assertThat(postCount).isEqualTo(76);
-        assertThat(covered).isEqualTo(67);
+        assertThat(paths.path("/api/v1/taxpayers/{id}/canonical-citizen-link").path("post").isMissingNode()).isFalse();
+        assertThat(postCount).isEqualTo(77);
+        assertThat(covered).isEqualTo(68);
     }
 
     @Test void taxConceptCreationEndpointReplaysConcurrentRequestAndConflictsOnDifferentBody() throws Exception {

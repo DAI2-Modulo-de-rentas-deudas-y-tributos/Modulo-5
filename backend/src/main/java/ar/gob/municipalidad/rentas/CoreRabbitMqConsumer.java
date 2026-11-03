@@ -90,7 +90,7 @@ class CoreInboundEventDispatcher {
 }
 
 @Component
-@ConditionalOnProperty(prefix="rentas",name="broker-adapter",havingValue="rabbitmq")
+@ConditionalOnProperty(prefix="rentas.core.amqp",name="consumer-enabled",havingValue="true")
 class CoreRabbitMqConsumer {
     private static final Logger log=LoggerFactory.getLogger(CoreRabbitMqConsumer.class);
     private final CoreInboundEventDispatcher dispatcher;
