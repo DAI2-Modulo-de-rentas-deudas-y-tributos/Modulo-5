@@ -238,17 +238,11 @@ jobs:
         working-directory: frontend
         run: |
           npm ci --ignore-scripts
-          npx playwright install --with-deps chromium
+          ./node_modules/.bin/playwright install --with-deps chromium
 
       # Eje A: escenarios críticos de punta a punta, accesibilidad (axe) y responsive (360/768/1280).
       - name: Pruebas E2E con Playwright
-        working-directory: frontend
-        shell: bash
-        run: |
-          set -euo pipefail
-          E2E_DEMO_PASSWORD="$(sed -n 's/^RENTAS_DEMO_USERS_PASSWORD=//p' ../.env)"
-          export E2E_DEMO_PASSWORD
-          npx playwright test
+        run: sh scripts/compose/e2e-test.sh
 
       - name: Publicar el reporte de Playwright
         if: always()

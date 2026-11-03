@@ -19,7 +19,7 @@ Para correrlas en local, desde `frontend/` y con el sistema levantado:
 ```shell
 npm install
 npx playwright install chromium
-E2E_DEMO_PASSWORD=<valor de RENTAS_DEMO_USERS_PASSWORD del .env> npx playwright test
+cd .. && sh scripts/compose/e2e-test.sh   # lee la contraseña DEMO del .env
 ```
 
 `E2E_BASE_URL` cambia la URL del frontend (por defecto `http://localhost:5173`). Los escenarios
