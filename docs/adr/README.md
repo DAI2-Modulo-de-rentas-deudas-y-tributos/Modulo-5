@@ -12,3 +12,4 @@ Cada ADR debe indicar contexto, decisión, alternativas y consecuencias.
 - [ADR-0004: Strategy para cálculo de tributos](0004-strategy-calculo-tributos.md)
 - [ADR-0005: Adapter para publicar eventos de integración](0005-adapter-event-publisher.md)
 - [ADR-0006: Outbox transaccional y entrega desacoplada](0006-outbox-transaccional-y-entrega.md)
+- [ADR-0007: Auditoría de tickets en modo de sólo lectura](0007-auditor-ticket-read-only.md)
