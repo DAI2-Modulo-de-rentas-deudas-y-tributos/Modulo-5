@@ -1,6 +1,7 @@
 #!/bin/sh
 # Verifica el sistema levantado con `docker compose up -d --build`: el frontend responde con sus
-# cabeceras de seguridad y cada usuario DEMO ingresa a través de su proxy. Desde la raíz del repo:
+# cabeceras de seguridad, el log del backend no muestra contraseñas y cada usuario DEMO ingresa a
+# través de su proxy. Desde la raíz del repo:
 #   sh scripts/compose/smoke-test.sh
 # Lee el .env de la raíz; nunca imprime la contraseña.
 set -eu
@@ -21,6 +22,11 @@ for header in Content-Security-Policy X-Frame-Options X-Content-Type-Options Ref
   echo "$HEADERS" | grep -qi "^$header:" || { echo "ERROR: el frontend no envía la cabecera $header." >&2; exit 1; }
 done
 echo "Cabeceras de seguridad presentes."
+
+# Ninguna credencial puede aparecer en los logs (SCRUM-818).
+if docker compose logs backend 2>/dev/null | grep -qi 'generated security password'; then
+  echo "ERROR: el log del backend muestra una contraseña generada por Spring." >&2; exit 1
+fi
 
 for user in supervisor rentas cajero auditor contribuyente; do
   curl --fail --silent --show-error --header "Content-Type: application/json" \

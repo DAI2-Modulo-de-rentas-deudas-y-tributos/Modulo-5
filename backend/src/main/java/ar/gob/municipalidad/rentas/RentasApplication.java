@@ -17,6 +17,7 @@ import static org.springframework.data.web.config.EnableSpringDataWebSupport.Pag
 
 @EnableScheduling
 @EnableSpringDataWebSupport(pageSerializationMode=VIA_DTO)
+// Sin UserDetailsService propio, Spring crea un usuario en memoria y loguea su contraseña (SCRUM-818).
 @SpringBootApplication(exclude = UserDetailsServiceAutoConfiguration.class)
 public class RentasApplication {
     public static void main(String[] args) { SpringApplication.run(RentasApplication.class, args); }
