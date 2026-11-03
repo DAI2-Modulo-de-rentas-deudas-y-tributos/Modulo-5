@@ -85,3 +85,7 @@ frontend/test-results/
 
 # Schemathesis (pruebas de contrato)
 schemathesis-report/
+
+# Reportes de k6 y OWASP ZAP
+k6-report/
+zap-report/
