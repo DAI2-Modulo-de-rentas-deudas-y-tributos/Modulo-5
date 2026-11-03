@@ -66,7 +66,7 @@
 .workspace-app .workspace-nav-link.is-active { background: #edf1f7; color: var(--workspace-ink); font-weight: 600; }
 .workspace-app .workspace-nav-link.is-active > svg { color: var(--workspace-ink); }
 .workspace-app .workspace-nav-link.is-active::before { content: ""; position: absolute; top: 13px; bottom: 13px; left: 0; width: 3px; border-radius: 2px; background: var(--workspace-ink); }
-.workspace-app .workspace-nav-label { padding: 22px 14px 8px; color: #7b879a; font-size: 11px; }
+.workspace-app .workspace-nav-label { padding: 22px 14px 8px; color: #5f6c7f; font-size: 11px; }
 .workspace-app .workspace-sidebar-footer { margin: 0 24px; padding-block: 21px 26px; border-top: 1px solid var(--workspace-line); color: var(--workspace-muted); font-size: 11px; line-height: 1.8; }
 .workspace-app .workspace-sidebar-footer p:first-child { color: var(--workspace-ink); font-weight: 500; }
 .workspace-app .workspace-sidebar-footer > span { display: block; margin-top: 14px; font-size: 10px; }

@@ -49,7 +49,7 @@ export default function ExencionesPortalPage() {
       align: "right",
       render: (row) =>
         row.percentage === undefined || row.percentage === null ? (
-          <span className="text-neutral-300">—</span>
+          <span className="text-neutral-500">—</span>
         ) : (
           formatPercentage(row.percentage)
         ),

@@ -110,7 +110,7 @@ export default function ReceiptCard({ receipt }) {
           Cobrado por {receipt.cashier?.fullName ?? "—"}
           {receipt.cashier?.counter ? ` · ${receipt.cashier.counter}` : ""}
         </p>
-        <p className="text-[11px] text-neutral-300 tabular-nums">Pago #{receipt.paymentId}</p>
+        <p className="text-[11px] text-neutral-500 tabular-nums">Pago #{receipt.paymentId}</p>
       </footer>
     </div>
   );

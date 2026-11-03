@@ -56,7 +56,7 @@ export default function ContribuyentesPage() {
         row.benefit?.status === "ACTIVE" ? (
           <StatusBadge tone="success" label={`${row.benefit.discountPercentage}% desc.`} />
         ) : (
-          <span className="text-neutral-300">—</span>
+          <span className="text-neutral-500">—</span>
         ),
     },
   ];

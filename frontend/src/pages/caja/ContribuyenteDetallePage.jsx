@@ -56,7 +56,7 @@ export default function ContribuyenteDetallePage() {
             </Button>
           </div>
         ) : (
-          <span className="text-neutral-300">—</span>
+          <span className="text-neutral-500">—</span>
         ),
     },
   ];
@@ -125,7 +125,7 @@ export default function ContribuyenteDetallePage() {
             Cobrar cuota
           </Button>
         ) : (
-          <span className="text-neutral-300">—</span>
+          <span className="text-neutral-500">—</span>
         ),
     },
   ];

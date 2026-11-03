@@ -77,7 +77,7 @@ export default function PlanesPage() {
         row.status === "REQUESTED" ? (
           <StatusBadge status={row.internalStatus} />
         ) : (
-          <span className="text-neutral-300">—</span>
+          <span className="text-neutral-500">—</span>
         ),
     },
     {

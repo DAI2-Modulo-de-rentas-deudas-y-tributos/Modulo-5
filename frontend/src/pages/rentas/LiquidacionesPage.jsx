@@ -51,7 +51,7 @@ export default function LiquidacionesPage() {
         row.discountPercentage > 0 ? (
           <StatusBadge tone="success" label={formatPercentage(row.discountPercentage)} />
         ) : (
-          <span className="text-neutral-300">—</span>
+          <span className="text-neutral-500">—</span>
         ),
     },
     {

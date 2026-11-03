@@ -44,10 +44,11 @@ export default function Topbar({ onOpenMenu, menuOpen: navigationOpen = false, a
       <div className="workspace-account" ref={menuRef}>
         <button ref={triggerRef} type="button" onClick={() => setMenuOpen((value) => !value)}
           onBlur={(event) => { if (!event.currentTarget.parentElement.contains(event.relatedTarget)) setMenuOpen(false); }}
-          className="workspace-account-trigger" aria-label={`${user.fullName}, opciones de cuenta`}
-          aria-haspopup="menu" aria-expanded={menuOpen}>
-          <span className="workspace-avatar">{initials}</span>
+          className="workspace-account-trigger" aria-haspopup="menu" aria-expanded={menuOpen}>
+          <span className="workspace-avatar" aria-hidden="true">{initials}</span>
+          {/* El nombre accesible incluye el texto visible (WCAG 2.5.3). */}
           <span className="workspace-account-name"><strong>{user.fullName}</strong><span>{user.roleLabel}</span></span>
+          <span className="sr-only">, opciones de cuenta</span>
           <ChevronDown size={15} aria-hidden="true" />
         </button>
         {menuOpen && (

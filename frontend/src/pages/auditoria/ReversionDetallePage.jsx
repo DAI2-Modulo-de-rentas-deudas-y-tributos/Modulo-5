@@ -134,7 +134,7 @@ function Transition({ label, from, to }) {
       </p>
       <div className="mt-1.5 flex flex-wrap items-center gap-2">
         <StatusBadge status={from} />
-        <span className="text-neutral-300">→</span>
+        <span className="text-neutral-500">→</span>
         <StatusBadge status={to} />
       </div>
     </div>

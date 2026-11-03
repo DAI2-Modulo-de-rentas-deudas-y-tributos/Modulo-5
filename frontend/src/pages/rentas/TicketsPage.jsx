@@ -82,7 +82,7 @@ export default function TicketsPage() {
     {
       key: "assignedTo",
       header: "Asignado",
-      render: (row) => row.assignedTo ?? <span className="text-neutral-300">Sin asignar</span>,
+      render: (row) => row.assignedTo ?? <span className="text-neutral-500">Sin asignar</span>,
     },
     { key: "status", header: "Estado", render: (row) => <StatusBadge status={row.status} /> },
     {
