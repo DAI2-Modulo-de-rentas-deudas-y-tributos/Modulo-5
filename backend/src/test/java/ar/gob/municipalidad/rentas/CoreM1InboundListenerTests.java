@@ -30,20 +30,21 @@ class CoreM1InboundListenerTests {
     @Autowired ProcessedEventRepository processed;
 
     @Test void citizenVariantsArriveThroughCoreAndPreserveTheOriginalEnvelope() throws Exception {
-        long citizenId=Math.abs(UUID.randomUUID().getMostSignificantBits());
+        UUID citizenId=UUID.randomUUID();
         UUID id=UUID.randomUUID(), correlation=UUID.randomUUID(), causation=UUID.randomUUID();
         String registered=citizen(citizenId,"REGISTERED","""
             {"dni":"34567890","cuil":"20345678901","name":"Marcos","lastname":"Ferreyra","birthdate":"1990-04-12","state":"ACTIVE"}
             """,id,correlation,causation);
         send(registered,1);
-        TaxpayerReference citizen=taxpayers.findByTaxpayerTypeAndExternalId(TaxpayerType.CITIZEN,Long.toString(citizenId)).orElseThrow();
+        TaxpayerReference citizen=taxpayers.findByTaxpayerTypeAndCanonicalCitizenId(TaxpayerType.CITIZEN,citizenId).orElseThrow();
         assertThat(citizen.externalStatus).isEqualTo(TaxpayerStatus.ACTIVE);
-        assertThat(citizen.canonicalCitizenId).isNull();
+        assertThat(citizen.externalId).isEqualTo(citizenId.toString());
+        assertThat(citizen.canonicalCitizenId).isEqualTo(citizenId);
         IntegrationEventLog recorded=logs.findFirstByExternalEventIdOrderByIdDesc(id.toString()).orElseThrow();
         ObjectNode saved=(ObjectNode)json.readTree(recorded.payload);
         assertThat(saved.path("correlationId").asText()).isEqualTo(correlation.toString());
         assertThat(saved.path("causationId").asText()).isEqualTo(causation.toString());
-        assertThat(saved.path("data").path("citizenId").longValue()).isEqualTo(citizenId);
+        assertThat(saved.path("data").path("citizenId").asText()).isEqualTo(citizenId.toString());
         assertThat(saved.has("producer")).isFalse();
         assertThat(recorded.sourceModule).isEqualTo("ciudadanos");
 
@@ -87,7 +88,7 @@ class CoreM1InboundListenerTests {
     }
 
     @Test void invalidSourceMalformedEnvelopeAndUnconfirmedVariantNackWithoutRequeue() throws Exception {
-        long citizenId=100000L+Math.floorMod(UUID.randomUUID().getMostSignificantBits(),100000L);
+        UUID citizenId=UUID.randomUUID();
         UUID id=UUID.randomUUID();
         String valid=citizen(citizenId,"REGISTERED","""
             {"dni":"34567890","cuil":"20345678901","name":"Marcos","lastname":"Ferreyra","birthdate":"1990-04-12","state":"ACTIVE"}
@@ -98,12 +99,21 @@ class CoreM1InboundListenerTests {
         reject(valid.replace("\"eventType\":\"citizenUpdated\"","\"eventType\":\"representationRevoked\""),12);
         reject(valid.replace("\"data\":","\"producer\":{},\"data\":"),13);
         assertThat(processed.existsByExternalEventId(id.toString())).isFalse();
-        assertThat(taxpayers.findByTaxpayerTypeAndExternalId(TaxpayerType.CITIZEN,Long.toString(citizenId))).isEmpty();
+        assertThat(taxpayers.findByTaxpayerTypeAndCanonicalCitizenId(TaxpayerType.CITIZEN,citizenId)).isEmpty();
     }
 
-    private String citizen(long citizenId,String updateType,String details,UUID id,UUID correlation,UUID causation) throws Exception {
+    @Test void uuidEventDoesNotGuessThatLegacyNumericExternalIdBelongsToCitizen() throws Exception {
+        TaxpayerReference legacy=new TaxpayerReference();legacy.taxpayerType=TaxpayerType.CITIZEN;legacy.externalId="4";
+        legacy.displayName="Legacy reference";legacy.externalStatus=TaxpayerStatus.ACTIVE;legacy.createdAt=legacy.updatedAt=OffsetDateTime.now();
+        taxpayers.saveAndFlush(legacy);
+        UUID canonicalId=UUID.randomUUID();
+        reject(citizen(canonicalId,"BLOCKED","{\"reason\":\"REVIEW\",\"reviewRequired\":true}",UUID.randomUUID(),UUID.randomUUID(),null),14);
+        assertThat(taxpayers.findById(legacy.id).orElseThrow().canonicalCitizenId).isNull();
+    }
+
+    private String citizen(UUID citizenId,String updateType,String details,UUID id,UUID correlation,UUID causation) throws Exception {
         return envelope("citizenUpdated","ciudadanos",id,correlation,causation,"""
-            {"citizenId":%d,"updateType":"%s","details":%s,"updatedBy":{"type":"AREA_USER","id":"USR-M1-14"}}
+            {"citizenId":"%s","updateType":"%s","details":%s,"updatedBy":{"type":"AREA_USER","id":"USR-M1-14"}}
             """.formatted(citizenId,updateType,details));
     }
     private String envelope(String type,String source,UUID id,UUID correlation,UUID causation,String data) throws Exception {

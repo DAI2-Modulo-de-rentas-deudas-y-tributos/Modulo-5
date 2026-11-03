@@ -30,6 +30,7 @@ interface TaxpayerRepository extends FilteredRepository<TaxpayerReference,Long> 
     @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select t from TaxpayerReference t where t.id=:id") Optional<TaxpayerReference> findByIdForUpdate(Long id);
     Optional<TaxpayerReference> findByTaxpayerTypeAndExternalId(TaxpayerType type, String externalId);
     Optional<TaxpayerReference> findByTaxpayerTypeAndCanonicalCitizenId(TaxpayerType type,UUID canonicalCitizenId);
+    Optional<TaxpayerReference> findByCanonicalCitizenId(UUID canonicalCitizenId);
     Optional<TaxpayerReference> findByTaxpayerTypeAndDni(TaxpayerType type,String dni);
     Optional<TaxpayerReference> findByTaxpayerTypeAndCuit(TaxpayerType type,String cuit);
 }
