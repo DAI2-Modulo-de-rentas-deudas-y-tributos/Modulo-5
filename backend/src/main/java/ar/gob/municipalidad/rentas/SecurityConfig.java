@@ -60,6 +60,7 @@ class SecurityConfig {
             if (!(handler instanceof HandlerMethod mapped)) return true;
             HandlerMethod resolved=mapped.createWithResolvedBean();
             Method method=resolved.getMethod();
+            // shortcut: current @PreAuthorize rules are role-only; argument-based rules need a different pre-binding strategy.
             MethodInvocation invocation=new MethodInvocation() {
                 @Override public Method getMethod() { return method; }
                 @Override public Object[] getArguments() { return new Object[method.getParameterCount()]; }
