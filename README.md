@@ -185,8 +185,22 @@ tests de frontend y backend, validación de Terraform, arranque completo con
 `docker compose`, escaneo de dependencias vulnerables (OSV-Scanner) y de secretos. El check `ci-required` exige que todos
 terminen bien y es el que bloquea el merge.
 
-Sobre el sistema levantado por `docker compose`, el CI también corre las pruebas de punta a punta
-con Playwright, que incluyen accesibilidad y responsive ([frontend/e2e/README.md](frontend/e2e/README.md)).
+Sobre el sistema levantado por `docker compose`, el job `compose` también corre (scripts en `scripts/compose/`):
+
+| Prueba | Script | Criterio |
+|---|---|---|
+| E2E con Playwright, accesibilidad (axe) y responsive | `e2e-test.sh` ([frontend/e2e/README.md](frontend/e2e/README.md)) | Eje A |
+| Resiliencia: duplicados, DLQ y broker caído | `resilience-test.sh` | Eje C |
+| Contrato contra el OpenAPI (Schemathesis) | `contract-test.sh` | Eje B |
+
+Las que tardan más que los 15 minutos del pipeline corren en workflows propios, semanalmente, al
+crear un tag `v*` y a pedido (Actions → *Run workflow*), con sus reportes como artefactos:
+
+| Workflow | Qué corre | Criterio |
+|---|---|---|
+| `mutation.yml` | PIT sobre las 14 clases de dominio; falla debajo de 60 %. | Eje B |
+| `no-funcionales.yml` | k6 (50 usuarios, 5 min, p95 < 500 ms, < 1 % de errores) y OWASP ZAP (0 alertas High). | Ejes C y D |
+| `estabilidad.yml` | La suite completa 3 veces sobre el mismo commit. | Eje B |
 
 ## Continuidad del traspaso técnico
 
