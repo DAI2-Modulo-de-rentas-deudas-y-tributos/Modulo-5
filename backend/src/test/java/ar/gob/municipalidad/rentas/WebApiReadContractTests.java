@@ -32,6 +32,7 @@ class WebApiReadContractTests {
     @Autowired ObjectMapper json;
     @Autowired TaxpayerRepository taxpayers;
     @Autowired TaxConceptRepository concepts;
+    @Autowired TaxConfigurationRepository configurations;
     @Autowired DebtRepository debts;
     @Autowired DemoUserRepository demoUsers;
     @Autowired PasswordEncoder encoder;
@@ -338,6 +339,25 @@ class WebApiReadContractTests {
             .filter(item->item.path("id").asLong()==created.path("id").asLong()).findFirst().orElseThrow();
         assertThat(listedRule.has("approvedActorId")).isFalse();
         assertThat(listedRule.path("percentage").decimalValue()).isEqualByComparingTo("10.00");
+    }
+
+    @Test void rejectsTaxConfigurationWithMinimumAboveMaximumWithoutDatabaseError() throws Exception {
+        TaxConcept concept=new TaxConcept();concept.code="MONEY_RANGE_"+java.util.UUID.randomUUID();concept.name=concept.code;
+        concept.type=TaxConceptType.FEE;concept.originModule="M5";concept.active=true;
+        concept.createdAt=concept.updatedAt=OffsetDateTime.now();concepts.save(concept);
+        long before=configurations.count();
+
+        mvc.perform(post("/api/v1/tax-configurations")
+                .header("X-Demo-Session",rentas)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"taxConceptId\":"+concept.id+",\"calculationType\":\"FIXED\",\"fixedAmount\":100,"+
+                    "\"minimumAmount\":5000,\"maximumAmount\":100,\"partialPaymentAllowed\":true,"+
+                    "\"paymentPlanAllowed\":true,\"validFrom\":\"2026-11-01\"}"))
+            .andExpect(status().isUnprocessableEntity())
+            .andExpect(jsonPath("$.code").value("INVALID_CONFIGURATION_RANGE"))
+            .andExpect(jsonPath("$.message").value("El importe mínimo no puede superar al importe máximo"));
+
+        assertThat(configurations.count()).isEqualTo(before);
     }
 
     private org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder withStaff(

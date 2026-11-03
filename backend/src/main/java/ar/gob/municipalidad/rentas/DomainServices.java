@@ -135,6 +135,8 @@ class CatalogService {
     private TaxConfiguration config(Long id) { return configurations.findById(id).orElseThrow(()->notFound("Configuración")); }
     private void validateConfiguration(ApiDtos.CreateTaxConfigurationRequest r) {
         require(r.validUntil()==null || !r.validUntil().isBefore(r.validFrom()),"INVALID_VALIDITY_RANGE","La vigencia final no puede preceder a la inicial");
+        require(r.minimumAmount()==null || r.maximumAmount()==null || r.minimumAmount().compareTo(r.maximumAmount())<=0,
+            "INVALID_CONFIGURATION_RANGE","El importe mínimo no puede superar al importe máximo");
         require(r.calculationType()!=CalculationType.FIXED || r.fixedAmount()!=null,"FIXED_AMOUNT_REQUIRED","El cálculo fijo requiere importe");
         require(r.calculationType()!=CalculationType.PERCENTAGE || r.rate()!=null,"RATE_REQUIRED","El cálculo porcentual requiere alícuota");
     }
