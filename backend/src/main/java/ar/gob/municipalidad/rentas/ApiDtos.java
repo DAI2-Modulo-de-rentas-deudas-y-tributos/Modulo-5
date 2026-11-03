@@ -81,17 +81,17 @@ public final class ApiDtos {
         @NotNull TaxConceptType type, @NotBlank String originModule) {}
     public record UpdateTaxConceptRequest(@NotBlank String name, String description, @NotNull Boolean active) {}
     public record CreateTaxConfigurationRequest(@NotNull @Positive Long taxConceptId, @NotNull CalculationType calculationType,
-        @PositiveOrZero BigDecimal rate, @PositiveOrZero BigDecimal fixedAmount,
-        @PositiveOrZero BigDecimal minimumAmount, @PositiveOrZero BigDecimal maximumAmount,
+        @PositiveOrZero BigDecimal rate, @PositiveOrZero @CurrencyAmount BigDecimal fixedAmount,
+        @PositiveOrZero @CurrencyAmount BigDecimal minimumAmount, @PositiveOrZero @CurrencyAmount BigDecimal maximumAmount,
         boolean partialPaymentAllowed, boolean paymentPlanAllowed, @NotNull LocalDate validFrom, LocalDate validUntil) {}
-    public record UpdateTaxConfigurationRequest(CalculationType calculationType,@PositiveOrZero BigDecimal rate,@PositiveOrZero BigDecimal fixedAmount,
-        @PositiveOrZero BigDecimal minimumAmount,@PositiveOrZero BigDecimal maximumAmount,Boolean partialPaymentAllowed,Boolean paymentPlanAllowed,
+    public record UpdateTaxConfigurationRequest(CalculationType calculationType,@PositiveOrZero BigDecimal rate,@PositiveOrZero @CurrencyAmount BigDecimal fixedAmount,
+        @PositiveOrZero @CurrencyAmount BigDecimal minimumAmount,@PositiveOrZero @CurrencyAmount BigDecimal maximumAmount,Boolean partialPaymentAllowed,Boolean paymentPlanAllowed,
         LocalDate validFrom,LocalDate validUntil) {}
     public record ApprovalRequest(String observation) {}
     public record RejectionRequest(@NotBlank String reason) {}
     public record DeactivationRequest(@NotBlank String reason) {}
     public record LiquidationRequest(@NotNull @Positive Long taxpayerId, @NotNull @Positive Long taxConceptId,
-        @NotBlank @Pattern(regexp="\\d{4}-\\d{2}") String period, @NotNull @PositiveOrZero BigDecimal taxableBase,
+        @NotBlank @Pattern(regexp="\\d{4}-\\d{2}") String period, @NotNull @PositiveOrZero @CurrencyAmount BigDecimal taxableBase,
         @NotNull LocalDate dueDate) {}
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record LiquidationComponentResponse(Long id, LiquidationComponentType type, String sourceType,
@@ -118,18 +118,18 @@ public final class ApiDtos {
         LiquidationOriginResponse origin,DebtResponse debt,String historyOrder,
         List<LiquidationHistoryEntryResponse> history,List<AdjustmentResponse> adjustments) {}
     public record RegisterPaymentRequest(@NotNull @Positive Long taxpayerId, @Positive Long billId, @NotNull PaymentMethod paymentMethod,
-        @NotNull @Positive BigDecimal amount, List<@NotNull @Valid AllocationRequest> allocations) {
+        @NotNull @Positive @CurrencyAmount BigDecimal amount, List<@NotNull @Valid AllocationRequest> allocations) {
         public RegisterPaymentRequest(Long taxpayerId, PaymentMethod method, BigDecimal amount, List<AllocationRequest> allocations) { this(taxpayerId,null,method,amount,allocations); }
     }
-    public record AllocationRequest(@Positive Long debtId, @Positive Long installmentId, @NotNull @Positive BigDecimal amount) {
+    public record AllocationRequest(@Positive Long debtId, @Positive Long installmentId, @NotNull @Positive @CurrencyAmount BigDecimal amount) {
         public AllocationRequest(Long debtId, BigDecimal amount) { this(debtId, null, amount); }
     }
     public record CreateBillRequest(@NotNull @Positive Long taxpayerId, @NotEmpty List<@NotNull @Positive Long> debtIds, @NotNull LocalDate dueDate) {}
     public record BillDetail(Bill bill,List<BillDebt> debts) {}
     public record ReceiptResponse(String receiptNumber,Long paymentId,Long taxpayerId,BigDecimal amount,OffsetDateTime paidAt,String status) {}
-    public record ElectronicPaymentRequest(@NotNull @Positive Long debtId,@NotNull PaymentMethod paymentMethod,@NotNull @Positive BigDecimal amount) {}
+    public record ElectronicPaymentRequest(@NotNull @Positive Long debtId,@NotNull PaymentMethod paymentMethod,@NotNull @Positive @CurrencyAmount BigDecimal amount) {}
     public record ElectronicPaymentPreview(Long debtId,BigDecimal requestedAmount,BigDecimal payableAmount,boolean approved,String message) {}
-    public record ApplyCreditBalanceRequest(@NotNull @Positive Long debtId,@NotNull @Positive BigDecimal amount) {}
+    public record ApplyCreditBalanceRequest(@NotNull @Positive Long debtId,@NotNull @Positive @CurrencyAmount BigDecimal amount) {}
     public record CreateReversalRequest(@NotBlank String reason) {}
     public record GrantPlanRequest(@NotNull @Positive Long debtId, @Min(1) @Max(60) int installments,
         @NotNull @PositiveOrZero BigDecimal annualInterestRate) {}
@@ -148,7 +148,7 @@ public final class ApiDtos {
         BigDecimal downPayment,BigDecimal financedPrincipal,BigDecimal interest,BigDecimal total,int installments,
         BigDecimal regularInstallmentAmount,boolean exceptional) {}
     public record CreatePaymentPlanRequest(@NotNull @Positive Long taxpayerId,@NotEmpty List<@NotNull @Positive Long> debtIds,@Min(1) @Max(60) int installments) {}
-    public record GrantPaymentPlanRequest(@PositiveOrZero BigDecimal downPaymentAmount) {}
+    public record GrantPaymentPlanRequest(@PositiveOrZero @CurrencyAmount BigDecimal downPaymentAmount) {}
     public record SubmitPlanExceptionRequest(@NotBlank String reason) {}
     public record ApprovePlanExceptionRequest(String observation) {}
     public record CreatePlanExpirationRequest(@NotBlank String reason) {}
@@ -156,8 +156,8 @@ public final class ApiDtos {
     public record RefinancingSimulationResponse(Long originalPlanId,BigDecimal outstandingPrincipal,BigDecimal interest,
         BigDecimal total,int installments,boolean exceptional) {}
     public record CreateRefinancingRequest(@Min(1) @Max(60) int installments) {}
-    public record CreateAdjustmentRequest(@NotNull @Positive Long debtId,@NotNull AdjustmentType type,@NotNull @DecimalMin("0.01") BigDecimal amount,@NotBlank String reason) {}
-    public record LiquidationRunItemRequest(@NotNull @Positive Long taxpayerId,@NotNull @PositiveOrZero BigDecimal taxableBase) {}
+    public record CreateAdjustmentRequest(@NotNull @Positive Long debtId,@NotNull AdjustmentType type,@NotNull @DecimalMin("0.01") @CurrencyAmount BigDecimal amount,@NotBlank String reason) {}
+    public record LiquidationRunItemRequest(@NotNull @Positive Long taxpayerId,@NotNull @PositiveOrZero @CurrencyAmount BigDecimal taxableBase) {}
     public record CreateLiquidationRunRequest(@NotNull @Positive Long taxConceptId,@NotBlank @Pattern(regexp="\\d{4}-\\d{2}") String period,
         @NotNull LocalDate dueDate,@NotEmpty List<@NotNull @Valid LiquidationRunItemRequest> items) {}
     public record LiquidationRunDetail(LiquidationRun run,List<LiquidationRunItem> items) {}

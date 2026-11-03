@@ -144,6 +144,50 @@ class BeanValidationContractTests {
         assertThat(payments.count()).isEqualTo(before);
     }
 
+    @Test void rejectsMoneyWithMoreThanTwoSignificantDecimalsBeforePersistence() throws Exception {
+        var invalidPayment=new ApiDtos.RegisterPaymentRequest(1L,PaymentMethod.CASH,new BigDecimal("100.005"),null);
+        var equivalentCents=new ApiDtos.RegisterPaymentRequest(1L,PaymentMethod.CASH,new BigDecimal("10.2300"),null);
+        assertThat(validator.validate(invalidPayment)).extracting(error->error.getPropertyPath().toString())
+            .contains("amount");
+        assertThat(validator.validate(equivalentCents)).isEmpty();
+        assertThat(validator.validate(new ApiDtos.CreateAdjustmentRequest(1L,AdjustmentType.DISCOUNT,
+            new BigDecimal("10.555"),"Prueba"))).extracting(error->error.getPropertyPath().toString())
+            .contains("amount");
+        assertThat(validator.validate(new ApiDtos.LiquidationRequest(1L,1L,"2026-11",
+            new BigDecimal("1234.567"),LocalDate.now()))).extracting(error->error.getPropertyPath().toString())
+            .contains("taxableBase");
+        assertThat(validator.validate(new ApiDtos.CreateTaxConfigurationRequest(1L,CalculationType.FIXED,
+            null,new BigDecimal("100.005"),null,null,true,true,LocalDate.now(),null)))
+            .extracting(error->error.getPropertyPath().toString()).contains("fixedAmount");
+        assertThat(validator.validate(new ApiDtos.UpdateTaxConfigurationRequest(null,null,null,
+            new BigDecimal("1.001"),null,null,null,null,null)))
+            .extracting(error->error.getPropertyPath().toString()).contains("minimumAmount");
+        assertThat(validator.validate(new ApiDtos.RegisterPaymentRequest(1L,PaymentMethod.CASH,BigDecimal.TEN,
+            List.of(new ApiDtos.AllocationRequest(1L,new BigDecimal("1.001"))))))
+            .extracting(error->error.getPropertyPath().toString()).contains("allocations[0].amount");
+        assertThat(validator.validate(new ApiDtos.ElectronicPaymentRequest(1L,PaymentMethod.CARD,
+            new BigDecimal("1.001")))).extracting(error->error.getPropertyPath().toString()).contains("amount");
+        assertThat(validator.validate(new ApiDtos.ApplyCreditBalanceRequest(1L,new BigDecimal("1.001"))))
+            .extracting(error->error.getPropertyPath().toString()).contains("amount");
+        assertThat(validator.validate(new ApiDtos.GrantPaymentPlanRequest(new BigDecimal("1.001"))))
+            .extracting(error->error.getPropertyPath().toString()).contains("downPaymentAmount");
+        var invalidRun=new ApiDtos.CreateLiquidationRunRequest(1L,"2026-11",LocalDate.now(),
+            List.of(new ApiDtos.LiquidationRunItemRequest(1L,new BigDecimal("1.001"))));
+        assertThat(validator.validate(invalidRun)).extracting(error->error.getPropertyPath().toString())
+            .contains("items[0].taxableBase");
+
+        long before=payments.count();
+        mvc.perform(post("/api/v1/payments")
+                .header("X-Demo-Session",demo.token(DemoRole.CASHIER))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"taxpayerId\":1,\"paymentMethod\":\"CASH\",\"amount\":100.005}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+            .andExpect(jsonPath("$.details.fieldErrors[0].field").value("amount"))
+            .andExpect(jsonPath("$.details.fieldErrors[0].messages[0]").value("Debe tener como máximo 2 decimales"));
+        assertThat(payments.count()).isEqualTo(before);
+    }
+
     @Test void invalidLiquidationFormatReturns400BeforePersistence() throws Exception {
         long before=liquidations.count();
         mvc.perform(post("/api/v1/liquidations")
