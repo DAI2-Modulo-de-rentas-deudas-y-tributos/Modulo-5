@@ -22,7 +22,7 @@ fi
 
 SUMMARY="$REPORT_DIR/resumen-k6.json"
 if [ -f "$SUMMARY" ]; then
-  if ! node -e 'const fs=require("node:fs");const p=process.argv[1];try{const data=JSON.parse(fs.readFileSync(p,"utf8"));delete data.setup_data;const output=JSON.stringify(data,null,2);if(output.includes("X-Demo-Session"))throw new Error("session header remains");fs.writeFileSync(p,output+"\n")}catch{fs.rmSync(p,{force:true});process.exit(1)}' "$SUMMARY"; then
+  if ! node -e 'const fs=require("node:fs");const p=process.argv[1],tmp=p+".sanitized";try{const data=JSON.parse(fs.readFileSync(p,"utf8"));delete data.setup_data;const output=JSON.stringify(data,null,2);if(output.includes("X-Demo-Session"))throw new Error("session header remains");fs.writeFileSync(tmp,output+"\n");fs.renameSync(tmp,p)}catch(error){fs.rmSync(tmp,{force:true});fs.rmSync(p,{force:true});console.error(`ERROR: k6 summary sanitization failed (${error.name}); summary removed.`);process.exit(1)}' "$SUMMARY"; then
     status=1
   fi
 fi
