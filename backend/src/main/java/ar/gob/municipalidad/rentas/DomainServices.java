@@ -405,7 +405,7 @@ class ReversalService {
     }
     private void block(PaymentReversalRequest reversal,PaymentAllocation allocation,String code,String message){
         rejectionAudit.record(reversal.id,allocation.id,code);
-        CatalogService.require(false,code,message);
+        throw new BusinessException(code,message,422);
     }
     private void reverseInstallment(Payment payment,PaymentAllocation a,String reason){
         Long planId=installments.findPaymentPlanIdById(a.installmentId).orElseThrow();PaymentPlan plan=plans.findByIdForUpdate(planId).orElseThrow();Installment i=installments.findByIdForUpdate(a.installmentId).orElseThrow();
