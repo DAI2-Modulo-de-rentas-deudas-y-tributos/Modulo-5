@@ -69,7 +69,12 @@ class TrustedClientAddressResolver {
         try{return InetAddress.getByName(value).getAddress();}catch(UnknownHostException ex){return null;}
     }
 
-    private record Network(byte[] address,int prefix){
+    private static final class Network {
+        private final byte[] address;
+        private final int prefix;
+
+        Network(byte[] address,int prefix){this.address=address;this.prefix=prefix;}
+
         boolean contains(byte[] candidate){
             if(address.length!=candidate.length)return false;
             int wholeBytes=prefix/8,remainingBits=prefix%8;
