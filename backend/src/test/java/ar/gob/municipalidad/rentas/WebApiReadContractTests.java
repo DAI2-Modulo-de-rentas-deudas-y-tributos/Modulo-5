@@ -108,6 +108,24 @@ class WebApiReadContractTests {
             .andExpect(jsonPath("$.content[0].status").value("FAILED"));
     }
 
+    @Test void integrationsBitacoraValidatesFiltersAndSupportsDeterministicFilteringAndSorting() throws Exception {
+        String base="/api/v1/integrations/events";
+        for (var invalid : new String[][]{{"direction","sideways"},{"status","UNKNOWN"},{"unexpected","x"},{"sort","secret,asc"},{"from","not-a-date"}}) {
+            var request=get(base).header("X-Demo-Session",staff).param(invalid[0],invalid[1]);
+            mvc.perform(request).andExpect(status().isBadRequest());
+        }
+        mvc.perform(withStaff(get(base).param("direction","outbound").param("status","DLQ")
+                .param("eventType","none").param("sourceModule","rentas").param("targetModule","CORE")
+                .param("from","2026-01-01").param("to","2026-01-31").param("sort","eventType,asc")))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.content").isArray());
+        mvc.perform(withStaff(get(base).param("direction","inbound").param("status","processed")
+                .param("sourceModule","m1").param("targetModule","rentas").param("from","2026-01-01T00:00:00Z")
+                .param("to","2026-01-31T23:59:59Z").param("sort","occurredAt,desc")))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.content").isArray());
+        mvc.perform(withStaff(get(base).param("direction"," ").param("status"," ").param("eventType"," ")))
+            .andExpect(status().isOk());
+    }
+
     @Test void missingResourcesUseTheSameSafeErrorContract() throws Exception {
         String[] missing = {
             "/api/v1/taxpayers/999999", "/api/v1/tax-concepts/999999",
