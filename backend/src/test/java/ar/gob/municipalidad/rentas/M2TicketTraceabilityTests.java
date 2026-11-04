@@ -42,7 +42,12 @@ class M2TicketTraceabilityTests {
         assertThat(consumer.consume(repeat).id).isEqualTo(ticket.id);
         assertThat(ticket.lastSourceEventId).isEqualTo(repeat.eventId().toString());
         tickets.assign(ticket.id);
-        assertThatThrownBy(()->tickets.assign(ticket.id)).isInstanceOf(BusinessException.class);
+        long eventCount=outbox.count();
+        assertThatThrownBy(()->tickets.assign(ticket.id)).isInstanceOfSatisfying(BusinessException.class,error->{
+            assertThat(error.code).isEqualTo("INVALID_TICKET_TRANSITION");assertThat(error.status).isEqualTo(409);
+        });
+        assertThat(ticket.status).isEqualTo(TicketCaseStatus.IN_PROGRESS);
+        assertThat(outbox.count()).isEqualTo(eventCount);
         assertThat(events("STARTED")).hasSize(1);
         assertThat(payload(events("STARTED").get(0)).path("causationId").asText()).isEqualTo(repeat.eventId().toString());
     }

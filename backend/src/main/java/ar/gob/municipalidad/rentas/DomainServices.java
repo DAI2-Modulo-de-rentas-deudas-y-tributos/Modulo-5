@@ -78,8 +78,10 @@ class CatalogService {
         "EXPIRATION_ALREADY_PENDING","EXPIRATION_NOT_PENDING","REFINANCING_ALREADY_PENDING",
         "INVALID_REFINANCING_TRANSITION","REFINANCING_NOT_PENDING","REFINANCING_EXCEPTION_APPROVAL_REQUIRED",
         "PLAN_NOT_REFINANCING_ELIGIBLE","PLAN_BALANCE_CHANGED","PLAN_WITHOUT_BALANCE","MAX_REFINANCING_REACHED",
-        "TICKET_ALREADY_CLOSED","INTEGRATION_EVENT_NOT_REPROCESSABLE","EXTERNAL_OBLIGATION_NOT_RETRYABLE",
-        "RECONCILIATION_ALREADY_RESOLVED","RECONCILIATION_PAYMENT_MISMATCH");
+        "TICKET_ALREADY_CLOSED","INSTALLMENT_CANCELLED","INTEGRATION_EVENT_NOT_REPROCESSABLE","EXTERNAL_OBLIGATION_NOT_RETRYABLE",
+        "RECONCILIATION_ALREADY_RESOLVED","RECONCILIATION_PAYMENT_MISMATCH",
+        "INVALID_TICKET_TRANSITION","INVALID_SOCIAL_RULE_TRANSITION",
+        "ALLOCATION_NOT_REVERSIBLE","PLAN_NOT_REVERSIBLE","INSTALLMENT_NOT_REVERSIBLE");
     private final TaxpayerRepository taxpayers; private final TaxConceptRepository concepts;
     private final TaxConfigurationRepository configurations; private final AuditService audit; private final CurrentIdentity identity;
     CatalogService(TaxpayerRepository taxpayers, TaxConceptRepository concepts, TaxConfigurationRepository configurations, AuditService audit, CurrentIdentity identity) {
@@ -405,7 +407,7 @@ class ReversalService {
     }
     private void block(PaymentReversalRequest reversal,PaymentAllocation allocation,String code,String message){
         rejectionAudit.record(reversal.id,allocation.id,code);
-        throw new BusinessException(code,message,422);
+        CatalogService.require(false,code,message);
     }
     private void reverseInstallment(Payment payment,PaymentAllocation a,String reason){
         Long planId=installments.findPaymentPlanIdById(a.installmentId).orElseThrow();PaymentPlan plan=plans.findByIdForUpdate(planId).orElseThrow();Installment i=installments.findByIdForUpdate(a.installmentId).orElseThrow();

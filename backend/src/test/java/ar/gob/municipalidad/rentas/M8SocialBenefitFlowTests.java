@@ -194,6 +194,17 @@ class M8SocialBenefitFlowTests {
         assertThat(preview(taxpayer,concept,"2026-11").finalAmount()).isEqualByComparingTo("100.00");
     }
 
+    @Test void resubmittingSocialRuleReturns409AndKeepsPendingState(){
+        TaxConcept concept=concept("M8-STATE-CONFLICT");
+        SocialBenefitRule proposal=ruleService.propose(new SocialBenefitRuleService.RuleProposal(PROGRAM_ID,
+            concept.code,new BigDecimal("20"),LocalDate.of(2026,11,1),null));
+        ruleService.submit(proposal.id);
+        assertThatThrownBy(()->ruleService.submit(proposal.id)).isInstanceOfSatisfying(BusinessException.class,error->{
+            assertThat(error.code).isEqualTo("INVALID_SOCIAL_RULE_TRANSITION");assertThat(error.status).isEqualTo(409);
+        });
+        assertThat(rules.findById(proposal.id).orElseThrow().status).isEqualTo(SocialBenefitRuleStatus.PENDING_APPROVAL);
+    }
+
     @Test void ruleRequiresSupervisorIdentityAndRespectsValidity(){
         TaxpayerReference taxpayer=taxpayer(true);TaxConcept concept=concept("M8-VALIDITY");configuration(concept);
         SocialBenefitRule proposal=ruleService.propose(new SocialBenefitRuleService.RuleProposal(PROGRAM_ID,concept.code,
