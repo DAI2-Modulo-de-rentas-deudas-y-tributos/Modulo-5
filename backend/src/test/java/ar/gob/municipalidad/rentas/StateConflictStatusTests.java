@@ -28,6 +28,11 @@ class StateConflictStatusTests {
         }
     }
 
+    @Test void businessExceptionNormalizesStateConflictButKeepsValidationStatus() {
+        org.assertj.core.api.Assertions.assertThat(new BusinessException("PLAN_NOT_REVERSIBLE", "transition not allowed", 422).status).isEqualTo(409);
+        org.assertj.core.api.Assertions.assertThat(new BusinessException("INVALID_EVENT", "invalid payload", 422).status).isEqualTo(422);
+    }
+
     static Stream<String> transitionConflictCodes() {
         return Stream.of(
             "TAXPAYER_BLOCKED", "DEBT_NOT_PAYABLE", "DEBT_NOT_BILLABLE", "BILL_NOT_PAYABLE",
