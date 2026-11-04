@@ -15,6 +15,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.YearMonth;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -34,6 +35,8 @@ class WebApiReadContractTests {
     @Autowired TaxConceptRepository concepts;
     @Autowired DebtRepository debts;
     @Autowired DemoUserRepository demoUsers;
+    @Autowired IntegrationEventLogRepository integrations;
+    @Autowired OutboxRepository outbox;
     @Autowired PasswordEncoder encoder;
     @Autowired DemoAuthService demoAuth;
     private DemoAuthSessions demo;
@@ -66,6 +69,43 @@ class WebApiReadContractTests {
                 .andExpect(jsonPath("$.content").isArray())
                 .andExpect(jsonPath("$.page.size").value(2));
         }
+    }
+
+    @Test void integrationsBitacoraCombinesInboundAndOutboxWithFaithfulStatesAndPagination() throws Exception {
+        OffsetDateTime now=OffsetDateTime.now();
+        UUID inboundId=UUID.randomUUID(),outboundId=UUID.randomUUID();
+        IntegrationEventLog inbound=new IntegrationEventLog();inbound.eventId=inboundId;inbound.externalEventId=inboundId.toString();
+        inbound.eventType="scrum787Synthetic";inbound.sourceModule="m1";inbound.targetModule="rentas";inbound.direction=EventDirection.INBOUND;
+        inbound.status=IntegrationEventStatus.PROCESSED;inbound.payload="{}";inbound.retryCount=0;inbound.occurredAt=now.minusMinutes(2);
+        inbound.receivedAt=now.minusMinutes(1);inbound.processedAt=now;integrations.saveAndFlush(inbound);
+        OutboxEvent outbound=new OutboxEvent();outbound.id=outboundId;outbound.eventType="scrum787Synthetic";outbound.targetModule="CORE";
+        outbound.aggregateType="ExemptionRequest";outbound.aggregateId="test";outbound.payload="{\"eventId\":\""+outboundId+"\"}";
+        outbound.status=OutboxStatus.CORE_ACCEPTED;outbound.retryCount=1;outbound.createdAt=now.minusMinutes(1);outbound.lastAttemptAt=now;outbound.publishedAt=now;outbox.saveAndFlush(outbound);
+
+        mvc.perform(withStaff(get("/api/v1/integrations/events").param("eventType","scrum787Synthetic").param("size","1")))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.page.totalElements").value(2)).andExpect(jsonPath("$.content.length()").value(1));
+        mvc.perform(withStaff(get("/api/v1/integrations/events").param("eventType","scrum787Synthetic").param("direction","OUT")))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.page.totalElements").value(1))
+            .andExpect(jsonPath("$.content[0].id").value(org.hamcrest.Matchers.nullValue()))
+            .andExpect(jsonPath("$.content[0].eventId").value(outboundId.toString()))
+            .andExpect(jsonPath("$.content[0].direction").value("OUTBOUND"))
+            .andExpect(jsonPath("$.content[0].status").value("CORE_ACCEPTED"))
+            .andExpect(jsonPath("$.content[0].publishedAt").isNotEmpty())
+            .andExpect(jsonPath("$.content[0].processedAt").value(org.hamcrest.Matchers.nullValue()));
+        mvc.perform(withStaff(get("/api/v1/integrations/events").param("eventType","scrum787Synthetic").param("direction","IN")))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.page.totalElements").value(1))
+            .andExpect(jsonPath("$.content[0].eventId").value(inboundId.toString()))
+            .andExpect(jsonPath("$.content[0].direction").value("INBOUND"))
+            .andExpect(jsonPath("$.content[0].status").value("PROCESSED"));
+        mvc.perform(withStaff(get("/api/v1/integrations/events").param("eventType","scrum787Synthetic").param("size","1").param("page","1")))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.page.totalElements").value(2))
+            .andExpect(jsonPath("$.content[0].eventId").value(inboundId.toString()));
+        OutboxEvent retrying=new OutboxEvent();retrying.id=UUID.randomUUID();retrying.eventType="scrum787Retrying";retrying.targetModule="CORE";
+        retrying.aggregateType="ExemptionRequest";retrying.aggregateId="test";retrying.payload="{}";retrying.status=OutboxStatus.FAILED;
+        retrying.retryCount=2;retrying.createdAt=now;retrying.lastAttemptAt=now;outbox.saveAndFlush(retrying);
+        mvc.perform(withStaff(get("/api/v1/integrations/events").param("eventType","scrum787Retrying").param("direction","OUT").param("status","RETRYING")))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.page.totalElements").value(1))
+            .andExpect(jsonPath("$.content[0].status").value("FAILED"));
     }
 
     @Test void missingResourcesUseTheSameSafeErrorContract() throws Exception {
