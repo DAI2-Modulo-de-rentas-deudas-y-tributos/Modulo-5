@@ -1,4 +1,4 @@
-# ADR-0007: State para el ciclo de vida de la deuda
+# ADR-0008: State para el ciclo de vida de la deuda
 
 - Estado: propuesto, pendiente de revisión arquitectónica.
 - Fecha: 2026-11-04.
