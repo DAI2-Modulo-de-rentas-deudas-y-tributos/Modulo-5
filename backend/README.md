@@ -293,9 +293,6 @@ M5 no consulta bases de M1, M2, M4, M7 ni M8: conserva referencias locales y se 
 - `GUIA_APRENDIZAJE.md`: explicación progresiva del backend.
 - `GUIA_FINAL_HARDENING.md`: explicación específica de esta etapa de cierre.
 - `INTEGRATION_CONTRACTS.md`: contratos recibidos de M1/M2/M4/M7/M8, estado de implementación local y pendientes de interoperabilidad con Core/Broker. `../docs/integrations/M5_ESTADO_LOCAL_2026-10-30.md` resume la situación actual y las migraciones aún no autorizadas.
-- `M7_CONTRACT_AND_API_AUDIT.md`: adaptación contractual de Tránsito e inventario auditado de la API REST.
-- `BACKEND_HARDENING_REPORT.md`: baseline, decisiones, evidencias y riesgos restantes.
-- `API_PERFORMANCE_HARDENING_REPORT.md`: cierre de los hallazgos GET/POST, evidencia de consultas y decisiones de compatibilidad.
 
 ## Problemas frecuentes
 
