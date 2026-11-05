@@ -192,6 +192,27 @@ class SegregationOfDutiesTests {
         assertThat(plans.approveRefinancingException(exceptional.id).exceptionApproved).isTrue();
     }
 
+    @Test void refinancingExceptionCanOnlyBeRejectedByAnotherSupervisor(){
+        Scenario scenario=scenario("SOD-REFINANCING-REJECT");
+        planConfiguration(1,2);
+        PaymentPlan plan=grantPlan(scenario);
+        authenticate("refinancing-requester",scenario.taxpayer.id,"TAXPAYER");
+        RefinancingRequest request=plans.requestRefinancing(plan.id,new ApiDtos.CreateRefinancingRequest(3));
+        authenticate("refinancing-exception-submitter","RENTAS");
+        plans.submitRefinancingException(request.id,"Fuera del máximo configurado");
+        long eventCount=outbox.count();
+
+        assertForbidden("RefinancingRequest",request.id,()->plans.rejectRefinancing(request.id,"No corresponde"));
+        authenticate("another-rentas-reviewer","RENTAS");
+        assertThatThrownBy(()->plans.rejectRefinancing(request.id,"No corresponde"))
+            .isInstanceOfSatisfying(BusinessException.class,error->assertThat(error.code).isEqualTo("PLAN_SUPERVISOR_REQUIRED"));
+        assertThat(refinancings.findById(request.id).orElseThrow().status).isEqualTo(RefinancingRequestStatus.PENDING_EXCEPTION_APPROVAL);
+        assertThat(outbox.count()).isEqualTo(eventCount);
+
+        authenticate("refinancing-supervisor","SUPERVISOR");
+        assertThat(plans.rejectRefinancing(request.id,"No corresponde").status).isEqualTo(RefinancingRequestStatus.REJECTED);
+    }
+
     @Test void reversalRequesterCannotApproveAndAnotherSupervisorCan(){
         Scenario scenario=scenario("SOD-REVERSAL");
         Payment payment=new Payment();payment.taxpayerId=scenario.taxpayer.id;payment.paymentMethod=PaymentMethod.CASH;payment.amount=new BigDecimal("10.00");payment.allocatedAmount=BigDecimal.ZERO.setScale(2);payment.unallocatedAmount=payment.amount;payment.status=PaymentStatus.CONFIRMED;payment.allocationStatus=PaymentAllocationStatus.UNALLOCATED;payment.origin=PaymentOrigin.CASHIER;payment.receiptNumber="SOD-REC-"+UUID.randomUUID();payment.registeredBy="payment-maker";payment.paidAt=payment.createdAt=OffsetDateTime.now();payments.save(payment);

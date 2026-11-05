@@ -39,12 +39,17 @@ npm test -- -t "cancela la deuda cuando el pago cubre el saldo"
 Copiar `.env.example` a `.env`:
 
 - `VITE_API_BASE_URL` — URL pública del backend. Ninguna variable `VITE_*` lleva secretos.
-- `VITE_AUTH_MODE=mock` — el login siempre va a `POST /api/v1/dev-auth/login`.
+- `VITE_AUTH_MODE=demo` — el login siempre va a `POST /api/v1/dev-auth/login`.
   Las cuentas y las sesiones viven en PostgreSQL (`demo_user`, `demo_auth_session`).
   El frontend envía `X-Demo-Session`; no elige roles en cabeceras. Core/JWT sigue
   pendiente.
 
-Para el stack local: `VITE_AUTH_MODE=mock` y backend con
+El valor anterior `mock` se acepta como alias de `demo` para mantener la
+compatibilidad de despliegues existentes. Ambos autentican contra el backend real.
+`VITE_USE_MOCKS` no es una opción de runtime: no activa ni cambia datos simulados.
+Los modos desconocidos se rechazan; `core` sigue sin contrato de autenticación integrado.
+
+Para el stack local: `VITE_AUTH_MODE=demo` y backend con
 `RENTAS_SECURITY_DEV_MODE=true`. El primer supervisor se crea con
 `POST /api/v1/dev-auth/bootstrap` y el resto con `POST /api/v1/dev-auth/users`.
 No hay cuentas de prueba embebidas en la pantalla de ingreso ni datos de negocio mock.

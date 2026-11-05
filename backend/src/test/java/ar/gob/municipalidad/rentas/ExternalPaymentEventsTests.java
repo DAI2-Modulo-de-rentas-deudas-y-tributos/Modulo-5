@@ -513,7 +513,7 @@ class ExternalPaymentEventsTests {
         PaymentReversalRequest reversal=reversals.request(payment.id,"Plan caducado");TestActorSupport.asApprover(() -> reversals.approve(reversal.id));
 
         assertThatThrownBy(()->reversals.execute(reversal.id)).isInstanceOfSatisfying(BusinessException.class,
-            error->assertThat(error.code).isEqualTo("PLAN_NOT_REVERSIBLE"));
+            error->{assertThat(error.code).isEqualTo("PLAN_NOT_REVERSIBLE");assertThat(error.status).isEqualTo(409);});
         assertThat(installments.findById(installment.id).orElseThrow().status).isEqualTo(InstallmentStatus.PAID);
         assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo(balance);
         assertThat(outbox.count()).isEqualTo(outboxBefore);

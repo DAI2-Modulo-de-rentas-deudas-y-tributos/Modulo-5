@@ -6,6 +6,7 @@ import DataTable from "../../components/common/DataTable.jsx";
 import FilterBar from "../../components/common/FilterBar.jsx";
 import StatusBadge from "../../components/common/StatusBadge.jsx";
 import Button from "../../components/common/Button.jsx";
+import DebtDetailModal from "../../components/common/DebtDetailModal.jsx";
 import Alert from "../../components/ui/Alert.jsx";
 import useResource from "../../hooks/useResource.js";
 import { portalService } from "../../services/rentasService.js";
@@ -17,6 +18,7 @@ export default function MisDeudasPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [status, setStatus] = useState("");
+  const [selectedDebt, setSelectedDebt] = useState(null);
 
   const loader = useCallback(
     () => portalService.debts({ taxpayerId: user.taxpayerId, status }),
@@ -27,6 +29,7 @@ export default function MisDeudasPage() {
   const financiables = (debts ?? []).filter((d) => d.outstandingAmount > 0 && !d.planRequestId);
 
   const columns = [
+    { key: "detail", header: "Detalle", render: (row) => <Button size="sm" variant="secondary" onClick={() => setSelectedDebt(row.id)}>Ver detalle</Button> },
     {
       key: "conceptName",
       header: "Concepto",
@@ -135,6 +138,7 @@ export default function MisDeudasPage() {
                 { value: "PENDING", label: "Pendiente" },
                 { value: "OVERDUE", label: "Vencida" },
                 { value: "SETTLED", label: "Cancelada" },
+                { value: "CANCELLED", label: "Anulada" },
               ],
             },
           ]}
@@ -157,6 +161,7 @@ export default function MisDeudasPage() {
         usar la boleta en la ventanilla y los canales habilitados. Cuando se acredite,
         aparece en <strong>Mis pagos</strong> y el saldo baja acá.
       </Alert>
+      {selectedDebt && <DebtDetailModal debtId={selectedDebt} onClose={() => setSelectedDebt(null)} />}
     </ModuleShell>
   );
 }

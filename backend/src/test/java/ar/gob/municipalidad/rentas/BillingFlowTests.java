@@ -19,6 +19,8 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -46,6 +48,7 @@ class BillingFlowTests {
     @Autowired IntegrationEventLogRepository integrationLogs;
     @Autowired com.fasterxml.jackson.databind.ObjectMapper json;
     @Autowired ElectronicPaymentRepository electronicPaymentAttempts;
+    @Autowired AdjustmentRepository adjustmentRepository;
     @Autowired MockMvc mvc;
     @Autowired DemoUserRepository demoUsers;
     @Autowired TaxpayerRepository taxpayers;
@@ -74,6 +77,60 @@ class BillingFlowTests {
 
         assertThatThrownBy(() -> billing.create(new ApiDtos.CreateBillRequest(one.taxpayerId, List.of(one.id, two.id), LocalDate.now().plusDays(10))))
             .isInstanceOf(BusinessException.class).hasMessageContaining("contribuyente");
+    }
+
+    @Test void electronicPaymentPreviewIsLimitedToTheOwningTaxpayer() throws Exception {
+        Debt ownedDebt = debt("BILL-PREVIEW-OWNED-11111111", "BILL-PREVIEW-OWNED-CONCEPT");
+        Debt anotherDebt = debt("BILL-PREVIEW-OTHER-22222222", "BILL-PREVIEW-OTHER-CONCEPT");
+        var request = new ApiDtos.ElectronicPaymentRequest(ownedDebt.id, PaymentMethod.CARD, new BigDecimal("25"));
+        var owner = new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("owner", ownedDebt.taxpayerId), null,
+            List.of(new SimpleGrantedAuthority("ROLE_TAXPAYER")));
+        var other = new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("other", anotherDebt.taxpayerId), null,
+            List.of(new SimpleGrantedAuthority("ROLE_TAXPAYER")));
+
+        mvc.perform(post("/api/v1/electronic-payments/preview")
+                .with(authentication(owner))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsBytes(request)))
+            .andExpect(status().isOk());
+        mvc.perform(post("/api/v1/electronic-payments/preview")
+                .with(authentication(other))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsBytes(request)))
+            .andExpect(status().isForbidden())
+            .andExpect(jsonPath("$.code").value("FORBIDDEN_OWNERSHIP"));
+    }
+
+    @Test void electronicPaymentCannotBeCreatedForAnotherTaxpayerDebt() throws Exception {
+        Debt debt = debt("BILL-ELECTRONIC-CREATE-OWNER", "BILL-ELECTRONIC-CREATE-CONCEPT");
+        TaxpayerReference foreign = catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(
+            TaxpayerType.CITIZEN, "BILL-ELECTRONIC-CREATE-FOREIGN", "30777888", null, "Contribuyente ajeno"));
+        var request = new ApiDtos.ElectronicPaymentRequest(debt.id, PaymentMethod.CARD, new BigDecimal("25"));
+        var other = new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("other", foreign.id), null,
+            List.of(new SimpleGrantedAuthority("ROLE_TAXPAYER")));
+        long paymentsBefore = paymentRepository.count();
+        long attemptsBefore = electronicPaymentAttempts.count();
+
+        mvc.perform(post("/api/v1/electronic-payments").with(authentication(other))
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsBytes(request)))
+            .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("FORBIDDEN_OWNERSHIP"));
+
+        assertThat(paymentRepository.count()).isEqualTo(paymentsBefore);
+        assertThat(electronicPaymentAttempts.count()).isEqualTo(attemptsBefore);
+    }
+
+    @Test void electronicPaymentAttemptCannotBeReadByAnotherTaxpayer() throws Exception {
+        Debt debt = debt("BILL-ELECTRONIC-READ-OWNER", "BILL-ELECTRONIC-READ-CONCEPT");
+        authenticate(new AuthenticatedIdentity("owner", debt.taxpayerId), "TAXPAYER");
+        ElectronicPaymentAttempt attempt = electronicPayments.create(new ApiDtos.ElectronicPaymentRequest(
+            debt.id, PaymentMethod.CARD, new BigDecimal("25")), "electronic-read-owner");
+        TaxpayerReference foreign = catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(
+            TaxpayerType.CITIZEN, "BILL-ELECTRONIC-READ-FOREIGN", "30777889", null, "Contribuyente ajeno"));
+        var other = new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("other", foreign.id), null,
+            List.of(new SimpleGrantedAuthority("ROLE_TAXPAYER")));
+
+        mvc.perform(get("/api/v1/electronic-payments/{paymentId}", attempt.paymentId).with(authentication(other)))
+            .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("FORBIDDEN_OWNERSHIP"));
     }
 
     @Test void unallocatedPaymentCanBeAllocatedLater() throws Exception {
@@ -266,6 +323,23 @@ class BillingFlowTests {
         assertThat(debts.findById(target.id).orElseThrow().status).isEqualTo(DebtStatus.CANCELLED);
         assertThat(creditApplications.findAll()).noneMatch(application -> credit.id.equals(application.creditBalanceId));
         assertThat(outbox.count()).isEqualTo(outboxBefore);
+    }
+
+    @Test void apiRejectsAdjustmentToPaidDebtWith409WithoutPersistingRequest() throws Exception {
+        Debt target=debt("DEBT-STATE-PAID-ADJUSTMENT","DEBT-STATE-PAID-ADJUSTMENT");
+        target.status=DebtStatus.PAID;target.outstandingBalance=BigDecimal.ZERO.setScale(2);debts.saveAndFlush(target);
+        String token=new DemoAuthSessions(demoUsers,taxpayers,passwordEncoder,demoAuth).token(DemoRole.RENTAS);
+        long before=adjustmentRepository.count();
+
+        mvc.perform(post("/api/v1/adjustments").header("X-Demo-Session",token).contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(new ApiDtos.CreateAdjustmentRequest(target.id,AdjustmentType.DISCOUNT,new BigDecimal("10"),"Ajuste inválido"))))
+            .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("DEBT_NOT_ADJUSTABLE"));
+
+        assertThat(adjustmentRepository.count()).isEqualTo(before);
+        assertThat(debts.findById(target.id).orElseThrow()).satisfies(stored->{
+            assertThat(stored.status).isEqualTo(DebtStatus.PAID);
+            assertThat(stored.outstandingBalance).isZero();
+        });
     }
 
     @Test void electronicPaymentUsesTaxpayerIdentityAndElectronicOrigin() {

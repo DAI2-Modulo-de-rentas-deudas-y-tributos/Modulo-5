@@ -144,6 +144,90 @@ class BeanValidationContractTests {
         assertThat(payments.count()).isEqualTo(before);
     }
 
+    @Test void rejectsMoneyWithMoreThanTwoSignificantDecimalsBeforePersistence() throws Exception {
+        var invalidPayment=new ApiDtos.RegisterPaymentRequest(1L,PaymentMethod.CASH,new BigDecimal("100.005"),null);
+        var equivalentCents=new ApiDtos.RegisterPaymentRequest(1L,PaymentMethod.CASH,new BigDecimal("10.2300"),null);
+        assertThat(validator.validate(invalidPayment)).extracting(error->error.getPropertyPath().toString())
+            .contains("amount");
+        assertThat(validator.validate(equivalentCents)).isEmpty();
+        assertThat(validator.validate(new ApiDtos.CreateAdjustmentRequest(1L,AdjustmentType.DISCOUNT,
+            new BigDecimal("10.555"),"Prueba"))).extracting(error->error.getPropertyPath().toString())
+            .contains("amount");
+        assertThat(validator.validate(new ApiDtos.LiquidationRequest(1L,1L,"2026-11",
+            new BigDecimal("1234.567"),LocalDate.now()))).extracting(error->error.getPropertyPath().toString())
+            .contains("taxableBase");
+        assertThat(validator.validate(new ApiDtos.CreateTaxConfigurationRequest(1L,CalculationType.FIXED,
+            null,new BigDecimal("100.005"),null,null,true,true,LocalDate.now(),null)))
+            .extracting(error->error.getPropertyPath().toString()).contains("fixedAmount");
+        assertThat(validator.validate(new ApiDtos.UpdateTaxConfigurationRequest(null,null,null,
+            new BigDecimal("1.001"),null,null,null,null,null)))
+            .extracting(error->error.getPropertyPath().toString()).contains("minimumAmount");
+        assertThat(validator.validate(new ApiDtos.RegisterPaymentRequest(1L,PaymentMethod.CASH,BigDecimal.TEN,
+            List.of(new ApiDtos.AllocationRequest(1L,new BigDecimal("1.001"))))))
+            .extracting(error->error.getPropertyPath().toString()).contains("allocations[0].amount");
+        assertThat(validator.validate(new ApiDtos.ElectronicPaymentRequest(1L,PaymentMethod.CARD,
+            new BigDecimal("1.001")))).extracting(error->error.getPropertyPath().toString()).contains("amount");
+        assertThat(validator.validate(new ApiDtos.ApplyCreditBalanceRequest(1L,new BigDecimal("1.001"))))
+            .extracting(error->error.getPropertyPath().toString()).contains("amount");
+        assertThat(validator.validate(new ApiDtos.GrantPaymentPlanRequest(new BigDecimal("1.001"))))
+            .extracting(error->error.getPropertyPath().toString()).contains("downPaymentAmount");
+        var invalidRun=new ApiDtos.CreateLiquidationRunRequest(1L,"2026-11",LocalDate.now(),
+            List.of(new ApiDtos.LiquidationRunItemRequest(1L,new BigDecimal("1.001"))));
+        assertThat(validator.validate(invalidRun)).extracting(error->error.getPropertyPath().toString())
+            .contains("items[0].taxableBase");
+
+        long before=payments.count();
+        mvc.perform(post("/api/v1/payments")
+                .header("X-Demo-Session",demo.token(DemoRole.CASHIER))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"taxpayerId\":1,\"paymentMethod\":\"CASH\",\"amount\":100.005}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+            .andExpect(jsonPath("$.details.fieldErrors[0].field").value("amount"))
+            .andExpect(jsonPath("$.details.fieldErrors[0].messages[0]").value("Debe tener como máximo 2 decimales"));
+        assertThat(payments.count()).isEqualTo(before);
+    }
+
+    @Test void validatesMoneyScaleOnInboundModuleContractsWithoutChangingTheirShapes() {
+        var external=new ApiDtos.ExternalObligationData("M7-1",TaxpayerType.CITIZEN,"citizen-1",
+            new BigDecimal("12.345"),LocalDate.now());
+        var legacyInfraction=new ApiDtos.InfractionData("M7-2",TaxpayerType.CITIZEN,"citizen-1",
+            new BigDecimal("12.345"),LocalDate.now());
+        assertThat(validator.validate(external)).extracting(error->error.getPropertyPath().toString())
+            .contains("amount");
+        assertThat(validator.validate(legacyInfraction)).extracting(error->error.getPropertyPath().toString())
+            .contains("amount");
+        assertThat(validator.validate(new ApiDtos.ExternalObligationData("M7-1",TaxpayerType.CITIZEN,"citizen-1",
+            new BigDecimal("12.3400"),LocalDate.now()))).isEmpty();
+
+        var m7Data=new ConfirmedInboundEvents.M7InfractionData(UUID.randomUUID(),"citizen-1",
+            ConfirmedInboundEvents.M7DebtorIdType.DNI,"AA111AA","TEST",OffsetDateTime.now(),
+            new BigDecimal("12.345"),List.of(),new BigDecimal("12.34"),"INS-1",
+            new ConfirmedInboundEvents.M7Location("Calle","Esquina",new BigDecimal("-34.60"),new BigDecimal("-58.40")));
+        var m7Event=new ConfirmedInboundEvents.M7InfractionConfirmedEvent(UUID.randomUUID(),"infractionConfirmed",
+            "1.0",OffsetDateTime.now(),"transito",UUID.randomUUID(),null,m7Data);
+        assertThat(validator.validate(m7Event)).extracting(error->error.getPropertyPath().toString())
+            .contains("data.baseAmount");
+
+        var m4Data=new CoreM4Events.PermitFeeGeneratedData("FEE-1","PA-1","EST-1","30712345678",
+            new BigDecimal("12.345"),"ARS");
+        var m4Event=new CoreM4Events.Envelope<>(UUID.randomUUID(),"permitFeeGenerated","1.0",OffsetDateTime.now(),
+            "habilitaciones",UUID.randomUUID(),null,m4Data);
+        assertThat(validator.validate(m4Event)).extracting(error->error.getPropertyPath().toString())
+            .contains("data.amount");
+
+        var preliminary=new PreliminaryM4Events.Envelope<>("M4","permitFeeGenerated",
+            new PreliminaryM4Events.PermitFeeGeneratedData("FEE-2","PA-2","EST-2",new BigDecimal("12.345")));
+        assertThat(validator.validate(preliminary)).extracting(error->error.getPropertyPath().toString())
+            .contains("data.amount");
+
+        var m8Data=new ConfirmedInboundEvents.M8SocialBenefitData(UUID.randomUUID(),UUID.randomUUID(),UUID.randomUUID(),
+            UUID.randomUUID(),UUID.randomUUID(),"Programa",UUID.randomUUID(),"Asignación","Beneficio",
+            new BigDecimal("12.345"),"APPROVED",null,LocalDate.now(),null,OffsetDateTime.now());
+        assertThat(validator.validate(m8Data)).extracting(error->error.getPropertyPath().toString())
+            .contains("amount");
+    }
+
     @Test void invalidLiquidationFormatReturns400BeforePersistence() throws Exception {
         long before=liquidations.count();
         mvc.perform(post("/api/v1/liquidations")

@@ -5,13 +5,17 @@ import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
@@ -27,12 +31,22 @@ class DueDateProcessorTests {
     private final CurrentIdentity identity=mock(CurrentIdentity.class);
     private final AuditService audit=mock(AuditService.class);
     private final EntityManager entityManager=mock(EntityManager.class);
+    private final FiscalProcessingDatePolicy dates=new FiscalProcessingDatePolicy(
+        Clock.fixed(Instant.parse("2026-10-20T15:00:00Z"),ZoneId.of("America/Argentina/Buenos_Aires")));
     private final DueDateProcessor processor=new DueDateProcessor(runs,debts,installments,plans,configurations,
-        expirations,lateCharges,outbox,identity,audit,new FiscalProcessingDatePolicy(java.time.Clock.systemUTC()));
+        expirations,lateCharges,outbox,identity,audit,dates);
 
     DueDateProcessorTests(){
         ReflectionTestUtils.setField(processor,"entityManager",entityManager);
         when(identity.get()).thenReturn(new AuthenticatedIdentity("rentas.demo",null,null));
+    }
+
+    @Test void futureFiscalDateIsRejectedBeforeAnyProcessingSideEffect(){
+        LocalDate futureDate=dates.today().plusDays(1);
+
+        assertThatThrownBy(()->processor.process(futureDate))
+            .isInstanceOfSatisfying(BusinessException.class,exception->assertThat(exception.code).isEqualTo("FUTURE_DATE_NOT_ALLOWED"));
+        verifyNoInteractions(runs,debts,installments,plans,configurations,expirations,lateCharges,outbox,identity,audit,entityManager);
     }
 
     @Test void alreadyProcessedDateReturnsExistingRunWithoutRepeatingEconomicEffects(){

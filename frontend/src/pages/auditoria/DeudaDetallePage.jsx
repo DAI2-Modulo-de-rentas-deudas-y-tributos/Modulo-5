@@ -9,6 +9,7 @@ import Alert from "../../components/ui/Alert.jsx";
 import Spinner from "../../components/ui/Spinner.jsx";
 import FieldGrid from "../../components/auditoria/FieldGrid.jsx";
 import HistoryTimeline from "../../components/auditoria/HistoryTimeline.jsx";
+import DebtOriginDetails from "../../components/common/DebtOriginDetails.jsx";
 import useResource from "../../hooks/useResource.js";
 import { auditService } from "../../services/rentasService.js";
 import { formatCurrency, formatDate, formatDateTime, labelFor } from "../../lib/format.js";
@@ -81,6 +82,7 @@ export default function DeudaDetallePage() {
               },
             ]}
           />
+          <div className="mt-4"><DebtOriginDetails debt={debt} showOriginType={false} /></div>
         </div>
       </Card>
 

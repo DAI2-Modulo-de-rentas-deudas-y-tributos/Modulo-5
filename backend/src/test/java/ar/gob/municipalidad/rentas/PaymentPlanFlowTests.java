@@ -106,6 +106,20 @@ class PaymentPlanFlowTests {
             .isInstanceOfSatisfying(BusinessException.class,exception->assertThat(exception.code).isEqualTo("FORBIDDEN_OWNERSHIP"));
     }
 
+    @Test void taxpayerCannotReadAnotherTaxpayersPlanRequest() {
+        Debt debt=debt("PLAN-REQUEST-OWNER","PLAN-REQUEST-OWNER-CONCEPT");
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+            new AuthenticatedIdentity("owner",debt.taxpayerId),null,List.of(new SimpleGrantedAuthority("ROLE_TAXPAYER"))));
+        PaymentPlanRequest request=workflow.request(new ApiDtos.CreatePaymentPlanRequest(debt.taxpayerId,List.of(debt.id),2));
+        TaxpayerReference foreign=catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(
+            TaxpayerType.CITIZEN,"PLAN-REQUEST-FOREIGN","98765432",null,"Contribuyente ajeno"));
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+            new AuthenticatedIdentity("foreign",foreign.id),null,List.of(new SimpleGrantedAuthority("ROLE_TAXPAYER"))));
+
+        assertThatThrownBy(()->workflow.getRequest(request.id))
+            .isInstanceOfSatisfying(BusinessException.class,exception->assertThat(exception.code).isEqualTo("FORBIDDEN_OWNERSHIP"));
+    }
+
     @Test void installmentPaymentReducesOnlyItsPrincipalAndBlocksDirectDebtPayment() {
         Debt debt=debt("PLAN-FLOW-2","PLAN-FLOW-CONCEPT-2"); PaymentPlan plan=grant(debt,2);
         assertThatThrownBy(()->payments.register(new ApiDtos.RegisterPaymentRequest(debt.taxpayerId,PaymentMethod.CASH,new BigDecimal("10"),List.of(new ApiDtos.AllocationRequest(debt.id,new BigDecimal("10"))))))
@@ -115,6 +129,7 @@ class PaymentPlanFlowTests {
         Payment payment=payments.register(new ApiDtos.RegisterPaymentRequest(debt.taxpayerId,null,PaymentMethod.CASH,down.totalAmount,List.of(new ApiDtos.AllocationRequest(null,down.id,down.totalAmount))));
 
         assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("90.00");
+        assertThat(debts.findById(debt.id).orElseThrow().status).isEqualTo(DebtStatus.PARTIALLY_PAID);
         assertThat(installments.findById(down.id).orElseThrow().status).isEqualTo(InstallmentStatus.PAID);
         PaymentAllocation allocation=paymentsAllocation(payment.id);
         assertThat(allocation.principalApplied.add(allocation.interestApplied)).isEqualByComparingTo(allocation.amount);
@@ -161,7 +176,7 @@ class PaymentPlanFlowTests {
         OutboxEvent event=outbox.findAll().stream().filter(item->item.eventType.equals("paymentPlanRefinanced")&&item.aggregateId.equals(request.newPaymentPlanId.toString())).findFirst().orElseThrow();var payload=json.readTree(event.payload);assertThat(event.targetModule).isEqualTo("PLATFORM");assertThat(payload.path("oldPaymentPlanId").longValue()).isEqualTo(old.id);assertThat(payload.path("newPaymentPlanId").longValue()).isEqualTo(request.newPaymentPlanId);
     }
 
-    @Test void completingPlanPublishesItsExistingPlatformEventOnce() throws Exception {Debt debt=debt("PLAN-COMPLETE","PLAN-COMPLETE-CONCEPT");PaymentPlan plan=grant(debt,2);for(Installment installment:installments.findByPaymentPlanIdOrderByNumber(plan.id))payments.register(new ApiDtos.RegisterPaymentRequest(debt.taxpayerId,null,PaymentMethod.CASH,installment.totalAmount,List.of(new ApiDtos.AllocationRequest(null,installment.id,installment.totalAmount))));assertThat(plans.findById(plan.id).orElseThrow().status).isEqualTo(PaymentPlanStatus.COMPLETED);List<OutboxEvent> events=outbox.findAll().stream().filter(event->event.eventType.equals("paymentPlanCompleted")&&event.aggregateId.equals(plan.id.toString())).toList();assertThat(events).hasSize(1);assertThat(events.get(0).targetModule).isEqualTo("PLATFORM");assertThat(json.readTree(events.get(0).payload).path("paymentPlanId").longValue()).isEqualTo(plan.id);}
+    @Test void completingPlanPublishesItsExistingPlatformEventOnce() throws Exception {Debt debt=debt("PLAN-COMPLETE","PLAN-COMPLETE-CONCEPT");PaymentPlan plan=grant(debt,2);for(Installment installment:installments.findByPaymentPlanIdOrderByNumber(plan.id))payments.register(new ApiDtos.RegisterPaymentRequest(debt.taxpayerId,null,PaymentMethod.CASH,installment.totalAmount,List.of(new ApiDtos.AllocationRequest(null,installment.id,installment.totalAmount))));assertThat(plans.findById(plan.id).orElseThrow().status).isEqualTo(PaymentPlanStatus.COMPLETED);assertThat(debts.findById(debt.id).orElseThrow().status).isEqualTo(DebtStatus.PAID);List<OutboxEvent> events=outbox.findAll().stream().filter(event->event.eventType.equals("paymentPlanCompleted")&&event.aggregateId.equals(plan.id.toString())).toList();assertThat(events).hasSize(1);assertThat(events.get(0).targetModule).isEqualTo("PLATFORM");assertThat(json.readTree(events.get(0).payload).path("paymentPlanId").longValue()).isEqualTo(plan.id);}
 
     @Test void refinancingRejectsOnlyAnotherActiveRequestForTheSamePlan() {
         Debt debt=debt("PLAN-FLOW-REFINANCING-DUPLICATE","PLAN-FLOW-REFINANCING-DUPLICATE");PaymentPlan plan=grant(debt,2);
