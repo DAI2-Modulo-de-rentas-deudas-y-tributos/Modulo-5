@@ -26,10 +26,11 @@ class DemoAuthController {
     record LoginResponse(String token,UserResponse user) {}
 
     private final DemoAuthService auth;
-    DemoAuthController(DemoAuthService auth){this.auth=auth;}
+    private final TrustedClientAddressResolver clientAddresses;
+    DemoAuthController(DemoAuthService auth,TrustedClientAddressResolver clientAddresses){this.auth=auth;this.clientAddresses=clientAddresses;}
 
     @PostMapping("/login")
-    LoginResponse login(@Valid @RequestBody LoginRequest request,HttpServletRequest servletRequest){return auth.login(request,servletRequest.getRemoteAddr());}
+    LoginResponse login(@Valid @RequestBody LoginRequest request,HttpServletRequest servletRequest){return auth.login(request,clientAddresses.resolve(servletRequest));}
 
     LoginResponse login(LoginRequest request){return auth.login(request,"local-test");}
 
@@ -42,7 +43,7 @@ class DemoAuthController {
 
     @PostMapping("/bootstrap") @ResponseStatus(HttpStatus.CREATED)
     UserResponse bootstrap(@RequestHeader(value=DemoAuthService.BOOTSTRAP_HEADER,required=false) String secret,
-            @Valid @RequestBody BootstrapRequest request,HttpServletRequest servletRequest){return auth.bootstrap(secret,request,servletRequest.getRemoteAddr());}
+            @Valid @RequestBody BootstrapRequest request,HttpServletRequest servletRequest){return auth.bootstrap(secret,request,clientAddresses.resolve(servletRequest));}
 
     @PostMapping("/users") @ResponseStatus(HttpStatus.CREATED) @PreAuthorize("hasRole('SUPERVISOR')")
     @Transactional UserResponse create(@Valid @RequestBody CreateUserRequest request){return auth.create(request);}
