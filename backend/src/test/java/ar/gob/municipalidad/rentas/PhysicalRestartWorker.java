@@ -40,7 +40,7 @@ public class PhysicalRestartWorker {
         System.setProperty("spring.flyway.locations", "classpath:db/migration,classpath:db/migration-postgresql,classpath:db/migration-demo");
         System.setProperty("server.address", "127.0.0.1");
         System.setProperty("server.port", "0");
-        System.setProperty("rentas.broker-adapter", "local-log");
+        System.setProperty("BROKER_ADAPTER", "local-log");
         System.setProperty("rentas.outbox-delay-ms", "3600000");
         System.setProperty("logging.level.root", "ERROR");
 

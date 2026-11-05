@@ -39,7 +39,6 @@ springdoc:
   api-docs.path: /v3/api-docs
 rentas:
   cors.allowed-origins: ${CORS_ALLOWED_ORIGINS:}
-  broker-adapter: ${BROKER_ADAPTER:local-log}
   core.amqp.exchange: ${CORE_RABBITMQ_EXCHANGE:muni.inbox}
   core.amqp.queue: ${CORE_RABBITMQ_QUEUE:q.rentas}
   core.amqp.confirm-timeout: ${CORE_RABBITMQ_CONFIRM_TIMEOUT:5s}

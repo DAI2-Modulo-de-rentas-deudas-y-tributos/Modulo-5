@@ -19,7 +19,7 @@ import java.time.OffsetDateTime;
 import java.util.UUID;
 
 @Component
-@ConditionalOnProperty(prefix="rentas",name="broker-adapter",havingValue="core-http")
+@ConditionalOnProperty(name="BROKER_ADAPTER",havingValue="core-http")
 class CoreHttpEventPublisher implements EventPublisher {
     private final ObjectMapper json;
     private final URI baseUri;
