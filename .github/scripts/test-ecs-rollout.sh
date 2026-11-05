@@ -65,7 +65,7 @@ for workflow in .github/workflows/cd-backend.yml .github/workflows/cd-backend-te
     step && /^        run: \|$/ { body = 1; next }
     body { sub(/^          /, ""); print }
   ' "${workflow}" > "${test_dir}/deploy.sh"
-  test -s "${test_dir}/deploy.sh"
+  [[ -s "${test_dir}/deploy.sh" ]]
   bash -n "${test_dir}/deploy.sh"
   check completed 0 1 0
   check delayed 0 3 2
