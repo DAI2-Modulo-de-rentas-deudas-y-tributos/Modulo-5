@@ -90,7 +90,7 @@ class RabbitMqEventPublisherTests {
         assertThat(received.getMessageProperties().getReceivedDeliveryMode()).isEqualTo(MessageDeliveryMode.PERSISTENT);
     }
 
-    @Test void transientInboundFailuresRetryTwiceThenDeadLetterWithTheSameEventId() throws Exception {
+    @Test void transientInboundFailuresRetryThreeTimesThenDeadLetterWithTheSameEventId() throws Exception {
         RetryTopology topology=declareRetryTopology();
         String eventId=UUID.randomUUID().toString();
         String payload="{\"eventId\":\""+eventId+"\",\"eventType\":\"ticketUpdated\",\"eventVersion\":\"1.0\",\"data\":{}}";
@@ -105,15 +105,15 @@ class RabbitMqEventPublisherTests {
         CoreInboundEventDispatcher dispatcher=mock(CoreInboundEventDispatcher.class);
         doAnswer(invocation->{attempts.incrementAndGet();throw new IllegalStateException("CORE_INBOUND_RETRY");})
             .when(dispatcher).dispatch(payload);
-        CoreRabbitMqConsumer listener=new CoreRabbitMqConsumer(dispatcher,template,topology.retryExchange(),topology.retryQueue1(),topology.retryQueue2(),5000);
+        CoreRabbitMqConsumer listener=new CoreRabbitMqConsumer(dispatcher,template,topology.retryExchange(),topology.retryQueue1(),topology.retryQueue2(),topology.retryQueue3(),5000);
 
         try(var connection=connections.createConnection();Channel channel=connection.createChannel(false)){
-            for(int attempt=0;attempt<3;attempt++){
-                GetResponse delivery=awaitGet(channel,topology.mainQueue(),5000);
-                assertThat(delivery).as("entrega %d de tres",attempt+1).isNotNull();
+            for(int attempt=0;attempt<4;attempt++){
+                GetResponse delivery=awaitGet(channel,topology.mainQueue(),8000);
+                assertThat(delivery).as("entrega %d de cuatro",attempt+1).isNotNull();
                 Object lastDeathQueue=delivery.getProps().getHeaders().get("x-last-death-queue");
                 assertThat(lastDeathQueue==null?null:lastDeathQueue.toString())
-                    .isEqualTo(attempt==0?null:attempt==1?topology.retryQueue1():topology.retryQueue2());
+                    .isEqualTo(attempt==0?null:attempt==1?topology.retryQueue1():attempt==2?topology.retryQueue2():topology.retryQueue3());
                 assertThat(delivery.getProps().getMessageId()).isEqualTo(eventId);
                 assertThat(new String(delivery.getBody(),StandardCharsets.UTF_8)).isEqualTo(payload);
                 listener.receive(asSpringMessage(delivery),channel,delivery.getEnvelope().getDeliveryTag());
@@ -124,7 +124,7 @@ class RabbitMqEventPublisherTests {
             assertThat(new String(deadLetter.getBody(),StandardCharsets.UTF_8)).contains(eventId);
             channel.basicAck(deadLetter.getEnvelope().getDeliveryTag(),false);
         }
-        assertThat(attempts).hasValue(3);
+        assertThat(attempts).hasValue(4);
     }
 
     @Test void permanentInboundFailureGoesDirectlyToDeadLetterWithoutRetry() throws Exception {
@@ -136,7 +136,7 @@ class RabbitMqEventPublisherTests {
         template.send("",topology.mainQueue(),original,new CorrelationData(eventId));
         CoreInboundEventDispatcher dispatcher=mock(CoreInboundEventDispatcher.class);
         doThrow(new IllegalArgumentException("UNSUPPORTED_CORE_EVENT_TYPE")).when(dispatcher).dispatch(payload);
-        CoreRabbitMqConsumer listener=new CoreRabbitMqConsumer(dispatcher,template,topology.retryExchange(),topology.retryQueue1(),topology.retryQueue2(),5000);
+        CoreRabbitMqConsumer listener=new CoreRabbitMqConsumer(dispatcher,template,topology.retryExchange(),topology.retryQueue1(),topology.retryQueue2(),topology.retryQueue3(),5000);
 
         try(var connection=connections.createConnection();Channel channel=connection.createChannel(false)){
             GetResponse delivery=awaitGet(channel,topology.mainQueue(),2000);
@@ -224,7 +224,7 @@ class RabbitMqEventPublisherTests {
         String suffix=UUID.randomUUID().toString().replace("-","");
         String main="q.rentas.retry-test."+suffix,dlx="rentas.retry-test.dlx."+suffix,dlq=main+".dlq";
         String returned="rentas.retry-test.return."+suffix,retry="rentas.retry-test.exchange."+suffix;
-        String retry1=main+".retry.1",retry2=main+".retry.2";
+        String retry1=main+".retry.1",retry2=main+".retry.2",retry3=main+".retry.3";
         RabbitAdmin admin=new RabbitAdmin(connections);
         DirectExchange returnExchange=new DirectExchange(returned,true,false),retryExchange=new DirectExchange(retry,true,false);
         FanoutExchange deadLetterExchange=new FanoutExchange(dlx,true,false);
@@ -233,12 +233,14 @@ class RabbitMqEventPublisherTests {
         Queue deadLetterQueue=QueueBuilder.durable(dlq).build();
         Queue firstRetry=QueueBuilder.durable(retry1).ttl(150).deadLetterExchange(returned).deadLetterRoutingKey(main).build();
         Queue secondRetry=QueueBuilder.durable(retry2).ttl(250).deadLetterExchange(returned).deadLetterRoutingKey(main).build();
-        admin.declareQueue(mainQueue);admin.declareQueue(deadLetterQueue);admin.declareQueue(firstRetry);admin.declareQueue(secondRetry);
+        Queue thirdRetry=QueueBuilder.durable(retry3).ttl(350).deadLetterExchange(returned).deadLetterRoutingKey(main).build();
+        admin.declareQueue(mainQueue);admin.declareQueue(deadLetterQueue);admin.declareQueue(firstRetry);admin.declareQueue(secondRetry);admin.declareQueue(thirdRetry);
         admin.declareBinding(BindingBuilder.bind(mainQueue).to(returnExchange).with(main));
         admin.declareBinding(BindingBuilder.bind(deadLetterQueue).to(deadLetterExchange));
         admin.declareBinding(BindingBuilder.bind(firstRetry).to(retryExchange).with(retry1));
         admin.declareBinding(BindingBuilder.bind(secondRetry).to(retryExchange).with(retry2));
-        return new RetryTopology(main,retry,retry1,retry2,dlq);
+        admin.declareBinding(BindingBuilder.bind(thirdRetry).to(retryExchange).with(retry3));
+        return new RetryTopology(main,retry,retry1,retry2,retry3,dlq);
     }
 
     private GetResponse awaitGet(Channel channel,String queue,long timeoutMs)throws Exception{
@@ -258,5 +260,5 @@ class RabbitMqEventPublisherTests {
         return new Message(delivery.getBody(),properties);
     }
 
-    private record RetryTopology(String mainQueue,String retryExchange,String retryQueue1,String retryQueue2,String deadLetterQueue){}
+    private record RetryTopology(String mainQueue,String retryExchange,String retryQueue1,String retryQueue2,String retryQueue3,String deadLetterQueue){}
 }

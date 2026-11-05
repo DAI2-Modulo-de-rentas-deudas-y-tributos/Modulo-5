@@ -78,6 +78,7 @@ class BillUpdatedPricingTests {
 
     @Test void approvedAdjustmentsAreExplanatoryAndNotCountedTwice() {
         Debt debt=debt("ADJUSTED");Bill bill=bill(debt);
+        bill.createdAt=bill.createdAt.minusMinutes(1);bills.saveAndFlush(bill);
         approveAdjustment(debt,AdjustmentType.DISCOUNT,"10");
         approveAdjustment(debt,AdjustmentType.SURCHARGE,"5");
         approveAdjustment(debt,AdjustmentType.INTEREST,"3");

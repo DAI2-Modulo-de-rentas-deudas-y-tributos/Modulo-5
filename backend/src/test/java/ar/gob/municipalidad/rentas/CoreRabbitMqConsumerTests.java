@@ -106,7 +106,7 @@ class CoreRabbitMqConsumerTests {
         verify(channel,never()).basicNack(eq(40),anyBoolean(),anyBoolean());
     }
 
-    @Test void secondTransientFailureUsesSecondRetryQueueAndThirdGoesToDeadLetter() throws Exception {
+    @Test void threeTransientRetriesUseThreeRetryQueuesThenDeadLetter() throws Exception {
         String payload="{\"eventId\":\""+UUID.randomUUID()+"\",\"eventType\":\"ticketUpdated\",\"data\":{}}";
         CoreInboundEventDispatcher dispatcher=mock(CoreInboundEventDispatcher.class);
         doThrow(new IllegalStateException("CORE_INBOUND_RETRY")).when(dispatcher).dispatch(payload);
@@ -122,8 +122,14 @@ class CoreRabbitMqConsumerTests {
         Message thirdAttempt=new Message(payload.getBytes(StandardCharsets.UTF_8),new MessageProperties());
         thirdAttempt.getMessageProperties().getHeaders().put("x-last-death-queue","q.rentas.retry.2");
         listener(dispatcher,rabbit).receive(thirdAttempt,channel,42);
-        verify(rabbit,times(1)).send(eq("rentas.retry"),eq("q.rentas.retry.2"),any(Message.class),any(CorrelationData.class));
-        verify(channel).basicNack(42,false,false);
+        verify(rabbit).send(eq("rentas.retry"),eq("q.rentas.retry.3"),any(Message.class),any(CorrelationData.class));
+        verify(channel).basicAck(42,false);
+
+        Message fourthAttempt=new Message(payload.getBytes(StandardCharsets.UTF_8),new MessageProperties());
+        fourthAttempt.getMessageProperties().getHeaders().put("x-last-death-queue","q.rentas.retry.3");
+        listener(dispatcher,rabbit).receive(fourthAttempt,channel,44);
+        verify(rabbit,times(1)).send(eq("rentas.retry"),eq("q.rentas.retry.3"),any(Message.class),any(CorrelationData.class));
+        verify(channel).basicNack(44,false,false);
     }
 
     @Test void unconfirmedRetryIsNotAcknowledgedAsDelivered() throws Exception {
@@ -181,8 +187,8 @@ class CoreRabbitMqConsumerTests {
         }
     }
 
-    private CoreRabbitMqConsumer listener(CoreInboundEventDispatcher dispatcher){return new CoreRabbitMqConsumer(dispatcher,mock(RabbitTemplate.class),"rentas.retry","q.rentas.retry.1","q.rentas.retry.2",1000);}
-    private CoreRabbitMqConsumer listener(CoreInboundEventDispatcher dispatcher,RabbitTemplate rabbit){return new CoreRabbitMqConsumer(dispatcher,rabbit,"rentas.retry","q.rentas.retry.1","q.rentas.retry.2",1000);}
+    private CoreRabbitMqConsumer listener(CoreInboundEventDispatcher dispatcher){return new CoreRabbitMqConsumer(dispatcher,mock(RabbitTemplate.class),"rentas.retry","q.rentas.retry.1","q.rentas.retry.2","q.rentas.retry.3",1000);}
+    private CoreRabbitMqConsumer listener(CoreInboundEventDispatcher dispatcher,RabbitTemplate rabbit){return new CoreRabbitMqConsumer(dispatcher,rabbit,"rentas.retry","q.rentas.retry.1","q.rentas.retry.2","q.rentas.retry.3",1000);}
     private RabbitTemplate confirmedPublisher(){RabbitTemplate rabbit=mock(RabbitTemplate.class);doAnswer(invocation->{CorrelationData correlation=invocation.getArgument(3);correlation.getFuture().complete(new CorrelationData.Confirm(true,null));return null;}).when(rabbit).send(any(String.class),any(String.class),any(Message.class),any(CorrelationData.class));return rabbit;}
     private Message message(long tag){MessageProperties properties=new MessageProperties();properties.setDeliveryTag(tag);return new Message(ticketUpdated().getBytes(StandardCharsets.UTF_8),properties);}
     private String envelope(String type,String source,String data){return """

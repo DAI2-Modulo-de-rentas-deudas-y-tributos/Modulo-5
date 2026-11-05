@@ -129,12 +129,12 @@ class CoreM1InboundListenerTests {
     }
     private void send(String payload,long tag) throws Exception {
         Channel channel=mock(Channel.class);
-        new CoreRabbitMqConsumer(dispatcher,rabbit,"rentas.retry","q.rentas.retry.1","q.rentas.retry.2",1000).receive(new Message(payload.getBytes(StandardCharsets.UTF_8),new MessageProperties()),channel,tag);
+        new CoreRabbitMqConsumer(dispatcher,rabbit,"rentas.retry","q.rentas.retry.1","q.rentas.retry.2","q.rentas.retry.3",1000).receive(new Message(payload.getBytes(StandardCharsets.UTF_8),new MessageProperties()),channel,tag);
         verify(channel).basicAck(tag,false);verify(channel,never()).basicNack(eq(tag),anyBoolean(),anyBoolean());
     }
     private void reject(String payload,long tag) throws Exception {
         Channel channel=mock(Channel.class);
-        new CoreRabbitMqConsumer(dispatcher,rabbit,"rentas.retry","q.rentas.retry.1","q.rentas.retry.2",1000).receive(new Message(payload.getBytes(StandardCharsets.UTF_8),new MessageProperties()),channel,tag);
+        new CoreRabbitMqConsumer(dispatcher,rabbit,"rentas.retry","q.rentas.retry.1","q.rentas.retry.2","q.rentas.retry.3",1000).receive(new Message(payload.getBytes(StandardCharsets.UTF_8),new MessageProperties()),channel,tag);
         verify(channel).basicNack(tag,false,false);verify(channel,never()).basicAck(eq(tag),anyBoolean());
     }
 }

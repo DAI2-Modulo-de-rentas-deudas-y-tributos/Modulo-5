@@ -109,15 +109,17 @@ class CoreRabbitMqConsumer {
     private final String retryExchange;
     private final String retryQueue1;
     private final String retryQueue2;
+    private final String retryQueue3;
     private final long confirmTimeoutMillis;
 
     CoreRabbitMqConsumer(CoreInboundEventDispatcher dispatcher,RabbitTemplate rabbit,
         @org.springframework.beans.factory.annotation.Value("${rentas.core.amqp.retry-exchange:rentas.retry}") String retryExchange,
         @org.springframework.beans.factory.annotation.Value("${rentas.core.amqp.retry-queue-1:q.rentas.retry.1}") String retryQueue1,
         @org.springframework.beans.factory.annotation.Value("${rentas.core.amqp.retry-queue-2:q.rentas.retry.2}") String retryQueue2,
+        @org.springframework.beans.factory.annotation.Value("${rentas.core.amqp.retry-queue-3:q.rentas.retry.3}") String retryQueue3,
         @org.springframework.beans.factory.annotation.Value("${rentas.core.amqp.confirm-timeout-ms:5000}") long confirmTimeoutMillis) {
         this.dispatcher=dispatcher;this.rabbit=rabbit;this.retryExchange=retryExchange;
-        this.retryQueue1=retryQueue1;this.retryQueue2=retryQueue2;this.confirmTimeoutMillis=confirmTimeoutMillis;
+        this.retryQueue1=retryQueue1;this.retryQueue2=retryQueue2;this.retryQueue3=retryQueue3;this.confirmTimeoutMillis=confirmTimeoutMillis;
     }
 
     @RabbitListener(queues="${rentas.core.amqp.queue:q.rentas}",
@@ -159,7 +161,8 @@ class CoreRabbitMqConsumer {
     private String nextRetryQueue(Message message){
         Object lastDeathQueue=message.getMessageProperties().getHeaders().get("x-last-death-queue");
         String last=lastDeathQueue==null?null:lastDeathQueue.toString();
-        if(retryQueue2.equals(last))return null;
+        if(retryQueue3.equals(last))return null;
+        if(retryQueue2.equals(last))return retryQueue3;
         return retryQueue1.equals(last)?retryQueue2:retryQueue1;
     }
 }
