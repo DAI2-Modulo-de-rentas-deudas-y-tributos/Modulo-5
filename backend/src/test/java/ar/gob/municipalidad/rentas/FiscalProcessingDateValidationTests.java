@@ -11,6 +11,7 @@ import java.time.ZoneId;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -93,6 +94,10 @@ class FiscalProcessingDateValidationTests {
 
         mvc.perform(post("/api/v1/administration/process-due-dates").contentType("application/json").content("{}"))
             .andExpect(status().isAccepted()).andExpect(jsonPath("$.id").value(77)).andExpect(jsonPath("$.status").value("PENDING"));
-        verify(dueDates).enqueue(dates.today());verify(dueDates).get(77L);verifyNoInteractions(lateCharges,reconciliations);
+        mvc.perform(post("/api/v1/administration/process-due-dates"))
+            .andExpect(status().isAccepted()).andExpect(jsonPath("$.id").value(77));
+        mvc.perform(get("/api/v1/administration/process-due-dates/77"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.id").value(77));
+        verify(dueDates,times(2)).enqueue(dates.today());verify(dueDates,times(3)).get(77L);verifyNoInteractions(lateCharges,reconciliations);
     }
 }
