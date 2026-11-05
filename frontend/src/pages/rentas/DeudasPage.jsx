@@ -14,7 +14,7 @@ import useTaxpayerIndex from "../../hooks/useTaxpayerIndex.js";
 import useTaxConcepts from "../../hooks/useTaxConcepts.js";
 import { administrationService, debtService } from "../../services/rentasService.js";
 import { DEBT_ORIGIN_TYPES } from "../../config/catalogosDominio.js";
-import { formatCurrency, formatDate, labelFor } from "../../lib/format.js";
+import { formatCurrency, formatDate, labelFor, todayFiscalDate } from "../../lib/format.js";
 
 const ORIGIN_LABELS = Object.fromEntries(DEBT_ORIGIN_TYPES.map((o) => [o.value, o.label]));
 
@@ -50,7 +50,7 @@ export default function DeudasPage() {
 
   const onPreviewLateCharge = async (debt) => {
     setFeedback(null);
-    try { setLateCharge({ debt, preview: await debtService.previewLateCharge(debt.id, new Date().toISOString().slice(0, 10)), applying: false }); }
+    try { setLateCharge({ debt, preview: await debtService.previewLateCharge(debt.id, todayFiscalDate()), applying: false }); }
     catch (caught) { setFeedback({ variant: "error", title: "No se pudo calcular", message: caught.message }); }
   };
 
@@ -69,7 +69,7 @@ export default function DeudasPage() {
 
   const onProcessDueDates = async () => {
     setProcessing(true);setFeedback(null);
-    try { const result=await administrationService.processDueDates(new Date().toISOString().slice(0,10));setFeedback({ variant:"success",title:"Vencimientos procesados",message:`${result.debtsOverdue} deudas vencidas, ${result.adjustmentsGenerated} ajustes y ${result.installmentsOverdue} cuotas actualizadas.`});reload(); }
+    try { const result=await administrationService.processDueDates(todayFiscalDate());setFeedback({ variant:"success",title:"Vencimientos procesados",message:`${result.debtsOverdue} deudas vencidas, ${result.adjustmentsGenerated} ajustes y ${result.installmentsOverdue} cuotas actualizadas.`});reload(); }
     catch(caught){setFeedback({variant:"error",title:"No se pudieron procesar",message:caught.message});}
     finally{setProcessing(false);}
   };
