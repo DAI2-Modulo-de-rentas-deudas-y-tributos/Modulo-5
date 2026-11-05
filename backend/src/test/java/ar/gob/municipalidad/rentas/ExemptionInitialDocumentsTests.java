@@ -24,6 +24,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @ActiveProfiles("test")
@@ -146,6 +147,24 @@ class ExemptionInitialDocumentsTests {
 
         mvc.perform(get("/api/v1/exemption-requests/{id}/documents",created.id).header("X-Demo-Session",foreignSession))
             .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("FORBIDDEN_OWNERSHIP"));
+    }
+
+    @Test void foreignTaxpayerCannotSubmitDocumentation() throws Exception {
+        ExemptionRequest created = exemptions.create(request(null));
+        exemptions.start(created.id);
+        exemptions.requestDocumentation(created.id, "Adjuntar constancia");
+        TaxpayerReference foreign = catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(
+            TaxpayerType.CITIZEN, "EXEMPTION-DOCUMENTS-SUBMIT-FOREIGN", "30999878", null, "Contribuyente ajeno"));
+        var other = new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("foreign", foreign.id), null,
+            List.of(new SimpleGrantedAuthority("ROLE_TAXPAYER")));
+
+        mvc.perform(post("/api/v1/exemption-requests/{id}/documentation", created.id).with(authentication(other))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(document("DOC-FOREIGN", "CERTIFICATE", "constancia.pdf"))))
+            .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("FORBIDDEN_OWNERSHIP"));
+
+        assertThat(documents.findByExemptionRequestId(created.id)).isEmpty();
+        assertThat(requests.findById(created.id).orElseThrow().status).isEqualTo(ExemptionRequestStatus.DOCUMENTATION_REQUIRED);
     }
 
     @ParameterizedTest

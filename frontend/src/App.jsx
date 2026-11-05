@@ -64,6 +64,7 @@ import RefinanciacionPortalPage from "./pages/portal/RefinanciacionPortalPage.js
 
 const ReversionDetallePage = lazy(() => import("./pages/auditoria/ReversionDetallePage.jsx"));
 const IntegracionDetallePage = lazy(() => import("./pages/auditoria/IntegracionDetallePage.jsx"));
+const OutboxPage = lazy(() => import("./pages/auditoria/OutboxPage.jsx"));
 
 /**
  * Rutas de las dos áreas de trabajo del módulo.
@@ -104,6 +105,7 @@ export default function App() {
 
               <Route element={<ProtectedRoute roles={["SUPERVISOR"]} />}>
                 <Route path="eventos" element={<EventosPage />} />
+                <Route path="eventos-salientes" element={<OutboxPage />} />
               </Route>
 
               <Route path="*" element={<NotFoundPage />} />
@@ -126,6 +128,7 @@ export default function App() {
           <Route element={<ProtectedRoute roles={["AUDITOR"]} />}>
             <Route path="/auditor" element={<AreaLayout area="auditoria" />}>
               <Route index element={<AuditorDashboardPage />} />
+              <Route path="eventos-salientes" element={<OutboxPage />} />
               <Route path="contribuyentes" element={<ContribuyentesAuditorPage />} />
               <Route path="contribuyentes/:taxpayerId" element={<ContribuyenteAuditorDetallePage />} />
               <Route path="conceptos" element={<ConceptosPage />} />

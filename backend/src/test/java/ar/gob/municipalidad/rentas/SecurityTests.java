@@ -28,6 +28,7 @@ class SecurityTests {
     @Autowired DemoAuthService demoAuth; @Autowired DemoAuthSessionRepository sessions; @Autowired AuditRepository audit;
     @Autowired PaymentRepository payments; @Autowired PaymentAllocationRepository allocations;
     @Autowired OutboxRepository outbox;
+    @Autowired TicketCaseRepository ticketCases; @Autowired TicketCaseUpdateRepository ticketUpdates;
     private DemoAuthSessions demo;
 
     @BeforeEach void sessions() {
@@ -72,6 +73,36 @@ class SecurityTests {
             assertThat(entry.userRole).contains("AUDITOR");
             assertThat(entry.newData).contains("/api/v1/tax-concepts").doesNotContain("X-Demo-Session");
         });
+    }
+
+    @Test void auditorCanReadTicketsButCannotChangeThem() throws Exception {
+        TicketCase ticket=new TicketCase();ticket.externalTicketId="SCRUM-820-"+java.util.UUID.randomUUID();ticket.category="CONSULTA";ticket.description="Ticket sintético para validar acceso de lectura";ticket.priority=TicketPriority.MEDIUM;ticket.status=TicketCaseStatus.OPEN;ticket.createdAt=ticket.updatedAt=OffsetDateTime.now();
+        ticket=ticketCases.saveAndFlush(ticket);
+        long ticketId=ticket.id;
+        String auditor=demo.token(DemoRole.AUDITOR);
+
+        var list=mvc.perform(get("/api/v1/tickets").header("X-Demo-Session",auditor))
+            .andExpect(status().isOk()).andReturn();
+        var content=json.readTree(list.getResponse().getContentAsString()).path("content");
+        boolean included=false;
+        for(JsonNode row:content) if(row.path("id").asLong()==ticketId) included=true;
+        assertThat(included).isTrue();
+        mvc.perform(get("/api/v1/tickets/{id}",ticketId).header("X-Demo-Session",auditor))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.id").value(ticketId));
+        mvc.perform(get("/api/v1/tickets/{id}",ticketId).header("X-Demo-Session",demo.token(DemoRole.RENTAS)))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.id").value(ticketId));
+        mvc.perform(get("/api/v1/tickets/{id}",ticketId).header("X-Demo-Session",demo.token(DemoRole.TAXPAYER)))
+            .andExpect(status().isForbidden());
+
+        mvc.perform(post("/api/v1/tickets/{id}/assign",ticketId).header("X-Demo-Session",auditor)).andExpect(status().isForbidden());
+        mvc.perform(post("/api/v1/tickets/{id}/updates",ticketId).header("X-Demo-Session",auditor).contentType(MediaType.APPLICATION_JSON).content("{\"message\":\"nota\"}")).andExpect(status().isForbidden());
+        mvc.perform(post("/api/v1/tickets/{id}/request-information",ticketId).header("X-Demo-Session",auditor).contentType(MediaType.APPLICATION_JSON).content("{\"message\":\"información\"}")).andExpect(status().isForbidden());
+        mvc.perform(post("/api/v1/tickets/{id}/return",ticketId).header("X-Demo-Session",auditor).contentType(MediaType.APPLICATION_JSON).content("{\"reasonCode\":\"NEEDS_INFO\",\"internalMessage\":\"revisar\"}")).andExpect(status().isForbidden());
+        mvc.perform(post("/api/v1/tickets/{id}/complete",ticketId).header("X-Demo-Session",auditor).contentType(MediaType.APPLICATION_JSON).content("{\"resolution\":\"resuelto\"}")).andExpect(status().isForbidden());
+        mvc.perform(post("/api/v1/tickets/{id}/reject",ticketId).header("X-Demo-Session",auditor).contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"no corresponde\"}")).andExpect(status().isForbidden());
+
+        assertThat(ticketCases.findById(ticketId).orElseThrow().status).isEqualTo(TicketCaseStatus.OPEN);
+        assertThat(ticketUpdates.findByTicketCaseIdOrderByCreatedAt(ticketId)).isEmpty();
     }
 
     @Test void rentasCanReachPaymentRegistrationFromItsOperationalScreen() throws Exception {

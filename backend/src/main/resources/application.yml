@@ -42,6 +42,11 @@ rentas:
   core.amqp.exchange: ${CORE_RABBITMQ_EXCHANGE:muni.inbox}
   core.amqp.queue: ${CORE_RABBITMQ_QUEUE:q.rentas}
   core.amqp.confirm-timeout: ${CORE_RABBITMQ_CONFIRM_TIMEOUT:5s}
+  core.amqp.retry-exchange: ${CORE_RABBITMQ_RETRY_EXCHANGE:rentas.retry}
+  core.amqp.retry-queue-1: ${CORE_RABBITMQ_RETRY_QUEUE_1:q.rentas.retry.1}
+  core.amqp.retry-queue-2: ${CORE_RABBITMQ_RETRY_QUEUE_2:q.rentas.retry.2}
+  core.amqp.retry-queue-3: ${CORE_RABBITMQ_RETRY_QUEUE_3:q.rentas.retry.3}
+  core.amqp.confirm-timeout-ms: ${CORE_RABBITMQ_CONFIRM_TIMEOUT_MS:5000}
   core.amqp.consumer-enabled: ${CORE_RABBITMQ_CONSUMER_ENABLED:false}
   core.http.base-url: ${CORE_HTTP_BASE_URL:}
   core.http.module-secret: ${CORE_MODULE_SECRET:}

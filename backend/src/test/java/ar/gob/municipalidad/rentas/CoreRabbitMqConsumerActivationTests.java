@@ -5,6 +5,7 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -29,5 +30,6 @@ class CoreRabbitMqConsumerActivationTests {
     @Import(CoreRabbitMqConsumer.class)
     static class ConsumerConfiguration {
         @Bean CoreInboundEventDispatcher dispatcher(){return mock(CoreInboundEventDispatcher.class);}
+        @Bean RabbitTemplate rabbitTemplate(){return mock(RabbitTemplate.class);}
     }
 }

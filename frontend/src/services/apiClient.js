@@ -16,7 +16,9 @@ function withoutTrailingSlashes(value) {
 
 const API_BASE_URL = withoutTrailingSlashes((import.meta.env.VITE_API_BASE_URL ?? "").trim());
 
-export const AUTH_MODE = import.meta.env.VITE_AUTH_MODE ?? "mock";
+// DEMO autentica con usuarios y sesiones reales del backend. "mock" es un alias heredado.
+const configuredAuthMode = (import.meta.env.VITE_AUTH_MODE ?? "demo").trim().toLowerCase();
+export const AUTH_MODE = configuredAuthMode === "mock" ? "demo" : configuredAuthMode;
 
 export class ApiError extends Error {
   constructor(message, status, details, code, traceId) {
@@ -30,7 +32,7 @@ export class ApiError extends Error {
 }
 
 export function authHeaders() {
-  if (AUTH_MODE !== "mock") return {};
+  if (AUTH_MODE !== "demo") return {};
   const token = sessionStorage.getItem("rentas.token");
   if (!token) return {};
   return { "X-Demo-Session": token };

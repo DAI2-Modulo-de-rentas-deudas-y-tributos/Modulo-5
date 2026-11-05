@@ -36,8 +36,8 @@ export default function AjustesYSaldosPage() {
   const adjLoader = useCallback(() => debtAdjustmentService.list(), []);
   const { data: ajustes, loading, error, reload } = useResource(adjLoader, []);
 
-  const creditLoader = useCallback(() => creditBalanceService.list({ status: "ACTIVE" }), []);
-  const { data: saldos, reload: reloadSaldos } = useResource(creditLoader, []);
+  const creditLoader = useCallback(() => creditBalanceService.list({ onlyAvailable: true }), []);
+  const { data: saldos, loading: loadingSaldos, error: errorSaldos, reload: reloadSaldos } = useResource(creditLoader, []);
 
   const refrescar = () => {
     reload();
@@ -168,14 +168,18 @@ export default function AjustesYSaldosPage() {
         title="Saldos a favor"
         description="Aplicar un saldo no genera un pago: usa un crédito que ya se registró."
       >
-        <DataTable
+        {errorSaldos ? <Alert variant="error" title="No se pudieron cargar los saldos a favor">
+          <p>{errorSaldos}</p>
+          <Button variant="secondary" onClick={reloadSaldos}>Reintentar</Button>
+        </Alert> : <DataTable
           columns={creditColumns}
+          loading={loadingSaldos}
           rows={saldos ?? []}
           rowKey={(row) => row.id}
           emptyIconName="Wallet"
           emptyTitle="Sin saldos a favor"
           emptyDescription="Ningún contribuyente tiene crédito disponible."
-        />
+        />}
       </Card>
 
       <Alert variant="info" title="La aprobación aplica el ajuste">

@@ -10,7 +10,7 @@ const TOKEN_KEY = "rentas.token";
 const PAYMENT_INTENT_KEY = "rentas.electronicPaymentIntent";
 
 function hasStoredToken() {
-  if (AUTH_MODE === "core") return false;
+  if (AUTH_MODE !== "demo") return false;
   return Boolean(sessionStorage.getItem(TOKEN_KEY));
 }
 
@@ -36,7 +36,7 @@ export function AuthProvider({ children }) {
     let cancelled = false;
     const generation = sessionGeneration.current;
     async function restore() {
-      if (AUTH_MODE === "core") {
+      if (AUTH_MODE !== "demo") {
         setInitializing(false);
         return;
       }
