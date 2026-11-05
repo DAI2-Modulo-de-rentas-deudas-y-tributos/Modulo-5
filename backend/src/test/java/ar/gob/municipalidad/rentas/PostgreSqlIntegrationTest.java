@@ -1512,8 +1512,8 @@ class PostgreSqlIntegrationTest {
         TaxpayerReference taxpayer=taxpayer(TaxpayerType.CITIZEN,"PG-DUE-LOAD-"+UUID.randomUUID(),uniqueDigits(8),null);
         taxpayer.canonicalCitizenId=UUID.randomUUID();taxpayers.saveAndFlush(taxpayer);
         Debt seed=debt("DUE-LOAD-SEED-"+UUID.randomUUID(),taxpayer.id);
-        LocalDate processingDate=LocalDate.of(1800,4,10);
-        while(dueDateRuns.findByProcessingDate(processingDate).isPresent())processingDate=processingDate.plusDays(1);
+        LocalDate processingDate=fiscalDates.today();
+        while(dueDateRuns.findByProcessingDate(processingDate).isPresent())processingDate=processingDate.minusDays(1);
         LocalDate dueDate=processingDate.minusDays(1);
         jdbc.update("""
             insert into debt (integration_id,taxpayer_id,tax_concept_id,origin_type,liquidation_id,original_amount,current_amount,
@@ -1549,7 +1549,9 @@ class PostgreSqlIntegrationTest {
         var completed=dueDates.get(runId);
         assertThat(completed.status()).isEqualTo(DueDateRunStatus.COMPLETED);
         assertThat(completed.debtsOverdue()).isEqualTo(10000);
+        assertThat(completed.errors()).isZero();
         assertThat(jdbc.queryForObject("select count(*) from outbox_event o join debt d on o.aggregate_id=d.id::text where o.event_type='debtOverdue' and d.taxpayer_id=? and d.due_date=?",Long.class,taxpayer.id,dueDate)).isEqualTo(10000);
+        assertThat(jdbc.queryForObject("select count(*) from late_charge_application l join debt d on l.debt_id=d.id where d.taxpayer_id=? and d.due_date=? and l.calculation_date=?",Long.class,taxpayer.id,dueDate,processingDate)).isEqualTo(10000);
         mvc.perform(post("/api/v1/administration/process-due-dates").with(authentication(rentas))
                 .header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON)
                 .content(json.writeValueAsBytes(new FiscalProcessingController.DueDateRequest(processingDate))))
@@ -1557,6 +1559,7 @@ class PostgreSqlIntegrationTest {
             .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.id").value(runId))
             .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.status").value("COMPLETED"));
         assertThat(jdbc.queryForObject("select count(*) from outbox_event o join debt d on o.aggregate_id=d.id::text where o.event_type='debtOverdue' and d.taxpayer_id=? and d.due_date=?",Long.class,taxpayer.id,dueDate)).isEqualTo(10000);
+        assertThat(jdbc.queryForObject("select count(*) from late_charge_application l join debt d on l.debt_id=d.id where d.taxpayer_id=? and d.due_date=? and l.calculation_date=?",Long.class,taxpayer.id,dueDate,processingDate)).isEqualTo(10000);
         System.out.printf("due-date load rows=10000 responseMs=%d workerMs=%d processingStatus=%s outboxEvents=10000%n",requestMillis,processingMillis,completed.status());
     }
 
