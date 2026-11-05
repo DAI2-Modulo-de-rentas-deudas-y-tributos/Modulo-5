@@ -20,4 +20,13 @@ api PUT queues/%2F/q.rentas.dlq '{"durable":true}'
 api POST bindings/%2F/e/rentas.dlx/q/q.rentas.dlq '{}'
 api PUT queues/%2F/q.rentas '{"durable":true,"arguments":{"x-dead-letter-exchange":"rentas.dlx"}}'
 
-echo "RabbitMQ local listo: muni.inbox -> q.m5.publicados, q.rentas -> q.rentas.dlq."
+# Solo el broker local declara el retry; en entornos Core/M9 la topología se acuerda allí.
+api PUT exchanges/%2F/rentas.retry '{"type":"direct","durable":true}'
+api PUT exchanges/%2F/rentas.retry.return '{"type":"direct","durable":true}'
+api POST bindings/%2F/e/rentas.retry.return/q/q.rentas '{"routing_key":"q.rentas"}'
+api PUT queues/%2F/q.rentas.retry.1 '{"durable":true,"arguments":{"x-message-ttl":1000,"x-dead-letter-exchange":"rentas.retry.return","x-dead-letter-routing-key":"q.rentas"}}'
+api POST bindings/%2F/e/rentas.retry/q/q.rentas.retry.1 '{"routing_key":"q.rentas.retry.1"}'
+api PUT queues/%2F/q.rentas.retry.2 '{"durable":true,"arguments":{"x-message-ttl":5000,"x-dead-letter-exchange":"rentas.retry.return","x-dead-letter-routing-key":"q.rentas"}}'
+api POST bindings/%2F/e/rentas.retry/q/q.rentas.retry.2 '{"routing_key":"q.rentas.retry.2"}'
+
+echo "RabbitMQ local listo: muni.inbox -> q.m5.publicados, q.rentas -> retry limitado -> q.rentas.dlq."

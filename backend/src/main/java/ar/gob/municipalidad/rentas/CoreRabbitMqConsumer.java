@@ -3,12 +3,18 @@ package ar.gob.municipalidad.rentas;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.rabbitmq.client.Channel;
+import org.springframework.amqp.rabbit.connection.CorrelationData;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.core.Message;
+import org.springframework.amqp.core.MessageBuilder;
+import org.springframework.amqp.core.MessageDeliveryMode;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.amqp.support.AmqpHeaders;
+import org.springframework.dao.DataAccessException;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.stereotype.Component;
@@ -17,6 +23,7 @@ import java.io.IOException;
 import java.time.OffsetDateTime;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 @Component
 class CoreInboundEventDispatcher {
@@ -58,9 +65,13 @@ class CoreInboundEventDispatcher {
             }
         } catch (IllegalArgumentException|BusinessException ex) {
             throw ex;
+        } catch (JsonProcessingException ex) {
+            throw new IllegalArgumentException("INVALID_CORE_EVENT_PAYLOAD",ex);
+        } catch (DataAccessException ex) {
+            throw ex;
         } catch (Exception ex) {
             if(ex instanceof IllegalStateException state&&"CORE_INBOUND_RETRY".equals(state.getMessage()))throw state;
-            throw new IllegalArgumentException("INVALID_CORE_EVENT_PAYLOAD",ex);
+            throw new IllegalStateException("CORE_INBOUND_PROCESSING_FAILED",ex);
         }
     }
 
@@ -94,8 +105,20 @@ class CoreInboundEventDispatcher {
 class CoreRabbitMqConsumer {
     private static final Logger log=LoggerFactory.getLogger(CoreRabbitMqConsumer.class);
     private final CoreInboundEventDispatcher dispatcher;
+    private final RabbitTemplate rabbit;
+    private final String retryExchange;
+    private final String retryQueue1;
+    private final String retryQueue2;
+    private final long confirmTimeoutMillis;
 
-    CoreRabbitMqConsumer(CoreInboundEventDispatcher dispatcher){this.dispatcher=dispatcher;}
+    CoreRabbitMqConsumer(CoreInboundEventDispatcher dispatcher,RabbitTemplate rabbit,
+        @org.springframework.beans.factory.annotation.Value("${rentas.core.amqp.retry-exchange:rentas.retry}") String retryExchange,
+        @org.springframework.beans.factory.annotation.Value("${rentas.core.amqp.retry-queue-1:q.rentas.retry.1}") String retryQueue1,
+        @org.springframework.beans.factory.annotation.Value("${rentas.core.amqp.retry-queue-2:q.rentas.retry.2}") String retryQueue2,
+        @org.springframework.beans.factory.annotation.Value("${rentas.core.amqp.confirm-timeout-ms:5000}") long confirmTimeoutMillis) {
+        this.dispatcher=dispatcher;this.rabbit=rabbit;this.retryExchange=retryExchange;
+        this.retryQueue1=retryQueue1;this.retryQueue2=retryQueue2;this.confirmTimeoutMillis=confirmTimeoutMillis;
+    }
 
     @RabbitListener(queues="${rentas.core.amqp.queue:q.rentas}",
         autoStartup="${rentas.core.amqp.consumer-enabled:false}",ackMode="MANUAL")
@@ -109,7 +132,34 @@ class CoreRabbitMqConsumer {
                 OperationalLogSupport.uuidField(payload,"eventId"),OperationalLogSupport.uuidField(payload,"correlationId"),
                 OperationalLogSupport.safeIdentifierField(payload,"eventType"),
                 ex.getClass().getSimpleName(),OperationalLogSupport.sanitizedStackTrace(ex));
-            channel.basicNack(deliveryTag,false,false);
+            String retryQueue=retryable(ex)?nextRetryQueue(message):null;
+            if(retryQueue==null){channel.basicNack(deliveryTag,false,false);return;}
+            try {
+                Message retry=MessageBuilder.fromMessage(message).build();
+                retry.getMessageProperties().setDeliveryMode(MessageDeliveryMode.PERSISTENT);
+                CorrelationData correlation=new CorrelationData(OperationalLogSupport.uuidField(payload,"eventId")+retryQueue);
+                rabbit.send(retryExchange,retryQueue,retry,correlation);
+                CorrelationData.Confirm confirm=correlation.getFuture().get(confirmTimeoutMillis,TimeUnit.MILLISECONDS);
+                if(confirm.isAck()&&correlation.getReturned()==null)channel.basicAck(deliveryTag,false);
+                else channel.basicNack(deliveryTag,false,false);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                channel.basicNack(deliveryTag,false,false);
+            } catch (Exception publishFailure) {
+                log.warn("CORE_INBOUND retry_publish_failed eventId={} eventType={} exceptionType={}",
+                    OperationalLogSupport.uuidField(payload,"eventId"),OperationalLogSupport.safeIdentifierField(payload,"eventType"),
+                    publishFailure.getClass().getSimpleName());
+                channel.basicNack(deliveryTag,false,false);
+            }
         }
+    }
+
+    private boolean retryable(RuntimeException ex){return !(ex instanceof IllegalArgumentException||ex instanceof BusinessException);}
+
+    private String nextRetryQueue(Message message){
+        Object lastDeathQueue=message.getMessageProperties().getHeaders().get("x-last-death-queue");
+        String last=lastDeathQueue==null?null:lastDeathQueue.toString();
+        if(retryQueue2.equals(last))return null;
+        return retryQueue1.equals(last)?retryQueue2:retryQueue1;
     }
 }

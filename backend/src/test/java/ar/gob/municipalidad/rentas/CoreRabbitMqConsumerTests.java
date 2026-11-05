@@ -9,6 +9,8 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageProperties;
+import org.springframework.amqp.rabbit.connection.CorrelationData;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
@@ -73,9 +75,9 @@ class CoreRabbitMqConsumerTests {
         verify(m4).consumePermitFee(any());verify(m7).consume(any());verify(m8).consume(any());verifyNoInteractions(m1,m2);
     }
 
-    @Test void acknowledgesOnlyAfterDispatcherReturnsAndNeverRequeuesFailures() throws Exception {
+    @Test void acknowledgesSuccessAndSendsPermanentInvalidPayloadDirectlyToDeadLetter() throws Exception {
         CoreInboundEventDispatcher dispatcher=mock(CoreInboundEventDispatcher.class);
-        CoreRabbitMqConsumer listener=new CoreRabbitMqConsumer(dispatcher);
+        CoreRabbitMqConsumer listener=listener(dispatcher);
         Channel channel=mock(Channel.class);
         listener.receive(message(29),channel,29);
         verify(channel).basicAck(29,false);
@@ -86,13 +88,66 @@ class CoreRabbitMqConsumerTests {
         verify(channel,never()).basicNack(30,false,true);
     }
 
+    @Test void transientFailureIsConfirmedToFirstRetryQueueBeforeOriginalIsAcknowledged() throws Exception {
+        String eventId=UUID.randomUUID().toString();
+        String payload="{\"eventId\":\""+eventId+"\",\"eventType\":\"ticketUpdated\",\"data\":{}}";
+        CoreInboundEventDispatcher dispatcher=mock(CoreInboundEventDispatcher.class);
+        doThrow(new IllegalStateException("CORE_INBOUND_RETRY")).when(dispatcher).dispatch(payload);
+        RabbitTemplate rabbit=confirmedPublisher();
+        Message original=new Message(payload.getBytes(StandardCharsets.UTF_8),new MessageProperties());
+        original.getMessageProperties().setMessageId(eventId);
+        Channel channel=mock(Channel.class);
+
+        listener(dispatcher,rabbit).receive(original,channel,40);
+
+        verify(rabbit).send(eq("rentas.retry"),eq("q.rentas.retry.1"),argThat(message->
+            eventId.equals(message.getMessageProperties().getMessageId())&&payload.equals(new String(message.getBody(),StandardCharsets.UTF_8))),any(CorrelationData.class));
+        verify(channel).basicAck(40,false);
+        verify(channel,never()).basicNack(eq(40),anyBoolean(),anyBoolean());
+    }
+
+    @Test void secondTransientFailureUsesSecondRetryQueueAndThirdGoesToDeadLetter() throws Exception {
+        String payload="{\"eventId\":\""+UUID.randomUUID()+"\",\"eventType\":\"ticketUpdated\",\"data\":{}}";
+        CoreInboundEventDispatcher dispatcher=mock(CoreInboundEventDispatcher.class);
+        doThrow(new IllegalStateException("CORE_INBOUND_RETRY")).when(dispatcher).dispatch(payload);
+        RabbitTemplate rabbit=confirmedPublisher();
+        Channel channel=mock(Channel.class);
+        Message secondAttempt=new Message(payload.getBytes(StandardCharsets.UTF_8),new MessageProperties());
+        secondAttempt.getMessageProperties().getHeaders().put("x-last-death-queue","q.rentas.retry.1");
+
+        listener(dispatcher,rabbit).receive(secondAttempt,channel,41);
+        verify(rabbit).send(eq("rentas.retry"),eq("q.rentas.retry.2"),any(Message.class),any(CorrelationData.class));
+        verify(channel).basicAck(41,false);
+
+        Message thirdAttempt=new Message(payload.getBytes(StandardCharsets.UTF_8),new MessageProperties());
+        thirdAttempt.getMessageProperties().getHeaders().put("x-last-death-queue","q.rentas.retry.2");
+        listener(dispatcher,rabbit).receive(thirdAttempt,channel,42);
+        verify(rabbit,times(1)).send(eq("rentas.retry"),eq("q.rentas.retry.2"),any(Message.class),any(CorrelationData.class));
+        verify(channel).basicNack(42,false,false);
+    }
+
+    @Test void unconfirmedRetryIsNotAcknowledgedAsDelivered() throws Exception {
+        String payload="{\"eventId\":\""+UUID.randomUUID()+"\",\"eventType\":\"ticketUpdated\",\"data\":{}}";
+        CoreInboundEventDispatcher dispatcher=mock(CoreInboundEventDispatcher.class);
+        doThrow(new IllegalStateException("CORE_INBOUND_RETRY")).when(dispatcher).dispatch(payload);
+        RabbitTemplate rejected=mock(RabbitTemplate.class);
+        doAnswer(invocation->{CorrelationData correlation=invocation.getArgument(3);correlation.getFuture().complete(new CorrelationData.Confirm(false,"nack"));return null;})
+            .when(rejected).send(any(String.class),any(String.class),any(Message.class),any(CorrelationData.class));
+        Channel channel=mock(Channel.class);
+
+        listener(dispatcher,rejected).receive(new Message(payload.getBytes(StandardCharsets.UTF_8),new MessageProperties()),channel,43);
+
+        verify(channel).basicNack(43,false,false);
+        verify(channel,never()).basicAck(43,false);
+    }
+
     @Test void rejectedInboundLogsOnlyUuidIdentifiersAndSanitizedStackTrace() throws Exception {
         UUID eventId=UUID.randomUUID(),correlationId=UUID.randomUUID();
         String payload="{\"eventId\":\""+eventId+"\",\"correlationId\":\""+correlationId
             +"\",\"eventType\":\"ticketUpdated\",\"data\":{\"dni\":\"40111222\",\"cuit\":\"20-40111222-3\",\"token\":\"secret-token\"}}";
         CoreInboundEventDispatcher dispatcher=mock(CoreInboundEventDispatcher.class);
         doThrow(new IllegalArgumentException("40111222 20-40111222-3 secret-token "+payload)).when(dispatcher).dispatch(payload);
-        CoreRabbitMqConsumer listener=new CoreRabbitMqConsumer(dispatcher);
+        CoreRabbitMqConsumer listener=listener(dispatcher);
         Channel channel=mock(Channel.class);
         Logger logger=(Logger)LoggerFactory.getLogger(CoreRabbitMqConsumer.class);
         ListAppender<ILoggingEvent> logs=new ListAppender<>();logs.start();logger.addAppender(logs);
@@ -117,7 +172,7 @@ class CoreRabbitMqConsumerTests {
         Logger logger=(Logger)LoggerFactory.getLogger(CoreRabbitMqConsumer.class);
         ListAppender<ILoggingEvent> logs=new ListAppender<>();logs.start();logger.addAppender(logs);
         try {
-            new CoreRabbitMqConsumer(dispatcher).receive(
+            listener(dispatcher).receive(
                 new Message(payload.getBytes(StandardCharsets.UTF_8),new MessageProperties()),mock(Channel.class),32);
             String output=logs.list.stream().map(ILoggingEvent::getFormattedMessage).reduce("",String::concat);
             assertThat(output).contains("eventType=unavailable").doesNotContain("ticketUpdated","40111222");
@@ -126,13 +181,16 @@ class CoreRabbitMqConsumerTests {
         }
     }
 
+    private CoreRabbitMqConsumer listener(CoreInboundEventDispatcher dispatcher){return new CoreRabbitMqConsumer(dispatcher,mock(RabbitTemplate.class),"rentas.retry","q.rentas.retry.1","q.rentas.retry.2",1000);}
+    private CoreRabbitMqConsumer listener(CoreInboundEventDispatcher dispatcher,RabbitTemplate rabbit){return new CoreRabbitMqConsumer(dispatcher,rabbit,"rentas.retry","q.rentas.retry.1","q.rentas.retry.2",1000);}
+    private RabbitTemplate confirmedPublisher(){RabbitTemplate rabbit=mock(RabbitTemplate.class);doAnswer(invocation->{CorrelationData correlation=invocation.getArgument(3);correlation.getFuture().complete(new CorrelationData.Confirm(true,null));return null;}).when(rabbit).send(any(String.class),any(String.class),any(Message.class),any(CorrelationData.class));return rabbit;}
     private Message message(long tag){MessageProperties properties=new MessageProperties();properties.setDeliveryTag(tag);return new Message(ticketUpdated().getBytes(StandardCharsets.UTF_8),properties);}
     private String envelope(String type,String source,String data){return """
         {"eventId":"%s","eventType":"%s","eventVersion":"1.0","occurredAt":"2026-10-30T10:00:00-03:00","sourceModule":"%s","correlationId":"%s","causationId":null,"data":%s}
         """.formatted(UUID.randomUUID(),type,source,UUID.randomUUID(),data);}
     private void acknowledge(CoreInboundEventDispatcher dispatcher,String payload,long tag) throws Exception {
         Channel channel=mock(Channel.class);
-        new CoreRabbitMqConsumer(dispatcher).receive(new Message(payload.getBytes(StandardCharsets.UTF_8),new MessageProperties()),channel,tag);
+        listener(dispatcher).receive(new Message(payload.getBytes(StandardCharsets.UTF_8),new MessageProperties()),channel,tag);
         verify(channel).basicAck(tag,false);verify(channel,never()).basicNack(eq(tag),anyBoolean(),anyBoolean());
     }
     private String ticketUpdated(){return """

@@ -1,6 +1,8 @@
 package ar.gob.municipalidad.rentas;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.rabbitmq.client.Channel;
+import com.rabbitmq.client.GetResponse;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -10,6 +12,7 @@ import org.springframework.amqp.core.FanoutExchange;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageDeliveryMode;
 import org.springframework.amqp.core.Queue;
+import org.springframework.amqp.core.QueueBuilder;
 import org.springframework.amqp.rabbit.connection.CachingConnectionFactory;
 import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.amqp.rabbit.core.RabbitAdmin;
@@ -23,10 +26,17 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.UUID;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -78,6 +88,66 @@ class RabbitMqEventPublisherTests {
         assertThat(new String(received.getBody(),StandardCharsets.UTF_8)).isEqualTo(payload);
         assertThat(received.getMessageProperties().getMessageId()).isEqualTo(id);
         assertThat(received.getMessageProperties().getReceivedDeliveryMode()).isEqualTo(MessageDeliveryMode.PERSISTENT);
+    }
+
+    @Test void transientInboundFailuresRetryTwiceThenDeadLetterWithTheSameEventId() throws Exception {
+        RetryTopology topology=declareRetryTopology();
+        String eventId=UUID.randomUUID().toString();
+        String payload="{\"eventId\":\""+eventId+"\",\"eventType\":\"ticketUpdated\",\"eventVersion\":\"1.0\",\"data\":{}}";
+        Message original=new Message(payload.getBytes(StandardCharsets.UTF_8),new org.springframework.amqp.core.MessageProperties());
+        original.getMessageProperties().setMessageId(eventId);
+        original.getMessageProperties().setDeliveryMode(MessageDeliveryMode.PERSISTENT);
+        CorrelationData publish=new CorrelationData(eventId);
+        template.send("",topology.mainQueue(),original,publish);
+        assertThat(publish.getFuture().get(5,TimeUnit.SECONDS).isAck()).isTrue();
+
+        AtomicInteger attempts=new AtomicInteger();
+        CoreInboundEventDispatcher dispatcher=mock(CoreInboundEventDispatcher.class);
+        doAnswer(invocation->{attempts.incrementAndGet();throw new IllegalStateException("CORE_INBOUND_RETRY");})
+            .when(dispatcher).dispatch(payload);
+        CoreRabbitMqConsumer listener=new CoreRabbitMqConsumer(dispatcher,template,topology.retryExchange(),topology.retryQueue1(),topology.retryQueue2(),5000);
+
+        try(var connection=connections.createConnection();Channel channel=connection.createChannel(false)){
+            for(int attempt=0;attempt<3;attempt++){
+                GetResponse delivery=awaitGet(channel,topology.mainQueue(),5000);
+                assertThat(delivery).as("entrega %d de tres",attempt+1).isNotNull();
+                Object lastDeathQueue=delivery.getProps().getHeaders().get("x-last-death-queue");
+                assertThat(lastDeathQueue==null?null:lastDeathQueue.toString())
+                    .isEqualTo(attempt==0?null:attempt==1?topology.retryQueue1():topology.retryQueue2());
+                assertThat(delivery.getProps().getMessageId()).isEqualTo(eventId);
+                assertThat(new String(delivery.getBody(),StandardCharsets.UTF_8)).isEqualTo(payload);
+                listener.receive(asSpringMessage(delivery),channel,delivery.getEnvelope().getDeliveryTag());
+            }
+            GetResponse deadLetter=awaitGet(channel,topology.deadLetterQueue(),2000);
+            assertThat(deadLetter).isNotNull();
+            assertThat(deadLetter.getProps().getMessageId()).isEqualTo(eventId);
+            assertThat(new String(deadLetter.getBody(),StandardCharsets.UTF_8)).contains(eventId);
+            channel.basicAck(deadLetter.getEnvelope().getDeliveryTag(),false);
+        }
+        assertThat(attempts).hasValue(3);
+    }
+
+    @Test void permanentInboundFailureGoesDirectlyToDeadLetterWithoutRetry() throws Exception {
+        RetryTopology topology=declareRetryTopology();
+        String eventId=UUID.randomUUID().toString();
+        String payload="{\"eventId\":\""+eventId+"\",\"eventType\":\"unknown\",\"eventVersion\":\"1.0\",\"data\":{}}";
+        Message original=new Message(payload.getBytes(StandardCharsets.UTF_8),new org.springframework.amqp.core.MessageProperties());
+        original.getMessageProperties().setMessageId(eventId);
+        template.send("",topology.mainQueue(),original,new CorrelationData(eventId));
+        CoreInboundEventDispatcher dispatcher=mock(CoreInboundEventDispatcher.class);
+        doThrow(new IllegalArgumentException("UNSUPPORTED_CORE_EVENT_TYPE")).when(dispatcher).dispatch(payload);
+        CoreRabbitMqConsumer listener=new CoreRabbitMqConsumer(dispatcher,template,topology.retryExchange(),topology.retryQueue1(),topology.retryQueue2(),5000);
+
+        try(var connection=connections.createConnection();Channel channel=connection.createChannel(false)){
+            GetResponse delivery=awaitGet(channel,topology.mainQueue(),2000);
+            assertThat(delivery).isNotNull();
+            listener.receive(asSpringMessage(delivery),channel,delivery.getEnvelope().getDeliveryTag());
+            GetResponse deadLetter=awaitGet(channel,topology.deadLetterQueue(),2000);
+            assertThat(deadLetter).isNotNull();
+            assertThat(deadLetter.getProps().getMessageId()).isEqualTo(eventId);
+            assertThat(new String(deadLetter.getBody(),StandardCharsets.UTF_8)).contains(eventId);
+        }
+        verify(dispatcher,times(1)).dispatch(payload);
     }
 
     @Test void invalidEnvelopeIsRejectedBeforePublishing() {
@@ -149,4 +219,44 @@ class RabbitMqEventPublisherTests {
             {"eventId":"%s","eventType":"paymentRegistered","eventVersion":"1.0","occurredAt":"%s","sourceModule":"rentas","correlationId":null,"causationId":null,"data":{"paymentId":"%s"}}
             """.formatted(id,OffsetDateTime.now(),UUID.randomUUID());
     }
+
+    private RetryTopology declareRetryTopology(){
+        String suffix=UUID.randomUUID().toString().replace("-","");
+        String main="q.rentas.retry-test."+suffix,dlx="rentas.retry-test.dlx."+suffix,dlq=main+".dlq";
+        String returned="rentas.retry-test.return."+suffix,retry="rentas.retry-test.exchange."+suffix;
+        String retry1=main+".retry.1",retry2=main+".retry.2";
+        RabbitAdmin admin=new RabbitAdmin(connections);
+        DirectExchange returnExchange=new DirectExchange(returned,true,false),retryExchange=new DirectExchange(retry,true,false);
+        FanoutExchange deadLetterExchange=new FanoutExchange(dlx,true,false);
+        admin.declareExchange(returnExchange);admin.declareExchange(retryExchange);admin.declareExchange(deadLetterExchange);
+        Queue mainQueue=QueueBuilder.durable(main).deadLetterExchange(dlx).build();
+        Queue deadLetterQueue=QueueBuilder.durable(dlq).build();
+        Queue firstRetry=QueueBuilder.durable(retry1).ttl(150).deadLetterExchange(returned).deadLetterRoutingKey(main).build();
+        Queue secondRetry=QueueBuilder.durable(retry2).ttl(250).deadLetterExchange(returned).deadLetterRoutingKey(main).build();
+        admin.declareQueue(mainQueue);admin.declareQueue(deadLetterQueue);admin.declareQueue(firstRetry);admin.declareQueue(secondRetry);
+        admin.declareBinding(BindingBuilder.bind(mainQueue).to(returnExchange).with(main));
+        admin.declareBinding(BindingBuilder.bind(deadLetterQueue).to(deadLetterExchange));
+        admin.declareBinding(BindingBuilder.bind(firstRetry).to(retryExchange).with(retry1));
+        admin.declareBinding(BindingBuilder.bind(secondRetry).to(retryExchange).with(retry2));
+        return new RetryTopology(main,retry,retry1,retry2,dlq);
+    }
+
+    private GetResponse awaitGet(Channel channel,String queue,long timeoutMs)throws Exception{
+        long deadline=System.nanoTime()+TimeUnit.MILLISECONDS.toNanos(timeoutMs);
+        GetResponse response;
+        while((response=channel.basicGet(queue,false))==null&&System.nanoTime()<deadline)Thread.sleep(20);
+        return response;
+    }
+
+    private Message asSpringMessage(GetResponse delivery){
+        var properties=new org.springframework.amqp.core.MessageProperties();
+        Map<String,Object> headers=delivery.getProps().getHeaders();
+        if(headers!=null)properties.setHeaders(new HashMap<>(headers));
+        properties.setMessageId(delivery.getProps().getMessageId());
+        properties.setDeliveryTag(delivery.getEnvelope().getDeliveryTag());
+        properties.setRedelivered(delivery.getEnvelope().isRedeliver());
+        return new Message(delivery.getBody(),properties);
+    }
+
+    private record RetryTopology(String mainQueue,String retryExchange,String retryQueue1,String retryQueue2,String deadLetterQueue){}
 }
