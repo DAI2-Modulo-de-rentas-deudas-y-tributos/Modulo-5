@@ -212,11 +212,68 @@ jobs:
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Show ECS diagnostics on failure
-        if: failure()
+        if: ${{ failure() && inputs.environment == 'dev' }}
         shell: bash
         run: |
+          # Collect only operational metadata before DEV terraform-destroy.
+          # Never print raw CloudWatch application logs or credentials.
+          set -uo pipefail
+          echo "::group::ECS service events"
           aws ecs describe-services \
             --cluster "${ECS_CLUSTER}" \
             --services "${ECS_SERVICE}" \
-            --query 'services[0].events[:10]' \
+            --query 'services[0].events[:15]' \
             --output table || true
+          echo "::endgroup::"
+
+          echo "::group::ECS stopped task reasons and container exit codes"
+          stopped=$(aws ecs list-tasks \
+            --cluster "${ECS_CLUSTER}" \
+            --service-name "${ECS_SERVICE}" \
+            --desired-status STOPPED \
+            --query 'taskArns' \
+            --output text 2>/dev/null || true)
+          if [[ -n "${stopped}" && "${stopped}" != "None" ]]; then
+            read -r -a task_arns <<< "${stopped}"
+            for ((i=0; i<${#task_arns[@]}; i+=100)); do
+              aws ecs describe-tasks \
+                --cluster "${ECS_CLUSTER}" \
+                --tasks "${task_arns[@]:i:100}" \
+                --query 'tasks[].{arn:taskArn,stopCode:stopCode,stoppedReason:stoppedReason,containers:containers[].{name:name,exitCode:exitCode,lastStatus:lastStatus,reason:reason}}' \
+                --output json || true
+            done
+          else
+            echo "No stopped ECS tasks remain visible."
+          fi
+          echo "::endgroup::"
+
+          echo "::group::ALB target health"
+          groups=$(aws ecs describe-services \
+            --cluster "${ECS_CLUSTER}" \
+            --services "${ECS_SERVICE}" \
+            --query 'services[0].loadBalancers[].targetGroupArn' \
+            --output text 2>/dev/null || true)
+          for target_group in ${groups}; do
+            [[ "${target_group}" == "None" ]] && continue
+            aws elbv2 describe-target-health \
+              --target-group-arn "${target_group}" \
+              --query 'TargetHealthDescriptions[].{id:Target.Id,status:TargetHealth.State,reason:TargetHealth.Reason}' \
+              --output table || true
+          done
+          echo "::endgroup::"
+
+          echo "::group::CloudWatch application error categories (no raw logs)"
+          log_group="/ecs/modulo-5-rentas-${TARGET_ENVIRONMENT}/backend"
+          aws logs describe-log-streams \
+            --log-group-name "${log_group}" \
+            --order-by LastEventTime --descending --limit 5 \
+            --query 'logStreams[].logStreamName' --output table || true
+          # Print only fixed class names; never emit exception messages or payloads.
+          start_ms=$(( ($(date +%s) - 1200) * 1000 ))
+          aws logs filter-log-events \
+            --log-group-name "${log_group}" \
+            --start-time "${start_ms}" \
+            --query 'events[].message' --output text 2>/dev/null \
+            | grep -Eo 'OutOfMemoryError|OOMKilled|FlywayException|FlywayValidateException|PSQLException|BeanCreationException|ApplicationContextException|CannotGetJdbcConnectionException|ResourceInitializationError|NoSuchBeanDefinitionException' \
+            | sort | uniq -c || true
+          echo "::endgroup::"
