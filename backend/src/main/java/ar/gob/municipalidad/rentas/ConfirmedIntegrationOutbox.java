@@ -174,7 +174,7 @@ class ConfirmedIntegrationOutbox {
 
     ConfirmedOutboundEvents.DebtSettledPayload municipalDebtSettledCandidate(Debt debt){
         CatalogService.require(debt.originType==DebtOriginType.LIQUIDATION&&debt.liquidationId!=null,"INVALID_DEBT_ORIGIN","La deuda no proviene de una liquidación municipal");
-        CatalogService.require(debt.status==DebtStatus.PAID&&debt.outstandingBalance.signum()==0,"DEBT_NOT_SETTLED","La deuda aún no está saldada");
+        CatalogService.requireConflict(debt.status==DebtStatus.PAID&&debt.outstandingBalance.signum()==0,"DEBT_NOT_SETTLED","La deuda aún no está saldada");
         TaxpayerReference taxpayer=taxpayer(debt.taxpayerId);
         CatalogService.require(canonicalCitizenAvailable(taxpayer),"CANONICAL_CITIZEN_ID_PENDING","Falta vincular el ciudadano con M1");
         Liquidation liquidation=liquidations.findById(debt.liquidationId).orElseThrow(()->CatalogService.notFound("Liquidación"));
