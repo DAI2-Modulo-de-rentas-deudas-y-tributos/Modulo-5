@@ -8,6 +8,7 @@ import java.util.UUID;
 enum DemoRole { RENTAS, SUPERVISOR, CASHIER, AUDITOR, TAXPAYER }
 enum ReconciliationStatus { CONCILIATED, OBSERVED, NOT_FOUND }
 enum DueDateRunStatus { PENDING, PROCESSING, COMPLETED, FAILED }
+enum DueDateProcessingStage { DEBTS, INSTALLMENTS, PLANS, COMPLETED }
 
 @Entity @Table(name="demo_user")
 class DemoUser {
@@ -84,6 +85,8 @@ class DueDateProcessing {
     @Column(name="next_attempt_at") public OffsetDateTime nextAttemptAt;
     @Column(name="attempt_count",nullable=false) public int attemptCount;
     @Column(name="last_error_code",length=80) public String lastErrorCode;
+    @Enumerated(EnumType.STRING) @Column(name="processing_stage",nullable=false) public DueDateProcessingStage processingStage=DueDateProcessingStage.COMPLETED;
+    @Column(name="last_processed_id",nullable=false) public long lastProcessedId;
     @Column(name="debts_scanned",nullable=false) public int debtsScanned;
     @Column(name="debts_overdue",nullable=false) public int debtsOverdue;
     @Column(name="adjustments_generated",nullable=false) public int adjustmentsGenerated;

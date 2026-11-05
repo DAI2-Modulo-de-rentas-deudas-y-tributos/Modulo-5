@@ -267,10 +267,11 @@ interface LateChargeApplicationRepository extends JpaRepository<LateChargeApplic
 }
 interface DueDateProcessingRepository extends JpaRepository<DueDateProcessing,Long> {
     Optional<DueDateProcessing> findByProcessingDate(LocalDate date);
-    @Modifying @Query(value="insert into due_date_processing(processing_date,processed_at,debts_scanned,debts_overdue,adjustments_generated,installments_overdue,plans_defaulted,skipped_already_processed,errors,processed_by,status,requested_at,attempt_count) values (:date,null,0,0,0,0,0,0,0,:actor,'PENDING',:requestedAt,0) on conflict(processing_date) do nothing",nativeQuery=true)
+    @Modifying @Query(value="insert into due_date_processing(processing_date,processed_at,debts_scanned,debts_overdue,adjustments_generated,installments_overdue,plans_defaulted,skipped_already_processed,errors,processed_by,status,requested_at,attempt_count,processing_stage,last_processed_id) values (:date,null,0,0,0,0,0,0,0,:actor,'PENDING',:requestedAt,0,'DEBTS',0) on conflict(processing_date) do nothing",nativeQuery=true)
     int enqueueIfAbsent(@Param("date") LocalDate date,@Param("actor") String actor,@Param("requestedAt") OffsetDateTime requestedAt);
     @Query(value="select * from due_date_processing where (status='PENDING' and (next_attempt_at is null or next_attempt_at<=:now)) or (status='PROCESSING' and lease_expires_at<=:now) order by id limit 1 for update skip locked",nativeQuery=true)
     Optional<DueDateProcessing> lockNextClaimable(@Param("now") OffsetDateTime now);
+    @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select r from DueDateProcessing r where r.id=:id") Optional<DueDateProcessing> findByIdForUpdate(@Param("id") Long id);
 }
 interface ElectronicReconciliationBatchRepository extends JpaRepository<ElectronicReconciliationBatch,Long> { Optional<ElectronicReconciliationBatch> findByExternalBatchReference(String reference); }
 interface ElectronicReconciliationItemRepository extends JpaRepository<ElectronicReconciliationItem,Long> {

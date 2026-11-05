@@ -343,6 +343,7 @@ class PostgreSqlIntegrationTest {
     @Autowired FiscalProcessingDatePolicy fiscalDates;
     @Autowired DueDateService dueDates;
     @Autowired DueDateProcessingWorker dueDateWorker;
+    @Autowired DueDateProcessor dueDateProcessor;
     @Autowired DueDateProcessingRepository dueDateRuns;
     @Autowired PaymentPlanConfigurationRepository planConfigurations;
     @Autowired TaxConfigurationRepository taxConfigurations;
@@ -1469,6 +1470,7 @@ class PostgreSqlIntegrationTest {
     @Test void dueDateProcessingHandlesMoreRowsThanOneBatch() {
         authenticate();
         TaxpayerReference taxpayer=taxpayer(TaxpayerType.CITIZEN,"PG-DUE-BATCH-"+UUID.randomUUID(),uniqueDigits(8),null);
+        taxpayer.canonicalCitizenId=UUID.randomUUID();taxpayers.saveAndFlush(taxpayer);
         Debt seed=debt("DUE-BATCH-SEED-"+UUID.randomUUID(),taxpayer.id);
         List<Debt> fixture=new ArrayList<>();fixture.add(seed);
         for(int i=1;i<101;i++){
@@ -1477,7 +1479,8 @@ class PostgreSqlIntegrationTest {
             debt.originalAmount=debt.currentAmount=debt.outstandingBalance=new BigDecimal("10.00");debt.status=DebtStatus.PENDING;
             debt.dueDate=LocalDate.of(1800,1,1);debt.createdAt=debt.updatedAt=OffsetDateTime.now();fixture.add(debt);
         }
-        seed.dueDate=LocalDate.of(1800,1,1);debts.save(seed);
+        LocalDate processingDate=uniqueProcessingDate(seed.id,3);
+        seed.dueDate=processingDate.minusDays(1);debts.save(seed);
         debts.saveAll(fixture);debts.flush();
         int version=planConfigurations.findAll().stream().mapToInt(config->config.version).max().orElse(0)+1;
         PaymentPlanConfiguration config=new PaymentPlanConfiguration();config.version=version;config.minimumInstallments=1;config.maximumInstallments=120;
@@ -1493,15 +1496,40 @@ class PostgreSqlIntegrationTest {
             installment.totalAmount=installment.outstandingAmount=BigDecimal.ONE;installment.paidAmount=BigDecimal.ZERO;installment.dueDate=LocalDate.of(1800,1,1);
             installment.status=InstallmentStatus.PENDING;installmentFixture.add(installment);}
         installments.saveAll(installmentFixture);installments.flush();
-        LocalDate processingDate=LocalDate.of(1800,1,2);
         long started=System.nanoTime();
 
-        var run=dueDates.process(processingDate);
+        var queued=dueDates.enqueue(processingDate);
+        var claim=dueDates.claimNext();
+        assertThat(claim).isNotNull();
+        assertThat(dueDateProcessor.processNextBatch(claim.id(),claim.attemptCount())).isFalse();
+        var checkpoint=dueDates.get(queued.id());
+        assertThat(checkpoint.status()).isEqualTo(DueDateRunStatus.PROCESSING);
+        assertThat(checkpoint.debtsOverdue()).isEqualTo(100);
+        long firstBatchEvents=jdbc.queryForObject("select count(*) from outbox_event o join debt d on o.aggregate_id=d.id::text where o.event_type='debtOverdue' and d.taxpayer_id=?",Long.class,taxpayer.id);
+        assertThat(firstBatchEvents).isBetween(1L,100L);
+        String lastDebtId=fixture.stream().map(debt->debt.id).max(Long::compareTo).orElseThrow().toString();
+        jdbc.execute("CREATE OR REPLACE FUNCTION fail_test_due_date_batch() RETURNS trigger AS $$ BEGIN IF NEW.event_type='debtOverdue' AND NEW.aggregate_id='"+lastDebtId+"' THEN RAISE EXCEPTION 'test due date batch failure'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql");
+        jdbc.execute("CREATE TRIGGER fail_test_due_date_batch BEFORE INSERT ON outbox_event FOR EACH ROW EXECUTE FUNCTION fail_test_due_date_batch()");
+        try {
+            assertThatThrownBy(()->dueDateProcessor.processNextBatch(claim.id(),claim.attemptCount())).hasMessageContaining("test due date batch failure");
+            dueDates.recordFailure(claim.id(),claim.attemptCount(),"DUE_DATE_PROCESSING_FAILED");
+            assertThat(dueDates.get(queued.id()).debtsOverdue()).isEqualTo(100);
+            assertThat(jdbc.queryForObject("select count(*) from outbox_event o join debt d on o.aggregate_id=d.id::text where o.event_type='debtOverdue' and d.taxpayer_id=?",Long.class,taxpayer.id)).isEqualTo(firstBatchEvents);
+            jdbc.execute("DROP TRIGGER IF EXISTS fail_test_due_date_batch ON outbox_event");jdbc.execute("DROP FUNCTION IF EXISTS fail_test_due_date_batch()");
+            jdbc.update("update due_date_processing set next_attempt_at=null where id=?",queued.id());
+            dueDateWorker.processNext();
+        } finally {
+            jdbc.execute("DROP TRIGGER IF EXISTS fail_test_due_date_batch ON outbox_event");jdbc.execute("DROP FUNCTION IF EXISTS fail_test_due_date_batch()");
+        }
+        var run=dueDates.get(queued.id());
+        assertThat(run.status()).isEqualTo(DueDateRunStatus.COMPLETED);
+        assertThat(run.debtsOverdue()).isGreaterThanOrEqualTo(101);
+        assertThat(jdbc.queryForObject("select count(*) from outbox_event o join debt d on o.aggregate_id=d.id::text where o.event_type='debtOverdue' and d.taxpayer_id=?",Long.class,taxpayer.id)).isEqualTo(101);
+        assertThat(jdbc.queryForObject("select count(distinct o.idempotency_key) from outbox_event o join debt d on o.aggregate_id=d.id::text where o.event_type='debtOverdue' and d.taxpayer_id=?",Long.class,taxpayer.id)).isEqualTo(101);
 
         long elapsedMillis=TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started);
         assertThat(run.debtsScanned()).isGreaterThanOrEqualTo(101);
-        assertThat(run.debtsOverdue()).isEqualTo(101);
-        assertThat(run.installmentsOverdue()).isEqualTo(101);
+        assertThat(run.installmentsOverdue()).isGreaterThanOrEqualTo(101);
         assertThat(installments.findByPaymentPlanIdOrderByNumber(plan.id)).allMatch(installment->installment.status==InstallmentStatus.OVERDUE);
         System.out.printf("due-date fixture rows=101 elapsedMs=%d%n",elapsedMillis);
     }
