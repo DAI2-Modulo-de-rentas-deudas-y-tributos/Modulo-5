@@ -23,6 +23,13 @@ const dateTimeFormatter = new Intl.DateTimeFormat("es-AR", {
   minute: "2-digit",
 });
 
+const fiscalDateFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/Argentina/Buenos_Aires",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
 export const formatCurrency = (value) =>
   value === null || value === undefined ? "—" : currencyFormatter.format(value);
 
@@ -35,6 +42,13 @@ export const formatDate = (value) => (value ? dateFormatter.format(dateValue(val
 
 export const formatDateTime = (value) =>
   value ? dateTimeFormatter.format(new Date(value)) : "—";
+
+export const todayInFiscalTimezone = (now = new Date()) => {
+  const parts = Object.fromEntries(
+    fiscalDateFormatter.formatToParts(now).map(({ type, value }) => [type, value]),
+  );
+  return `${parts.year}-${parts.month}-${parts.day}`;
+};
 
 export const formatTime = (value) => (value ? timeFormatter.format(new Date(value)) : "—");
 
