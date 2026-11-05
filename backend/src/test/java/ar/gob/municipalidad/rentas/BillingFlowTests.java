@@ -46,6 +46,7 @@ class BillingFlowTests {
     @Autowired IntegrationEventLogRepository integrationLogs;
     @Autowired com.fasterxml.jackson.databind.ObjectMapper json;
     @Autowired ElectronicPaymentRepository electronicPaymentAttempts;
+    @Autowired AdjustmentRepository adjustmentRepository;
     @Autowired MockMvc mvc;
     @Autowired DemoUserRepository demoUsers;
     @Autowired TaxpayerRepository taxpayers;
@@ -266,6 +267,23 @@ class BillingFlowTests {
         assertThat(debts.findById(target.id).orElseThrow().status).isEqualTo(DebtStatus.CANCELLED);
         assertThat(creditApplications.findAll()).noneMatch(application -> credit.id.equals(application.creditBalanceId));
         assertThat(outbox.count()).isEqualTo(outboxBefore);
+    }
+
+    @Test void apiRejectsAdjustmentToPaidDebtWith409WithoutPersistingRequest() throws Exception {
+        Debt target=debt("DEBT-STATE-PAID-ADJUSTMENT","DEBT-STATE-PAID-ADJUSTMENT");
+        target.status=DebtStatus.PAID;target.outstandingBalance=BigDecimal.ZERO.setScale(2);debts.saveAndFlush(target);
+        String token=new DemoAuthSessions(demoUsers,taxpayers,passwordEncoder,demoAuth).token(DemoRole.RENTAS);
+        long before=adjustmentRepository.count();
+
+        mvc.perform(post("/api/v1/adjustments").header("X-Demo-Session",token).contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(new ApiDtos.CreateAdjustmentRequest(target.id,AdjustmentType.DISCOUNT,new BigDecimal("10"),"Ajuste inválido"))))
+            .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("DEBT_NOT_ADJUSTABLE"));
+
+        assertThat(adjustmentRepository.count()).isEqualTo(before);
+        assertThat(debts.findById(target.id).orElseThrow()).satisfies(stored->{
+            assertThat(stored.status).isEqualTo(DebtStatus.PAID);
+            assertThat(stored.outstandingBalance).isZero();
+        });
     }
 
     @Test void electronicPaymentUsesTaxpayerIdentityAndElectronicOrigin() {
