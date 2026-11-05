@@ -55,7 +55,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import static org.assertj.core.api.Assertions.*;
 
-@SpringBootTest(properties={"spring.jpa.properties.hibernate.generate_statistics=true","spring.jpa.properties.hibernate.session.events.log=false","rentas.security.trusted-proxy-cidrs=10.0.0.0/8"})
+@SpringBootTest(properties={"spring.jpa.properties.hibernate.generate_statistics=true","spring.jpa.properties.hibernate.session.events.log=false","rentas.security.trusted-proxy-cidrs=10.0.0.0/8","rentas.due-date-processing-initial-delay-ms=3600000"})
 @AutoConfigureMockMvc
 @ActiveProfiles("postgres-it")
 @Testcontainers(disabledWithoutDocker=true)
@@ -341,6 +341,7 @@ class PostgreSqlIntegrationTest {
     @Autowired LateChargeService lateCharges;
     @Autowired FiscalProcessingDatePolicy fiscalDates;
     @Autowired DueDateService dueDates;
+    @Autowired DueDateProcessingWorker dueDateWorker;
     @Autowired DueDateProcessingRepository dueDateRuns;
     @Autowired PaymentPlanConfigurationRepository planConfigurations;
     @Autowired TaxConfigurationRepository taxConfigurations;
@@ -884,8 +885,8 @@ class PostgreSqlIntegrationTest {
     }
 
     @Test void contextStartsAndFlywayAppliesEveryMigration(){
-        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(31);
-        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(30);
+        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(32);
+        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(31);
         assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version='29'",Integer.class)).isOne();
         assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version='31'",Integer.class)).isOne();
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='tax_configuration'",String.class)).contains("submitted_by");
@@ -1520,6 +1521,28 @@ class PostgreSqlIntegrationTest {
         LocalDate firstDate=uniqueProcessingDate(eligible.id,2),secondDate=firstDate.plusDays(1);eligible.dueDate=firstDate.minusDays(1);debts.save(eligible);
         assertThat(runTogether(()->dueDates.process(firstDate),()->dueDates.process(secondDate))).containsOnlyNulls();
         assertThat(overdueEvents(eligible)).hasSize(1);
+    }
+
+    @Test void queuedDueDateRunRetriesRolledBackEffectsWithoutDuplicates() {
+        authenticate();Debt eligible=debt("DUE-DATE-QUEUE-"+UUID.randomUUID(),null);LocalDate date=uniqueProcessingDate(eligible.id,20);eligible.dueDate=date.minusDays(1);debts.save(eligible);
+        TaxpayerReference taxpayer=taxpayers.findById(eligible.taxpayerId).orElseThrow();taxpayer.canonicalCitizenId=UUID.randomUUID();taxpayers.save(taxpayer);
+        String aggregateId=eligible.id.toString();
+        jdbc.execute("CREATE OR REPLACE FUNCTION fail_test_due_date_queue() RETURNS trigger AS $$ BEGIN IF NEW.event_type='debtOverdue' AND NEW.aggregate_id='"+aggregateId+"' THEN RAISE EXCEPTION 'test due date queue failure'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql");
+        jdbc.execute("CREATE TRIGGER fail_test_due_date_queue BEFORE INSERT ON outbox_event FOR EACH ROW EXECUTE FUNCTION fail_test_due_date_queue()");
+        try {
+            var queued=dueDates.enqueue(date);var duplicate=dueDates.enqueue(date);
+            assertThat(queued.id()).isEqualTo(duplicate.id());assertThat(queued.status()).isEqualTo(DueDateRunStatus.PENDING);
+            assertThat(queued.processedAt()).isNull();
+            dueDateWorker.processNext();
+            var failedAttempt=dueDates.get(queued.id());assertThat(failedAttempt.status()).isEqualTo(DueDateRunStatus.PENDING);assertThat(failedAttempt.lastErrorCode()).isEqualTo("DUE_DATE_PROCESSING_FAILED");
+            assertThat(overdueEvents(eligible)).isEmpty();
+            jdbc.execute("DROP TRIGGER IF EXISTS fail_test_due_date_queue ON outbox_event");jdbc.execute("DROP FUNCTION IF EXISTS fail_test_due_date_queue()");
+            jdbc.update("update due_date_processing set next_attempt_at=null where id=?",queued.id());dueDateWorker.processNext();
+            var completed=dueDates.get(queued.id());assertThat(completed.status()).isEqualTo(DueDateRunStatus.COMPLETED);assertThat(completed.debtsOverdue()).isPositive();
+            assertThat(overdueEvents(eligible)).hasSize(1);
+        } finally {
+            jdbc.execute("DROP TRIGGER IF EXISTS fail_test_due_date_queue ON outbox_event");jdbc.execute("DROP FUNCTION IF EXISTS fail_test_due_date_queue()");
+        }
     }
 
     @Test void overdueOutboxFailureRollsBackTheDueDateProcessingTransaction() {

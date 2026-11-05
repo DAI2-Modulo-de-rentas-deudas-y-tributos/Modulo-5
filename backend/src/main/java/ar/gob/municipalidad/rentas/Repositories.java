@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Lock;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.*;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.repository.query.Param;
 import org.springframework.context.annotation.Profile;
 import java.time.LocalDate;
@@ -264,7 +265,13 @@ interface LateChargeApplicationRepository extends JpaRepository<LateChargeApplic
     List<LateChargeApplication> findByDebtId(Long debtId);
     List<LateChargeApplication> findByDebtIdIn(Collection<Long> debtIds);
 }
-interface DueDateProcessingRepository extends JpaRepository<DueDateProcessing,Long> { Optional<DueDateProcessing> findByProcessingDate(LocalDate date); }
+interface DueDateProcessingRepository extends JpaRepository<DueDateProcessing,Long> {
+    Optional<DueDateProcessing> findByProcessingDate(LocalDate date);
+    @Modifying @Query(value="insert into due_date_processing(processing_date,processed_at,debts_scanned,debts_overdue,adjustments_generated,installments_overdue,plans_defaulted,skipped_already_processed,errors,processed_by,status,requested_at,attempt_count) values (:date,null,0,0,0,0,0,0,0,:actor,'PENDING',:requestedAt,0) on conflict(processing_date) do nothing",nativeQuery=true)
+    int enqueueIfAbsent(@Param("date") LocalDate date,@Param("actor") String actor,@Param("requestedAt") OffsetDateTime requestedAt);
+    @Query(value="select * from due_date_processing where (status='PENDING' and (next_attempt_at is null or next_attempt_at<=:now)) or (status='PROCESSING' and lease_expires_at<=:now) order by id limit 1 for update skip locked",nativeQuery=true)
+    Optional<DueDateProcessing> lockNextClaimable(@Param("now") OffsetDateTime now);
+}
 interface ElectronicReconciliationBatchRepository extends JpaRepository<ElectronicReconciliationBatch,Long> { Optional<ElectronicReconciliationBatch> findByExternalBatchReference(String reference); }
 interface ElectronicReconciliationItemRepository extends JpaRepository<ElectronicReconciliationItem,Long> {
     Optional<ElectronicReconciliationItem> findByExternalReference(String reference);
