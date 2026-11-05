@@ -63,6 +63,27 @@ import static org.assertj.core.api.Assertions.*;
 class PostgreSqlIntegrationTest {
     @Autowired ExemptionService exenciones;
     @Autowired AuditRepository auditoria;
+    @Autowired IntegrationEventQueryService integrationEventQueries;
+
+    @Test void integrationsBitacoraQueriesOutboxWithPostgresAndKeepsCoreAcceptanceDistinctFromProcessing() {
+        UUID id=UUID.randomUUID();
+        OffsetDateTime now=OffsetDateTime.now();
+        OutboxEvent event=new OutboxEvent();event.id=id;event.eventType="scrum787Postgres";event.targetModule="CORE";
+        event.aggregateType="ExemptionRequest";event.aggregateId="synthetic";event.payload="{\"eventId\":\""+id+"\"}";
+        event.status=OutboxStatus.CORE_ACCEPTED;event.retryCount=1;event.createdAt=now.minusMinutes(1);event.publishedAt=now;
+        outbox.saveAndFlush(event);
+
+        var result=integrationEventQueries.list(Map.of("direction","OUT","eventType","scrum787Postgres","status","CORE_ACCEPTED"),PageRequest.of(0,10));
+
+        assertThat(result.getTotalElements()).isEqualTo(1);
+        assertThat(result.getContent()).singleElement().satisfies(row->{
+            assertThat(row.eventId()).isEqualTo(id.toString());
+            assertThat(row.direction()).isEqualTo(EventDirection.OUTBOUND);
+            assertThat(row.status()).isEqualTo("CORE_ACCEPTED");
+            assertThat(row.publishedAt()).isNotNull();
+            assertThat(row.processedAt()).isNull();
+        });
+    }
 
     @Test void pagosIdempotentesConcurrentesNoDuplicanEfectos() throws Exception {
         authenticate();

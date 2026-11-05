@@ -76,6 +76,17 @@ class SecurityErrorContractTests {
                 403,"ACCESS_DENIED","forbidden-trace");
     }
 
+    @Test void unauthorizedUserGets403BeforeInvalidRequestBodyIsValidated() throws Exception {
+        var result=assertSecurityError(mvc.perform(post("/api/v1/tax-concepts")
+                .header("X-Demo-Session",demo.token(DemoRole.AUDITOR))
+                .header("X-Correlation-Id","forbidden-invalid-body-trace")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}")),403,"ACCESS_DENIED","forbidden-invalid-body-trace");
+        String body=result.getResponse().getContentAsString();
+        assertThat(body).doesNotContain("VALIDATION_ERROR","fieldErrors");
+        assertThat(json.readTree(body).path("details").isNull()).isTrue();
+    }
+
     @Test void malformedJsonRetainsTheStandard400Contract() throws Exception {
         mvc.perform(post("/api/v1/tax-concepts")
                 .header("X-Demo-Session",demo.token(DemoRole.RENTAS))
