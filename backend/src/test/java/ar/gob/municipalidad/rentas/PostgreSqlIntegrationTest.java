@@ -8,6 +8,7 @@ import org.hibernate.SessionFactory;
 import org.hibernate.stat.Statistics;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -1503,6 +1504,60 @@ class PostgreSqlIntegrationTest {
         assertThat(run.installmentsOverdue()).isEqualTo(101);
         assertThat(installments.findByPaymentPlanIdOrderByNumber(plan.id)).allMatch(installment->installment.status==InstallmentStatus.OVERDUE);
         System.out.printf("due-date fixture rows=101 elapsedMs=%d%n",elapsedMillis);
+    }
+
+    @Test @EnabledIfSystemProperty(named="rentas.due-date-load-test",matches="true")
+    void queuedDueDateProcessingAcceptsAndProcessesTenThousandOverdueDebts() throws Exception {
+        authenticate();
+        TaxpayerReference taxpayer=taxpayer(TaxpayerType.CITIZEN,"PG-DUE-LOAD-"+UUID.randomUUID(),uniqueDigits(8),null);
+        taxpayer.canonicalCitizenId=UUID.randomUUID();taxpayers.saveAndFlush(taxpayer);
+        Debt seed=debt("DUE-LOAD-SEED-"+UUID.randomUUID(),taxpayer.id);
+        LocalDate processingDate=LocalDate.of(1800,4,10);
+        while(dueDateRuns.findByProcessingDate(processingDate).isPresent())processingDate=processingDate.plusDays(1);
+        LocalDate dueDate=processingDate.minusDays(1);
+        jdbc.update("""
+            insert into debt (integration_id,taxpayer_id,tax_concept_id,origin_type,liquidation_id,original_amount,current_amount,
+                              outstanding_balance,due_date,status,created_at,updated_at)
+            select gen_random_uuid(),?,?,'LIQUIDATION',?,10,10,10,?,'PENDING',now(),now()
+            from generate_series(1,10000)
+            """,taxpayer.id,seed.taxConceptId,seed.liquidationId,dueDate);
+
+        var rentas=new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("due-date-load-"+UUID.randomUUID(),null),null,
+            List.of(new SimpleGrantedAuthority("ROLE_RENTAS")));
+        String key=UUID.randomUUID().toString();
+        long requestStarted=System.nanoTime();
+        MockHttpServletResponse accepted=mvc.perform(post("/api/v1/administration/process-due-dates").with(authentication(rentas))
+                .header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsBytes(new FiscalProcessingController.DueDateRequest(processingDate))))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isAccepted())
+            .andReturn().getResponse();
+        long requestMillis=TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-requestStarted);
+        JsonNode acceptedBody=json.readTree(accepted.getContentAsByteArray());
+        long runId=acceptedBody.path("id").asLong();
+        assertThat(requestMillis).isLessThan(2000);
+        assertThat(acceptedBody.path("status").asText()).isEqualTo("PENDING");
+
+        mvc.perform(post("/api/v1/administration/process-due-dates").with(authentication(rentas))
+                .header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsBytes(new FiscalProcessingController.DueDateRequest(processingDate))))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isAccepted())
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.id").value(runId));
+        long processingStarted=System.nanoTime();
+        dueDateWorker.processNext();
+        long processingMillis=TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-processingStarted);
+
+        var completed=dueDates.get(runId);
+        assertThat(completed.status()).isEqualTo(DueDateRunStatus.COMPLETED);
+        assertThat(completed.debtsOverdue()).isEqualTo(10000);
+        assertThat(jdbc.queryForObject("select count(*) from outbox_event o join debt d on o.aggregate_id=d.id::text where o.event_type='debtOverdue' and d.taxpayer_id=? and d.due_date=?",Long.class,taxpayer.id,dueDate)).isEqualTo(10000);
+        mvc.perform(post("/api/v1/administration/process-due-dates").with(authentication(rentas))
+                .header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsBytes(new FiscalProcessingController.DueDateRequest(processingDate))))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isAccepted())
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.id").value(runId))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.status").value("COMPLETED"));
+        assertThat(jdbc.queryForObject("select count(*) from outbox_event o join debt d on o.aggregate_id=d.id::text where o.event_type='debtOverdue' and d.taxpayer_id=? and d.due_date=?",Long.class,taxpayer.id,dueDate)).isEqualTo(10000);
+        System.out.printf("due-date load rows=10000 responseMs=%d workerMs=%d processingStatus=%s outboxEvents=10000%n",requestMillis,processingMillis,completed.status());
     }
 
     @Test void concurrentDueDateProcessingForSameDateReturnsSingleIdempotentRun() throws Exception {
