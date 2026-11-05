@@ -59,3 +59,4 @@ rentas:
   security.dev-mode: ${RENTAS_SECURITY_DEV_MODE:false}
   security.demo-bootstrap-password: ${RENTAS_DEMO_BOOTSTRAP_PASSWORD:}
   security.demo-session-ttl: ${RENTAS_DEMO_SESSION_TTL:PT8H}
+  security.trusted-proxy-cidrs: ${RENTAS_SECURITY_TRUSTED_PROXY_CIDRS:}

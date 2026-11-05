@@ -55,7 +55,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import static org.assertj.core.api.Assertions.*;
 
-@SpringBootTest(properties={"spring.jpa.properties.hibernate.generate_statistics=true","spring.jpa.properties.hibernate.session.events.log=false"})
+@SpringBootTest(properties={"spring.jpa.properties.hibernate.generate_statistics=true","spring.jpa.properties.hibernate.session.events.log=false","rentas.security.trusted-proxy-cidrs=10.0.0.0/8"})
 @AutoConfigureMockMvc
 @ActiveProfiles("postgres-it")
 @Testcontainers(disabledWithoutDocker=true)
@@ -744,6 +744,28 @@ class PostgreSqlIntegrationTest {
         jdbc.update("UPDATE demo_login_attempt SET window_started_at=CURRENT_TIMESTAMP - INTERVAL '16 minutes' WHERE attempt_key_hash=?",key);
         assertThat(demoAuthService.login(new DemoAuthController.LoginRequest(username,"clave-segura"),remoteAddress).user().username()).isEqualTo(username);
         demoLoginAttempts.reset(key);
+    }
+
+    @Test void demoLoginUsesClientAddressOnlyWhenForwardedByTrustedProxy() throws Exception {
+        authenticate();
+        String username="rate-proxy-"+UUID.randomUUID();
+        demoAuth.create(new DemoAuthController.CreateUserRequest(username,"clave-segura","Proxy test",DemoRole.RENTAS,null));
+        String body=new ObjectMapper().writeValueAsString(new DemoAuthController.LoginRequest(username,"incorrecta"));
+        for(int attempt=0;attempt<5;attempt++)
+            mvc.perform(post("/api/v1/dev-auth/login").with(request->{request.setRemoteAddr("10.1.2.3");return request;})
+                    .header("X-Forwarded-For","203.0.113.99, 198.51.100.40").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isUnauthorized());
+
+        String validBody=new ObjectMapper().writeValueAsString(new DemoAuthController.LoginRequest(username,"clave-segura"));
+        mvc.perform(post("/api/v1/dev-auth/login").with(request->{request.setRemoteAddr("10.1.2.3");return request;})
+                .header("X-Forwarded-For","198.51.100.40").contentType(MediaType.APPLICATION_JSON).content(validBody))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isTooManyRequests());
+        mvc.perform(post("/api/v1/dev-auth/login").with(request->{request.setRemoteAddr("10.1.2.3");return request;})
+                .header("X-Forwarded-For","198.51.100.41").contentType(MediaType.APPLICATION_JSON).content(validBody))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk());
+        mvc.perform(post("/api/v1/dev-auth/login").with(request->{request.setRemoteAddr("203.0.113.10");return request;})
+                .header("X-Forwarded-For","198.51.100.40").contentType(MediaType.APPLICATION_JSON).content(validBody))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk());
     }
 
     @Test void demoLoginAttemptWindowsAreIsolatedByUsername() {

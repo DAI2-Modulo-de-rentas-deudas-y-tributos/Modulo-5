@@ -113,6 +113,21 @@ class SecurityErrorContractTests {
             .andExpect(header().string("X-Correlation-Id","malformed-json-trace"));
     }
 
+    @Test void unsupportedMediaTypeUsesProblemDetails() throws Exception {
+        mvc.perform(post("/api/v1/tax-concepts")
+                .header("X-Demo-Session",demo.token(DemoRole.RENTAS))
+                .header("X-Correlation-Id","unsupported-media-type-trace")
+                .contentType(MediaType.TEXT_PLAIN)
+                .content("not-json"))
+            .andExpect(status().isUnsupportedMediaType())
+            .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+            .andExpect(jsonPath("$.type").value("about:blank"))
+            .andExpect(jsonPath("$.status").value(415))
+            .andExpect(jsonPath("$.code").value("UNSUPPORTED_MEDIA_TYPE"))
+            .andExpect(jsonPath("$.traceId").value("unsupported-media-type-trace"))
+            .andExpect(header().string("X-Correlation-Id","unsupported-media-type-trace"));
+    }
+
     @Test void validationErrorUsesProblemJsonAndSafeFieldDetails() throws Exception {
         mvc.perform(post("/api/v1/tax-concepts")
                 .header("X-Demo-Session",demo.token(DemoRole.RENTAS))
