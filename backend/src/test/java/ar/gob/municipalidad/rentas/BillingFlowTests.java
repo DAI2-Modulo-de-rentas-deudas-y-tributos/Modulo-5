@@ -19,6 +19,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -75,6 +76,28 @@ class BillingFlowTests {
 
         assertThatThrownBy(() -> billing.create(new ApiDtos.CreateBillRequest(one.taxpayerId, List.of(one.id, two.id), LocalDate.now().plusDays(10))))
             .isInstanceOf(BusinessException.class).hasMessageContaining("contribuyente");
+    }
+
+    @Test void electronicPaymentPreviewIsLimitedToTheOwningTaxpayer() throws Exception {
+        Debt ownedDebt = debt("BILL-PREVIEW-OWNED-11111111", "BILL-PREVIEW-OWNED-CONCEPT");
+        Debt anotherDebt = debt("BILL-PREVIEW-OTHER-22222222", "BILL-PREVIEW-OTHER-CONCEPT");
+        var request = new ApiDtos.ElectronicPaymentRequest(ownedDebt.id, PaymentMethod.CARD, new BigDecimal("25"));
+        var owner = new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("owner", ownedDebt.taxpayerId), null,
+            List.of(new SimpleGrantedAuthority("ROLE_TAXPAYER")));
+        var other = new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("other", anotherDebt.taxpayerId), null,
+            List.of(new SimpleGrantedAuthority("ROLE_TAXPAYER")));
+
+        mvc.perform(post("/api/v1/electronic-payments/preview")
+                .with(authentication(owner))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsBytes(request)))
+            .andExpect(status().isOk());
+        mvc.perform(post("/api/v1/electronic-payments/preview")
+                .with(authentication(other))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsBytes(request)))
+            .andExpect(status().isForbidden())
+            .andExpect(jsonPath("$.code").value("FORBIDDEN_OWNERSHIP"));
     }
 
     @Test void unallocatedPaymentCanBeAllocatedLater() throws Exception {
