@@ -5,7 +5,6 @@ import { useLocation, useNavigate, Navigate } from "react-router-dom";
 import FormField from "../components/ui/FormField.jsx";
 import Alert from "../components/ui/Alert.jsx";
 import Button from "../components/common/Button.jsx";
-import logo from "../assets/logo.png";
 import { useAuth } from "../context/AuthContext.jsx";
 import { homePathForRole } from "../config/workspaces.js";
 
@@ -69,15 +68,6 @@ export default function LoginPage() {
               />
             ))}
           </svg>
-          <header className="login-header">
-        <div className="login-brand">
-          <img src={logo} alt="" width="42" height="42" />
-          <div>
-            <p className="login-brand-name">Ciudad UADE</p>
-            <p className="login-brand-area">Dirección General de Rentas</p>
-          </div>
-        </div>
-          </header>
           <div className="login-intro-copy">
             <h1 id="login-intro-title">Tu acceso a Rentas,<br />en un solo lugar.</h1>
             <p className="login-description">
