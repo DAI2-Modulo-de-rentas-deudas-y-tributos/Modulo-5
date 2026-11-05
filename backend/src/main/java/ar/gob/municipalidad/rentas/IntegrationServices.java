@@ -16,7 +16,7 @@ import java.util.UUID;
 interface EventPublisher { OutboxStatus publish(String eventType, String targetModule, String payload); }
 
 @Component
-@ConditionalOnProperty(prefix="rentas",name="broker-adapter",havingValue="local-log",matchIfMissing=true)
+@ConditionalOnProperty(name="BROKER_ADAPTER",havingValue="local-log",matchIfMissing=true)
 class LocalLogEventPublisher implements EventPublisher {
     private static final Logger log=LoggerFactory.getLogger(LocalLogEventPublisher.class);
     public OutboxStatus publish(String eventType,String targetModule,String payload){log.info("BROKER_ADAPTER local-log eventType={} targetModule={}",eventType,targetModule);return OutboxStatus.LOCAL_ONLY;}
@@ -67,7 +67,7 @@ class OutboxPublisher {
     private final Set<UUID> coreHttpAllowedEventIds;
     @org.springframework.beans.factory.annotation.Autowired
     OutboxPublisher(OutboxRepository repository,EventPublisher publisher,
-        @org.springframework.beans.factory.annotation.Value("${rentas.broker-adapter:local-log}") String brokerAdapter,
+        @org.springframework.beans.factory.annotation.Value("${BROKER_ADAPTER:local-log}") String brokerAdapter,
         @org.springframework.beans.factory.annotation.Value("${rentas.core.http.allowed-event-types:}") String allowedEventTypes,
         @org.springframework.beans.factory.annotation.Value("${rentas.core.http.allowed-event-ids:}") String allowedEventIds){
         this.repository=repository;this.publisher=publisher;this.rabbitMode="rabbitmq".equalsIgnoreCase(brokerAdapter);this.coreHttpMode="core-http".equalsIgnoreCase(brokerAdapter);

@@ -14,13 +14,13 @@ class CoreRabbitMqConsumerActivationTests {
         .withUserConfiguration(ConsumerConfiguration.class);
 
     @Test void coreHttpCanReceiveRabbitEventsOnlyWhenExplicitlyEnabled() {
-        contextRunner.withPropertyValues("rentas.broker-adapter=core-http","rentas.core.amqp.consumer-enabled=true")
+        contextRunner.withPropertyValues("BROKER_ADAPTER=core-http","rentas.core.amqp.consumer-enabled=true")
             .run(context->assertThat(context).hasSingleBean(CoreRabbitMqConsumer.class));
     }
 
     @Test void consumerRemainsDisabledByDefaultForEveryOutboundTransport() {
         for(String transport:new String[]{"local-log","core-http","rabbitmq"}) {
-            contextRunner.withPropertyValues("rentas.broker-adapter="+transport)
+            contextRunner.withPropertyValues("BROKER_ADAPTER="+transport)
                 .run(context->assertThat(context).doesNotHaveBean(CoreRabbitMqConsumer.class));
         }
     }
