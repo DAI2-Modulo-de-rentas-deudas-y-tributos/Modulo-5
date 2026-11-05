@@ -106,6 +106,20 @@ class PaymentPlanFlowTests {
             .isInstanceOfSatisfying(BusinessException.class,exception->assertThat(exception.code).isEqualTo("FORBIDDEN_OWNERSHIP"));
     }
 
+    @Test void taxpayerCannotReadAnotherTaxpayersPlanRequest() {
+        Debt debt=debt("PLAN-REQUEST-OWNER","PLAN-REQUEST-OWNER-CONCEPT");
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+            new AuthenticatedIdentity("owner",debt.taxpayerId),null,List.of(new SimpleGrantedAuthority("ROLE_TAXPAYER"))));
+        PaymentPlanRequest request=workflow.request(new ApiDtos.CreatePaymentPlanRequest(debt.taxpayerId,List.of(debt.id),2));
+        TaxpayerReference foreign=catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(
+            TaxpayerType.CITIZEN,"PLAN-REQUEST-FOREIGN","98765432",null,"Contribuyente ajeno"));
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+            new AuthenticatedIdentity("foreign",foreign.id),null,List.of(new SimpleGrantedAuthority("ROLE_TAXPAYER"))));
+
+        assertThatThrownBy(()->workflow.getRequest(request.id))
+            .isInstanceOfSatisfying(BusinessException.class,exception->assertThat(exception.code).isEqualTo("FORBIDDEN_OWNERSHIP"));
+    }
+
     @Test void installmentPaymentReducesOnlyItsPrincipalAndBlocksDirectDebtPayment() {
         Debt debt=debt("PLAN-FLOW-2","PLAN-FLOW-CONCEPT-2"); PaymentPlan plan=grant(debt,2);
         assertThatThrownBy(()->payments.register(new ApiDtos.RegisterPaymentRequest(debt.taxpayerId,PaymentMethod.CASH,new BigDecimal("10"),List.of(new ApiDtos.AllocationRequest(debt.id,new BigDecimal("10"))))))

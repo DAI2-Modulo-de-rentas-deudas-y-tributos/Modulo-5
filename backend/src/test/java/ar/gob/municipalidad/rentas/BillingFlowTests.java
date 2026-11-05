@@ -19,6 +19,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -98,6 +99,38 @@ class BillingFlowTests {
                 .content(json.writeValueAsBytes(request)))
             .andExpect(status().isForbidden())
             .andExpect(jsonPath("$.code").value("FORBIDDEN_OWNERSHIP"));
+    }
+
+    @Test void electronicPaymentCannotBeCreatedForAnotherTaxpayerDebt() throws Exception {
+        Debt debt = debt("BILL-ELECTRONIC-CREATE-OWNER", "BILL-ELECTRONIC-CREATE-CONCEPT");
+        TaxpayerReference foreign = catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(
+            TaxpayerType.CITIZEN, "BILL-ELECTRONIC-CREATE-FOREIGN", "30777888", null, "Contribuyente ajeno"));
+        var request = new ApiDtos.ElectronicPaymentRequest(debt.id, PaymentMethod.CARD, new BigDecimal("25"));
+        var other = new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("other", foreign.id), null,
+            List.of(new SimpleGrantedAuthority("ROLE_TAXPAYER")));
+        long paymentsBefore = paymentRepository.count();
+        long attemptsBefore = electronicPaymentAttempts.count();
+
+        mvc.perform(post("/api/v1/electronic-payments").with(authentication(other))
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsBytes(request)))
+            .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("FORBIDDEN_OWNERSHIP"));
+
+        assertThat(paymentRepository.count()).isEqualTo(paymentsBefore);
+        assertThat(electronicPaymentAttempts.count()).isEqualTo(attemptsBefore);
+    }
+
+    @Test void electronicPaymentAttemptCannotBeReadByAnotherTaxpayer() throws Exception {
+        Debt debt = debt("BILL-ELECTRONIC-READ-OWNER", "BILL-ELECTRONIC-READ-CONCEPT");
+        authenticate(new AuthenticatedIdentity("owner", debt.taxpayerId), "TAXPAYER");
+        ElectronicPaymentAttempt attempt = electronicPayments.create(new ApiDtos.ElectronicPaymentRequest(
+            debt.id, PaymentMethod.CARD, new BigDecimal("25")), "electronic-read-owner");
+        TaxpayerReference foreign = catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(
+            TaxpayerType.CITIZEN, "BILL-ELECTRONIC-READ-FOREIGN", "30777889", null, "Contribuyente ajeno"));
+        var other = new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("other", foreign.id), null,
+            List.of(new SimpleGrantedAuthority("ROLE_TAXPAYER")));
+
+        mvc.perform(get("/api/v1/electronic-payments/{paymentId}", attempt.paymentId).with(authentication(other)))
+            .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("FORBIDDEN_OWNERSHIP"));
     }
 
     @Test void unallocatedPaymentCanBeAllocatedLater() throws Exception {
