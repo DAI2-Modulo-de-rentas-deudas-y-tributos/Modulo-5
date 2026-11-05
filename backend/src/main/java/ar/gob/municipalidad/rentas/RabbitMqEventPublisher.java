@@ -13,7 +13,7 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 @Component
-@ConditionalOnProperty(prefix="rentas",name="broker-adapter",havingValue="rabbitmq")
+@ConditionalOnProperty(name="BROKER_ADAPTER",havingValue="rabbitmq")
 class RabbitMqEventPublisher implements EventPublisher {
     private final RabbitTemplate rabbit;
     private final ObjectMapper json;

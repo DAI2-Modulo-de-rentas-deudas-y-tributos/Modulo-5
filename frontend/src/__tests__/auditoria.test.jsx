@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import App from "../App.jsx";
 import { ingresarComoAgente } from "./helpers/ingresar.js";
 import { AUDITORIA_MODULES } from "../config/auditoriaModules.js";
-import { instalarBackendFalso } from "./fixtures/backendFalso.js";
+import { instalarBackendFalso, pagina } from "./fixtures/backendFalso.js";
 
 /**
  * Área de Auditoría: acceso de sólo lectura al circuito completo. Las pruebas recorren
@@ -56,6 +56,27 @@ describe("área de auditoría", () => {
       await waitFor(() => expect(screen.queryByText(/cargando información/i)).toBeNull());
     },
   );
+
+  it("consulta el Outbox sin presentar la aceptación de transporte como consumo real", async () => {
+    const backend = instalarBackendFalso({
+      "GET /api/v1/integrations/outbox": pagina([{
+        id: "event-uuid-1", eventType: "exemptionRequested", targetModule: "CORE", aggregateType: "ExemptionRequest",
+        aggregateId: "request-1", status: "CORE_ACCEPTED", retryCount: 0,
+        createdAt: "2026-11-03T10:00:00-03:00", publishedAt: "2026-11-03T10:01:00-03:00",
+        payload: "{\\\"privateReason\\\":\\\"synthetic-sensitive-value\\\"}",
+      }]),
+    });
+    await loginAsAuditor(user);
+    await user.click(screen.getByRole("link", { name: /^eventos salientes$/i }));
+
+    expect((await screen.findAllByText("Aceptado por Core")).length).toBeGreaterThan(0);
+    expect(screen.getByText(/tampoco confirman procesamiento por el consumidor/i)).toBeDefined();
+    await user.click(screen.getByRole("button", { name: /ver detalle/i }));
+    expect(await screen.findByText(/el detalle técnico completo del payload no se muestra/i)).toBeDefined();
+    expect(screen.queryByText(/synthetic-sensitive-value/i)).toBeNull();
+    expect(backend.llamadas.some((call) => call.ruta === "/api/v1/integrations/outbox")).toBe(true);
+    expect(screen.queryByRole("button", { name: /reenviar|reintentar/i })).toBeNull();
+  });
 
   it("no ofrece acciones que modifiquen entidades", async () => {
     await loginAsAuditor(user);

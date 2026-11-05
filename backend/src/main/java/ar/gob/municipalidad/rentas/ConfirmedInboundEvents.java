@@ -66,7 +66,7 @@ public final class ConfirmedInboundEvents {
     public record M8SocialBenefitData(@NotNull UUID benefitId,@NotNull UUID citizenId,
         @NotNull UUID applicationId,@NotNull UUID programId,@NotNull UUID programEditionId,
         @NotBlank String programName,@NotNull UUID benefitTypeId,@NotBlank String type,
-        @NotBlank String description,BigDecimal amount,@NotBlank String status,String reason,
+        @NotBlank String description,@CurrencyAmount BigDecimal amount,@NotBlank String status,String reason,
         LocalDate startDate,LocalDate endDate,@NotNull OffsetDateTime updatedAt) {}
 
     public enum M7DebtorIdType { DNI, CUIT }
@@ -80,8 +80,8 @@ public final class ConfirmedInboundEvents {
     }
     public record M7InfractionData(@NotNull UUID infractionId,@NotBlank String debtorId,
         @NotNull M7DebtorIdType debtorIdType,@NotBlank String licensePlate,@NotBlank String infractionType,
-        @NotNull OffsetDateTime infractionDateTime,@NotNull @Positive BigDecimal baseAmount,
-        @NotNull List<@NotBlank String> aggravatingFactors,@NotNull @Positive BigDecimal finalAmount,
+        @NotNull OffsetDateTime infractionDateTime,@NotNull @Positive @CurrencyAmount BigDecimal baseAmount,
+        @NotNull List<@NotBlank String> aggravatingFactors,@NotNull @Positive @CurrencyAmount BigDecimal finalAmount,
         @NotBlank String inspectorId,@NotNull @Valid M7Location location) {}
     public record M7Location(@NotBlank String street,@NotBlank String crossStreet,
         @NotNull BigDecimal latitude,@NotNull BigDecimal longitude) {}

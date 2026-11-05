@@ -6,6 +6,7 @@ import com.rabbitmq.client.Channel;
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageProperties;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
@@ -23,6 +24,7 @@ import static org.mockito.Mockito.*;
 @Transactional
 class CoreM1InboundListenerTests {
     @Autowired CoreInboundEventDispatcher dispatcher;
+    @Autowired RabbitTemplate rabbit;
     @Autowired ObjectMapper json;
     @Autowired TaxpayerRepository taxpayers;
     @Autowired TaxpayerRepresentationRepository representations;
@@ -127,12 +129,12 @@ class CoreM1InboundListenerTests {
     }
     private void send(String payload,long tag) throws Exception {
         Channel channel=mock(Channel.class);
-        new CoreRabbitMqConsumer(dispatcher).receive(new Message(payload.getBytes(StandardCharsets.UTF_8),new MessageProperties()),channel,tag);
+        new CoreRabbitMqConsumer(dispatcher,rabbit,"rentas.retry","q.rentas.retry.1","q.rentas.retry.2","q.rentas.retry.3",1000).receive(new Message(payload.getBytes(StandardCharsets.UTF_8),new MessageProperties()),channel,tag);
         verify(channel).basicAck(tag,false);verify(channel,never()).basicNack(eq(tag),anyBoolean(),anyBoolean());
     }
     private void reject(String payload,long tag) throws Exception {
         Channel channel=mock(Channel.class);
-        new CoreRabbitMqConsumer(dispatcher).receive(new Message(payload.getBytes(StandardCharsets.UTF_8),new MessageProperties()),channel,tag);
+        new CoreRabbitMqConsumer(dispatcher,rabbit,"rentas.retry","q.rentas.retry.1","q.rentas.retry.2","q.rentas.retry.3",1000).receive(new Message(payload.getBytes(StandardCharsets.UTF_8),new MessageProperties()),channel,tag);
         verify(channel).basicNack(tag,false,false);verify(channel,never()).basicAck(eq(tag),anyBoolean());
     }
 }

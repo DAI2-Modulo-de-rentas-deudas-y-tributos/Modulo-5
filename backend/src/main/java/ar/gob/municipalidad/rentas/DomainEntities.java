@@ -176,7 +176,17 @@ class Debt {
     @Enumerated(EnumType.STRING) @Column(nullable=false) public DebtStatus status;
     @Column(name="created_at",nullable=false) public OffsetDateTime createdAt;
     @Column(name="updated_at",nullable=false) public OffsetDateTime updatedAt;
-    boolean isCollectible() { return (status==DebtStatus.PENDING||status==DebtStatus.PARTIALLY_PAID)&&outstandingBalance!=null&&outstandingBalance.signum()>0; }
+    @Transient private DebtLifecycleState lifecycleState;
+    @PostLoad void restoreLifecycleState(){lifecycleState=DebtLifecycleState.from(status);}
+    private DebtLifecycleState state(){if(lifecycleState==null||lifecycleState.status()!=status)lifecycleState=DebtLifecycleState.from(status);return lifecycleState;}
+    private void transition(DebtLifecycleState next){lifecycleState=next;status=next.status();}
+    void imputar(BigDecimal amount){BigDecimal next=outstandingBalance.subtract(amount);transition(state().imputar(next));outstandingBalance=next;}
+    void revertirImputacion(BigDecimal amount){BigDecimal next=outstandingBalance.add(amount);transition(state().revertirImputacion(next,currentAmount));outstandingBalance=next;}
+    void ajustar(BigDecimal nextCurrent,BigDecimal nextOutstanding){BigDecimal paid=currentAmount.subtract(outstandingBalance);transition(state().ajustar(paid,nextOutstanding));currentAmount=nextCurrent;outstandingBalance=nextOutstanding;}
+    void anular(){transition(state().anular(currentAmount.subtract(outstandingBalance)));}
+    boolean admiteCobro() { return state().admiteCobro(outstandingBalance); }
+    boolean admiteAjuste() { return state().admiteAjuste(); }
+    boolean isCollectible() { return admiteCobro(); }
     protected Debt() {}
 }
 
