@@ -38,6 +38,14 @@ export const formatDateTime = (value) =>
 
 export const formatTime = (value) => (value ? timeFormatter.format(new Date(value)) : "—");
 
+export const todayFiscalDate = () =>
+  new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Argentina/Buenos_Aires",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+
 /** `YYYY-MM-DD` de una fecha, para comparar jornadas sin arrastrar la hora. */
 export const toDateInput = (value) => {
   const date = value ? new Date(value) : new Date();
