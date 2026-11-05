@@ -2,6 +2,7 @@ package ar.gob.municipalidad.rentas;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import org.springframework.data.domain.*;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.transaction.annotation.Transactional;
@@ -43,6 +44,7 @@ class FiscalProcessingController {
     LateChargeResponse preview(@PathVariable Long id,@RequestBody(required=false) CalculationDateRequest body){LocalDate date=date(body);dates.requireNotFuture(date);return lateCharges.preview(id,date);}
     @PostMapping("/debts/{id}/late-charges") @PreAuthorize("hasAnyRole('RENTAS','SUPERVISOR')")
     LateChargeResponse apply(@PathVariable Long id,@RequestBody(required=false) CalculationDateRequest body,@RequestHeader(name="Idempotency-Key",required=false) String key){return idempotency.execute("POST:/debts/{id}/late-charges:"+id,key,body,LateChargeResponse.class,()->{LocalDate date=date(body);dates.requireNotFuture(date);return lateCharges.apply(id,date);});}
+    @ApiResponse(responseCode="202",description="El procesamiento fue aceptado para ejecución asíncrona",useReturnTypeSchema=true)
     @PostMapping("/administration/process-due-dates") @PreAuthorize("hasAnyRole('RENTAS','SUPERVISOR')")
     ResponseEntity<DueDateResponse> process(@RequestBody(required=false) DueDateRequest body,@RequestHeader(name="Idempotency-Key",required=false) String key){DueDateResponse queued=idempotency.execute("POST:/administration/process-due-dates",key,body,DueDateResponse.class,()->{LocalDate date=dates.todayIfMissing(body==null?null:body.processingDate());dates.requireNotFuture(date);return dueDates.enqueue(date);});return ResponseEntity.accepted().body(dueDates.get(queued.id()));}
     @GetMapping("/administration/process-due-dates/{id}") @PreAuthorize("hasAnyRole('RENTAS','SUPERVISOR','AUDITOR')")
