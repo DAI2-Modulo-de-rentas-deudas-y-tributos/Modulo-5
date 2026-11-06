@@ -534,7 +534,7 @@ class AdjustmentRequest {
     @Column(name="debt_id",nullable=false) public Long debtId;
     @Enumerated(EnumType.STRING) @Column(nullable=false) public AdjustmentType type;
     @Column(nullable=false,precision=19,scale=2) public BigDecimal amount;
-    @Column(nullable=false) public String reason;
+    @Column(nullable=false,length=1000) public String reason;
     @Enumerated(EnumType.STRING) @Column(nullable=false) public AdjustmentStatus status;
     @Column(name="requested_by",nullable=false) public String requestedBy;
     @Column(name="requested_at",nullable=false) public OffsetDateTime requestedAt;
