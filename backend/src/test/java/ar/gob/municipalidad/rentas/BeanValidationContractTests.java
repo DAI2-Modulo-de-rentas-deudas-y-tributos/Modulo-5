@@ -38,6 +38,7 @@ class BeanValidationContractTests {
     @Autowired PaymentRepository payments;
     @Autowired AdjustmentRepository adjustments;
     @Autowired ExemptionRequestRepository exemptionRequests;
+    @Autowired ExemptionRequestDocumentRepository exemptionDocuments;
     @Autowired TaxConceptRepository taxConcepts;
     @Autowired LiquidationRepository liquidations;
     @Autowired PaymentPlanConfigurationRepository planConfigurations;
@@ -249,6 +250,8 @@ class BeanValidationContractTests {
             .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
             .andExpect(jsonPath("$.details.fieldErrors[0].field").value("description"))
             .andExpect(jsonPath("$.details.fieldErrors[0].messages[0]").value(org.hamcrest.Matchers.containsString("255")));
+        long exemptionRequestsBeforeDocumentation=exemptionRequests.count();
+        long exemptionDocumentsBeforeDocumentation=exemptionDocuments.count();
         mvc.perform(post("/api/v1/exemption-requests/999/request-documentation")
                 .header("X-Demo-Session",demo.token(DemoRole.RENTAS))
                 .contentType(MediaType.APPLICATION_JSON)
@@ -257,6 +260,8 @@ class BeanValidationContractTests {
             .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
             .andExpect(jsonPath("$.details.fieldErrors[0].field").value("message"))
             .andExpect(jsonPath("$.details.fieldErrors[0].messages[0]").value(org.hamcrest.Matchers.containsString("1000")));
+        assertThat(exemptionRequests.count()).isEqualTo(exemptionRequestsBeforeDocumentation);
+        assertThat(exemptionDocuments.count()).isEqualTo(exemptionDocumentsBeforeDocumentation);
         assertThat(taxConcepts.count()).isEqualTo(conceptsCount);
     }
 
