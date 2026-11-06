@@ -25,7 +25,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @ActiveProfiles("test")
-@SpringBootTest
+@SpringBootTest(properties = "spring.datasource.url=jdbc:h2:mem:web-api-read-contract;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE")
 @AutoConfigureMockMvc
 @Transactional
 class WebApiReadContractTests {
@@ -254,13 +254,15 @@ class WebApiReadContractTests {
         mvc.perform(request.header("X-Demo-Session",staff)).andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("NOT_FOUND"));
     }
 
-    @Test void coreRestWorkflowPreservesEconomicInvariantsAndResponseContracts() throws Exception {
+    @Test @Transactional(propagation=org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void coreRestWorkflowPreservesEconomicInvariantsAndResponseContracts() throws Exception {
+        String suffix=UUID.randomUUID().toString();
         TaxpayerReference taxpayer=new TaxpayerReference();taxpayer.taxpayerType=TaxpayerType.CITIZEN;
-        taxpayer.externalId="API-HARDENING";taxpayer.displayName="Contrato API";taxpayer.externalStatus=TaxpayerStatus.ACTIVE;
+        taxpayer.externalId="API-HARDENING-"+suffix;taxpayer.displayName="Contrato API";taxpayer.externalStatus=TaxpayerStatus.ACTIVE;
         taxpayer.createdAt=taxpayer.updatedAt=OffsetDateTime.now();taxpayers.save(taxpayer);
 
         long conceptId=id(postJson("/api/v1/tax-concepts",
-            "{\"code\":\"API-HARD\",\"name\":\"Tasa API\",\"type\":\"FEE\",\"originModule\":\"M5\"}",201));
+            "{\"code\":\"API-HARD-"+suffix+"\",\"name\":\"Tasa API\",\"type\":\"FEE\",\"originModule\":\"M5\"}",201));
         patchJson("/api/v1/tax-concepts/"+conceptId,
             "{\"name\":\"Tasa API endurecida\",\"description\":\"contrato\",\"active\":true}");
         mvc.perform(withStaff(get("/api/v1/tax-concepts/{id}",conceptId))).andExpect(status().isOk())

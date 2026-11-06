@@ -72,10 +72,8 @@ class AdjustmentRunFlowTests {
         liquidations.create(new ApiDtos.LiquidationRequest(executionTaxpayer.id,executionConcept.id,executionPeriod,BigDecimal.ZERO,LocalDate.now().plusDays(30)));
 
         mvc.perform(post("/api/v1/liquidation-runs/{id}/execute",executionRun.id).with(authentication(asRole("RENTAS"))))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.status").value("FAILED"))
-            .andExpect(jsonPath("$.validItems").value(0))
-            .andExpect(jsonPath("$.errorItems").value(1));
+            .andExpect(status().isUnprocessableEntity())
+            .andExpect(jsonPath("$.code").value("DUPLICATE_LIQUIDATION"));
         SecurityContextHolder.getContext().setAuthentication(asRole("RENTAS"));
         mvc.perform(get("/api/v1/liquidation-runs/{id}",executionRun.id).with(authentication(asRole("RENTAS"))))
             .andExpect(status().isOk())
