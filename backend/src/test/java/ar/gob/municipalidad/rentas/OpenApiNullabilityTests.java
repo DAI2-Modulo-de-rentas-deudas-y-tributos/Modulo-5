@@ -25,6 +25,7 @@ class OpenApiNullabilityTests {
         mvc.perform(get("/v3/api-docs"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.components.schemas.ErrorResponse.properties.details.type", hasItem("null")))
+            .andExpect(jsonPath("$.paths['/api/v1/administration/process-due-dates'].post.responses['202']").exists())
             .andExpect(jsonPath("$.paths['/api/v1/debts'].get.responses['415']").exists());
     }
 
