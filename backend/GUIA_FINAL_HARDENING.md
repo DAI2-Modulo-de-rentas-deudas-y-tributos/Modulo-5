@@ -135,6 +135,4 @@ El cliente recibe un error estable sin SQL ni stack trace. El detalle técnico s
 
 ## 14. Resultado comprobable
 
-La corrida final local detectó 52 tests: 49 aprobaron, 3 Testcontainers se omitieron, 0 fallaron y 0 terminaron con error. Flyway aplicó V1–V9 sobre H2 en modo PostgreSQL. Docker no está instalado, de modo que PostgreSQL 17 real sigue pendiente y no se presenta como validado.
-
-El detalle auditable está en `BACKEND_HARDENING_REPORT.md`; esta guía explica el razonamiento para que puedas repetirlo y defender las decisiones.
+Los resultados de cada validación deben consultarse en el run de CI y artefactos asociados al SHA probado; esta guía no conserva métricas históricas.
