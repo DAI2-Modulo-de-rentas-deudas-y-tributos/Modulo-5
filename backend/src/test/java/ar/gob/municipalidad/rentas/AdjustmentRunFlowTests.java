@@ -22,7 +22,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 
-@ActiveProfiles("test") @SpringBootTest @AutoConfigureMockMvc @Transactional
+@ActiveProfiles("test") @SpringBootTest(properties="spring.datasource.url=jdbc:h2:mem:adjustment-run-flow;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE") @AutoConfigureMockMvc @Transactional
 class AdjustmentRunFlowTests {
     @Autowired CatalogService catalog; @Autowired LiquidationService liquidations; @Autowired AdjustmentService adjustments;
     @Autowired LiquidationRunService runs; @Autowired DebtRepository debts; @Autowired LiquidationRepository liquidationRepository;
