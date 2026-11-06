@@ -36,6 +36,10 @@ class BeanValidationContractTests {
     @Autowired Validator validator;
     @Autowired MockMvc mvc;
     @Autowired PaymentRepository payments;
+    @Autowired AdjustmentRepository adjustments;
+    @Autowired ExemptionRequestRepository exemptionRequests;
+    @Autowired ExemptionRequestDocumentRepository exemptionDocuments;
+    @Autowired TaxConceptRepository taxConcepts;
     @Autowired LiquidationRepository liquidations;
     @Autowired PaymentPlanConfigurationRepository planConfigurations;
     @Autowired DemoUserRepository users;
@@ -186,6 +190,79 @@ class BeanValidationContractTests {
             .andExpect(jsonPath("$.details.fieldErrors[0].field").value("amount"))
             .andExpect(jsonPath("$.details.fieldErrors[0].messages[0]").value("Debe tener como máximo 2 decimales"));
         assertThat(payments.count()).isEqualTo(before);
+    }
+
+    @Test void rejectsFreeTextBeyondItsDatabaseColumnLimitBeforePersistence() throws Exception {
+        var adjustmentAtLimit=new ApiDtos.CreateAdjustmentRequest(1L,AdjustmentType.DISCOUNT,
+            BigDecimal.ONE,"x".repeat(1000));
+        var exemptionAtLimit=new ApiDtos.CreateExemptionRequest(1L,1L,"x".repeat(255),
+            new BigDecimal("50"),LocalDate.now(),LocalDate.now().plusDays(1));
+        assertThat(validator.validate(adjustmentAtLimit)).isEmpty();
+        assertThat(validator.validate(exemptionAtLimit)).isEmpty();
+        assertThat(validator.validate(new ApiDtos.CreateAdjustmentRequest(1L,AdjustmentType.DISCOUNT,
+            BigDecimal.ONE,"x".repeat(1001)))).extracting(error->error.getPropertyPath().toString())
+            .contains("reason");
+        assertThat(validator.validate(new ApiDtos.CreateExemptionRequest(1L,1L,"x".repeat(256),
+            new BigDecimal("50"),LocalDate.now(),LocalDate.now().plusDays(1))))
+            .extracting(error->error.getPropertyPath().toString()).contains("reason");
+
+        long adjustmentCount=adjustments.count();
+        long exemptionCount=exemptionRequests.count();
+        mvc.perform(post("/api/v1/adjustments")
+                .header("X-Demo-Session",demo.token(DemoRole.RENTAS))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"debtId\":1,\"type\":\"DISCOUNT\",\"amount\":1,\"reason\":\""+"x".repeat(1001)+"\"}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+            .andExpect(jsonPath("$.details.fieldErrors[0].field").value("reason"))
+            .andExpect(jsonPath("$.details.fieldErrors[0].messages[0]").value(org.hamcrest.Matchers.containsString("1000")));
+        mvc.perform(post("/api/v1/exemption-requests")
+                .header("X-Demo-Session",demo.token(DemoRole.TAXPAYER))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"taxpayerId\":1,\"taxConceptId\":1,\"reason\":\""+"x".repeat(256)
+                    +"\",\"percentage\":50,\"validFrom\":\"2026-11-06\",\"validUntil\":\"2026-11-07\"}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+            .andExpect(jsonPath("$.details.fieldErrors[0].field").value("reason"))
+            .andExpect(jsonPath("$.details.fieldErrors[0].messages[0]").value(org.hamcrest.Matchers.containsString("255")));
+        assertThat(adjustments.count()).isEqualTo(adjustmentCount);
+        assertThat(exemptionRequests.count()).isEqualTo(exemptionCount);
+
+        assertThat(validator.validate(new ApiDtos.RequestDocumentationRequest("x".repeat(1000)))).isEmpty();
+        assertThat(validator.validate(new ApiDtos.RequestDocumentationRequest("x".repeat(1001))))
+            .extracting(error->error.getPropertyPath().toString()).contains("message");
+        assertThat(validator.validate(new ApiDtos.CreateTaxConceptRequest("LIMIT_TEST","Test",
+            "x".repeat(255),TaxConceptType.FEE,"M5"))).isEmpty();
+        assertThat(validator.validate(new ApiDtos.CreateTaxConceptRequest("LIMIT_TEST","Test",
+            "x".repeat(256),TaxConceptType.FEE,"M5"))).extracting(error->error.getPropertyPath().toString())
+            .contains("description");
+        assertThat(validator.validate(new ApiDtos.UpdateTaxConceptRequest("Test",null,true))).isEmpty();
+        assertThat(validator.validate(new ApiDtos.UpdateTaxConceptRequest("Test","x".repeat(256),true)))
+            .extracting(error->error.getPropertyPath().toString()).contains("description");
+
+        long conceptsCount=taxConcepts.count();
+        mvc.perform(post("/api/v1/tax-concepts")
+                .header("X-Demo-Session",demo.token(DemoRole.RENTAS))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"code\":\"TOO_LONG_DESCRIPTION\",\"name\":\"Test\",\"description\":\""
+                    +"x".repeat(256)+"\",\"type\":\"FEE\",\"originModule\":\"M5\"}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+            .andExpect(jsonPath("$.details.fieldErrors[0].field").value("description"))
+            .andExpect(jsonPath("$.details.fieldErrors[0].messages[0]").value(org.hamcrest.Matchers.containsString("255")));
+        long exemptionRequestsBeforeDocumentation=exemptionRequests.count();
+        long exemptionDocumentsBeforeDocumentation=exemptionDocuments.count();
+        mvc.perform(post("/api/v1/exemption-requests/999/request-documentation")
+                .header("X-Demo-Session",demo.token(DemoRole.RENTAS))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"message\":\""+"x".repeat(1001)+"\"}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+            .andExpect(jsonPath("$.details.fieldErrors[0].field").value("message"))
+            .andExpect(jsonPath("$.details.fieldErrors[0].messages[0]").value(org.hamcrest.Matchers.containsString("1000")));
+        assertThat(exemptionRequests.count()).isEqualTo(exemptionRequestsBeforeDocumentation);
+        assertThat(exemptionDocuments.count()).isEqualTo(exemptionDocumentsBeforeDocumentation);
+        assertThat(taxConcepts.count()).isEqualTo(conceptsCount);
     }
 
     @Test void validatesMoneyScaleOnInboundModuleContractsWithoutChangingTheirShapes() {
