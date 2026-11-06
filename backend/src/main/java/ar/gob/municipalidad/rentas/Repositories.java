@@ -40,7 +40,6 @@ interface TaxConceptRepository extends FilteredRepository<TaxConcept,Long> {
 }
 interface TaxConfigurationRepository extends FilteredRepository<TaxConfiguration,Long> {
     @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select c from TaxConfiguration c where c.id=:id") Optional<TaxConfiguration> findByIdForUpdate(@Param("id") Long id);
-    Optional<TaxConfiguration> findFirstByTaxConceptIdAndStatusAndValidFromLessThanEqualAndValidUntilGreaterThanEqualOrderByVersionDesc(Long conceptId, TaxConfigurationStatus status, LocalDate from, LocalDate until);
     Optional<TaxConfiguration> findFirstByTaxConceptIdOrderByVersionDesc(Long conceptId);
 }
 interface LiquidationRepository extends FilteredRepository<Liquidation,Long> { List<Liquidation> findByTaxpayerId(Long taxpayerId); boolean existsByTaxpayerIdAndTaxConceptIdAndPeriod(Long taxpayerId,Long conceptId,String period); }
@@ -70,7 +69,7 @@ interface ExternalObligationRepository extends FilteredRepository<ExternalObliga
     Page<ExternalObligation> findByStatus(ExternalObligationStatus status,Pageable pageable);
 }
 interface PaymentRepository extends FilteredRepository<Payment,Long> {
-    List<Payment> findByTaxpayerId(Long taxpayerId); Page<Payment> findByTaxpayerId(Long taxpayerId,Pageable pageable); Page<Payment> findByUnallocatedAmountGreaterThan(BigDecimal amount,Pageable pageable); Optional<Payment> findByTaxpayerIdAndIdempotencyKey(Long taxpayerId,String idempotencyKey);
+    List<Payment> findByTaxpayerId(Long taxpayerId); Page<Payment> findByTaxpayerId(Long taxpayerId,Pageable pageable); Optional<Payment> findByTaxpayerIdAndIdempotencyKey(Long taxpayerId,String idempotencyKey);
     @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select p from Payment p where p.id=:id") Optional<Payment> findByIdForUpdate(Long id);
     long countByStatusAndUnallocatedAmountGreaterThan(PaymentStatus status,BigDecimal amount);
     @Query("select coalesce(sum(p.unallocatedAmount),0) from Payment p where p.status=:status and p.unallocatedAmount>:amount")
@@ -150,7 +149,6 @@ interface OutboxRepository extends JpaRepository<OutboxEvent,UUID> {
     boolean existsByIdempotencyKey(String idempotencyKey);
     Optional<OutboxEvent> findByIdempotencyKey(String idempotencyKey);
     Optional<OutboxEvent> findFirstByEventTypeAndAggregateTypeAndAggregateIdOrderByCreatedAtAsc(String eventType,String aggregateType,String aggregateId);
-    boolean existsByEventTypeAndAggregateTypeAndAggregateIdAndStatus(String eventType,String aggregateType,String aggregateId,OutboxStatus status);
     boolean existsByEventTypeAndAggregateTypeAndAggregateIdAndStatusIn(String eventType,String aggregateType,String aggregateId,Collection<OutboxStatus> statuses);
 }
 interface AuditRepository extends FilteredRepository<AuditEntry,Long> { List<AuditEntry> findByEntityTypeAndEntityIdOrderByOccurredAt(String entityType,String entityId); List<AuditEntry> findByEntityTypeAndEntityIdOrderByOccurredAtAscIdAsc(String entityType,String entityId); List<AuditEntry> findTop10ByEntityTypeInOrderByOccurredAtDescIdDesc(Collection<String> entityTypes); }
@@ -228,7 +226,7 @@ interface SocialBenefitRuleRepository extends JpaRepository<SocialBenefitRule,Lo
 interface SocialBenefitEventHistoryRepository extends JpaRepository<SocialBenefitEventHistory,Long> {
     List<SocialBenefitEventHistory> findByExternalBenefitIdOrderBySourceUpdatedAtAsc(String externalBenefitId);
 }
-interface SocialBenefitTaxConceptRepository extends JpaRepository<SocialBenefitTaxConcept,Long> { List<SocialBenefitTaxConcept> findBySocialBenefitId(Long benefitId); List<SocialBenefitTaxConcept> findBySocialBenefitIdIn(Collection<Long> benefitIds); boolean existsBySocialBenefitIdAndTaxConceptId(Long benefitId,Long conceptId); void deleteBySocialBenefitId(Long benefitId); }
+interface SocialBenefitTaxConceptRepository extends JpaRepository<SocialBenefitTaxConcept,Long> { List<SocialBenefitTaxConcept> findBySocialBenefitIdIn(Collection<Long> benefitIds); boolean existsBySocialBenefitIdAndTaxConceptId(Long benefitId,Long conceptId); void deleteBySocialBenefitId(Long benefitId); }
 interface TaxpayerRepresentationRepository extends JpaRepository<TaxpayerRepresentationReference,Long> { Optional<TaxpayerRepresentationReference> findByExternalRepresentationId(String externalRepresentationId); }
 interface ExemptionRequestRepository extends FilteredRepository<ExemptionRequest,Long> {
     Page<ExemptionRequest> findByTaxpayerId(Long taxpayerId,Pageable pageable);
