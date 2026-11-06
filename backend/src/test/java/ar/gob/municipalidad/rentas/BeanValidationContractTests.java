@@ -37,6 +37,8 @@ class BeanValidationContractTests {
     @Autowired MockMvc mvc;
     @Autowired PaymentRepository payments;
     @Autowired LiquidationRepository liquidations;
+    @Autowired LiquidationRunRepository liquidationRuns;
+    @Autowired AdjustmentRepository adjustments;
     @Autowired PaymentPlanConfigurationRepository planConfigurations;
     @Autowired DemoUserRepository users;
     @Autowired DemoAuthSessionRepository sessions;
@@ -238,6 +240,30 @@ class BeanValidationContractTests {
             .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
             .andExpect(jsonPath("$.details.fieldErrors[0].field").value("period"));
         assertThat(liquidations.count()).isEqualTo(before);
+    }
+
+    @Test void adjustmentWithFractionalCentsReturns400BeforePersistence() throws Exception {
+        long before=adjustments.count();
+        mvc.perform(post("/api/v1/adjustments")
+                .header("X-Demo-Session",demo.token(DemoRole.RENTAS))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"debtId\":1,\"type\":\"DISCOUNT\",\"amount\":10.005,\"reason\":\"Test\"}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+            .andExpect(jsonPath("$.details.fieldErrors[0].field").value("amount"));
+        assertThat(adjustments.count()).isEqualTo(before);
+    }
+
+    @Test void liquidationRunWithFractionalCentBaseReturns400BeforePersistence() throws Exception {
+        long before=liquidationRuns.count();
+        mvc.perform(post("/api/v1/liquidation-runs")
+                .header("X-Demo-Session",demo.token(DemoRole.RENTAS))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"taxConceptId\":1,\"period\":\"2026-11\",\"dueDate\":\"2026-11-30\",\"items\":[{\"taxpayerId\":1,\"taxableBase\":10.005}]}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+            .andExpect(jsonPath("$.details.fieldErrors[0].field").value("items[0].taxableBase"));
+        assertThat(liquidationRuns.count()).isEqualTo(before);
     }
 
     @Test void optionalBodiesWithConstraintsAreValidatedWhenPresent() throws Exception {
