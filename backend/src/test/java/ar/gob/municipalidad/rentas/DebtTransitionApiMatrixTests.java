@@ -50,6 +50,10 @@ class DebtTransitionApiMatrixTests {
     @Autowired PaymentPlanRequestRepository planRequests;
     @Autowired PaymentPlanRequestDebtRepository planRequestDebts;
     @Autowired PaymentPlanRepository plans;
+    @Autowired ExemptionRequestRepository exemptionRequests;
+    @Autowired PaymentReversalRepository reversals;
+    @Autowired LiquidationRunRepository liquidationRuns;
+    @Autowired LiquidationRepository liquidationRepository;
     @Autowired OutboxRepository outbox;
     @Autowired DemoUserRepository demoUsers;
     @Autowired TaxpayerRepository taxpayers;
@@ -211,6 +215,288 @@ class DebtTransitionApiMatrixTests {
         assertThat(storedPayment.allocationStatus).isEqualTo(PaymentAllocationStatus.UNALLOCATED);
         assertThat(storedPayment.allocatedAmount).isZero();
         assertThat(storedPayment.unallocatedAmount).isEqualByComparingTo("10.00");
+    }
+
+    @Test void overdueDebtRemainsPayableBecauseDueDateIsNotALifecycleState() throws Exception {
+        LocalDate today=dates.today();
+        Debt debt=createDebt(today);
+        debt.dueDate=today.minusDays(1);
+        debts.saveAndFlush(debt);
+        DemoAuthSessions sessions=new DemoAuthSessions(demoUsers,taxpayers,passwordEncoder,demoAuth);
+        ApiDtos.RegisterPaymentRequest body=new ApiDtos.RegisterPaymentRequest(debt.taxpayerId,PaymentMethod.CASH,
+            new BigDecimal("10.00"),List.of(new ApiDtos.AllocationRequest(debt.id,new BigDecimal("10.00"))));
+
+        SecurityContextHolder.clearContext();
+        mvc.perform(post("/api/v1/payments").header("X-Demo-Session",sessions.token(DemoRole.RENTAS))
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(body)))
+            .andExpect(status().isCreated());
+
+        Debt stored=debts.findById(debt.id).orElseThrow();
+        assertThat(stored.dueDate).isBefore(today);
+        assertThat(stored.status).isEqualTo(DebtStatus.PARTIALLY_PAID);
+        assertThat(stored.outstandingBalance).isEqualByComparingTo("90.00");
+    }
+
+    @ParameterizedTest(name = "GRANTED plan request rejects {0} with 409")
+    @MethodSource("invalidGrantedPlanRequestTransitions")
+    void grantedPlanRequestRejectsFurtherTransitionsAndKeepsItsState(String action,DemoRole actor,Object body) throws Exception {
+        LocalDate today=dates.today();
+        Debt debt=createDebt(today);
+        createPlanConfiguration(today);
+        DemoAuthSessions sessions=new DemoAuthSessions(demoUsers,taxpayers,passwordEncoder,demoAuth);
+        String taxpayer=sessions.token(DemoRole.TAXPAYER,debt.taxpayerId);
+        String rentas=sessions.token(DemoRole.RENTAS);
+        String requestBody=json.writeValueAsString(new ApiDtos.CreatePaymentPlanRequest(debt.taxpayerId,List.of(debt.id),2));
+
+        SecurityContextHolder.clearContext();
+        String response=mvc.perform(post("/api/v1/payment-plan-requests").header("X-Demo-Session",taxpayer)
+                .contentType(MediaType.APPLICATION_JSON).content(requestBody))
+            .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        long requestId=json.readTree(response).get("id").asLong();
+        String grantBody=json.writeValueAsString(new ApiDtos.GrantPaymentPlanRequest(null));
+
+        SecurityContextHolder.clearContext();
+        mvc.perform(post("/api/v1/payment-plan-requests/{id}/grant",requestId).header("X-Demo-Session",rentas)
+                .contentType(MediaType.APPLICATION_JSON).content(grantBody))
+            .andExpect(status().isOk());
+        long plansAfterGrant=plans.count();
+
+        String actionBody=json.writeValueAsString(body);
+        SecurityContextHolder.clearContext();
+        mvc.perform(post("/api/v1/payment-plan-requests/{id}/"+action,requestId)
+                .header("X-Demo-Session",sessions.token(actor))
+                .contentType(MediaType.APPLICATION_JSON).content(actionBody))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("INVALID_PLAN_REQUEST_TRANSITION"));
+
+        assertThat(planRequests.findById(requestId).orElseThrow().status).isEqualTo(PaymentPlanRequestStatus.GRANTED);
+        assertThat(plans.count()).isEqualTo(plansAfterGrant);
+    }
+
+    private static Stream<Arguments> invalidGrantedPlanRequestTransitions() {
+        return Stream.of(
+            Arguments.of("grant",DemoRole.RENTAS,new ApiDtos.GrantPaymentPlanRequest(null)),
+            Arguments.of("reject",DemoRole.RENTAS,new ApiDtos.RejectionRequest("transition already resolved")),
+            Arguments.of("submit-exception",DemoRole.RENTAS,new ApiDtos.SubmitPlanExceptionRequest("exception")),
+            Arguments.of("approve-exception",DemoRole.SUPERVISOR,new ApiDtos.ApprovePlanExceptionRequest(null)),
+            Arguments.of("reject-exception",DemoRole.SUPERVISOR,new ApiDtos.RejectionRequest("transition already resolved"))
+        );
+    }
+
+    @Test void exemptionRequestCannotStartReviewTwiceAndKeepsReviewState() throws Exception {
+        LocalDate today=dates.today();
+        Debt debt=createDebt(today);
+        DemoAuthSessions sessions=new DemoAuthSessions(demoUsers,taxpayers,passwordEncoder,demoAuth);
+        ApiDtos.CreateExemptionRequest body=new ApiDtos.CreateExemptionRequest(debt.taxpayerId,debt.taxConceptId,
+            "Transition matrix",new BigDecimal("10.00"),today,today.plusMonths(1));
+
+        SecurityContextHolder.clearContext();
+        String response=mvc.perform(post("/api/v1/exemption-requests")
+                .header("X-Demo-Session",sessions.token(DemoRole.TAXPAYER,debt.taxpayerId))
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(body)))
+            .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        long requestId=json.readTree(response).get("id").asLong();
+        String rentas=sessions.token(DemoRole.RENTAS);
+
+        SecurityContextHolder.clearContext();
+        mvc.perform(post("/api/v1/exemption-requests/{id}/start-review",requestId).header("X-Demo-Session",rentas))
+            .andExpect(status().isOk());
+
+        SecurityContextHolder.clearContext();
+        mvc.perform(post("/api/v1/exemption-requests/{id}/start-review",requestId).header("X-Demo-Session",rentas))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("INVALID_EXEMPTION_TRANSITION"));
+
+        assertThat(exemptionRequests.findById(requestId).orElseThrow().status).isEqualTo(ExemptionRequestStatus.UNDER_REVIEW);
+    }
+
+    @ParameterizedTest(name = "PENDING exemption rejects {0} with 409")
+    @MethodSource("invalidPendingExemptionTransitions")
+    void pendingExemptionRejectsLifecycleTransitionsAndRemainsPending(String action,DemoRole actor,Object body,String code) throws Exception {
+        LocalDate today=dates.today();
+        Debt debt=createDebt(today);
+        DemoAuthSessions sessions=new DemoAuthSessions(demoUsers,taxpayers,passwordEncoder,demoAuth);
+        ApiDtos.CreateExemptionRequest create=new ApiDtos.CreateExemptionRequest(debt.taxpayerId,debt.taxConceptId,
+            "Transition matrix",new BigDecimal("10.00"),today,today.plusMonths(1));
+
+        SecurityContextHolder.clearContext();
+        String response=mvc.perform(post("/api/v1/exemption-requests")
+                .header("X-Demo-Session",sessions.token(DemoRole.TAXPAYER,debt.taxpayerId))
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(create)))
+            .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        long requestId=json.readTree(response).get("id").asLong();
+        long outboxBefore=outbox.count();
+
+        SecurityContextHolder.clearContext();
+        var call=post("/api/v1/exemption-requests/{id}/"+action,requestId)
+            .header("X-Demo-Session",sessions.token(actor,actor==DemoRole.TAXPAYER?debt.taxpayerId:null));
+        if(body!=null)call.contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(body));
+        mvc.perform(call).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value(code));
+
+        assertThat(exemptionRequests.findById(requestId).orElseThrow().status).isEqualTo(ExemptionRequestStatus.PENDING);
+        assertThat(outbox.count()).isEqualTo(outboxBefore);
+    }
+
+    private static Stream<Arguments> invalidPendingExemptionTransitions() {
+        return Stream.of(
+            Arguments.of("request-documentation",DemoRole.RENTAS,new ApiDtos.RequestDocumentationRequest("document required"),"INVALID_EXEMPTION_TRANSITION"),
+            Arguments.of("documentation",DemoRole.TAXPAYER,new ApiDtos.SubmitDocumentationRequest("doc-ref","IDENTITY","identity.pdf"),"DOCUMENTATION_NOT_REQUIRED"),
+            Arguments.of("submit-resolution",DemoRole.RENTAS,null,"INVALID_EXEMPTION_TRANSITION"),
+            Arguments.of("approve",DemoRole.SUPERVISOR,new ApiDtos.ApproveExemptionRequest(null,null,null,null),"INVALID_EXEMPTION_TRANSITION"),
+            Arguments.of("reject",DemoRole.SUPERVISOR,new ApiDtos.RejectionRequest("not ready"),"INVALID_EXEMPTION_TRANSITION")
+        );
+    }
+
+    @Test void pendingReversalCannotBeExecutedAndRemainsPending() throws Exception {
+        LocalDate today=dates.today();
+        Debt debt=createDebt(today);
+        Payment payment=paymentService.register(new ApiDtos.RegisterPaymentRequest(debt.taxpayerId,PaymentMethod.CASH,
+            new BigDecimal("10.00"),null));
+        DemoAuthSessions sessions=new DemoAuthSessions(demoUsers,taxpayers,passwordEncoder,demoAuth);
+        SecurityContextHolder.clearContext();
+        String response=mvc.perform(post("/api/v1/payments/{id}/reversal-requests",payment.id)
+                .header("X-Demo-Session",sessions.token(DemoRole.CASHIER))
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(new ApiDtos.CreateReversalRequest("test"))))
+            .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        long reversalId=json.readTree(response).get("id").asLong();
+
+        SecurityContextHolder.clearContext();
+        mvc.perform(post("/api/v1/payment-reversals/{id}/execute",reversalId)
+                .header("X-Demo-Session",sessions.token(DemoRole.RENTAS)))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("REVERSAL_NOT_APPROVED"));
+
+        assertThat(reversals.findById(reversalId).orElseThrow().status).isEqualTo(PaymentReversalStatus.PENDING_APPROVAL);
+        assertThat(payments.findById(payment.id).orElseThrow().status).isEqualTo(PaymentStatus.CONFIRMED);
+    }
+
+    @ParameterizedTest(name = "REJECTED reversal rejects {0} with 409")
+    @MethodSource("invalidRejectedReversalTransitions")
+    void rejectedReversalRejectsFurtherTransitionsAndPreservesPayment(String action,DemoRole actor,Object body,String code) throws Exception {
+        LocalDate today=dates.today();
+        Debt debt=createDebt(today);
+        Payment payment=paymentService.register(new ApiDtos.RegisterPaymentRequest(debt.taxpayerId,PaymentMethod.CASH,
+            new BigDecimal("10.00"),null));
+        DemoAuthSessions sessions=new DemoAuthSessions(demoUsers,taxpayers,passwordEncoder,demoAuth);
+        SecurityContextHolder.clearContext();
+        String response=mvc.perform(post("/api/v1/payments/{id}/reversal-requests",payment.id)
+                .header("X-Demo-Session",sessions.token(DemoRole.CASHIER))
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(new ApiDtos.CreateReversalRequest("test"))))
+            .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        long reversalId=json.readTree(response).get("id").asLong();
+
+        SecurityContextHolder.clearContext();
+        mvc.perform(post("/api/v1/payment-reversals/{id}/reject",reversalId)
+                .header("X-Demo-Session",sessions.token(DemoRole.SUPERVISOR))
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(new ApiDtos.RejectionRequest("rejected"))))
+            .andExpect(status().isOk());
+        long outboxAfterReject=outbox.count();
+
+        SecurityContextHolder.clearContext();
+        var call=post("/api/v1/payment-reversals/{id}/"+action,reversalId)
+            .header("X-Demo-Session",sessions.token(actor));
+        if(body!=null)call.contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(body));
+        mvc.perform(call).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value(code));
+
+        assertThat(reversals.findById(reversalId).orElseThrow().status).isEqualTo(PaymentReversalStatus.REJECTED);
+        assertThat(payments.findById(payment.id).orElseThrow().status).isEqualTo(PaymentStatus.CONFIRMED);
+        assertThat(outbox.count()).isEqualTo(outboxAfterReject);
+    }
+
+    private static Stream<Arguments> invalidRejectedReversalTransitions() {
+        return Stream.of(
+            Arguments.of("approve",DemoRole.SUPERVISOR,null,"REVERSAL_NOT_PENDING"),
+            Arguments.of("reject",DemoRole.SUPERVISOR,new ApiDtos.RejectionRequest("again"),"REVERSAL_NOT_PENDING"),
+            Arguments.of("execute",DemoRole.RENTAS,null,"REVERSAL_NOT_APPROVED")
+        );
+    }
+
+    @Test void liquidationRunSemanticDateErrorIs422ButInvalidApprovalStateIs409() throws Exception {
+        LocalDate today=dates.today();
+        Debt debt=createDebt(today);
+        DemoAuthSessions sessions=new DemoAuthSessions(demoUsers,taxpayers,passwordEncoder,demoAuth);
+        String rentas=sessions.token(DemoRole.RENTAS);
+        ApiDtos.LiquidationRunItemRequest item=new ApiDtos.LiquidationRunItemRequest(debt.taxpayerId,BigDecimal.ZERO);
+        ApiDtos.CreateLiquidationRunRequest invalidDueDate=new ApiDtos.CreateLiquidationRunRequest(
+            debt.taxConceptId,YearMonth.from(today).toString(),today.minusDays(1),List.of(item));
+
+        SecurityContextHolder.clearContext();
+        long runCountBefore=liquidationRuns.count();
+        mvc.perform(post("/api/v1/liquidation-runs").header("X-Demo-Session",rentas)
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(invalidDueDate)))
+            .andExpect(status().isUnprocessableEntity())
+            .andExpect(jsonPath("$.code").value("INVALID_DUE_DATE"));
+        assertThat(liquidationRuns.count()).isEqualTo(runCountBefore);
+
+        ApiDtos.CreateLiquidationRunRequest valid=new ApiDtos.CreateLiquidationRunRequest(
+            debt.taxConceptId,YearMonth.from(today).toString(),today.plusDays(30),List.of(item));
+        SecurityContextHolder.clearContext();
+        String response=mvc.perform(post("/api/v1/liquidation-runs").header("X-Demo-Session",rentas)
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(valid)))
+            .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        long runId=json.readTree(response).get("id").asLong();
+
+        SecurityContextHolder.clearContext();
+        mvc.perform(post("/api/v1/liquidation-runs/{id}/approve",runId)
+                .header("X-Demo-Session",sessions.token(DemoRole.SUPERVISOR)))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("RUN_NOT_PENDING"));
+
+        assertThat(liquidationRuns.count()).isEqualTo(runCountBefore+1);
+        assertThat(liquidationRuns.findById(runId).orElseThrow().status).isEqualTo(LiquidationRunStatus.DRAFT);
+    }
+
+    @ParameterizedTest(name = "REJECTED liquidation run rejects {0} with 409")
+    @MethodSource("invalidRejectedLiquidationRunTransitions")
+    void rejectedLiquidationRunRejectsFurtherTransitionsAndPreservesState(String action,DemoRole actor,Object body,String code) throws Exception {
+        LocalDate today=dates.today();
+        Debt debt=createDebt(today);
+        String suffix=UUID.randomUUID().toString();
+        TaxpayerReference runTaxpayer=catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(
+            TaxpayerType.CITIZEN,"RUN-MATRIX-"+suffix,suffix.replace("-",""),null,"Liquidation transition test"));
+        DemoAuthSessions sessions=new DemoAuthSessions(demoUsers,taxpayers,passwordEncoder,demoAuth);
+        String rentas=sessions.token(DemoRole.RENTAS);
+        ApiDtos.CreateLiquidationRunRequest create=new ApiDtos.CreateLiquidationRunRequest(debt.taxConceptId,
+            YearMonth.from(today).toString(),today.plusDays(30),List.of(new ApiDtos.LiquidationRunItemRequest(runTaxpayer.id,BigDecimal.ZERO)));
+
+        SecurityContextHolder.clearContext();
+        String response=mvc.perform(post("/api/v1/liquidation-runs").header("X-Demo-Session",rentas)
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(create)))
+            .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        long runId=json.readTree(response).get("id").asLong();
+        SecurityContextHolder.clearContext();
+        mvc.perform(post("/api/v1/liquidation-runs/{id}/preview",runId).header("X-Demo-Session",rentas))
+            .andExpect(status().isOk());
+        SecurityContextHolder.clearContext();
+        mvc.perform(post("/api/v1/liquidation-runs/{id}/submit",runId).header("X-Demo-Session",rentas))
+            .andExpect(status().isOk());
+        SecurityContextHolder.clearContext();
+        mvc.perform(post("/api/v1/liquidation-runs/{id}/reject",runId)
+                .header("X-Demo-Session",sessions.token(DemoRole.SUPERVISOR))
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(new ApiDtos.RejectionRequest("rejected"))))
+            .andExpect(status().isOk());
+        long outboxAfterReject=outbox.count();
+        long liquidationsAfterReject=liquidationRepository.count();
+
+        SecurityContextHolder.clearContext();
+        var call=post("/api/v1/liquidation-runs/{id}/"+action,runId)
+            .header("X-Demo-Session",sessions.token(actor));
+        if(body!=null)call.contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(body));
+        mvc.perform(call).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value(code));
+
+        assertThat(liquidationRuns.findById(runId).orElseThrow().status).isEqualTo(LiquidationRunStatus.REJECTED);
+        assertThat(outbox.count()).isEqualTo(outboxAfterReject);
+        assertThat(liquidationRepository.count()).isEqualTo(liquidationsAfterReject);
+    }
+
+    private static Stream<Arguments> invalidRejectedLiquidationRunTransitions() {
+        return Stream.of(
+            Arguments.of("preview",DemoRole.RENTAS,null,"RUN_NOT_DRAFT"),
+            Arguments.of("submit",DemoRole.RENTAS,null,"RUN_NOT_READY"),
+            Arguments.of("approve",DemoRole.SUPERVISOR,null,"RUN_NOT_PENDING"),
+            Arguments.of("reject",DemoRole.SUPERVISOR,new ApiDtos.RejectionRequest("again"),"RUN_NOT_PENDING"),
+            Arguments.of("execute",DemoRole.RENTAS,null,"RUN_NOT_APPROVED")
+        );
     }
 
     private org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder request(
