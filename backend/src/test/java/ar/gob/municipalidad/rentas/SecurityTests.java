@@ -75,6 +75,28 @@ class SecurityTests {
         });
     }
 
+    @Test void securityEventsCanBeFilteredByAuditorAndSupervisorOnly() throws Exception {
+        String actor="security-query-"+java.util.UUID.randomUUID();
+        AuditEntry event=new AuditEntry();event.entityType="SecurityEvent";event.entityId=java.util.UUID.randomUUID().toString();
+        event.action="DEMO_LOGIN_FAILED";event.userId=actor;event.userRole="ANONYMOUS";event.occurredAt=OffsetDateTime.now();
+        audit.saveAndFlush(event);
+        AuditEntry unrelated=new AuditEntry();unrelated.entityType="Payment";unrelated.entityId="1";
+        unrelated.action=event.action;unrelated.userId=actor;unrelated.userRole=event.userRole;unrelated.occurredAt=event.occurredAt;
+        audit.saveAndFlush(unrelated);
+
+        for(DemoRole role:java.util.List.of(DemoRole.AUDITOR,DemoRole.SUPERVISOR)) {
+            mvc.perform(get("/api/v1/audit").header("X-Demo-Session",demo.token(role))
+                    .param("entityType","SecurityEvent").param("action",event.action).param("userId",actor))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].entityType").value("SecurityEvent"))
+                .andExpect(jsonPath("$.content[0].action").value("DEMO_LOGIN_FAILED"))
+                .andExpect(jsonPath("$.content[0].userId").value(actor));
+        }
+        mvc.perform(get("/api/v1/audit").header("X-Demo-Session",demo.token(DemoRole.RENTAS))
+                .param("entityType","SecurityEvent").param("userId",actor))
+            .andExpect(status().isForbidden());
+    }
+
     @Test void auditorCanReadTicketsButCannotChangeThem() throws Exception {
         TicketCase ticket=new TicketCase();ticket.externalTicketId="SCRUM-820-"+java.util.UUID.randomUUID();ticket.category="CONSULTA";ticket.description="Ticket sintético para validar acceso de lectura";ticket.priority=TicketPriority.MEDIUM;ticket.status=TicketCaseStatus.OPEN;ticket.createdAt=ticket.updatedAt=OffsetDateTime.now();
         ticket=ticketCases.saveAndFlush(ticket);
