@@ -27,8 +27,9 @@ class AdjustmentRunFlowTests {
     @Autowired CatalogService catalog; @Autowired LiquidationService liquidations; @Autowired AdjustmentService adjustments;
     @Autowired LiquidationRunService runs; @Autowired DebtRepository debts; @Autowired LiquidationRepository liquidationRepository;
     @Autowired OutboxRepository outbox; @Autowired com.fasterxml.jackson.databind.ObjectMapper json; @Autowired MockMvc mvc;
+    @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
 
-    @BeforeEach void authenticate(){var authorities=List.of("RENTAS","SUPERVISOR").stream().map(x->new SimpleGrantedAuthority("ROLE_"+x)).toList();SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("tester",null),null,authorities));}
+    @BeforeEach void authenticate(){jdbc.execute("CREATE TABLE IF NOT EXISTS idempotency_request (actor_id VARCHAR(255) NOT NULL, operation VARCHAR(160) NOT NULL, idempotency_key VARCHAR(128) NOT NULL, request_fingerprint VARCHAR(64) NOT NULL, response_body TEXT, created_at TIMESTAMP WITH TIME ZONE NOT NULL, PRIMARY KEY (actor_id, operation, idempotency_key))");var authorities=List.of("RENTAS","SUPERVISOR").stream().map(x->new SimpleGrantedAuthority("ROLE_"+x)).toList();SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("tester",null),null,authorities));}
     @AfterEach void clear(){SecurityContextHolder.clearContext();}
 
     @Test void adjustmentChangesDebtAndPublishesTypedPlatformEventOnlyWhenApproved() throws Exception {Debt debt=debt("ADJUST-1","ADJUST-CONCEPT-1");AdjustmentRequest request=adjustments.create(new ApiDtos.CreateAdjustmentRequest(debt.id,AdjustmentType.DISCOUNT,new BigDecimal("25"),"Bonificación autorizada"));assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("100.00");TestActorSupport.asApprover(() -> adjustments.approve(request.id,"Verificado"));assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("75.00");assertThat(debts.findById(debt.id).orElseThrow().originalAmount).isEqualByComparingTo("100.00");List<OutboxEvent> events=outbox.findAll().stream().filter(x->x.eventType.equals("debtAdjusted")&&x.aggregateId.equals(debt.id.toString())).toList();assertThat(events).hasSize(1);assertThat(events.get(0).targetModule).isEqualTo("PLATFORM");var payload=json.readTree(events.get(0).payload);assertThat(payload.path("debtId").longValue()).isEqualTo(debt.id);assertThat(payload.path("adjustmentId").longValue()).isEqualTo(request.id);}
@@ -41,6 +42,29 @@ class AdjustmentRunFlowTests {
 
     @Test @Transactional(propagation=org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     void approvedRunExecutesOnlyValidItems(){TaxpayerReference taxpayer=taxpayer("RUN-2");TaxConcept concept=concept("RUN-CONCEPT-2");activate(concept.id);LiquidationRun run=runs.create(new ApiDtos.CreateLiquidationRunRequest(concept.id,YearMonth.now().toString(),LocalDate.now().plusDays(30),List.of(new ApiDtos.LiquidationRunItemRequest(taxpayer.id,BigDecimal.ZERO),new ApiDtos.LiquidationRunItemRequest(999998L,BigDecimal.ZERO))));runs.preview(run.id);runs.submit(run.id);TestActorSupport.asApprover(() -> runs.approve(run.id,null));LiquidationRun executedRun=runs.execute(run.id);assertThat(executedRun.status).isEqualTo(LiquidationRunStatus.EXECUTED);assertThat(debts.findByTaxpayerId(taxpayer.id)).hasSize(1);}
+
+    @Test @Transactional(propagation=org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void executeReplaysIdempotentResponseWithoutRepeatingLiquidation() throws Exception {
+        String suffix=java.util.UUID.randomUUID().toString();
+        TaxpayerReference taxpayer=taxpayer("RUN-IDEMPOTENT-"+suffix);
+        TaxConcept concept=concept("RUN-IDEMPOTENT-"+suffix);
+        activate(concept.id);
+        String period=YearMonth.now().plusMonths(2).toString();
+        LiquidationRun run=runs.create(new ApiDtos.CreateLiquidationRunRequest(concept.id,period,LocalDate.now().plusDays(30),List.of(new ApiDtos.LiquidationRunItemRequest(taxpayer.id,BigDecimal.ZERO))));
+        runs.preview(run.id);
+        runs.submit(run.id);
+        TestActorSupport.asApprover(() -> runs.approve(run.id,null));
+        String key="liquidation-run-execute-"+suffix;
+        String first=mvc.perform(post("/api/v1/liquidation-runs/{id}/execute",run.id).with(authentication(asRole("RENTAS"))).header("Idempotency-Key",key))
+            .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        String replay=mvc.perform(post("/api/v1/liquidation-runs/{id}/execute",run.id).with(authentication(asRole("RENTAS"))).header("Idempotency-Key",key))
+            .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        assertThat(json.readTree(replay)).isEqualTo(json.readTree(first));
+        assertThat(json.readTree(replay).path("status").asText()).isEqualTo("EXECUTED");
+        assertThat(liquidationRepository.findAll()).filteredOn(item -> item.taxConceptId.equals(concept.id)).hasSize(1);
+        assertThat(debts.findByTaxpayerId(taxpayer.id)).hasSize(1);
+        assertThat(runs.detail(run.id).run().status).isEqualTo(LiquidationRunStatus.EXECUTED);
+    }
 
     @Test @Transactional(propagation=org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     void duplicateIsReportedInPreviewAndExecutionRaceFinishesWithItemError() throws Exception {
@@ -71,7 +95,7 @@ class AdjustmentRunFlowTests {
         TestActorSupport.asApprover(() -> runs.approve(executionRun.id,null));
         liquidations.create(new ApiDtos.LiquidationRequest(executionTaxpayer.id,executionConcept.id,executionPeriod,BigDecimal.ZERO,LocalDate.now().plusDays(30)));
 
-        mvc.perform(post("/api/v1/liquidation-runs/{id}/execute",executionRun.id).with(authentication(asRole("RENTAS"))))
+        mvc.perform(post("/api/v1/liquidation-runs/{id}/execute",executionRun.id).with(authentication(asRole("RENTAS"))).header("Idempotency-Key","liquidation-run-failure-"+suffix))
             .andExpect(status().isUnprocessableEntity())
             .andExpect(jsonPath("$.code").value("DUPLICATE_LIQUIDATION"));
         SecurityContextHolder.getContext().setAuthentication(asRole("RENTAS"));
