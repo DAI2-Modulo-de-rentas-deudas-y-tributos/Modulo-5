@@ -41,6 +41,15 @@ final class EntityTags {
         }
     }
 
+    static String paymentPlanRequest(ApiDtos.PaymentPlanRequestResponse request) {
+        try {
+            byte[] digest=MessageDigest.getInstance("SHA-256").digest(request.toString().getBytes(StandardCharsets.UTF_8));
+            return quoted("payment-plan-request-" + request.id() + "-" + HexFormat.of().formatHex(digest));
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("SHA-256 no disponible", ex);
+        }
+    }
+
     static void requireIfMatch(String current, String provided) {
         if (provided == null) return;
         String value=provided.trim();

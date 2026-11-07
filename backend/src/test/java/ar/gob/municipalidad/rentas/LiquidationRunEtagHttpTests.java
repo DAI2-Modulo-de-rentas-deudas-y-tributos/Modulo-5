@@ -89,7 +89,12 @@ class LiquidationRunEtagHttpTests {
 
         mvc.perform(post(path+"/submit").with(authentication(rentas)).header("If-Match",originalTag)
                 .header("Idempotency-Key","same-key-"+run.id))
-            .andExpect(status().isOk());
+            .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("PENDING_APPROVAL"));
+
+        mvc.perform(post(path+"/submit").with(authentication(rentas)).header("If-Match",originalTag)
+                .header("Idempotency-Key","same-key-"+run.id))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.response").doesNotExist())
+            .andExpect(jsonPath("$.status").value("PENDING_APPROVAL"));
 
         mvc.perform(post(path+"/submit").with(authentication(rentas)).header("If-Match","\"different-tag\"")
                 .header("Idempotency-Key","same-key-"+run.id))

@@ -88,15 +88,25 @@ class PlanWorkflowService {
     PaymentPlanRequest getRequest(Long id){PaymentPlanRequest r=requests.findById(id).orElseThrow(()->CatalogService.notFound("Solicitud de plan"));identity.requireOwnership(r.taxpayerId);return r;}
 
     @Transactional PaymentPlanRequest submitException(Long id,ApiDtos.SubmitPlanExceptionRequest body){
+        return submitException(id,body,null);
+    }
+    @Transactional PaymentPlanRequest submitException(Long id,ApiDtos.SubmitPlanExceptionRequest body,String ifMatch){
         PaymentPlanRequest r=requests.findByIdForUpdate(id).orElseThrow(()->CatalogService.notFound("Solicitud de plan"));
+        EntityTags.requireIfMatch(EntityTags.paymentPlanRequest(ApiResponses.of(r)),ifMatch);
         identity.requireOwnership(r.taxpayerId);requireStatus(r,PaymentPlanRequestStatus.PENDING);
         r.exceptionReason=body.reason();r.exceptionSubmittedBy=identity.get().userId();r.status=PaymentPlanRequestStatus.PENDING_EXCEPTION_APPROVAL;
         audit.record("PaymentPlanRequest",r.id,r.exceptional?"PLAN_EXCEPTION_SUBMITTED":"PAYMENT_PLAN_DERIVED_TO_SUPERVISOR",r);return r;
     }
-    @Transactional PaymentPlanRequest approveException(Long id,ApiDtos.ApprovePlanExceptionRequest body){PaymentPlanRequest r=requests.findByIdForUpdate(id).orElseThrow(()->CatalogService.notFound("Solicitud de plan"));identity.requireOwnership(r.taxpayerId);requireStatus(r,PaymentPlanRequestStatus.PENDING_EXCEPTION_APPROVAL);audit.requireDifferentActor("PaymentPlanRequest",r.id,r.requestedBy,r.exceptionSubmittedBy);r.exceptionApproved=true;r.status=PaymentPlanRequestStatus.PENDING;r.resolvedBy=identity.get().userId();r.resolvedAt=OffsetDateTime.now();r.resolutionReason=body==null?null:body.observation();audit.record("PaymentPlanRequest",r.id,"PLAN_EXCEPTION_APPROVED",r);return r;}
-    @Transactional PaymentPlanRequest rejectException(Long id,String reason){PaymentPlanRequest r=requests.findByIdForUpdate(id).orElseThrow(()->CatalogService.notFound("Solicitud de plan"));identity.requireOwnership(r.taxpayerId);requireStatus(r,PaymentPlanRequestStatus.PENDING_EXCEPTION_APPROVAL);audit.requireDifferentActor("PaymentPlanRequest",r.id,r.requestedBy,r.exceptionSubmittedBy);return reject(r,reason,"PLAN_EXCEPTION_REJECTED");}
+    @Transactional PaymentPlanRequest approveException(Long id,ApiDtos.ApprovePlanExceptionRequest body){return approveException(id,body,null);}
+    @Transactional PaymentPlanRequest approveException(Long id,ApiDtos.ApprovePlanExceptionRequest body,String ifMatch){PaymentPlanRequest r=requests.findByIdForUpdate(id).orElseThrow(()->CatalogService.notFound("Solicitud de plan"));EntityTags.requireIfMatch(EntityTags.paymentPlanRequest(ApiResponses.of(r)),ifMatch);identity.requireOwnership(r.taxpayerId);requireStatus(r,PaymentPlanRequestStatus.PENDING_EXCEPTION_APPROVAL);audit.requireDifferentActor("PaymentPlanRequest",r.id,r.requestedBy,r.exceptionSubmittedBy);r.exceptionApproved=true;r.status=PaymentPlanRequestStatus.PENDING;r.resolvedBy=identity.get().userId();r.resolvedAt=OffsetDateTime.now();r.resolutionReason=body==null?null:body.observation();audit.record("PaymentPlanRequest",r.id,"PLAN_EXCEPTION_APPROVED",r);return r;}
+    @Transactional PaymentPlanRequest rejectException(Long id,String reason){return rejectException(id,reason,null);}
+    @Transactional PaymentPlanRequest rejectException(Long id,String reason,String ifMatch){PaymentPlanRequest r=requests.findByIdForUpdate(id).orElseThrow(()->CatalogService.notFound("Solicitud de plan"));EntityTags.requireIfMatch(EntityTags.paymentPlanRequest(ApiResponses.of(r)),ifMatch);identity.requireOwnership(r.taxpayerId);requireStatus(r,PaymentPlanRequestStatus.PENDING_EXCEPTION_APPROVAL);audit.requireDifferentActor("PaymentPlanRequest",r.id,r.requestedBy,r.exceptionSubmittedBy);return reject(r,reason,"PLAN_EXCEPTION_REJECTED");}
     @Transactional PaymentPlanRequest rejectRequest(Long id,String reason){
+        return rejectRequest(id,reason,null);
+    }
+    @Transactional PaymentPlanRequest rejectRequest(Long id,String reason,String ifMatch){
         PaymentPlanRequest r=requests.findByIdForUpdate(id).orElseThrow(()->CatalogService.notFound("Solicitud de plan"));
+        EntityTags.requireIfMatch(EntityTags.paymentPlanRequest(ApiResponses.of(r)),ifMatch);
         identity.requireOwnership(r.taxpayerId);
         CatalogService.require(r.status==PaymentPlanRequestStatus.PENDING||r.status==PaymentPlanRequestStatus.PENDING_EXCEPTION_APPROVAL,"INVALID_PLAN_REQUEST_TRANSITION","Estado de solicitud inválido");
         audit.requireDifferentActor("PaymentPlanRequest",r.id,r.requestedBy,r.status==PaymentPlanRequestStatus.PENDING_EXCEPTION_APPROVAL?r.exceptionSubmittedBy:null);
@@ -105,7 +115,11 @@ class PlanWorkflowService {
     }
 
     @Transactional PaymentPlanRequest grant(Long id,ApiDtos.GrantPaymentPlanRequest body) {
+        return grant(id,body,null);
+    }
+    @Transactional PaymentPlanRequest grant(Long id,ApiDtos.GrantPaymentPlanRequest body,String ifMatch) {
         PaymentPlanRequest r=requests.findByIdForUpdate(id).orElseThrow(()->CatalogService.notFound("Solicitud de plan")); identity.requireOwnership(r.taxpayerId);
+        EntityTags.requireIfMatch(EntityTags.paymentPlanRequest(ApiResponses.of(r)),ifMatch);
         CatalogService.require(r.status==PaymentPlanRequestStatus.PENDING||r.status==PaymentPlanRequestStatus.PENDING_EXCEPTION_APPROVAL,"INVALID_PLAN_REQUEST_TRANSITION","Estado de solicitud inválido");
         audit.requireDifferentActor("PaymentPlanRequest",r.id,r.requestedBy,r.exceptionSubmittedBy);
         if(r.status==PaymentPlanRequestStatus.PENDING_EXCEPTION_APPROVAL) CatalogService.require(identity.hasRole("SUPERVISOR"),"PLAN_SUPERVISOR_REQUIRED","La solicitud debe ser resuelta por el Supervisor");
