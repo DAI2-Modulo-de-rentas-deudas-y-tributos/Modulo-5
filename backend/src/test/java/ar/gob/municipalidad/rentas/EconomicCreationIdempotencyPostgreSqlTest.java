@@ -1,0 +1,281 @@
+package ar.gob.municipalidad.rentas;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.YearMonth;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+@SpringBootTest
+@AutoConfigureMockMvc
+@ActiveProfiles("postgres-it")
+@Testcontainers(disabledWithoutDocker = true)
+class EconomicCreationIdempotencyPostgreSqlTest {
+    @Container
+    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:17-alpine");
+
+    @DynamicPropertySource
+    static void database(DynamicPropertyRegistry registry) {
+        registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
+        registry.add("spring.datasource.username", POSTGRES::getUsername);
+        registry.add("spring.datasource.password", POSTGRES::getPassword);
+        registry.add("spring.flyway.locations", () -> "classpath:db/migration,classpath:db/migration-postgresql,classpath:db/migration-demo");
+    }
+
+    @Autowired MockMvc mvc;
+    @Autowired CatalogService catalog;
+    @Autowired LiquidationService liquidationService;
+    @Autowired PlanWorkflowService planWorkflow;
+    @Autowired PaymentService paymentService;
+    @Autowired TaxpayerRepository taxpayers;
+    @Autowired LiquidationRepository liquidations;
+    @Autowired DebtRepository debts;
+    @Autowired ExemptionRequestRepository exemptions;
+    @Autowired PaymentReversalRepository reversals;
+    @Autowired RefinancingRequestRepository refinancings;
+    @Autowired OutboxRepository outbox;
+    @Autowired JdbcTemplate jdbc;
+    @Autowired ObjectMapper json;
+
+    @AfterEach
+    void clearSecurityContext() {
+        SecurityContextHolder.clearContext();
+    }
+
+    @Test
+    void individualLiquidationConcurrentReplayReturnsSameCreatedResponseAndOneDebt() throws Exception {
+        Fixture fixture = fixture("LIQ");
+        String actor = "liquidation-idempotency-" + UUID.randomUUID();
+        var auth = identity(actor, fixture.taxpayer.id, "RENTAS");
+        String key = "liquidation-" + UUID.randomUUID();
+        var request = new ApiDtos.LiquidationRequest(fixture.taxpayer.id, fixture.concept.id,
+            YearMonth.now().plusMonths(1).toString(), BigDecimal.ZERO, LocalDate.now().plusDays(30));
+        String body = json.writeValueAsString(request);
+
+        List<MvcResult> responses = runTogether(
+            () -> httpPost("/api/v1/liquidations", auth, key, body),
+            () -> httpPost("/api/v1/liquidations", auth, key, body));
+
+        String first = responses.get(0).getResponse().getContentAsString();
+        String replay = responses.get(1).getResponse().getContentAsString();
+        assertThat(responses).allSatisfy(response -> assertThat(response.getResponse().getStatus()).isEqualTo(201));
+        assertThat(replay).isEqualTo(first);
+        long liquidationId = json.readTree(first).path("id").asLong();
+        assertThat(liquidations.findByTaxpayerId(fixture.taxpayer.id).stream()
+            .filter(item -> item.taxConceptId.equals(fixture.concept.id) && item.period.equals(request.period()))).hasSize(1);
+        assertThat(debts.findByLiquidationId(liquidationId)).isPresent();
+        assertThat(jdbc.queryForObject("select count(*) from debt where liquidation_id=?", Long.class, liquidationId)).isOne();
+        assertThat(idempotencyRows(actor, "POST:/liquidations", key)).isOne();
+
+        var changed = new ApiDtos.LiquidationRequest(fixture.taxpayer.id, fixture.concept.id,
+            request.period(), BigDecimal.ONE, request.dueDate());
+        mvc.perform(post("/api/v1/liquidations").with(authentication(auth)).header("Idempotency-Key", key)
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsBytes(changed)))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"));
+        assertThat(liquidations.findByTaxpayerId(fixture.taxpayer.id).stream()
+            .filter(item -> item.taxConceptId.equals(fixture.concept.id) && item.period.equals(request.period()))).hasSize(1);
+    }
+
+    @Test
+    void exemptionCreationConcurrentReplayKeepsOneRequestAndOneOutboxEvent() throws Exception {
+        Fixture fixture = fixture("EXEMPTION");
+        fixture.taxpayer.canonicalCitizenId = UUID.randomUUID();
+        taxpayers.saveAndFlush(fixture.taxpayer);
+        var auth = identity("exemption-idempotency-" + UUID.randomUUID(), fixture.taxpayer.id, "TAXPAYER");
+        String key = "exemption-" + UUID.randomUUID();
+        var request = new ApiDtos.CreateExemptionRequest(fixture.taxpayer.id, fixture.concept.id, "Solicitud sintética",
+            new BigDecimal("20.00"), LocalDate.now().minusDays(1), LocalDate.now().plusDays(30));
+        String body = json.writeValueAsString(request);
+
+        List<MvcResult> responses = runTogether(
+            () -> httpPost("/api/v1/exemption-requests", auth, key, body),
+            () -> httpPost("/api/v1/exemption-requests", auth, key, body));
+
+        String first = responses.get(0).getResponse().getContentAsString();
+        assertThat(responses).allSatisfy(response -> assertThat(response.getResponse().getStatus()).isEqualTo(201));
+        assertThat(responses.get(1).getResponse().getContentAsString()).isEqualTo(first);
+        long requestId = json.readTree(first).path("id").asLong();
+        assertThat(exemptions.findAll().stream().filter(item -> item.taxpayerId.equals(fixture.taxpayer.id)
+            && item.taxConceptId.equals(fixture.concept.id))).hasSize(1);
+        assertThat(outbox.findAll().stream().filter(event -> event.eventType.equals("exemptionRequested")
+            && event.aggregateId.equals(Long.toString(requestId)))).hasSize(1);
+        assertThat(idempotencyRows(auth.getName(), "POST:/exemption-requests", key)).isOne();
+
+        var changed = new ApiDtos.CreateExemptionRequest(fixture.taxpayer.id, fixture.concept.id, "Solicitud sintética",
+            new BigDecimal("25.00"), request.validFrom(), request.validUntil());
+        mvc.perform(post("/api/v1/exemption-requests").with(authentication(auth)).header("Idempotency-Key", key)
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsBytes(changed)))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"));
+        assertThat(exemptions.findAll().stream().filter(item -> item.taxpayerId.equals(fixture.taxpayer.id)
+            && item.taxConceptId.equals(fixture.concept.id))).hasSize(1);
+    }
+
+    @Test
+    void reversalRequestConcurrentReplayReturnsOneRequestAndChangedReasonConflicts() throws Exception {
+        Fixture fixture = fixture("REVERSAL");
+        setActor(identity("reversal-payment-" + UUID.randomUUID(), null, "RENTAS"));
+        var payment = paymentService.register(new ApiDtos.RegisterPaymentRequest(fixture.taxpayer.id,
+            PaymentMethod.CASH, new BigDecimal("100.00"), List.of(new ApiDtos.AllocationRequest(fixture.debtId, new BigDecimal("100.00")))));
+        var auth = identity("reversal-cashier-" + UUID.randomUUID(), null, "CASHIER");
+        String key = "reversal-" + UUID.randomUUID();
+        var request = new ApiDtos.CreateReversalRequest("Solicitud sintética");
+        String body = json.writeValueAsString(request);
+        String path = "/api/v1/payments/" + payment.id + "/reversal-requests";
+
+        List<MvcResult> responses = runTogether(() -> httpPost(path, auth, key, body), () -> httpPost(path, auth, key, body));
+
+        String first = responses.get(0).getResponse().getContentAsString();
+        assertThat(responses).allSatisfy(response -> assertThat(response.getResponse().getStatus()).isEqualTo(201));
+        assertThat(responses.get(1).getResponse().getContentAsString()).isEqualTo(first);
+        long reversalId = json.readTree(first).path("id").asLong();
+        assertThat(reversals.findAll().stream().filter(item -> item.paymentId.equals(payment.id))).hasSize(1);
+        assertThat(reversals.findById(reversalId)).isPresent();
+        assertThat(idempotencyRows(auth.getName(), "POST:/payments/{id}/reversal-requests:" + payment.id, key)).isOne();
+
+        mvc.perform(post(path).with(authentication(auth)).header("Idempotency-Key", key)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsBytes(new ApiDtos.CreateReversalRequest("Motivo diferente"))))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"));
+        assertThat(reversals.findAll().stream().filter(item -> item.paymentId.equals(payment.id))).hasSize(1);
+    }
+
+    @Test
+    void refinancingRequestConcurrentReplayKeepsOneRequestAndChangedBodyConflicts() throws Exception {
+        Fixture fixture = fixture("REFINANCE");
+        plansConfiguration();
+        setActor(identity("refinancing-plan-request-" + UUID.randomUUID(), fixture.taxpayer.id, "TAXPAYER"));
+        PaymentPlanRequest request = planWorkflow.request(new ApiDtos.CreatePaymentPlanRequest(
+            fixture.taxpayer.id, List.of(fixture.debtId), 3));
+        setActor(identity("refinancing-plan-grant-" + UUID.randomUUID(), null, "RENTAS"));
+        PaymentPlanRequest granted = planWorkflow.grant(request.id, new ApiDtos.GrantPaymentPlanRequest(BigDecimal.ZERO));
+        assertThat(granted.paymentPlanId).isNotNull();
+
+        var auth = identity("refinancing-owner-" + UUID.randomUUID(), fixture.taxpayer.id, "TAXPAYER");
+        String key = "refinancing-" + UUID.randomUUID();
+        var body = new ApiDtos.CreateRefinancingRequest(6);
+        String payload = json.writeValueAsString(body);
+        String path = "/api/v1/payment-plans/" + granted.paymentPlanId + "/refinancing-requests";
+
+        List<MvcResult> responses = runTogether(() -> httpPost(path, auth, key, payload), () -> httpPost(path, auth, key, payload));
+
+        String first = responses.get(0).getResponse().getContentAsString();
+        assertThat(responses).allSatisfy(response -> assertThat(response.getResponse().getStatus()).isEqualTo(201));
+        assertThat(responses.get(1).getResponse().getContentAsString()).isEqualTo(first);
+        long refinancingId = json.readTree(first).path("id").asLong();
+        assertThat(refinancings.findAll().stream().filter(item -> item.originalPlanId.equals(granted.paymentPlanId))).hasSize(1);
+        assertThat(refinancings.findById(refinancingId)).isPresent();
+        assertThat(idempotencyRows(auth.getName(), "POST:/payment-plans/{planId}/refinancing-requests:" + granted.paymentPlanId, key)).isOne();
+
+        mvc.perform(post(path).with(authentication(auth)).header("Idempotency-Key", key)
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsBytes(new ApiDtos.CreateRefinancingRequest(5))))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"));
+        assertThat(refinancings.findAll().stream().filter(item -> item.originalPlanId.equals(granted.paymentPlanId))).hasSize(1);
+    }
+
+    private Fixture fixture(String prefix) {
+        String suffix = UUID.randomUUID().toString();
+        setActor(identity("idempotency-fixture-" + suffix, null, "RENTAS"));
+        TaxpayerReference taxpayer = catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(
+            TaxpayerType.CITIZEN, prefix + "-" + suffix,
+            String.format("%08d", Math.floorMod(suffix.hashCode(), 100_000_000)), null, "Synthetic idempotency test"));
+        TaxConcept concept = catalog.createConcept(new ApiDtos.CreateTaxConceptRequest(
+            prefix + "_" + suffix.replace('-', '_'), "Synthetic " + prefix, null, TaxConceptType.FEE, "M5"));
+        TaxConfiguration configuration = catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(
+            concept.id, CalculationType.FIXED, null, new BigDecimal("100.00"), null, null, true, true,
+            LocalDate.now().minusDays(1), null));
+        catalog.submit(configuration.id);
+        TestActorSupport.asApprover(() -> catalog.approve(configuration.id));
+        var liquidation = liquidationService.create(new ApiDtos.LiquidationRequest(taxpayer.id, concept.id,
+            YearMonth.now().toString(), BigDecimal.ZERO, LocalDate.now().plusDays(30)));
+        Debt debt = debts.findByLiquidationId(liquidation.id).orElseThrow();
+        return new Fixture(taxpayer, concept, debt.id);
+    }
+
+    private void plansConfiguration() {
+        planWorkflow.createConfiguration(new ApiDtos.CreatePaymentPlanConfigurationRequest(
+            1, 12, BigDecimal.ZERO, BigDecimal.ZERO, 0, 2, true, true, 2,
+            LocalDate.now().minusDays(1), null, true));
+    }
+
+    private long idempotencyRows(String actor, String operation, String key) {
+        return jdbc.queryForObject("select count(*) from idempotency_request where actor_id=? and operation=? and idempotency_key=?",
+            Long.class, actor, operation, key);
+    }
+
+    private MvcResult httpPost(String path, UsernamePasswordAuthenticationToken auth, String key, String body) throws Exception {
+        return mvc.perform(post(path).with(authentication(auth)).header("Idempotency-Key", key)
+                .contentType(MediaType.APPLICATION_JSON).content(body))
+            .andReturn();
+    }
+
+    private static UsernamePasswordAuthenticationToken identity(String actor, Long taxpayerId, String role) {
+        return new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity(actor, taxpayerId), null,
+            List.of(new SimpleGrantedAuthority("ROLE_" + role)));
+    }
+
+    private static void setActor(UsernamePasswordAuthenticationToken auth) {
+        SecurityContextHolder.getContext().setAuthentication(auth);
+    }
+
+    private static List<MvcResult> runTogether(Callable<MvcResult> first, Callable<MvcResult> second) throws Exception {
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        try {
+            List<Future<MvcResult>> futures = List.of(
+                pool.submit(task(first, ready, start)), pool.submit(task(second, ready, start)));
+            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+            return List.of(futures.get(0).get(30, TimeUnit.SECONDS), futures.get(1).get(30, TimeUnit.SECONDS));
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    private static Callable<MvcResult> task(Callable<MvcResult> action, CountDownLatch ready, CountDownLatch start) {
+        return () -> {
+            ready.countDown();
+            start.await();
+            try { return action.call(); }
+            finally { SecurityContextHolder.clearContext(); }
+        };
+    }
+
+    private record Fixture(TaxpayerReference taxpayer, TaxConcept concept, Long debtId) {}
+}
