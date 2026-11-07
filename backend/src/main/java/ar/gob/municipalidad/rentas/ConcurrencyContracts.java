@@ -111,7 +111,7 @@ class IdempotencyService implements IdempotencyExecutor {
     }
 
     private <T> T deserialize(String value, Class<T> responseType) {
-        try { return json.readValue(value, responseType); }
+        try { return json.readerFor(responseType).without(com.fasterxml.jackson.databind.DeserializationFeature.ADJUST_DATES_TO_CONTEXT_TIME_ZONE).readValue(value); }
         catch (JsonProcessingException ex) { throw new IllegalStateException("No se pudo recuperar el resultado idempotente", ex); }
     }
 

@@ -111,17 +111,23 @@ class BulkStabilityTests {
         liquidations.create(new ApiDtos.LiquidationRequest(fixture.taxpayers().get(2), fixture.conceptId(),
             YearMonth.now().toString(), BigDecimal.ZERO, LocalDate.now().plusDays(30)));
         long beforeLiquidations = liquidationRepository.count(), beforeDebts = debts.count();
-        for (int attempt = 0; attempt < 2; attempt++) {
-            businessError(() -> runs.execute(fixture.runId()), "DUPLICATE_LIQUIDATION");
-            assertThat(liquidationRepository.count()).isEqualTo(beforeLiquidations);
-            assertThat(debts.count()).isEqualTo(beforeDebts);
-            var stored = runs.detail(fixture.runId());
-            assertThat(stored.run().status).isEqualTo(LiquidationRunStatus.APPROVED);
-            assertThat(stored.items()).allSatisfy(item -> {
-                assertThat(item.status).isEqualTo(LiquidationRunItemStatus.VALID);
-                assertThat(item.liquidationId).isNull();
-            });
-        }
+        businessError(() -> runs.execute(fixture.runId()), "DUPLICATE_LIQUIDATION");
+        assertThat(liquidationRepository.count()).isEqualTo(beforeLiquidations);
+        assertThat(debts.count()).isEqualTo(beforeDebts);
+        var stored = runs.detail(fixture.runId());
+        assertThat(stored.run().status).isEqualTo(LiquidationRunStatus.FAILED);
+        assertThat(stored.run().validItems).isZero();
+        assertThat(stored.run().errorItems).isEqualTo(3);
+        assertThat(stored.items()).allSatisfy(item -> {
+            assertThat(item.status).isEqualTo(LiquidationRunItemStatus.ERROR);
+            assertThat(item.liquidationId).isNull();
+        });
+        assertThat(stored.items()).filteredOn(item -> item.errorCode.equals("DUPLICATE_LIQUIDATION"))
+            .singleElement().satisfies(item -> assertThat(item.taxpayerId).isEqualTo(fixture.taxpayers().get(2)));
+        assertThat(stored.items()).filteredOn(item -> item.errorCode.equals("LIQUIDATION_RUN_ABORTED")).hasSize(2);
+        businessError(() -> runs.execute(fixture.runId()), "RUN_NOT_APPROVED");
+        assertThat(liquidationRepository.count()).isEqualTo(beforeLiquidations);
+        assertThat(debts.count()).isEqualTo(beforeDebts);
     }
 
     @Test
@@ -134,7 +140,12 @@ class BulkStabilityTests {
         businessError(() -> runs.execute(fixture.runId()), "RUN_CONFIGURATION_CHANGED");
         assertThat(liquidationRepository.count()).isEqualTo(before);
         assertThat(debts.count()).isEqualTo(debtCount);
-        assertThat(runs.detail(fixture.runId()).run().status).isEqualTo(LiquidationRunStatus.APPROVED);
+        var stored = runs.detail(fixture.runId());
+        assertThat(stored.run().status).isEqualTo(LiquidationRunStatus.FAILED);
+        assertThat(stored.run().validItems).isZero();
+        assertThat(stored.run().errorItems).isEqualTo(3);
+        assertThat(stored.items()).filteredOn(item -> item.errorCode.equals("RUN_CONFIGURATION_CHANGED")).hasSize(1);
+        assertThat(stored.items()).filteredOn(item -> item.errorCode.equals("LIQUIDATION_RUN_ABORTED")).hasSize(2);
     }
 
     @Test
