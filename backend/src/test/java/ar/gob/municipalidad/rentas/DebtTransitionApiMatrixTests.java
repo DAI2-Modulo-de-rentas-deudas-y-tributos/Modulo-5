@@ -249,6 +249,68 @@ class DebtTransitionApiMatrixTests {
         assertThat(stored.outstandingBalance).isEqualByComparingTo("90.00");
     }
 
+    @Test void activePlanDebtRejectsCreditApplicationWithoutPersistingEconomicEffects() throws Exception {
+        LocalDate today=dates.today();
+        Debt planDebt=createDebt(today);
+        Debt creditSource=createDebt(today,planDebt.taxpayerId);
+        createPlanConfiguration(today);
+        DemoAuthSessions sessions=new DemoAuthSessions(demoUsers,taxpayers,passwordEncoder,demoAuth);
+        String taxpayerSession=sessions.token(DemoRole.TAXPAYER,planDebt.taxpayerId);
+        String rentasSession=sessions.token(DemoRole.RENTAS);
+        String requestBody=json.writeValueAsString(new ApiDtos.CreatePaymentPlanRequest(
+            planDebt.taxpayerId,List.of(planDebt.id),2));
+
+        SecurityContextHolder.clearContext();
+        String requestResponse=mvc.perform(post("/api/v1/payment-plan-requests").header("X-Demo-Session",taxpayerSession)
+                .contentType(MediaType.APPLICATION_JSON).content(requestBody))
+            .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        long requestId=json.readTree(requestResponse).get("id").asLong();
+
+        SecurityContextHolder.clearContext();
+        mvc.perform(post("/api/v1/payment-plan-requests/{id}/grant",requestId).header("X-Demo-Session",rentasSession)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"downPaymentAmount\":null}"))
+            .andExpect(status().isOk());
+        PaymentPlan plan=plans.findById(planRequests.findById(requestId).orElseThrow().paymentPlanId).orElseThrow();
+        assertThat(plan.status).isEqualTo(PaymentPlanStatus.ACTIVE);
+
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+            new AuthenticatedIdentity("state-matrix-rentas",null),null,
+            List.of(new SimpleGrantedAuthority("ROLE_RENTAS"),new SimpleGrantedAuthority("ROLE_CASHIER"))));
+        Payment sourcePayment=paymentService.register(new ApiDtos.RegisterPaymentRequest(planDebt.taxpayerId,
+            PaymentMethod.CASH,new BigDecimal("120.00"),List.of(new ApiDtos.AllocationRequest(creditSource.id,new BigDecimal("100.00")))));
+        CreditBalance credit=credits.findBySourcePaymentId(sourcePayment.id).orElseThrow();
+        assertThat(credit.availableAmount).isEqualByComparingTo("20.00");
+
+        Debt beforeDebt=debts.findById(planDebt.id).orElseThrow();
+        CreditBalance beforeCredit=credits.findById(credit.id).orElseThrow();
+        long applicationsBefore=creditApplications.count();
+        long paymentsBefore=payments.count();
+        long allocationsBefore=allocations.count();
+        long outboxBefore=outbox.count();
+
+        SecurityContextHolder.clearContext();
+        mvc.perform(post("/api/v1/credit-balances/{id}/apply",credit.id).header("X-Demo-Session",rentasSession)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(new ApiDtos.ApplyCreditBalanceRequest(planDebt.id,new BigDecimal("10.00")))))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("DEBT_IN_ACTIVE_PAYMENT_PLAN"));
+
+        assertThat(debts.findById(planDebt.id).orElseThrow()).satisfies(stored->{
+            assertThat(stored.status).isEqualTo(beforeDebt.status);
+            assertThat(stored.currentAmount).isEqualByComparingTo(beforeDebt.currentAmount);
+            assertThat(stored.outstandingBalance).isEqualByComparingTo(beforeDebt.outstandingBalance);
+        });
+        assertThat(credits.findById(credit.id).orElseThrow()).satisfies(stored->{
+            assertThat(stored.status).isEqualTo(beforeCredit.status);
+            assertThat(stored.originalAmount).isEqualByComparingTo(beforeCredit.originalAmount);
+            assertThat(stored.availableAmount).isEqualByComparingTo(beforeCredit.availableAmount);
+        });
+        assertThat(creditApplications.count()).isEqualTo(applicationsBefore);
+        assertThat(payments.count()).isEqualTo(paymentsBefore);
+        assertThat(allocations.count()).isEqualTo(allocationsBefore);
+        assertThat(outbox.count()).isEqualTo(outboxBefore);
+    }
+
     @ParameterizedTest(name = "GRANTED plan request rejects {0} with 409")
     @MethodSource("invalidGrantedPlanRequestTransitions")
     void grantedPlanRequestRejectsFurtherTransitionsAndKeepsItsState(String action,DemoRole actor,Object body) throws Exception {
