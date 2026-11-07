@@ -1,6 +1,7 @@
 package ar.gob.municipalidad.rentas;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -111,7 +112,9 @@ class IdempotencyService implements IdempotencyExecutor {
     }
 
     private <T> T deserialize(String value, Class<T> responseType) {
-        try { return json.readValue(value, responseType); }
+        try { return json.readerFor(responseType)
+            .without(DeserializationFeature.ADJUST_DATES_TO_CONTEXT_TIME_ZONE)
+            .readValue(value); }
         catch (JsonProcessingException ex) { throw new IllegalStateException("No se pudo recuperar el resultado idempotente", ex); }
     }
 
