@@ -56,6 +56,12 @@ class CreationIdempotencyEndpointPostgreSqlTest {
 
     @Autowired MockMvc mvc;
     @Autowired CatalogService catalog;
+    @Autowired ExemptionService exemptions;
+    @Autowired TaxConceptRepository concepts;
+    @Autowired TaxConfigurationRepository configurations;
+    @Autowired TaxpayerRepository taxpayers;
+    @Autowired ExemptionRequestRepository exemptionRequests;
+    @Autowired ExemptionRequestDocumentRepository exemptionDocuments;
     @Autowired JdbcTemplate jdbc;
     @Autowired ObjectMapper json;
     @Autowired FiscalProcessingDatePolicy fiscalDates;
@@ -151,6 +157,96 @@ class CreationIdempotencyEndpointPostgreSqlTest {
         assertThat(jdbc.queryForObject("select count(*) from payment_plan_configuration", Long.class)).isOne();
     }
 
+    @Test
+    void taxConceptCreationConcurrentReplayReturnsExactResponseAndRejectsChangedBody() throws Exception {
+        var auth = identity("concept-create-" + UUID.randomUUID());
+        String code = "IDEMP_" + UUID.randomUUID().toString().replace("-", "");
+        var request = new ApiDtos.CreateTaxConceptRequest(code, "Concepto sintético", null, TaxConceptType.FEE, "M5");
+        String body = json.writeValueAsString(request);
+        String key = "concept-" + UUID.randomUUID();
+
+        List<MvcResult> responses = concurrentPosts("/api/v1/tax-concepts", auth, key, body);
+        String first = responses.get(0).getResponse().getContentAsString();
+        assertThat(responses).allSatisfy(response -> assertThat(response.getResponse().getStatus()).isEqualTo(201));
+        assertThat(responses.get(1).getResponse().getContentAsString()).isEqualTo(first);
+        assertThat(concepts.findByCode(code)).isPresent();
+        assertThat(idempotencyRows(auth.getName(), "POST:/tax-concepts", key)).isOne();
+
+        var changed = new ApiDtos.CreateTaxConceptRequest(code, "Otro nombre", null, TaxConceptType.FEE, "M5");
+        mvc.perform(post("/api/v1/tax-concepts").with(authentication(auth)).header("Idempotency-Key", key)
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsBytes(changed)))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"));
+        assertThat(concepts.findByCode(code)).isPresent();
+    }
+
+    @Test
+    void taxConfigurationApprovalConcurrentReplayReturnsExactResponseAndRejectsChangedBody() throws Exception {
+        var rentas = identity("tax-config-creator-" + UUID.randomUUID());
+        SecurityContextHolder.getContext().setAuthentication(rentas);
+        TaxConcept concept = createConcept("TAX_CONFIG_APPROVAL");
+        TaxConfiguration configuration = catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(
+            concept.id, CalculationType.FIXED, null, new BigDecimal("100.00"), null, null,
+            true, true, LocalDate.now().minusDays(1), null));
+        catalog.submit(configuration.id);
+
+        var supervisor = identity("tax-config-approver-" + UUID.randomUUID(), "SUPERVISOR", null);
+        String key = "tax-config-approve-" + UUID.randomUUID();
+        String body = json.writeValueAsString(new ApiDtos.ApprovalRequest("Aprobación sintética"));
+        String path = "/api/v1/tax-configurations/" + configuration.id + "/approve";
+        List<MvcResult> responses = concurrentPosts(path, supervisor, key, body);
+
+        String first = responses.get(0).getResponse().getContentAsString();
+        assertThat(responses).allSatisfy(response -> assertThat(response.getResponse().getStatus()).isEqualTo(200));
+        assertThat(responses.get(1).getResponse().getContentAsString()).isEqualTo(first);
+        assertThat(configurations.findById(configuration.id).orElseThrow().status).isEqualTo(TaxConfigurationStatus.ACTIVE);
+        assertThat(idempotencyRows(supervisor.getName(), "POST:/tax-configurations/{id}/approve:" + configuration.id, key)).isOne();
+
+        mvc.perform(post(path).with(authentication(supervisor)).header("Idempotency-Key", key)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsBytes(new ApiDtos.ApprovalRequest("Observación distinta"))))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"));
+        assertThat(configurations.findById(configuration.id).orElseThrow().status).isEqualTo(TaxConfigurationStatus.ACTIVE);
+    }
+
+    @Test
+    void exemptionDocumentationRequestConcurrentReplayKeepsOneStateTransitionAndRejectsChangedBody() throws Exception {
+        var rentas = identity("exemption-setup-" + UUID.randomUUID());
+        SecurityContextHolder.getContext().setAuthentication(rentas);
+        String dni = "%08d".formatted(Math.floorMod(UUID.randomUUID().getMostSignificantBits(), 100_000_000L));
+        TaxpayerReference taxpayer = catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(
+            TaxpayerType.CITIZEN, "exemption-idempotency-" + UUID.randomUUID(), dni, null, "Synthetic taxpayer"));
+        taxpayer.canonicalCitizenId = UUID.randomUUID();
+        taxpayers.saveAndFlush(taxpayer);
+        TaxConcept concept = createConcept("EXEMPTION_DOCS");
+
+        SecurityContextHolder.getContext().setAuthentication(identity("exemption-requester-" + UUID.randomUUID(), "TAXPAYER", taxpayer.id));
+        var request = exemptions.create(new ApiDtos.CreateExemptionRequest(taxpayer.id, concept.id, "Solicitud sintética",
+            new BigDecimal("20.00"), LocalDate.now(), LocalDate.now().plusDays(30)));
+        SecurityContextHolder.getContext().setAuthentication(rentas);
+        exemptions.start(request.id);
+
+        String path = "/api/v1/exemption-requests/" + request.id + "/request-documentation";
+        String key = "exemption-docs-" + UUID.randomUUID();
+        String body = json.writeValueAsString(new ApiDtos.RequestDocumentationRequest("Presentar constancia"));
+        List<MvcResult> responses = concurrentPosts(path, rentas, key, body);
+
+        String first = responses.get(0).getResponse().getContentAsString();
+        assertThat(responses).allSatisfy(response -> assertThat(response.getResponse().getStatus()).isEqualTo(200));
+        assertThat(responses.get(1).getResponse().getContentAsString()).isEqualTo(first);
+        assertThat(exemptionRequests.findById(request.id).orElseThrow().status).isEqualTo(ExemptionRequestStatus.DOCUMENTATION_REQUIRED);
+        assertThat(exemptionDocuments.findByExemptionRequestId(request.id)).isEmpty();
+        assertThat(idempotencyRows(rentas.getName(), "POST:/exemption-requests/{id}/request-documentation:" + request.id, key)).isOne();
+
+        mvc.perform(post(path).with(authentication(rentas)).header("Idempotency-Key", key)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsBytes(new ApiDtos.RequestDocumentationRequest("Otro pedido"))))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"));
+        assertThat(exemptionRequests.findById(request.id).orElseThrow().status).isEqualTo(ExemptionRequestStatus.DOCUMENTATION_REQUIRED);
+    }
+
     private TaxConcept createConcept(String prefix) {
         String unique = prefix + "_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
         return catalog.createConcept(new ApiDtos.CreateTaxConceptRequest(unique, unique, null, TaxConceptType.FEE, "M5"));
@@ -186,8 +282,12 @@ class CreationIdempotencyEndpointPostgreSqlTest {
     }
 
     private static UsernamePasswordAuthenticationToken identity(String actor) {
-        return new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity(actor, null), null,
-            List.of(new SimpleGrantedAuthority("ROLE_RENTAS")));
+        return identity(actor, "RENTAS", null);
+    }
+
+    private static UsernamePasswordAuthenticationToken identity(String actor, String role, Long taxpayerId) {
+        return new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity(actor, taxpayerId), null,
+            List.of(new SimpleGrantedAuthority("ROLE_" + role)));
     }
 
     private static List<MvcResult> runTogether(Callable<MvcResult> first, Callable<MvcResult> second) throws Exception {
