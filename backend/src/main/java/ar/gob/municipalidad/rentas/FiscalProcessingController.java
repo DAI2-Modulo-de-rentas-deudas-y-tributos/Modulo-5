@@ -43,7 +43,7 @@ class FiscalProcessingController {
     @PostMapping("/debts/{id}/late-charge-preview") @PreAuthorize("hasAnyRole('RENTAS','SUPERVISOR','AUDITOR')")
     LateChargeResponse preview(@PathVariable Long id,@RequestBody(required=false) CalculationDateRequest body){LocalDate date=date(body);dates.requireNotFuture(date);return lateCharges.preview(id,date);}
     @PostMapping("/debts/{id}/late-charges") @PreAuthorize("hasAnyRole('RENTAS','SUPERVISOR')")
-    LateChargeResponse apply(@PathVariable Long id,@RequestBody(required=false) CalculationDateRequest body,@RequestHeader(name="Idempotency-Key",required=false) String key){return idempotency.execute("POST:/debts/{id}/late-charges:"+id,key,body,LateChargeResponse.class,()->{LocalDate date=date(body);dates.requireNotFuture(date);return lateCharges.apply(id,date);});}
+    ResponseEntity<LateChargeResponse> apply(@PathVariable Long id,@RequestBody(required=false) CalculationDateRequest body,@RequestHeader(name="If-Match",required=false) String ifMatch,@RequestHeader(name="Idempotency-Key",required=false) String key){var result=idempotency.execute("POST:/debts/{id}/late-charges:"+id,key,ifMatch==null?body:new ApiDtos.IfMatchIdempotencyRequest(ifMatch,body),LateChargeResponse.class,()->{LocalDate date=date(body);dates.requireNotFuture(date);return lateCharges.apply(id,date,ifMatch);});return ResponseEntity.ok().eTag(lateCharges.debtTag(id)).body(result);}
     @ApiResponse(responseCode="202",description="El procesamiento fue aceptado para ejecución asíncrona",useReturnTypeSchema=true)
     @PostMapping("/administration/process-due-dates") @PreAuthorize("hasAnyRole('RENTAS','SUPERVISOR')")
     ResponseEntity<DueDateResponse> process(@RequestBody(required=false) DueDateRequest body,@RequestHeader(name="Idempotency-Key",required=false) String key){DueDateResponse queued=idempotency.execute("POST:/administration/process-due-dates",key,body,DueDateResponse.class,()->{LocalDate date=dates.todayIfMissing(body==null?null:body.processingDate());dates.requireNotFuture(date);return dueDates.enqueue(date);});return ResponseEntity.accepted().body(dueDates.get(queued.id()));}
@@ -72,10 +72,13 @@ class FiscalProcessingDatePolicy {
 @org.springframework.stereotype.Service
 class LateChargeService {
     private static final BigDecimal HUNDRED=new BigDecimal("100");
-    private final DebtRepository debts;private final LateChargeRuleRepository rules;private final LateChargeApplicationRepository applications;
+    private final DebtRepository debts;private final LateChargeRuleRepository rules;private final LateChargeApplicationRepository applications;private final PaymentPlanRepository plans;private final PaymentPlanDebtRepository planDebts;
     private final AdjustmentRepository adjustments;private final AuditService audit;private final CurrentIdentity identity;private final FiscalProcessingDatePolicy dates;
+    @org.springframework.beans.factory.annotation.Autowired
+    LateChargeService(DebtRepository debts,LateChargeRuleRepository rules,LateChargeApplicationRepository applications,PaymentPlanRepository plans,PaymentPlanDebtRepository planDebts,
+        AdjustmentRepository adjustments,AuditService audit,CurrentIdentity identity,FiscalProcessingDatePolicy dates){this.debts=debts;this.rules=rules;this.applications=applications;this.plans=plans;this.planDebts=planDebts;this.adjustments=adjustments;this.audit=audit;this.identity=identity;this.dates=dates;}
     LateChargeService(DebtRepository debts,LateChargeRuleRepository rules,LateChargeApplicationRepository applications,
-        AdjustmentRepository adjustments,AuditService audit,CurrentIdentity identity,FiscalProcessingDatePolicy dates){this.debts=debts;this.rules=rules;this.applications=applications;this.adjustments=adjustments;this.audit=audit;this.identity=identity;this.dates=dates;}
+        AdjustmentRepository adjustments,AuditService audit,CurrentIdentity identity,FiscalProcessingDatePolicy dates){this(debts,rules,applications,null,null,adjustments,audit,identity,dates);}
 
     FiscalProcessingController.LateChargeResponse preview(Long debtId,LocalDate date){
         dates.requireNotFuture(date);
@@ -86,9 +89,10 @@ class LateChargeService {
     }
     @Transactional(readOnly=true) Map<Long,FiscalProcessingController.LateChargeResponse> previewIfApplicable(Collection<Debt> candidates,LocalDate date){List<Debt> chargeable=candidates.stream().filter(debt->debt.status!=DebtStatus.PAID&&debt.status!=DebtStatus.CANCELLED&&debt.outstandingBalance.signum()>0&&date.isAfter(debt.dueDate)).toList();if(chargeable.isEmpty())return Map.of();List<LateChargeRule> applicable=rules.findApplicable(date,PageRequest.of(0,1));if(applicable.isEmpty())return Map.of();LateChargeRule rule=applicable.get(0);List<LateChargeApplication> previous=applications.findByDebtIdIn(chargeable.stream().map(x->x.id).toList());Map<Long,BigDecimal> totals=previous.stream().collect(java.util.stream.Collectors.groupingBy(x->x.debtId,java.util.stream.Collectors.reducing(BigDecimal.ZERO,x->x.totalAdjustment,BigDecimal::add)));Set<Long> alreadyApplied=previous.stream().filter(x->x.ruleId.equals(rule.id)&&x.calculationDate.equals(date)).map(x->x.debtId).collect(java.util.stream.Collectors.toSet());Map<Long,FiscalProcessingController.LateChargeResponse> result=new HashMap<>();for(Debt debt:chargeable)if(!alreadyApplied.contains(debt.id))result.put(debt.id,calculate(debt,rule,date,false,null,money(totals.getOrDefault(debt.id,BigDecimal.ZERO))));return result;}
     boolean hasApplicableRule(LocalDate date){return !rules.findApplicable(date,PageRequest.of(0,1)).isEmpty();}
-    @Transactional FiscalProcessingController.LateChargeResponse apply(Long debtId,LocalDate date){
+    @Transactional FiscalProcessingController.LateChargeResponse apply(Long debtId,LocalDate date){return apply(debtId,date,null);}
+    @Transactional FiscalProcessingController.LateChargeResponse apply(Long debtId,LocalDate date,String ifMatch){
         dates.requireNotFuture(date);
-        Debt debt=debts.findByIdForUpdate(debtId).orElseThrow(()->CatalogService.notFound("Deuda"));LateChargeRule rule=rule(date);
+        Debt debt=debts.findByIdForUpdate(debtId).orElseThrow(()->CatalogService.notFound("Deuda"));if(ifMatch!=null)EntityTags.requireIfMatch(debtTag(debt),ifMatch);LateChargeRule rule=rule(date);
         Optional<LateChargeApplication> existing=applications.findByDebtIdAndRuleIdAndCalculationDate(debt.id,rule.id,date);
         if(existing.isPresent())return response(existing.get(),rule.code,false);
         FiscalProcessingController.LateChargeResponse value=calculate(debt,rule,date,false,null);
@@ -113,6 +117,8 @@ class LateChargeService {
     }
     private void createAdjustment(Debt debt,AdjustmentType type,BigDecimal amount,BigDecimal previous,String reason){if(amount.signum()==0)return;AdjustmentRequest a=new AdjustmentRequest();a.debtId=debt.id;a.type=type;a.amount=amount;a.reason=reason;a.status=AdjustmentStatus.APPROVED;a.requestedBy=a.resolvedBy=identity.get().userId();a.requestedAt=a.resolvedAt=OffsetDateTime.now();a.resolutionReason="Procesamiento automático de vencimiento";a.previousDebtAmount=previous;a.newDebtAmount=previous.add(amount);adjustments.save(a);}
     private Debt debt(Long id){return debts.findById(id).orElseThrow(()->CatalogService.notFound("Deuda"));}
+    String debtTag(Long id){Debt debt=debts.findById(id).orElseThrow(()->CatalogService.notFound("Deuda"));return debtTag(debt);}
+    private String debtTag(Debt debt){boolean inPlan=plans.existsByDebtIdAndStatus(debt.id,PaymentPlanStatus.ACTIVE)||planDebts.existsByDebtIdAndStatus(debt.id,PaymentPlanDebtStatus.ACTIVE);return EntityTags.debt(ApiResponses.of(debt,inPlan));}
     private LateChargeRule rule(LocalDate date){List<LateChargeRule> found=rules.findApplicable(date,PageRequest.of(0,1));CatalogService.require(!found.isEmpty(),"LATE_CHARGE_RULE_NOT_FOUND","No existe regla de recargos vigente");return found.get(0);}
     private BigDecimal money(BigDecimal value){return MonetaryAmounts.normalize(value);}
     private FiscalProcessingController.LateChargeResponse response(LateChargeApplication x,String code,boolean applied){return new FiscalProcessingController.LateChargeResponse(x.id,x.debtId,x.calculationDate,x.daysOverdue,x.principal,x.surchargeRate,x.surchargeAmount,x.interestRate,x.interestAmount,x.previousAdjustments,x.totalAdjustment,x.updatedTotal,code,applied);}
