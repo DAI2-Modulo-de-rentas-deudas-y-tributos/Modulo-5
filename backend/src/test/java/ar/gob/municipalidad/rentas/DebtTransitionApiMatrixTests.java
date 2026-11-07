@@ -30,6 +30,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -605,6 +606,40 @@ class DebtTransitionApiMatrixTests {
         );
     }
 
+    @Test void activeNonDefaultedPlanCannotRequestExpirationAndRemainsUnchanged() throws Exception {
+        LocalDate today=dates.today();
+        Debt debt=createDebt(today);
+        createPlanConfiguration(today);
+        DemoAuthSessions sessions=new DemoAuthSessions(demoUsers,taxpayers,passwordEncoder,demoAuth);
+        String taxpayer=sessions.token(DemoRole.TAXPAYER,debt.taxpayerId);
+        String rentas=sessions.token(DemoRole.RENTAS);
+        String response=performAsSession(post("/api/v1/payment-plan-requests").header("X-Demo-Session",taxpayer)
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(
+                    new ApiDtos.CreatePaymentPlanRequest(debt.taxpayerId,List.of(debt.id),2))))
+            .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        long requestId=json.readTree(response).get("id").asLong();
+        performAsSession(post("/api/v1/payment-plan-requests/{id}/grant",requestId).header("X-Demo-Session",rentas)
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(new ApiDtos.GrantPaymentPlanRequest(null))))
+            .andExpect(status().isOk());
+        PaymentPlan plan=plans.findById(planRequests.findById(requestId).orElseThrow().paymentPlanId).orElseThrow();
+        assertThat(plan.status).isEqualTo(PaymentPlanStatus.ACTIVE);
+        assertThat(installments.findByPaymentPlanIdOrderByNumber(plan.id)).allMatch(i->!i.dueDate.isBefore(today));
+        long expirationsBefore=expirations.count();
+        long outboxBefore=outbox.count();
+        BigDecimal balanceBefore=plan.outstandingPlanAmount;
+
+        performAsSession(post("/api/v1/payment-plans/{planId}/expiration-requests",plan.id)
+                .header("X-Demo-Session",rentas).contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(new ApiDtos.CreatePlanExpirationRequest("not defaulted"))))
+            .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("PLAN_NOT_DEFAULTED"));
+
+        PaymentPlan stored=plans.findById(plan.id).orElseThrow();
+        assertThat(stored.status).isEqualTo(PaymentPlanStatus.ACTIVE);
+        assertThat(stored.outstandingPlanAmount).isEqualByComparingTo(balanceBefore);
+        assertThat(expirations.count()).isEqualTo(expirationsBefore);
+        assertThat(outbox.count()).isEqualTo(outboxBefore);
+    }
+
     @Test void exemptionRequestCannotStartReviewTwiceAndKeepsReviewState() throws Exception {
         LocalDate today=dates.today();
         Debt debt=createDebt(today);
@@ -1032,6 +1067,7 @@ class DebtTransitionApiMatrixTests {
     private static Stream<Arguments> invalidOtherLiquidationRunTransitions() {
         return Stream.of(
             Arguments.of("DRAFT","reject",DemoRole.SUPERVISOR,"RUN_NOT_PENDING"),
+            Arguments.of("DRAFT","approve",DemoRole.SUPERVISOR,"RUN_NOT_PENDING"),
             Arguments.of("DRAFT","execute",DemoRole.RENTAS,"RUN_NOT_APPROVED"),
             Arguments.of("PENDING_APPROVAL","preview",DemoRole.RENTAS,"RUN_NOT_DRAFT"),
             Arguments.of("PENDING_APPROVAL","submit",DemoRole.RENTAS,"RUN_NOT_READY"),
@@ -1045,6 +1081,308 @@ class DebtTransitionApiMatrixTests {
             Arguments.of("EXECUTED","approve",DemoRole.SUPERVISOR,"RUN_NOT_PENDING"),
             Arguments.of("EXECUTED","reject",DemoRole.SUPERVISOR,"RUN_NOT_PENDING"),
             Arguments.of("EXECUTED","execute",DemoRole.RENTAS,"RUN_NOT_APPROVED")
+        );
+    }
+
+    @ParameterizedTest(name = "{0} tax configuration rejects {1} with 409 and no mutation")
+    @MethodSource("invalidTaxConfigurationTransitions")
+    void invalidTaxConfigurationTransitionReturnsConflictWithoutMutation(
+            TaxConfigurationStatus state,String action,String code) throws Exception {
+        LocalDate today=dates.today();
+        Debt debt=createDebt(today);
+        TaxConfiguration configuration=catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(
+            debt.taxConceptId,CalculationType.FIXED,null,new BigDecimal("100.00"),null,null,true,true,today.minusDays(1),null));
+        Long configurationId=configuration.id;
+        DemoAuthSessions sessions=new DemoAuthSessions(demoUsers,taxpayers,passwordEncoder,demoAuth);
+        if(state!=TaxConfigurationStatus.DRAFT) {
+            catalog.submit(configurationId);
+            if(state==TaxConfigurationStatus.ACTIVE||state==TaxConfigurationStatus.INACTIVE) {
+                TestActorSupport.asApprover(()->catalog.approve(configurationId));
+                if(state==TaxConfigurationStatus.INACTIVE)catalog.deactivate(configurationId,"state-matrix fixture");
+            } else if(state==TaxConfigurationStatus.REJECTED) {
+                TestActorSupport.asApprover(()->catalog.reject(configurationId));
+            }
+        }
+        configuration=taxConfigurations.findById(configurationId).orElseThrow();
+        assertThat(configuration.status).isEqualTo(state);
+        String before=json.writeValueAsString(ApiResponses.of(configuration));
+        long configurationsBefore=taxConfigurations.count();
+        long outboxBefore=outbox.count();
+        List<Long> auditBefore=audit.findByEntityTypeAndEntityIdOrderByOccurredAtAscIdAsc(
+            "TaxConfiguration",configurationId.toString()).stream().map(entry->entry.id).toList();
+        var call=switch(action) {
+            case "submit" -> post("/api/v1/tax-configurations/{id}/submit",configuration.id)
+                .header("X-Demo-Session",sessions.token(DemoRole.RENTAS));
+            case "approve" -> post("/api/v1/tax-configurations/{id}/approve",configuration.id)
+                .header("X-Demo-Session",sessions.token(DemoRole.SUPERVISOR));
+            case "reject" -> post("/api/v1/tax-configurations/{id}/reject",configuration.id)
+                .header("X-Demo-Session",sessions.token(DemoRole.SUPERVISOR)).contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(new ApiDtos.RejectionRequest("invalid transition")));
+            case "deactivate" -> post("/api/v1/tax-configurations/{id}/deactivate",configuration.id)
+                .header("X-Demo-Session",sessions.token(DemoRole.SUPERVISOR)).contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(new ApiDtos.DeactivationRequest("invalid transition")));
+            case "update" -> patch("/api/v1/tax-configurations/{id}",configuration.id)
+                .header("X-Demo-Session",sessions.token(DemoRole.RENTAS))
+                .header("If-Match",EntityTags.taxConfiguration(configuration)).contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(new ApiDtos.UpdateTaxConfigurationRequest(null,null,
+                    new BigDecimal("101.00"),null,null,null,null,null,null)));
+            default -> throw new IllegalArgumentException(action);
+        };
+        SecurityContextHolder.clearContext();
+        mvc.perform(call).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value(code));
+
+        TaxConfiguration stored=taxConfigurations.findById(configuration.id).orElseThrow();
+        assertThat(json.writeValueAsString(ApiResponses.of(stored))).isEqualTo(before);
+        assertThat(taxConfigurations.count()).isEqualTo(configurationsBefore);
+        assertThat(outbox.count()).isEqualTo(outboxBefore);
+        assertThat(audit.findByEntityTypeAndEntityIdOrderByOccurredAtAscIdAsc(
+            "TaxConfiguration",configurationId.toString()).stream().map(entry->entry.id).toList())
+            .containsExactlyElementsOf(auditBefore);
+    }
+
+    private static Stream<Arguments> invalidTaxConfigurationTransitions() {
+        return Stream.of(
+            Arguments.of(TaxConfigurationStatus.DRAFT,"approve","INVALID_CONFIGURATION_TRANSITION"),
+            Arguments.of(TaxConfigurationStatus.DRAFT,"reject","INVALID_CONFIGURATION_TRANSITION"),
+            Arguments.of(TaxConfigurationStatus.DRAFT,"deactivate","CONFIGURATION_NOT_ACTIVE"),
+            Arguments.of(TaxConfigurationStatus.PENDING_APPROVAL,"submit","INVALID_CONFIGURATION_TRANSITION"),
+            Arguments.of(TaxConfigurationStatus.PENDING_APPROVAL,"update","CONFIGURATION_NOT_EDITABLE"),
+            Arguments.of(TaxConfigurationStatus.PENDING_APPROVAL,"deactivate","CONFIGURATION_NOT_ACTIVE"),
+            Arguments.of(TaxConfigurationStatus.ACTIVE,"submit","INVALID_CONFIGURATION_TRANSITION"),
+            Arguments.of(TaxConfigurationStatus.ACTIVE,"update","CONFIGURATION_NOT_EDITABLE"),
+            Arguments.of(TaxConfigurationStatus.ACTIVE,"approve","INVALID_CONFIGURATION_TRANSITION"),
+            Arguments.of(TaxConfigurationStatus.ACTIVE,"reject","INVALID_CONFIGURATION_TRANSITION"),
+            Arguments.of(TaxConfigurationStatus.REJECTED,"submit","INVALID_CONFIGURATION_TRANSITION"),
+            Arguments.of(TaxConfigurationStatus.REJECTED,"update","CONFIGURATION_NOT_EDITABLE"),
+            Arguments.of(TaxConfigurationStatus.REJECTED,"approve","INVALID_CONFIGURATION_TRANSITION"),
+            Arguments.of(TaxConfigurationStatus.REJECTED,"reject","INVALID_CONFIGURATION_TRANSITION"),
+            Arguments.of(TaxConfigurationStatus.REJECTED,"deactivate","CONFIGURATION_NOT_ACTIVE"),
+            Arguments.of(TaxConfigurationStatus.INACTIVE,"submit","INVALID_CONFIGURATION_TRANSITION"),
+            Arguments.of(TaxConfigurationStatus.INACTIVE,"update","CONFIGURATION_NOT_EDITABLE"),
+            Arguments.of(TaxConfigurationStatus.INACTIVE,"approve","INVALID_CONFIGURATION_TRANSITION"),
+            Arguments.of(TaxConfigurationStatus.INACTIVE,"reject","INVALID_CONFIGURATION_TRANSITION"),
+            Arguments.of(TaxConfigurationStatus.INACTIVE,"deactivate","CONFIGURATION_NOT_ACTIVE")
+        );
+    }
+
+    @ParameterizedTest(name = "{0} adjustment rejects {1} with 409 and no mutation")
+    @MethodSource("invalidResolvedAdjustmentTransitions")
+    void resolvedAdjustmentRejectsSecondResolutionWithoutMutation(AdjustmentStatus state,String action) throws Exception {
+        LocalDate today=dates.today();
+        Debt debt=createDebt(today);
+        DemoAuthSessions sessions=new DemoAuthSessions(demoUsers,taxpayers,passwordEncoder,demoAuth);
+        String rentas=sessions.token(DemoRole.RENTAS);
+        String supervisor=sessions.token(DemoRole.SUPERVISOR);
+        String response=performAsSession(post("/api/v1/adjustments").header("X-Demo-Session",rentas)
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(
+                    new ApiDtos.CreateAdjustmentRequest(debt.id,AdjustmentType.DISCOUNT,new BigDecimal("1.00"),"transition matrix"))))
+            .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        long adjustmentId=json.readTree(response).get("id").asLong();
+        if(state==AdjustmentStatus.APPROVED) {
+            performAsSession(post("/api/v1/adjustments/{id}/approve",adjustmentId).header("X-Demo-Session",supervisor))
+                .andExpect(status().isOk());
+        } else {
+            performAsSession(post("/api/v1/adjustments/{id}/reject",adjustmentId).header("X-Demo-Session",supervisor)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(json.writeValueAsString(new ApiDtos.RejectionRequest("rejected"))))
+                .andExpect(status().isOk());
+        }
+        AdjustmentRequest before=adjustments.findById(adjustmentId).orElseThrow();
+        String adjustmentSnapshot=json.writeValueAsString(ApiResponses.of(before));
+        Debt debtBefore=debts.findById(debt.id).orElseThrow();
+        String debtSnapshot=debtBefore.status+"|"+debtBefore.currentAmount+"|"+debtBefore.outstandingBalance;
+        long adjustmentCountBefore=adjustments.count();
+        long outboxBefore=outbox.count();
+        long auditBefore=audit.count();
+        var call=post("/api/v1/adjustments/{id}/"+action,adjustmentId).header("X-Demo-Session",supervisor);
+        if("reject".equals(action))call.contentType(MediaType.APPLICATION_JSON)
+            .content(json.writeValueAsString(new ApiDtos.RejectionRequest("again")));
+        performAsSession(call).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("ADJUSTMENT_NOT_PENDING"));
+
+        assertThat(json.writeValueAsString(ApiResponses.of(adjustments.findById(adjustmentId).orElseThrow())))
+            .isEqualTo(adjustmentSnapshot);
+        Debt storedDebt=debts.findById(debt.id).orElseThrow();
+        assertThat(storedDebt.status+"|"+storedDebt.currentAmount+"|"+storedDebt.outstandingBalance).isEqualTo(debtSnapshot);
+        assertThat(adjustments.count()).isEqualTo(adjustmentCountBefore);
+        assertThat(outbox.count()).isEqualTo(outboxBefore);
+        assertThat(audit.count()).isEqualTo(auditBefore);
+    }
+
+    private static Stream<Arguments> invalidResolvedAdjustmentTransitions() {
+        return Stream.of(
+            Arguments.of(AdjustmentStatus.APPROVED,"approve"),
+            Arguments.of(AdjustmentStatus.APPROVED,"reject"),
+            Arguments.of(AdjustmentStatus.REJECTED,"approve"),
+            Arguments.of(AdjustmentStatus.REJECTED,"reject")
+        );
+    }
+
+    @ParameterizedTest(name = "{0} plan expiration rejects {1} with 409 and no mutation")
+    @MethodSource("invalidResolvedExpirationTransitions")
+    void resolvedPlanExpirationRejectsSecondResolutionWithoutMutation(PlanExpirationStatus state,String action) throws Exception {
+        LocalDate today=dates.today();
+        Debt debt=createDebt(today);
+        createPlanConfiguration(today);
+        DemoAuthSessions sessions=new DemoAuthSessions(demoUsers,taxpayers,passwordEncoder,demoAuth);
+        String taxpayer=sessions.token(DemoRole.TAXPAYER,debt.taxpayerId);
+        String rentas=sessions.token(DemoRole.RENTAS);
+        String supervisor=sessions.token(DemoRole.SUPERVISOR);
+        String planRequestResponse=performAsSession(post("/api/v1/payment-plan-requests").header("X-Demo-Session",taxpayer)
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(
+                    new ApiDtos.CreatePaymentPlanRequest(debt.taxpayerId,List.of(debt.id),2))))
+            .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        long planRequestId=json.readTree(planRequestResponse).get("id").asLong();
+        performAsSession(post("/api/v1/payment-plan-requests/{id}/grant",planRequestId).header("X-Demo-Session",rentas)
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(new ApiDtos.GrantPaymentPlanRequest(null))))
+            .andExpect(status().isOk());
+        PaymentPlan plan=plans.findById(planRequests.findById(planRequestId).orElseThrow().paymentPlanId).orElseThrow();
+        List<Installment> overdueInstallments=installments.findByPaymentPlanIdOrderByNumber(plan.id);
+        overdueInstallments.forEach(installment->{installment.dueDate=today.minusDays(1);installment.status=InstallmentStatus.OVERDUE;});
+        installments.saveAllAndFlush(overdueInstallments);
+        String expirationResponse=performAsSession(post("/api/v1/payment-plans/{planId}/expiration-requests",plan.id)
+                .header("X-Demo-Session",rentas).contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(new ApiDtos.CreatePlanExpirationRequest("defaulted"))))
+            .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        long expirationId=json.readTree(expirationResponse).get("id").asLong();
+        if(state==PlanExpirationStatus.APPROVED) {
+            performAsSession(post("/api/v1/payment-plan-expirations/{id}/approve",expirationId)
+                    .header("X-Demo-Session",supervisor)).andExpect(status().isOk());
+        } else {
+            performAsSession(post("/api/v1/payment-plan-expirations/{id}/reject",expirationId)
+                    .header("X-Demo-Session",supervisor).contentType(MediaType.APPLICATION_JSON)
+                    .content(json.writeValueAsString(new ApiDtos.RejectionRequest("rejected"))))
+                .andExpect(status().isOk());
+        }
+
+        PlanExpirationRequest before=expirations.findById(expirationId).orElseThrow();
+        String expirationSnapshot=json.writeValueAsString(ApiResponses.of(before));
+        PaymentPlan planBefore=plans.findById(plan.id).orElseThrow();
+        String planSnapshot=planBefore.status+"|"+planBefore.outstandingPlanAmount;
+        List<String> installmentSnapshots=installments.findByPaymentPlanIdOrderByNumber(plan.id).stream()
+            .map(i->i.number+"|"+i.status+"|"+i.paidAmount+"|"+i.outstandingAmount).toList();
+        long expirationCountBefore=expirations.count();
+        long outboxBefore=outbox.count();
+        long auditBefore=audit.count();
+        var call=post("/api/v1/payment-plan-expirations/{id}/"+action,expirationId)
+            .header("X-Demo-Session",supervisor);
+        if("reject".equals(action))call.contentType(MediaType.APPLICATION_JSON)
+            .content(json.writeValueAsString(new ApiDtos.RejectionRequest("again")));
+        performAsSession(call).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("EXPIRATION_NOT_PENDING"));
+
+        assertThat(json.writeValueAsString(ApiResponses.of(expirations.findById(expirationId).orElseThrow())))
+            .isEqualTo(expirationSnapshot);
+        PaymentPlan storedPlan=plans.findById(plan.id).orElseThrow();
+        assertThat(storedPlan.status+"|"+storedPlan.outstandingPlanAmount).isEqualTo(planSnapshot);
+        assertThat(installments.findByPaymentPlanIdOrderByNumber(plan.id).stream()
+            .map(i->i.number+"|"+i.status+"|"+i.paidAmount+"|"+i.outstandingAmount).toList())
+            .containsExactlyElementsOf(installmentSnapshots);
+        assertThat(expirations.count()).isEqualTo(expirationCountBefore);
+        assertThat(outbox.count()).isEqualTo(outboxBefore);
+        assertThat(audit.count()).isEqualTo(auditBefore);
+    }
+
+    private static Stream<Arguments> invalidResolvedExpirationTransitions() {
+        return Stream.of(
+            Arguments.of(PlanExpirationStatus.APPROVED,"approve"),
+            Arguments.of(PlanExpirationStatus.APPROVED,"reject"),
+            Arguments.of(PlanExpirationStatus.REJECTED,"approve"),
+            Arguments.of(PlanExpirationStatus.REJECTED,"reject")
+        );
+    }
+
+    @ParameterizedTest(name = "{0} refinancing request rejects {1} with 409 and no mutation")
+    @MethodSource("invalidRefinancingRequestTransitions")
+    void invalidRefinancingRequestTransitionReturnsConflictWithoutMutation(
+            RefinancingRequestStatus state,String action,String code) throws Exception {
+        LocalDate today=dates.today();
+        Debt debt=createDebt(today);
+        createPlanConfiguration(today);
+        DemoAuthSessions sessions=new DemoAuthSessions(demoUsers,taxpayers,passwordEncoder,demoAuth);
+        String taxpayer=sessions.token(DemoRole.TAXPAYER,debt.taxpayerId);
+        String rentas=sessions.token(DemoRole.RENTAS);
+        String supervisor=sessions.token(DemoRole.SUPERVISOR);
+        String planRequestResponse=performAsSession(post("/api/v1/payment-plan-requests").header("X-Demo-Session",taxpayer)
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(
+                    new ApiDtos.CreatePaymentPlanRequest(debt.taxpayerId,List.of(debt.id),2))))
+            .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        long planRequestId=json.readTree(planRequestResponse).get("id").asLong();
+        performAsSession(post("/api/v1/payment-plan-requests/{id}/grant",planRequestId).header("X-Demo-Session",rentas)
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(new ApiDtos.GrantPaymentPlanRequest(null))))
+            .andExpect(status().isOk());
+        PaymentPlan plan=plans.findById(planRequests.findById(planRequestId).orElseThrow().paymentPlanId).orElseThrow();
+        int requestedInstallments=state==RefinancingRequestStatus.PENDING_EXCEPTION_APPROVAL?1:3;
+        String refinancingResponse=performAsSession(post("/api/v1/payment-plans/{planId}/refinancing-requests",plan.id)
+                .header("X-Demo-Session",taxpayer).contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(new ApiDtos.CreateRefinancingRequest(requestedInstallments))))
+            .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        long refinancingId=json.readTree(refinancingResponse).get("id").asLong();
+        if(state==RefinancingRequestStatus.PENDING_EXCEPTION_APPROVAL) {
+            performAsSession(post("/api/v1/refinancing-requests/{id}/submit-exception",refinancingId)
+                    .header("X-Demo-Session",rentas).contentType(MediaType.APPLICATION_JSON)
+                    .content(json.writeValueAsString(new ApiDtos.SubmitPlanExceptionRequest("exceptional"))))
+                .andExpect(status().isOk());
+        } else if(state==RefinancingRequestStatus.GRANTED) {
+            performAsSession(post("/api/v1/refinancing-requests/{id}/grant",refinancingId).header("X-Demo-Session",rentas))
+                .andExpect(status().isOk());
+        } else if(state==RefinancingRequestStatus.REJECTED) {
+            performAsSession(post("/api/v1/refinancing-requests/{id}/reject",refinancingId)
+                    .header("X-Demo-Session",rentas).contentType(MediaType.APPLICATION_JSON)
+                    .content(json.writeValueAsString(new ApiDtos.RejectionRequest("rejected"))))
+                .andExpect(status().isOk());
+        }
+
+        RefinancingRequest before=refinancings.findById(refinancingId).orElseThrow();
+        assertThat(before.status).isEqualTo(state);
+        String requestSnapshot=json.writeValueAsString(ApiResponses.of(before));
+        PaymentPlan planBefore=plans.findById(plan.id).orElseThrow();
+        String planSnapshot=planBefore.status+"|"+planBefore.outstandingPlanAmount;
+        long refinancingCountBefore=refinancings.count();
+        long plansBefore=plans.count();
+        long outboxBefore=outbox.count();
+        long auditBefore=audit.count();
+        var call=switch(action) {
+            case "grant" -> post("/api/v1/refinancing-requests/{id}/grant",refinancingId)
+                .header("X-Demo-Session",rentas);
+            case "reject" -> post("/api/v1/refinancing-requests/{id}/reject",refinancingId)
+                .header("X-Demo-Session",rentas).contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(new ApiDtos.RejectionRequest("again")));
+            case "submit-exception" -> post("/api/v1/refinancing-requests/{id}/submit-exception",refinancingId)
+                .header("X-Demo-Session",rentas).contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(new ApiDtos.SubmitPlanExceptionRequest("again")));
+            case "approve-exception" -> post("/api/v1/refinancing-requests/{id}/approve-exception",refinancingId)
+                .header("X-Demo-Session",supervisor);
+            case "reject-exception" -> post("/api/v1/refinancing-requests/{id}/reject-exception",refinancingId)
+                .header("X-Demo-Session",supervisor).contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(new ApiDtos.RejectionRequest("again")));
+            default -> throw new IllegalArgumentException(action);
+        };
+        performAsSession(call).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value(code));
+
+        assertThat(json.writeValueAsString(ApiResponses.of(refinancings.findById(refinancingId).orElseThrow())))
+            .isEqualTo(requestSnapshot);
+        PaymentPlan storedPlan=plans.findById(plan.id).orElseThrow();
+        assertThat(storedPlan.status+"|"+storedPlan.outstandingPlanAmount).isEqualTo(planSnapshot);
+        assertThat(refinancings.count()).isEqualTo(refinancingCountBefore);
+        assertThat(plans.count()).isEqualTo(plansBefore);
+        assertThat(outbox.count()).isEqualTo(outboxBefore);
+        assertThat(audit.count()).isEqualTo(auditBefore);
+    }
+
+    private static Stream<Arguments> invalidRefinancingRequestTransitions() {
+        return Stream.of(
+            Arguments.of(RefinancingRequestStatus.PENDING,"approve-exception","INVALID_REFINANCING_TRANSITION"),
+            Arguments.of(RefinancingRequestStatus.PENDING_EXCEPTION_APPROVAL,"grant","INVALID_REFINANCING_TRANSITION"),
+            Arguments.of(RefinancingRequestStatus.PENDING_EXCEPTION_APPROVAL,"submit-exception","INVALID_REFINANCING_TRANSITION"),
+            Arguments.of(RefinancingRequestStatus.GRANTED,"grant","INVALID_REFINANCING_TRANSITION"),
+            Arguments.of(RefinancingRequestStatus.GRANTED,"reject","REFINANCING_NOT_PENDING"),
+            Arguments.of(RefinancingRequestStatus.GRANTED,"submit-exception","INVALID_REFINANCING_TRANSITION"),
+            Arguments.of(RefinancingRequestStatus.GRANTED,"approve-exception","INVALID_REFINANCING_TRANSITION"),
+            Arguments.of(RefinancingRequestStatus.GRANTED,"reject-exception","REFINANCING_NOT_PENDING"),
+            Arguments.of(RefinancingRequestStatus.REJECTED,"grant","INVALID_REFINANCING_TRANSITION"),
+            Arguments.of(RefinancingRequestStatus.REJECTED,"reject","REFINANCING_NOT_PENDING"),
+            Arguments.of(RefinancingRequestStatus.REJECTED,"submit-exception","INVALID_REFINANCING_TRANSITION"),
+            Arguments.of(RefinancingRequestStatus.REJECTED,"approve-exception","INVALID_REFINANCING_TRANSITION"),
+            Arguments.of(RefinancingRequestStatus.REJECTED,"reject-exception","REFINANCING_NOT_PENDING")
         );
     }
 
