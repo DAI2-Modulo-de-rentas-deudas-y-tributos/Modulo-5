@@ -404,11 +404,12 @@ class SecurityTests {
         org.assertj.core.api.Assertions.assertThat(errorSchema.path("properties").has("message")).isTrue();
         org.assertj.core.api.Assertions.assertThat(errorSchema.path("properties").has("details")).isTrue();
         org.assertj.core.api.Assertions.assertThat(errorSchema.path("properties").has("traceId")).isTrue();
-        var paths=json.readTree(openApi).path("paths");int operations=0;for(var path=paths.fields();path.hasNext();)operations+=path.next().getValue().size();
+        var paths=json.readTree(openApi).path("paths");int operations=0;for(var path=paths.fields();path.hasNext();){var methods=path.next().getValue().fields();while(methods.hasNext()){String method=methods.next().getKey();if(java.util.Set.of("get","post","put","patch","delete","options","head","trace").contains(method))operations++;}}
         org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/tax-concepts").path("post").path("responses")
             .path("400").path("$ref").asText()).isEqualTo("#/components/responses/ApiError");
-        org.assertj.core.api.Assertions.assertThat(operations).isEqualTo(168);
-        org.assertj.core.api.Assertions.assertThat(paths.size()).isEqualTo(152);
+        org.assertj.core.api.Assertions.assertThat(operations).isEqualTo(169);
+        org.assertj.core.api.Assertions.assertThat(paths.size()).isEqualTo(153);
+        org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/administration/process-due-dates/{id}").has("get")).isTrue();
         org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/taxpayers/{id}/canonical-citizen-link").has("post")).isTrue();
         org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/tickets/{id}/return").has("post")).isTrue();
         org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/integrations/deferred/exemptions/{requestId}/reconcile").has("post")).isTrue();

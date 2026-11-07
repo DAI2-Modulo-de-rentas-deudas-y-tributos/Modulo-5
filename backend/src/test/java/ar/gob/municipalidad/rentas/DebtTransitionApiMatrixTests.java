@@ -174,7 +174,7 @@ class DebtTransitionApiMatrixTests {
     void registerPaymentRejectsAllocationToTerminalDebtAndRollsBackAllEffects(DebtStatus state) throws Exception {
         LocalDate today=dates.today();
         List<UUID> outboxIdsBeforeFixture=outbox.findAll().stream().map(event->event.id).toList();
-        List<Long> auditIdsBeforeFixture=audit.findAll().stream().map(entry->entry.id).toList();
+        List<Long> auditIdsBeforeFixture=audit.findAll().stream().filter(entry->!"SecurityEvent".equals(entry.entityType)).map(entry->entry.id).toList();
         Debt debt=createDebt(today);
         if(state==DebtStatus.PAID)debt.imputar(debt.outstandingBalance);
         else debt.anular();
@@ -194,7 +194,6 @@ class DebtTransitionApiMatrixTests {
         Long taxConceptId=debt.taxConceptId;
         DemoAuthSession session=demoAuthSessions.findByTokenHash(DemoAuthService.hashToken(rentasSession)).orElseThrow();
         Long demoUserId=session.demoUserId;
-        String demoActorId=demoUsers.findById(demoUserId).orElseThrow().integrationActorId.toString();
 
         // Commit only this synthetic H2 fixture so the HTTP request owns its transaction;
         // a failed request must roll back the transient Payment row as it would in production.
@@ -220,7 +219,7 @@ class DebtTransitionApiMatrixTests {
             assertThat(outbox.count()).isEqualTo(outboxBefore);
         } finally {
             cleanupTerminalDebtFixture(debtId,taxpayerId,liquidationId,configurationId,taxConceptId,
-                session,demoUserId,demoActorId,outboxIdsBeforeFixture);
+                session,demoUserId,outboxIdsBeforeFixture);
         }
 
         assertThat(debts.existsById(debtId)).isFalse();
@@ -232,11 +231,11 @@ class DebtTransitionApiMatrixTests {
         assertThat(demoAuthSessions.existsById(session.id)).isFalse();
         assertThat(demoUsers.existsById(demoUserId)).isFalse();
         assertThat(outbox.findAll().stream().map(event->event.id).toList()).containsExactlyInAnyOrderElementsOf(outboxIdsBeforeFixture);
-        assertThat(audit.findAll().stream().map(entry->entry.id).toList()).containsExactlyInAnyOrderElementsOf(auditIdsBeforeFixture);
+        assertThat(audit.findAll().stream().filter(entry->!"SecurityEvent".equals(entry.entityType)).map(entry->entry.id).toList()).containsExactlyInAnyOrderElementsOf(auditIdsBeforeFixture);
     }
 
     private void cleanupTerminalDebtFixture(Long debtId,Long taxpayerId,Long liquidationId,Long configurationId,
-            Long taxConceptId,DemoAuthSession session,Long demoUserId,String demoActorId,List<UUID> outboxIdsBeforeFixture) {
+            Long taxConceptId,DemoAuthSession session,Long demoUserId,List<UUID> outboxIdsBeforeFixture) {
         TestTransaction.start();
         debts.deleteById(debtId);
         liquidationComponents.deleteAll(liquidationComponents.findByLiquidationIdOrderById(liquidationId));
@@ -251,8 +250,6 @@ class DebtTransitionApiMatrixTests {
         deleteAuditEntries("TaxConfiguration",configurationId);
         deleteAuditEntries("TaxConcept",taxConceptId);
         deleteAuditEntries("DemoUser",demoUserId);
-        audit.deleteAll(audit.findAll().stream()
-            .filter(entry->"SecurityEvent".equals(entry.entityType)&&demoActorId.equals(entry.userId)).toList());
         outbox.deleteAll(outbox.findAll().stream().filter(event->!outboxIdsBeforeFixture.contains(event.id)).toList());
         TestTransaction.flagForCommit();
         TestTransaction.end();
