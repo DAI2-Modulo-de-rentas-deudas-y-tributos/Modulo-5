@@ -266,6 +266,27 @@ class BeanValidationContractTests {
         assertThat(liquidationRuns.count()).isEqualTo(before);
     }
 
+    @Test void individualLiquidationWithFractionalCentBaseReturns400BeforePersistence() throws Exception {
+        LocalDate today=LocalDate.now();
+        String period=java.time.YearMonth.from(today).toString();
+        ApiDtos.LiquidationRequest request=new ApiDtos.LiquidationRequest(1L,1L,period,
+            new BigDecimal("100.005"),today);
+        assertThat(validator.validate(request)).extracting(error->error.getPropertyPath().toString())
+            .containsExactly("taxableBase");
+
+        long before=liquidations.count();
+        mvc.perform(post("/api/v1/liquidations")
+                .header("X-Demo-Session",demo.token(DemoRole.RENTAS))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"taxpayerId\":1,\"taxConceptId\":1,\"period\":\""+period
+                    +"\",\"taxableBase\":100.005,\"dueDate\":\""+today+"\"}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+            .andExpect(jsonPath("$.details.fieldErrors[0].field").value("taxableBase"))
+            .andExpect(jsonPath("$.details.fieldErrors[0].messages[0]").value("Debe tener como máximo 2 decimales"));
+        assertThat(liquidations.count()).isEqualTo(before);
+    }
+
     @Test void optionalBodiesWithConstraintsAreValidatedWhenPresent() throws Exception {
         mvc.perform(post("/api/v1/payment-plan-requests/999999/grant")
                 .header("X-Demo-Session",demo.token(DemoRole.SUPERVISOR))
