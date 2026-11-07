@@ -79,6 +79,22 @@ class BillingFlowTests {
             .isInstanceOf(BusinessException.class).hasMessageContaining("contribuyente");
     }
 
+    @Test void organizationMayIssueBillOnlyWhenM1StatusIsActive() {
+        Debt debt=debt("BILL-ORG-STATUS","BILL-ORG-STATUS-CONCEPT");
+        TaxpayerReference organization=catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(
+            TaxpayerType.ORGANIZATION,"M1-ORG-BILL-STATUS-"+java.util.UUID.randomUUID(),null,"30712345678","Organización de prueba"));
+        debt.taxpayerId=organization.id;debts.saveAndFlush(debt);
+        organization.externalStatus=TaxpayerStatus.PENDIENTE;taxpayers.saveAndFlush(organization);
+        var request=new ApiDtos.CreateBillRequest(organization.id,List.of(debt.id),LocalDate.now().plusDays(5));
+        assertThatThrownBy(()->billing.create(request)).isInstanceOf(BusinessException.class)
+            .extracting(ex->((BusinessException)ex).code).isEqualTo("ORGANIZATION_NOT_ACTIVE");
+        organization.externalStatus=TaxpayerStatus.RECHAZADA;taxpayers.saveAndFlush(organization);
+        assertThatThrownBy(()->billing.create(request)).isInstanceOf(BusinessException.class)
+            .extracting(ex->((BusinessException)ex).code).isEqualTo("ORGANIZATION_NOT_ACTIVE");
+        organization.externalStatus=TaxpayerStatus.ACTIVA;taxpayers.saveAndFlush(organization);
+        assertThat(billing.create(request).taxpayerId).isEqualTo(organization.id);
+    }
+
     @Test void electronicPaymentPreviewIsLimitedToTheOwningTaxpayer() throws Exception {
         Debt ownedDebt = debt("BILL-PREVIEW-OWNED-11111111", "BILL-PREVIEW-OWNED-CONCEPT");
         Debt anotherDebt = debt("BILL-PREVIEW-OTHER-22222222", "BILL-PREVIEW-OTHER-CONCEPT");
