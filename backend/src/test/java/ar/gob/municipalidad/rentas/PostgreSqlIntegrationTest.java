@@ -574,8 +574,9 @@ class PostgreSqlIntegrationTest {
         }
         assertThat(paths.path("/api/v1/tickets/{id}/return").path("post").isMissingNode()).isFalse();
         assertThat(paths.path("/api/v1/taxpayers/{id}/canonical-citizen-link").path("post").isMissingNode()).isFalse();
-        assertThat(postCount).isEqualTo(77);
-        assertThat(covered).isEqualTo(68);
+        assertThat(paths.path("/api/v1/integrations/outbox/{id}/retry").path("post").isMissingNode()).isFalse();
+        assertThat(postCount).isEqualTo(78);
+        assertThat(covered).isEqualTo(69);
     }
 
     @Test void taxConceptCreationEndpointReplaysConcurrentRequestAndConflictsOnDifferentBody() throws Exception {
