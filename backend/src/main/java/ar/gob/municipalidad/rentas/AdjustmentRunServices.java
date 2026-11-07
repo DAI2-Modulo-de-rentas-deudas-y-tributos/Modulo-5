@@ -1,5 +1,6 @@
 package ar.gob.municipalidad.rentas;
 
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -36,10 +37,11 @@ class LiquidationRunService {
 
 @Service
 class LiquidationRunExecutionExecutor {
-    private final LiquidationRunRepository runs;private final LiquidationRunItemRepository items;private final LiquidationService liquidations;private final AuditService audit;
-    LiquidationRunExecutionExecutor(LiquidationRunRepository runs,LiquidationRunItemRepository items,LiquidationService liquidations,AuditService audit){this.runs=runs;this.items=items;this.liquidations=liquidations;this.audit=audit;}
+    private final LiquidationRunRepository runs;private final LiquidationRunItemRepository items;private final LiquidationRepository liquidationRepository;private final LiquidationService liquidations;private final AuditService audit;
+    LiquidationRunExecutionExecutor(LiquidationRunRepository runs,LiquidationRunItemRepository items,LiquidationRepository liquidationRepository,LiquidationService liquidations,AuditService audit){this.runs=runs;this.items=items;this.liquidationRepository=liquidationRepository;this.liquidations=liquidations;this.audit=audit;}
     @Transactional(propagation=org.springframework.transaction.annotation.Propagation.REQUIRED)
-    LiquidationRun execute(Long id){LiquidationRun run=runs.findByIdForUpdate(id).orElseThrow(()->CatalogService.notFound("Corrida de liquidación"));CatalogService.require(run.status==LiquidationRunStatus.APPROVED,"RUN_NOT_APPROVED","La corrida debe estar aprobada");for(LiquidationRunItem item:items.findByLiquidationRunIdOrderById(id)){if(item.status!=LiquidationRunItemStatus.VALID)continue;try{Liquidation liquidation=liquidations.create(new ApiDtos.LiquidationRequest(item.taxpayerId,run.taxConceptId,run.period,item.taxableBase,run.dueDate));CatalogService.require(liquidation.taxConfigurationId.equals(run.configurationId)&&liquidation.configurationVersion==run.configurationVersion,"RUN_CONFIGURATION_CHANGED","La configuración cambió antes de ejecutar");item.liquidationId=liquidation.id;item.status=LiquidationRunItemStatus.LIQUIDATED;}catch(BusinessException failure){throw new LiquidationRunItemExecutionFailure(item.id,failure);}}run.status=LiquidationRunStatus.EXECUTED;audit.record("LiquidationRun",run.id,"LIQUIDATION_RUN_EXECUTED",run);return run;}
+    LiquidationRun execute(Long id){LiquidationRun run=runs.findByIdForUpdate(id).orElseThrow(()->CatalogService.notFound("Corrida de liquidación"));CatalogService.require(run.status==LiquidationRunStatus.APPROVED,"RUN_NOT_APPROVED","La corrida debe estar aprobada");for(LiquidationRunItem item:items.findByLiquidationRunIdOrderById(id)){if(item.status!=LiquidationRunItemStatus.VALID)continue;try{Liquidation liquidation=liquidations.create(new ApiDtos.LiquidationRequest(item.taxpayerId,run.taxConceptId,run.period,item.taxableBase,run.dueDate));liquidationRepository.flush();CatalogService.require(liquidation.taxConfigurationId.equals(run.configurationId)&&liquidation.configurationVersion==run.configurationVersion,"RUN_CONFIGURATION_CHANGED","La configuración cambió antes de ejecutar");item.liquidationId=liquidation.id;item.status=LiquidationRunItemStatus.LIQUIDATED;}catch(BusinessException failure){throw new LiquidationRunItemExecutionFailure(item.id,failure);}catch(DataIntegrityViolationException failure){if(!isDuplicateLiquidation(failure))throw failure;throw new LiquidationRunItemExecutionFailure(item.id,new BusinessException("DUPLICATE_LIQUIDATION","Ya existe una liquidación para el contribuyente, concepto y período",422));}}run.status=LiquidationRunStatus.EXECUTED;audit.record("LiquidationRun",run.id,"LIQUIDATION_RUN_EXECUTED",run);return run;}
+    private boolean isDuplicateLiquidation(DataIntegrityViolationException failure){for(Throwable cause=failure;cause!=null;cause=cause.getCause())if(cause instanceof org.hibernate.exception.ConstraintViolationException violation)return "uk_liquidation_business".equals(violation.getConstraintName());return false;}
 }
 
 class LiquidationRunItemExecutionFailure extends RuntimeException {
