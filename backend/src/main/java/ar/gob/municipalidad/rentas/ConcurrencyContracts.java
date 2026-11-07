@@ -32,6 +32,15 @@ final class EntityTags {
         return quoted("payment-plan-configuration-" + configuration.id + "-" + configuration.version);
     }
 
+    static String liquidationRun(ApiDtos.LiquidationRunDetailResponse detail) {
+        try {
+            byte[] digest=MessageDigest.getInstance("SHA-256").digest(detail.toString().getBytes(StandardCharsets.UTF_8));
+            return quoted("liquidation-run-" + detail.run().id() + "-" + HexFormat.of().formatHex(digest));
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("SHA-256 no disponible", ex);
+        }
+    }
+
     static void requireIfMatch(String current, String provided) {
         if (provided == null) return;
         String value=provided.trim();
