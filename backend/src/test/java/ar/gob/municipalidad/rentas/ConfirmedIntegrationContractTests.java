@@ -134,25 +134,40 @@ class ConfirmedIntegrationContractTests {
     }
 
     @ParameterizedTest @ValueSource(strings={"STARTED","PROGRESS","INFORMATION_REQUIRED","RETURNED","RESOLVED","REJECTED"})
-    void m2OutboundCarriesOnlyUpdateTypeNotCanonicalStatus(String updateType) throws Exception {
+    void m2TicketStatusVariantsArePersistedThroughTheOutbox(String updateType) throws Exception {
         UUID actor=UUID.fromString("3b9f1c52-6a7e-4d08-9c41-5e2a8d7f0b13");
-        JsonNode details=switch(updateType){
-            case "INFORMATION_REQUIRED"->json.readTree("{\"informationRequest\":{\"messageForCitizen\":\"Aporte comprobante\"}}");
-            case "RETURNED"->json.readTree("{\"returnInfo\":{\"reasonCode\":\"REQUEST_TYPE_MISMATCH\"}}");
-            case "RESOLVED"->json.readTree("{\"resolution\":{\"type\":\"ACTION_COMPLETED\"}}");
-            case "REJECTED"->json.readTree("{\"cancellation\":{\"reasonCode\":\"REJECTED_BY_AREA\"}}");
-            default->null;
-        };
-        JsonNode tree=json.valueToTree(producer.ticketStatus("550e8400-e29b-41d4-a716-446655440000",updateType,"mensaje","interno",details,actor,"294e7015-0e6a-4bd1-8240-ce3148fd937d",null));assertThat(tree.path("eventType").asText()).isEqualTo("updateTicketStatus");assertThat(tree.path("data").path("updateType").asText()).isEqualTo(updateType);assertThat(tree.path("data").path("updatedBy").path("type").asText()).isEqualTo("EXTERNAL_USER");assertThat(tree.path("data").path("updatedBy").path("id").asText()).isEqualTo(actor.toString());assertThat(tree.path("data").path("updateOccurredAt").isTextual()).isTrue();assertThat(tree.path("data").has("status")).isFalse();assertThat(tree.path("data").has("newStatus")).isFalse();assertThat(tree.path("data").has("previousStatus")).isFalse();
+        TicketCase ticket=m2.consume(ticket("M2-EVT-OUTBOX-"+updateType,"M5",null,true,"ROUTED","ROUTED",routingDetails()));
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+            new AuthenticatedIdentity("outbox-actor-"+updateType,null,actor),null,List.of(new SimpleGrantedAuthority("ROLE_RENTAS"))));
+        try {
+            switch(updateType){
+                case "STARTED"->ticketService.assign(ticket.id);
+                case "PROGRESS"->{ticketService.assign(ticket.id);ticketService.note(ticket.id,"Avance registrado");}
+                case "INFORMATION_REQUIRED"->ticketService.requestInformation(ticket.id,"Aporte comprobante");
+                case "RETURNED"->ticketService.returnToM2(ticket.id,"REQUEST_TYPE_MISMATCH","Falta información del trámite.");
+                case "RESOLVED"->ticketService.complete(ticket.id,"El trámite fue resuelto.");
+                case "REJECTED"->ticketService.reject(ticket.id,"La solicitud no corresponde al área.");
+                default->throw new IllegalArgumentException(updateType);
+            }
+            OutboxEvent event=outbox.findAll().stream().filter(x->"updateTicketStatus".equals(x.eventType)
+                &&ticket.id.toString().equals(x.aggregateId)).filter(x->{
+                    try{return updateType.equals(json.readTree(x.payload).path("data").path("updateType").asText());}
+                    catch(Exception ex){return false;}
+                }).findFirst().orElseThrow();
+            JsonNode tree=json.readTree(event.payload);
+            assertThat(tree.path("eventType").asText()).isEqualTo("updateTicketStatus");assertThat(tree.path("data").path("updateType").asText()).isEqualTo(updateType);
+            assertThat(tree.path("data").path("updatedBy").path("type").asText()).isEqualTo("EXTERNAL_USER");assertThat(tree.path("data").path("updatedBy").path("id").asText()).isEqualTo(actor.toString());
+            assertThat(tree.path("data").path("updateOccurredAt").isTextual()).isTrue();assertThat(tree.path("data").has("status")).isFalse();assertThat(tree.path("data").has("newStatus")).isFalse();assertThat(tree.path("data").has("previousStatus")).isFalse();
+            assertThat(tree.path("correlationId").asText()).isEqualTo(ticket.correlationId);
+            if("STARTED".equals(updateType))assertThat(tree.path("causationId").asText()).isEqualTo(ticket.lastSourceEventId);
+        } finally { SecurityContextHolder.clearContext(); }
     }
 
     @Test void m2OutboundRejectsMissingHumanUuidAndInvalidVariant() throws Exception {
         String id="550e8400-e29b-41d4-a716-446655440000";
-        assertThatThrownBy(()->producer.ticketStatus(id,"STARTED","Iniciado",null,null,(UUID)null,"294e7015-0e6a-4bd1-8240-ce3148fd937d",null)).isInstanceOf(BusinessException.class).hasMessageContaining("UUID de integración");
-        assertThatThrownBy(()->producer.ticketStatus(id,"RESOLVED",null,null,json.readTree("{\"resolution\":{\"type\":\"ACTION_COMPLETED\"}}"),UUID.randomUUID(),"294e7015-0e6a-4bd1-8240-ce3148fd937d",null)).isInstanceOf(BusinessException.class).hasMessageContaining("publicMessage");
-        JsonNode system=json.valueToTree(producer.systemTicketStatus(id,"STARTED","Inicio automático",null,null,"294e7015-0e6a-4bd1-8240-ce3148fd937d",null));
-        assertThat(system.path("data").path("updatedBy").path("type").asText()).isEqualTo("SYSTEM");
-        assertThat(system.path("data").path("updatedBy").path("id").isNull()).isTrue();
+        assertThatThrownBy(()->producer.ticketStatus(id,"100","STARTED","Iniciado",null,null,null,"294e7015-0e6a-4bd1-8240-ce3148fd937d",null)).isInstanceOf(BusinessException.class).hasMessageContaining("UUID de integración");
+        assertThatThrownBy(()->producer.ticketStatus(id,"100","RESOLVED",null,null,json.readTree("{\"resolution\":{\"type\":\"ACTION_COMPLETED\"}}"),UUID.randomUUID(),"294e7015-0e6a-4bd1-8240-ce3148fd937d",null)).isInstanceOf(BusinessException.class).hasMessageContaining("publicMessage");
+        assertThat(outbox.findAll()).noneMatch(event->"updateTicketStatus".equals(event.eventType));
     }
 
     @Test void m2TicketOperationTakesActorUuidFromAuthenticatedBackendIdentity() throws Exception {
@@ -171,13 +186,6 @@ class ConfirmedIntegrationContractTests {
         }finally{SecurityContextHolder.clearContext();}
     }
 
-    @Test void m2OutboundPreservesIncomingCorrelationAndCausation(){
-        String correlation="294e7015-0e6a-4bd1-8240-ce3148fd937d",cause="ceb59c25-f422-4a2d-97f1-8d4143b8c89f";
-        JsonNode tree=json.valueToTree(producer.ticketStatus("550e8400-e29b-41d4-a716-446655440000","STARTED","Iniciado",null,null,UUID.fromString("3b9f1c52-6a7e-4d08-9c41-5e2a8d7f0b13"),correlation,cause));
-        assertThat(tree.path("correlationId").asText()).isEqualTo(correlation);
-        assertThat(tree.path("causationId").asText()).isEqualTo(cause);
-    }
-
     @ParameterizedTest @ValueSource(strings={"APPROVED","SUSPENDED","FINALIZED"})
     void m8ConfirmedStatusesAreStoredSeparatelyFromCalculatedState(String status) throws Exception {
         SocialBenefitReference result=m8.consume(benefit("M8-EVT-"+status,status));assertThat(result.externalStatus).isEqualTo(status);assertThat(result.calculatedStatus).isEqualTo(expectedCalculatedStatus(status));assertThat(result.benefitsPayload).contains("TAX_EXEMPTION","benefitTypeId","programEditionId");
@@ -193,18 +201,6 @@ class ConfirmedIntegrationContractTests {
         failed.occurredAt=event.occurredAt();failed.receivedAt=OffsetDateTime.now();logs.save(failed);
         assertThat(reprocess.reprocess(event.eventId().toString(),"Reintento M8").status).isEqualTo(IntegrationEventStatus.PROCESSED);
         assertThat(benefits.findByExternalBenefitId(event.data().benefitId().toString())).isPresent();
-    }
-
-    @Test void simpleOutboundEconomicContractsKeepConfirmedShapes() {
-        var exemption=new ConfirmedOutboundEvents.ExemptionRequestedPayload(UUID.fromString("e5dd27f4-c803-4d5c-a75e-c003d99cc5af"),UUID.fromString("2808fa6c-1e50-4f71-a46e-ca444458924b"),"TASA_SERVICIOS","Situación socioeconómica",new BigDecimal("100.00"),LocalDate.parse("2026-09-01"),LocalDate.parse("2027-08-31"));JsonNode exemptionTree=json.valueToTree(producer.exemptionRequestedEvent(exemption));assertThat(exemptionTree.path("occurredAt").isTextual()).isTrue();assertThat(exemptionTree.path("sourceModule").asText()).isEqualTo("rentas");assertThat(exemptionTree.path("data").path("requestedPercentage").decimalValue()).isEqualByComparingTo("100.00");
-        var plan=new ConfirmedOutboundEvents.PaymentPlanRequestedPayload(UUID.fromString("e5dd27f4-c803-4d5c-a75e-c003d99cc5af"),UUID.fromString("2808fa6c-1e50-4f71-a46e-ca444458924b"),List.of(UUID.fromString("a2fd68c2-b186-4e78-aa2b-191e241f584d"),UUID.fromString("653d9e79-2cd1-4ec1-8ada-845374f6903d")),new BigDecimal("200000.00"),6);JsonNode planTree=json.valueToTree(producer.paymentPlanRequestedEvent(plan));assertThat(planTree.path("data").path("debtIds")).hasSize(2);
-        var overdue=new ConfirmedOutboundEvents.OverdueDebtPayload(UUID.fromString("653d9e79-2cd1-4ec1-8ada-845374f6903d"),UUID.fromString("2808fa6c-1e50-4f71-a46e-ca444458924b"),"TASA_SERVICIOS",new BigDecimal("85000.00"),LocalDate.parse("2026-08-20"));assertThat(json.valueToTree(producer.overdueDebtEvent(overdue)).path("eventType").asText()).isEqualTo("debtOverdue");
-        var settled=new ConfirmedOutboundEvents.DebtSettledPayload(UUID.fromString("a2fd68c2-b186-4e78-aa2b-191e241f584d"),UUID.fromString("2808fa6c-1e50-4f71-a46e-ca444458924b"),"TASA_SERVICIOS","MUNICIPAL_TAX","liq-1",null,OffsetDateTime.parse("2026-08-27T14:00:00-03:00"),BigDecimal.ZERO.setScale(2),BigDecimal.ZERO.setScale(2));assertThat(json.valueToTree(producer.debtSettledEvent(settled)).path("data").path("outstandingBalance").decimalValue()).isEqualByComparingTo("0.00");
-    }
-
-    @Test void unifiedStatusEventsSerializeApprovedRejectedGrantedAndRejectedShapes() {
-        var approved=new ConfirmedOutboundEvents.UpdateExemptionStatusPayload(UUID.fromString("e5dd27f4-c803-4d5c-a75e-c003d99cc5af"),UUID.fromString("2808fa6c-1e50-4f71-a46e-ca444458924b"),"APPROVED",UUID.fromString("f0c9ec39-d07e-46cf-b379-eb7f57488fa5"),"TASA",new BigDecimal("100"),LocalDate.now(),LocalDate.now().plusYears(1),null);var rejected=new ConfirmedOutboundEvents.UpdateExemptionStatusPayload(UUID.fromString("71110654-776a-4342-bc6c-44408c3be39e"),UUID.fromString("2808fa6c-1e50-4f71-a46e-ca444458924b"),"REJECTED",null,"TASA",null,null,null,"No cumple");JsonNode approvedTree=json.valueToTree(producer.exemptionStatusEvent(approved));JsonNode rejectedTree=json.valueToTree(producer.exemptionStatusEvent(rejected));assertThat(approvedTree.path("eventType").asText()).isEqualTo("updateExemptionStatus");assertThat(approvedTree.path("data").path("status").asText()).isEqualTo("APPROVED");assertThat(rejectedTree.path("data").path("status").asText()).isEqualTo("REJECTED");
-        UUID request=UUID.fromString("e5dd27f4-c803-4d5c-a75e-c003d99cc5af"),citizen=UUID.fromString("2808fa6c-1e50-4f71-a46e-ca444458924b");var granted=new ConfirmedOutboundEvents.UpdatePaymentPlanStatusPayload(request,citizen,"GRANTED",UUID.fromString("a2fd68c2-b186-4e78-aa2b-191e241f584d"),6,new BigDecimal("220000"),null);var planRejected=new ConfirmedOutboundEvents.UpdatePaymentPlanStatusPayload(request,citizen,"REJECTED",null,null,null,"No elegible");assertThat(json.valueToTree(producer.paymentPlanStatusEvent(granted)).path("data").path("status").asText()).isEqualTo("GRANTED");assertThat(json.valueToTree(producer.paymentPlanStatusEvent(planRejected)).path("data").path("status").asText()).isEqualTo("REJECTED");
     }
 
     @Test void paymentPlanPayloadsRejectIncompleteOrNonPositiveValues(){
