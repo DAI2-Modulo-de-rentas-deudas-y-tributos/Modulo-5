@@ -13,12 +13,21 @@ class IntegrationInbox {
     IntegrationInbox(ProcessedEventRepository processed,IntegrationEventLogRepository logs,ObjectMapper json){this.processed=processed;this.logs=logs;this.json=json;}
     boolean processed(UUID id){return processed(id.toString());}
     boolean processed(String id){return processed.existsByExternalEventId(id);}
-    IntegrationEventLog receive(ApiDtos.EventEnvelope<?> event){return receive(normalize(event),event,false);}
+    IntegrationEventLog receive(ApiDtos.EventEnvelope<?> event){return receive(event,event);}
+    IntegrationEventLog receive(ApiDtos.EventEnvelope<?> event,Object raw){return receive(normalize(event),raw,false);}
     IntegrationEventLog receive(NormalizedIntegrationEvent event,Object raw){return receive(event,raw,false);}
     IntegrationEventLog ignore(NormalizedIntegrationEvent event){IntegrationEventLog log=receive(event,null,true);complete(event,log,IntegrationEventStatus.IGNORED);return log;}
     void fail(IntegrationEventLog log,String message){log.status=IntegrationEventStatus.FAILED;log.errorMessage=message;}
     void complete(ApiDtos.EventEnvelope<?> event,IntegrationEventLog log){complete(normalize(event),log,IntegrationEventStatus.PROCESSED);}
     void complete(NormalizedIntegrationEvent event,IntegrationEventLog log){complete(event,log,IntegrationEventStatus.PROCESSED);}
+    void complete(IntegrationEventLog log){
+        if(!processed(log.externalEventId)){
+            ProcessedEvent done=new ProcessedEvent();done.eventId=technicalId(log.externalEventId);done.externalEventId=log.externalEventId;
+            done.eventType=log.eventType;done.sourceModule=log.sourceModule;done.receivedAt=log.receivedAt;done.processedAt=OffsetDateTime.now();
+            processed.save(done);log.processedAt=done.processedAt;
+        }else if(log.processedAt==null)log.processedAt=OffsetDateTime.now();
+        log.status=IntegrationEventStatus.PROCESSED;
+    }
     private IntegrationEventLog receive(NormalizedIntegrationEvent event,Object raw,boolean minimal){IntegrationEventLog log=new IntegrationEventLog();log.eventId=technicalId(event.eventId());log.externalEventId=event.eventId();log.eventType=event.eventType();log.sourceModule=event.sourceModule();log.direction=EventDirection.INBOUND;log.status=IntegrationEventStatus.RECEIVED;log.retryCount=0;log.occurredAt=event.occurredAt();log.receivedAt=OffsetDateTime.now();try{log.payload=minimal?"{}":json.writeValueAsString(raw);}catch(Exception ex){throw new BusinessException("INVALID_EVENT_PAYLOAD","No se pudo serializar el evento",422);}return logs.save(log);}
     private void complete(NormalizedIntegrationEvent event,IntegrationEventLog log,IntegrationEventStatus status){ProcessedEvent done=new ProcessedEvent();done.eventId=technicalId(event.eventId());done.externalEventId=event.eventId();done.eventType=event.eventType();done.sourceModule=event.sourceModule();done.receivedAt=log.receivedAt;done.processedAt=OffsetDateTime.now();processed.save(done);log.status=status;log.processedAt=done.processedAt;}
     private NormalizedIntegrationEvent normalize(ApiDtos.EventEnvelope<?> event){return new NormalizedIntegrationEvent(event.eventId().toString(),event.eventType(),event.occurredAt(),event.sourceModule(),null,json.valueToTree(event.data()),null);}
