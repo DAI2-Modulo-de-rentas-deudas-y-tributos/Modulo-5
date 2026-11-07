@@ -141,6 +141,32 @@ class PaymentPlanRequestEtagHttpTests {
         assertThat(requests.findById(request.id).orElseThrow().status).isEqualTo(PaymentPlanRequestStatus.PENDING_EXCEPTION_APPROVAL);
     }
 
+    @Test void bothRejectionActionsAcceptFreshTagsAndReturnUpdatedRepresentations() throws Exception {
+        var supervisor=actor("supervisor-plan-reject-etag","SUPERVISOR");
+        PaymentPlanRequest ordinary=request();
+        String ordinaryPath="/api/v1/payment-plan-requests/"+ordinary.id;
+        String ordinaryTag=mvc.perform(get(ordinaryPath).with(authentication(supervisor))).andReturn().getResponse().getHeader("ETag");
+        var ordinaryRejected=mvc.perform(post(ordinaryPath+"/reject").with(authentication(supervisor)).header("If-Match",ordinaryTag)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"insufficient documentation\"}"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("REJECTED"))
+            .andReturn().getResponse();
+        assertThat(ordinaryRejected.getHeader("ETag")).isNotBlank().isNotEqualTo(ordinaryTag);
+        assertThat(requests.findById(ordinary.id).orElseThrow().resolvedBy).isEqualTo("supervisor-plan-reject-etag");
+
+        PaymentPlanRequest exceptional=request();
+        exceptional.status=PaymentPlanRequestStatus.PENDING_EXCEPTION_APPROVAL;
+        exceptional.exceptionSubmittedBy="rentas-plan-exception";
+        requests.saveAndFlush(exceptional);
+        String exceptionalPath="/api/v1/payment-plan-requests/"+exceptional.id;
+        String exceptionalTag=mvc.perform(get(exceptionalPath).with(authentication(supervisor))).andReturn().getResponse().getHeader("ETag");
+        var exceptionRejected=mvc.perform(post(exceptionalPath+"/reject-exception").with(authentication(supervisor)).header("If-Match",exceptionalTag)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"exception not justified\"}"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("REJECTED"))
+            .andReturn().getResponse();
+        assertThat(exceptionRejected.getHeader("ETag")).isNotBlank().isNotEqualTo(exceptionalTag);
+        assertThat(requests.findById(exceptional.id).orElseThrow().resolvedBy).isEqualTo("supervisor-plan-reject-etag");
+    }
+
     private PaymentPlanRequest request(){
         TaxpayerReference taxpayer=new TaxpayerReference();
         taxpayer.taxpayerType=TaxpayerType.CITIZEN;taxpayer.externalId="ETAG-PLAN-"+java.util.UUID.randomUUID();

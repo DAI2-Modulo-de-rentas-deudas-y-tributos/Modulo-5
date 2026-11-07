@@ -8,6 +8,8 @@ import io.swagger.v3.oas.models.media.Schema;
 import io.swagger.v3.oas.models.responses.ApiResponse;
 import io.swagger.v3.oas.models.parameters.Parameter;
 import io.swagger.v3.oas.models.media.StringSchema;
+import io.swagger.v3.oas.models.Operation;
+import io.swagger.v3.oas.models.headers.Header;
 import org.springdoc.core.customizers.OpenApiCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -27,32 +29,19 @@ class ErrorContractOpenApiConfiguration {
                     operation.getResponses().putIfAbsent(status,new ApiResponse().$ref("#/components/responses/ApiError"));
                 if(pathName.equals("/api/v1/dev-auth/login")||pathName.equals("/api/v1/dev-auth/bootstrap"))
                     operation.getResponses().putIfAbsent("429",new ApiResponse().$ref("#/components/responses/ApiError"));
-                if(pathName.matches("/api/v1/(tax-concepts|tax-configurations|payment-plan-configurations)/\\{id\\}") && path.getPatch()==operation){
-                    Parameter ifMatch=operation.getParameters()==null?null:operation.getParameters().stream()
-                        .filter(parameter->"If-Match".equalsIgnoreCase(parameter.getName())).findFirst().orElse(null);
-                    if(ifMatch==null){ifMatch=new Parameter().name("If-Match");operation.addParametersItem(ifMatch);}
-                    ifMatch.setIn("header");ifMatch.setRequired(false);
-                    ifMatch.setDescription("ETag recibido del GET. Si se omite, se conserva compatibilidad sin precondición.");
-                    ifMatch.setSchema(new StringSchema());
-                    operation.getResponses().putIfAbsent("412",new ApiResponse().$ref("#/components/responses/ApiError"));
-                    ApiResponse response=operation.getResponses().get("200");if(response!=null)response.addHeaderObject("ETag",new io.swagger.v3.oas.models.headers.Header().description("Nueva versión del recurso").schema(new StringSchema()));
-                }
-                if(pathName.matches("/api/v1/(tax-concepts|tax-configurations|payment-plan-configurations)/\\{id\\}") && path.getGet()==operation){ApiResponse response=operation.getResponses().get("200");if(response!=null)response.addHeaderObject("ETag",new io.swagger.v3.oas.models.headers.Header().description("Versión actual del recurso").schema(new StringSchema()));}
-                if(pathName.matches("/api/v1/liquidation-runs/\\{id\\}") && path.getGet()==operation){ApiResponse response=operation.getResponses().get("200");if(response!=null)response.addHeaderObject("ETag",new io.swagger.v3.oas.models.headers.Header().description("Hash de la representación actual de la corrida y sus ítems").schema(new StringSchema()));}
-                if(pathName.matches("/api/v1/payment-plan-requests/\\{id\\}") && path.getGet()==operation){ApiResponse response=operation.getResponses().get("200");if(response!=null)response.addHeaderObject("ETag",new io.swagger.v3.oas.models.headers.Header().description("Hash de la representación actual de la solicitud de plan").schema(new StringSchema()));}
+                if(pathName.matches("/api/v1/(tax-concepts|tax-configurations|payment-plan-configurations)/\\{id\\}") && path.getPatch()==operation)
+                    documentIfMatch(operation,"ETag recibido del GET. Si se omite, se conserva compatibilidad sin precondición.","Nueva versión del recurso");
+                if(pathName.matches("/api/v1/(tax-concepts|tax-configurations|payment-plan-configurations)/\\{id\\}") && path.getGet()==operation)
+                    documentEtag(operation,"Versión actual del recurso");
+                if(pathName.matches("/api/v1/liquidation-runs/\\{id\\}") && path.getGet()==operation)
+                    documentEtag(operation,"Hash de la representación actual de la corrida y sus ítems");
+                if(pathName.matches("/api/v1/payment-plan-requests/\\{id\\}") && path.getGet()==operation)
+                    documentEtag(operation,"Hash de la representación actual de la solicitud de plan");
                 if(pathName.matches("/api/v1/liquidation-runs/\\{id\\}/(preview|submit|approve|reject|execute)") && path.getPost()==operation){
-                    Parameter ifMatch=operation.getParameters()==null?null:operation.getParameters().stream().filter(parameter->"If-Match".equalsIgnoreCase(parameter.getName())).findFirst().orElse(null);
-                    if(ifMatch==null){ifMatch=new Parameter().name("If-Match");operation.addParametersItem(ifMatch);}
-                    ifMatch.setIn("header");ifMatch.setRequired(false);ifMatch.setDescription("ETag recibido del detalle de la corrida. Si se omite, se conserva compatibilidad sin precondición.");ifMatch.setSchema(new StringSchema());
-                    operation.getResponses().putIfAbsent("412",new ApiResponse().$ref("#/components/responses/ApiError"));
-                    ApiResponse response=operation.getResponses().get("200");if(response!=null)response.addHeaderObject("ETag",new io.swagger.v3.oas.models.headers.Header().description("Hash de la representación actualizada de la corrida y sus ítems").schema(new StringSchema()));
+                    documentIfMatch(operation,"ETag recibido del detalle de la corrida. Si se omite, se conserva compatibilidad sin precondición.","Hash de la representación actualizada de la corrida y sus ítems");
                 }
                 if(pathName.matches("/api/v1/payment-plan-requests/\\{id\\}/(grant|reject|submit-exception|approve-exception|reject-exception)") && path.getPost()==operation){
-                    Parameter ifMatch=operation.getParameters()==null?null:operation.getParameters().stream().filter(parameter->"If-Match".equalsIgnoreCase(parameter.getName())).findFirst().orElse(null);
-                    if(ifMatch==null){ifMatch=new Parameter().name("If-Match");operation.addParametersItem(ifMatch);}
-                    ifMatch.setIn("header");ifMatch.setRequired(false);ifMatch.setDescription("ETag recibido del detalle de la solicitud. Si se omite, se conserva compatibilidad sin precondición.");ifMatch.setSchema(new StringSchema());
-                    operation.getResponses().putIfAbsent("412",new ApiResponse().$ref("#/components/responses/ApiError"));
-                    ApiResponse response=operation.getResponses().get("200");if(response!=null)response.addHeaderObject("ETag",new io.swagger.v3.oas.models.headers.Header().description("Hash de la solicitud actualizada").schema(new StringSchema()));
+                    documentIfMatch(operation,"ETag recibido del detalle de la solicitud. Si se omite, se conserva compatibilidad sin precondición.","Hash de la solicitud actualizada");
                 }
                 if(path.getPost()==operation&&!pathName.startsWith("/api/v1/dev-auth/")&&!isReadOnlyCalculation(pathName)
                     &&(operation.getParameters()==null||operation.getParameters().stream().noneMatch(p->"Idempotency-Key".equalsIgnoreCase(p.getName()))))
@@ -61,6 +50,20 @@ class ErrorContractOpenApiConfiguration {
             // Jackson serializa como null las propiedades opcionales sin valor: el contrato lo declara.
             openApi.getComponents().getSchemas().values().forEach(this::allowNullInOptionalProperties);
         };
+    }
+
+    private void documentIfMatch(Operation operation,String ifMatchDescription,String etagDescription){
+        Parameter ifMatch=operation.getParameters()==null?null:operation.getParameters().stream()
+            .filter(parameter->"If-Match".equalsIgnoreCase(parameter.getName())).findFirst().orElse(null);
+        if(ifMatch==null){ifMatch=new Parameter().name("If-Match");operation.addParametersItem(ifMatch);}
+        ifMatch.setIn("header");ifMatch.setRequired(false);ifMatch.setDescription(ifMatchDescription);ifMatch.setSchema(new StringSchema());
+        operation.getResponses().putIfAbsent("412",new ApiResponse().$ref("#/components/responses/ApiError"));
+        documentEtag(operation,etagDescription);
+    }
+
+    private void documentEtag(Operation operation,String description){
+        ApiResponse response=operation.getResponses().get("200");
+        if(response!=null)response.addHeaderObject("ETag",new Header().description(description).schema(new StringSchema()));
     }
 
     private void allowNullInOptionalProperties(Schema<?> schema){

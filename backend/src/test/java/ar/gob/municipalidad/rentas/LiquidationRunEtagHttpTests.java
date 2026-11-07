@@ -79,6 +79,14 @@ class LiquidationRunEtagHttpTests {
             .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("APPROVED"))
             .andReturn().getResponse();
         assertThat(approved.getHeader("ETag")).isNotBlank().isNotEqualTo(submittedTag);
+
+        LiquidationRun observedRun=run();
+        observedRun.status=LiquidationRunStatus.PENDING_APPROVAL;observedRun.submittedBy="rentas-etag";runs.saveAndFlush(observedRun);
+        String observedPath="/api/v1/liquidation-runs/"+observedRun.id;
+        String observedTag=mvc.perform(get(observedPath).with(authentication(rentas))).andReturn().getResponse().getHeader("ETag");
+        mvc.perform(post(observedPath+"/approve").with(authentication(supervisor)).header("If-Match",observedTag)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"observation\":\"reviewed\"}"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("APPROVED"));
     }
 
     @Test void ifMatchParticipatesInIdempotencyFingerprintAndOpenApiDocumentsPolicy() throws Exception {
@@ -109,6 +117,56 @@ class LiquidationRunEtagHttpTests {
         for(JsonNode parameter:submit.path("parameters"))if(parameter.path("name").asText().equals("If-Match"))ifMatch=parameter;
         assertThat(ifMatch).isNotNull();
         assertThat(ifMatch.path("required").asBoolean()).isFalse();
+        for(String operation:List.of(
+                "/paths/~1api~1v1~1liquidation-runs~1{id}~1preview/post",
+                "/paths/~1api~1v1~1liquidation-runs~1{id}~1submit/post",
+                "/paths/~1api~1v1~1liquidation-runs~1{id}~1approve/post",
+                "/paths/~1api~1v1~1liquidation-runs~1{id}~1reject/post",
+                "/paths/~1api~1v1~1liquidation-runs~1{id}~1execute/post",
+                "/paths/~1api~1v1~1payment-plan-requests~1{id}~1grant/post",
+                "/paths/~1api~1v1~1payment-plan-requests~1{id}~1reject/post",
+                "/paths/~1api~1v1~1payment-plan-requests~1{id}~1submit-exception/post",
+                "/paths/~1api~1v1~1payment-plan-requests~1{id}~1approve-exception/post",
+                "/paths/~1api~1v1~1payment-plan-requests~1{id}~1reject-exception/post",
+                "/paths/~1api~1v1~1tax-concepts~1{id}/patch",
+                "/paths/~1api~1v1~1tax-configurations~1{id}/patch",
+                "/paths/~1api~1v1~1payment-plan-configurations~1{id}/patch"))
+            assertIfMatchContract(openApi,operation);
+        for(String headerPath:List.of(
+                "/paths/~1api~1v1~1liquidation-runs~1{id}/get/responses/200/headers",
+                "/paths/~1api~1v1~1payment-plan-requests~1{id}/get/responses/200/headers",
+                "/paths/~1api~1v1~1tax-concepts~1{id}/get/responses/200/headers",
+                "/paths/~1api~1v1~1tax-configurations~1{id}/get/responses/200/headers",
+                "/paths/~1api~1v1~1payment-plan-configurations~1{id}/get/responses/200/headers"))
+            assertThat(openApi.at(headerPath).has("ETag")).as("ETag documentado en %s",headerPath).isTrue();
+    }
+
+    private void assertIfMatchContract(JsonNode openApi,String path){
+        JsonNode operation=openApi.at(path);
+        assertThat(operation.path("parameters").findValuesAsText("name")).as(path).contains("If-Match");
+        assertThat(operation.path("responses").has("412")).as(path).isTrue();
+        assertThat(operation.path("responses").path("200").path("headers").has("ETag")).as(path).isTrue();
+        JsonNode ifMatch=null;
+        for(JsonNode parameter:operation.path("parameters"))if(parameter.path("name").asText().equals("If-Match"))ifMatch=parameter;
+        assertThat(ifMatch).as(path).isNotNull();
+        assertThat(ifMatch.path("required").asBoolean()).as(path).isFalse();
+    }
+
+    @Test void rejectUsesFreshTagAndReturnsUpdatedRepresentation() throws Exception {
+        LiquidationRun run=run();
+        run.status=LiquidationRunStatus.PENDING_APPROVAL;run.submittedBy="rentas-etag";runs.saveAndFlush(run);
+        var rentas=actor("rentas-reject-etag","RENTAS");
+        var supervisor=actor("supervisor-reject-etag","SUPERVISOR");
+        String path="/api/v1/liquidation-runs/"+run.id;
+        String tag=mvc.perform(get(path).with(authentication(rentas))).andReturn().getResponse().getHeader("ETag");
+
+        var response=mvc.perform(post(path+"/reject").with(authentication(supervisor)).header("If-Match",tag)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"invalid documentation\"}"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("REJECTED"))
+            .andReturn().getResponse();
+
+        assertThat(response.getHeader("ETag")).isNotBlank().isNotEqualTo(tag);
+        assertThat(runs.findById(run.id).orElseThrow().resolvedBy).isEqualTo("supervisor-reject-etag");
     }
 
     @Test void concurrentSubmissionsWithTheSameEtagAllowOnlyOneTransition() throws Exception {
