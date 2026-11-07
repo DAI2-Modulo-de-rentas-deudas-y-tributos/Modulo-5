@@ -12,11 +12,10 @@ import java.util.UUID;
 public final class ConfirmedOutboundEvents {
     private ConfirmedOutboundEvents() {}
 
-    public interface TypedEvent { String eventType(); }
     public record UpdatedBy(String type,String id) {}
 
     public record CoreEnvelope<T>(String eventId,String eventType,String eventVersion,OffsetDateTime occurredAt,
-        String sourceModule,String correlationId,String causationId,T data) implements TypedEvent {}
+        String sourceModule,String correlationId,String causationId,T data) {}
 
     public record ExemptionRequestedPayload(UUID requestId,UUID citizenId,String conceptCode,String reason,
         BigDecimal requestedPercentage,LocalDate requestedFrom,LocalDate requestedUntil) {
