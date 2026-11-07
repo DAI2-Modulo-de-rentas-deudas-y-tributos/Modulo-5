@@ -1778,6 +1778,67 @@ class PostgreSqlIntegrationTest {
         assertThat(jdbc.queryForObject("select sum(outstanding_balance) from debt where tax_concept_id=?", BigDecimal.class, concept.id)).isEqualByComparingTo("2005.00");
     }
 
+    @Test void concurrentIndividualAndBulkLiquidationRaceRecordsTheBulkConflictOnPostgreSql() throws Exception {
+        authenticate();
+        String suffix=UUID.randomUUID().toString();
+        TaxpayerReference owner=taxpayer(TaxpayerType.CITIZEN,"PG-LIQ-RACE-"+suffix,uniqueDigits(8),null);
+        TaxConcept concept=concept("PG_LIQ_RACE_"+suffix,TaxConceptType.FEE,"M5");
+        TaxConfiguration config=catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(
+            concept.id,CalculationType.FIXED,null,new BigDecimal("100.00"),null,null,true,true,LocalDate.now().minusDays(1),null));
+        catalog.submit(config.id);TestActorSupport.asApprover(()->catalog.approve(config.id));
+        String period=YearMonth.now().plusMonths(2).toString();
+        LocalDate dueDate=LocalDate.now().plusDays(30);
+        LiquidationRun run=bulkRuns.create(new ApiDtos.CreateLiquidationRunRequest(concept.id,period,dueDate,
+            List.of(new ApiDtos.LiquidationRunItemRequest(owner.id,BigDecimal.ZERO))));
+        bulkRuns.preview(run.id);bulkRuns.submit(run.id);TestActorSupport.asApprover(()->bulkRuns.approve(run.id,"race test"));
+        byte[] individualBody=json.writeValueAsBytes(new ApiDtos.LiquidationRequest(owner.id,concept.id,period,BigDecimal.ZERO,dueDate));
+        var rentasAuth=new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("postgres-it-race",null),null,
+            List.of(new SimpleGrantedAuthority("ROLE_RENTAS")));
+        Future<MockHttpServletResponse>[] responses=new Future[2];
+        ExecutorService pool=Executors.newFixedThreadPool(2);
+        jdbc.execute("CREATE FUNCTION test_hold_liquidation_race() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN "
+            +"PERFORM pg_advisory_xact_lock(177501,20261107); RETURN NEW; END $$");
+        jdbc.execute("CREATE TRIGGER test_hold_liquidation_race BEFORE INSERT ON liquidation FOR EACH ROW EXECUTE FUNCTION test_hold_liquidation_race()");
+        try {
+            new TransactionTemplate(transactionManager).executeWithoutResult(tx->{
+                jdbc.execute("select pg_advisory_xact_lock(177501,20261107)");
+                responses[0]=pool.submit(()->mvc.perform(post("/api/v1/liquidations").with(authentication(rentasAuth))
+                    .contentType(MediaType.APPLICATION_JSON).content(individualBody)).andReturn().getResponse());
+                awaitBlockedLiquidationInserts(1);
+                responses[1]=pool.submit(()->mvc.perform(post("/api/v1/liquidation-runs/{id}/execute",run.id)
+                    .with(authentication(rentasAuth)).header("Idempotency-Key","race-"+suffix))
+                    .andReturn().getResponse());
+                awaitBlockedLiquidationInserts(2);
+            });
+            MockHttpServletResponse individual=responses[0].get(15,TimeUnit.SECONDS);
+            MockHttpServletResponse bulk=responses[1].get(15,TimeUnit.SECONDS);
+            assertThat(individual.getStatus()).isEqualTo(201);
+            assertThat(bulk.getStatus()).isEqualTo(422);
+            assertThat(json.readTree(bulk.getContentAsString()).path("code").asText()).isEqualTo("DUPLICATE_LIQUIDATION");
+            assertThat(bulkRuns.detail(run.id).run().status).isEqualTo(LiquidationRunStatus.FAILED);
+            assertThat(jdbc.queryForObject("select count(*) from liquidation where taxpayer_id=? and tax_concept_id=? and period=?",Long.class,owner.id,concept.id,period)).isOne();
+            assertThat(jdbc.queryForObject("select count(*) from debt where taxpayer_id=? and tax_concept_id=?",Long.class,owner.id,concept.id)).isOne();
+        } finally {
+            pool.shutdownNow();
+            jdbc.execute("DROP TRIGGER IF EXISTS test_hold_liquidation_race ON liquidation");
+            jdbc.execute("DROP FUNCTION IF EXISTS test_hold_liquidation_race()");
+        }
+    }
+
+    private void awaitBlockedLiquidationInserts(int expected) {
+        long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(10);
+        int waiting=0;
+        while(System.nanoTime()<deadline) {
+            waiting=jdbc.queryForObject("select count(*) from pg_stat_activity a join pg_locks l on l.pid=a.pid "
+                +"where a.datname=current_database() and l.locktype='advisory' and not l.granted",Integer.class);
+            if(waiting==expected)return;
+            try{Thread.sleep(10);}catch(InterruptedException ex){Thread.currentThread().interrupt();throw new IllegalStateException(ex);}
+        }
+        assertThat(waiting).as("blocked liquidation inserts; lock waits="+jdbc.queryForList(
+            "select pid,wait_event_type,wait_event,query from pg_stat_activity where datname=current_database() and wait_event_type='Lock'"))
+            .isEqualTo(expected);
+    }
+
     @Test void percentageStrategyPreviewAndPersistedLiquidationMatchOnPostgreSql() {
         authenticate();
         TaxpayerReference owner = taxpayer(TaxpayerType.CITIZEN, "PG-STRATEGY-" + UUID.randomUUID(), uniqueDigits(8), null);
