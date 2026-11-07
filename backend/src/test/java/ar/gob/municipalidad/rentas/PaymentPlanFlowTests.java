@@ -248,6 +248,10 @@ class PaymentPlanFlowTests {
         TestActorSupport.asApprover(() -> workflow.grantRefinancing(request.id));
 
         assertThat(plans.findById(old.id).orElseThrow().status).isEqualTo(PaymentPlanStatus.REFINANCED);
+        assertThat(installments.findByPaymentPlanIdOrderByNumber(old.id))
+            .allMatch(installment -> installment.status == InstallmentStatus.CANCELLED);
+        assertThat(planDebts.findByPaymentPlanId(old.id))
+            .allMatch(link -> link.status == PaymentPlanDebtStatus.RELEASED);
         assertThat(request.status).isEqualTo(RefinancingRequestStatus.GRANTED);
         assertThat(plans.findById(request.newPaymentPlanId).orElseThrow().refinancingCount).isEqualTo(1);
         OutboxEvent event=outbox.findAll().stream().filter(item->item.eventType.equals("paymentPlanRefinanced")&&item.aggregateId.equals(request.newPaymentPlanId.toString())).findFirst().orElseThrow();var payload=json.readTree(event.payload);assertThat(event.targetModule).isEqualTo("PLATFORM");assertThat(payload.path("oldPaymentPlanId").longValue()).isEqualTo(old.id);assertThat(payload.path("newPaymentPlanId").longValue()).isEqualTo(request.newPaymentPlanId);

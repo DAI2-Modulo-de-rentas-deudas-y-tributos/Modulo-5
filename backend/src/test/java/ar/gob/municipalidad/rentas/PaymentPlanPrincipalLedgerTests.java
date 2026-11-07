@@ -82,6 +82,19 @@ class PaymentPlanPrincipalLedgerTests {
         verify(audit).record(eq("PaymentAllocation"),eq(44L),eq("PLAN_PRINCIPAL_DISTRIBUTED"),same(shares));
     }
 
+    @Test void findRejectsPersistedDistributionThatDoesNotConserveAllocationPrincipal() throws Exception {
+        PaymentAllocation allocation=allocation("50.00");
+        AuditEntry existing=new AuditEntry();existing.action="PLAN_PRINCIPAL_DISTRIBUTED";
+        existing.newData="[{\"debtId\":10,\"amount\":\"30.00\"}]";
+        when(entries.findByEntityTypeAndEntityIdOrderByOccurredAtAscIdAsc("PaymentAllocation","44"))
+            .thenReturn(List.of(existing));
+
+        assertThatThrownBy(()->ledger().find(allocation))
+            .isInstanceOfSatisfying(BusinessException.class,error->assertThat(error.code).isEqualTo("PLAN_DISTRIBUTION_INVALID"));
+
+        verifyNoInteractions(audit);
+    }
+
     private PaymentAllocation allocation(String principal) {
         PaymentAllocation allocation=new PaymentAllocation();allocation.id=44L;
         allocation.principalApplied=new BigDecimal(principal);return allocation;
