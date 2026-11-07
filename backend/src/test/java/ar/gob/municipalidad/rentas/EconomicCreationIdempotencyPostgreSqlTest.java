@@ -153,6 +153,45 @@ class EconomicCreationIdempotencyPostgreSqlTest {
     }
 
     @Test
+    void planGrantConcurrentReplayCreatesOnePlanAndInstallmentSet() throws Exception {
+        Fixture fixture = fixture("PLAN_GRANT");
+        plansConfiguration();
+        var taxpayerAuth = identity("plan-grant-requester-" + UUID.randomUUID(), fixture.taxpayer.id, "TAXPAYER");
+        setActor(taxpayerAuth);
+        PaymentPlanRequest pending = planWorkflow.request(new ApiDtos.CreatePaymentPlanRequest(
+            fixture.taxpayer.id, List.of(fixture.debtId), 3));
+
+        var rentasAuth = identity("plan-grant-approver-" + UUID.randomUUID(), null, "RENTAS");
+        String key = "plan-grant-" + UUID.randomUUID();
+        var grant = new ApiDtos.GrantPaymentPlanRequest(BigDecimal.ZERO);
+        String body = json.writeValueAsString(grant);
+        String path = "/api/v1/payment-plan-requests/" + pending.id + "/grant";
+
+        List<MvcResult> responses = runTogether(
+            () -> httpPost(path, rentasAuth, key, body),
+            () -> httpPost(path, rentasAuth, key, body));
+
+        String first = responses.get(0).getResponse().getContentAsString();
+        assertThat(responses).allSatisfy(response -> assertThat(response.getResponse().getStatus()).isEqualTo(200));
+        assertThat(responses.get(1).getResponse().getContentAsString()).isEqualTo(first);
+        long planId = json.readTree(first).path("paymentPlanId").asLong();
+        assertThat(planId).isPositive();
+        assertThat(jdbc.queryForObject("select count(*) from payment_plan where request_id=?", Long.class, pending.id)).isOne();
+        assertThat(jdbc.queryForObject("select count(*) from installment where payment_plan_id=?", Long.class, planId)).isEqualTo(3L);
+        assertThat(jdbc.queryForObject("select count(*) from payment_plan_request where id=? and status='GRANTED' and payment_plan_id=?",
+            Long.class, pending.id, planId)).isOne();
+        assertThat(idempotencyRows(rentasAuth.getName(), "POST:/payment-plan-requests/{id}/grant:" + pending.id, key)).isOne();
+
+        mvc.perform(post(path).with(authentication(rentasAuth)).header("Idempotency-Key", key)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsBytes(new ApiDtos.GrantPaymentPlanRequest(BigDecimal.ONE))))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"));
+        assertThat(jdbc.queryForObject("select count(*) from payment_plan where request_id=?", Long.class, pending.id)).isOne();
+        assertThat(jdbc.queryForObject("select count(*) from installment where payment_plan_id=?", Long.class, planId)).isEqualTo(3L);
+    }
+
+    @Test
     void reversalRequestConcurrentReplayReturnsOneRequestAndChangedReasonConflicts() throws Exception {
         Fixture fixture = fixture("REVERSAL");
         setActor(identity("reversal-payment-" + UUID.randomUUID(), null, "RENTAS"));
