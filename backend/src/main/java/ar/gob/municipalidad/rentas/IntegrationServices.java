@@ -1,12 +1,18 @@
 package ar.gob.municipalidad.rentas;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.EntityManagerFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.*;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.orm.jpa.SharedEntityManagerCreator;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -61,25 +67,68 @@ class OutboxPublisher {
     private final boolean rabbitMode,coreHttpMode;
     private final Set<String> coreHttpAllowedEventTypes;
     private final Set<UUID> coreHttpAllowedEventIds;
+    private final TransactionTemplate transactions;
+    private final EntityManager entityManager;
     @org.springframework.beans.factory.annotation.Autowired
     OutboxPublisher(OutboxRepository repository,EventPublisher publisher,
         @org.springframework.beans.factory.annotation.Value("${BROKER_ADAPTER:local-log}") String brokerAdapter,
         @org.springframework.beans.factory.annotation.Value("${rentas.core.http.allowed-event-types:}") String allowedEventTypes,
-        @org.springframework.beans.factory.annotation.Value("${rentas.core.http.allowed-event-ids:}") String allowedEventIds){
+        @org.springframework.beans.factory.annotation.Value("${rentas.core.http.allowed-event-ids:}") String allowedEventIds,
+        ObjectProvider<PlatformTransactionManager> transactionManager,ObjectProvider<EntityManagerFactory> entityManagerFactory){
+        this(repository,publisher,brokerAdapter,allowedEventTypes,allowedEventIds,transactionManager.getIfAvailable(),sharedEntityManager(entityManagerFactory.getIfAvailable()));
+    }
+    OutboxPublisher(OutboxRepository repository,EventPublisher publisher,String brokerAdapter,
+        String allowedEventTypes,String allowedEventIds){this(repository,publisher,brokerAdapter,allowedEventTypes,allowedEventIds,(PlatformTransactionManager)null);}
+    OutboxPublisher(OutboxRepository repository,EventPublisher publisher,String brokerAdapter,
+        String allowedEventTypes,String allowedEventIds,PlatformTransactionManager transactionManager){this(repository,publisher,brokerAdapter,allowedEventTypes,allowedEventIds,transactionManager,null);}
+    OutboxPublisher(OutboxRepository repository,EventPublisher publisher,String brokerAdapter,
+        String allowedEventTypes,String allowedEventIds,PlatformTransactionManager transactionManager,EntityManager entityManager){
         this.repository=repository;this.publisher=publisher;this.rabbitMode="rabbitmq".equalsIgnoreCase(brokerAdapter);this.coreHttpMode="core-http".equalsIgnoreCase(brokerAdapter);
         this.coreHttpAllowedEventTypes=csv(allowedEventTypes);
         this.coreHttpAllowedEventIds=csvUuids(allowedEventIds);
+        this.transactions=transactionManager==null?null:new TransactionTemplate(transactionManager);
+        this.entityManager=entityManager;
         if(coreHttpMode&&(coreHttpAllowedEventTypes.isEmpty()||coreHttpAllowedEventIds.isEmpty()))
             throw new IllegalStateException("CORE_HTTP_EVENT_ALLOWLIST_REQUIRED");
     }
-    OutboxPublisher(OutboxRepository repository,EventPublisher publisher){this(repository,publisher,"local-log","","");}
-    OutboxPublisher(OutboxRepository repository,EventPublisher publisher,String brokerAdapter){this(repository,publisher,brokerAdapter,"","");}
+    private static EntityManager sharedEntityManager(EntityManagerFactory factory){return factory==null?null:SharedEntityManagerCreator.createSharedEntityManager(factory);}
+    OutboxPublisher(OutboxRepository repository,EventPublisher publisher){this(repository,publisher,"local-log","","",(PlatformTransactionManager)null);}
+    OutboxPublisher(OutboxRepository repository,EventPublisher publisher,String brokerAdapter){this(repository,publisher,brokerAdapter,"","",(PlatformTransactionManager)null);}
     @Scheduled(fixedDelayString="${rentas.outbox-delay-ms:5000}")
-    @Transactional void publishPending(){
+    void publishPending(){
+        if(transactions==null){publishEvents(findCandidates());return;}
+        if(!rabbitMode&&!coreHttpMode){
+            transactions.executeWithoutResult(status->publishEvents(findCandidates()));
+            return;
+        }
+        List<UUID> candidateIds=transactions.execute(status->findCandidates().stream().map(event->event.id).toList());
+        if(candidateIds==null)return;
+        for(UUID candidateId:candidateIds){
+            transactions.executeWithoutResult(status->lockCandidate(candidateId)
+                .filter(this::stillPublishable)
+                .filter(event->!coreHttpMode||authorizedCoreHttpEvent(event))
+                .ifPresent(event->publishEvents(List.of(event))));
+        }
+    }
+    @SuppressWarnings("unchecked")
+    private java.util.Optional<OutboxEvent> lockCandidate(UUID id){
+        if(entityManager==null)throw new IllegalStateException("OUTBOX_ENTITY_MANAGER_REQUIRED");
+        List<OutboxEvent> locked=entityManager.createNativeQuery("select * from outbox_event where id=:id for update skip locked",OutboxEvent.class)
+            .setParameter("id",id).getResultList();
+        return locked.stream().findFirst();
+    }
+    private List<OutboxEvent> findCandidates(){
         var page=org.springframework.data.domain.PageRequest.of(0,coreHttpMode?1:50);
-        List<OutboxEvent> publishable=coreHttpMode
-            ?repository.findPublishableForCoreHttp(coreHttpAllowedEventTypes,coreHttpAllowedEventIds,page)
+        return coreHttpMode?repository.findPublishableForCoreHttp(coreHttpAllowedEventTypes,coreHttpAllowedEventIds,page)
             :repository.findPublishable(page);
+    }
+    private boolean stillPublishable(OutboxEvent event){
+        if(event.status==OutboxStatus.PENDING||(coreHttpMode&&event.status==OutboxStatus.LOCAL_ONLY))return true;
+        if(event.status!=OutboxStatus.FAILED)return false;
+        long delaySeconds=event.retryCount<=1?5:event.retryCount==2?10:event.retryCount==3?20:40;
+        return event.lastAttemptAt==null||!event.lastAttemptAt.isAfter(OffsetDateTime.now().minusSeconds(delaySeconds));
+    }
+    private void publishEvents(List<OutboxEvent> publishable){
         for(OutboxEvent event:publishable){
         if(coreHttpMode&&!authorizedCoreHttpEvent(event))continue;
         if("CORE".equals(event.targetModule)&&"overdueDebt".equals(event.eventType)){
