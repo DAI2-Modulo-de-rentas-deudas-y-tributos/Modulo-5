@@ -99,6 +99,14 @@ class EconomicCreationIdempotencyPostgreSqlTest {
         assertThat(jdbc.queryForObject("select count(*) from debt where liquidation_id=?", Long.class, liquidationId)).isOne();
         assertThat(idempotencyRows(actor, "POST:/liquidations", key)).isOne();
 
+        MvcResult retry = httpPost("/api/v1/liquidations", auth, key, body);
+        assertThat(retry.getResponse().getStatus()).isEqualTo(201);
+        assertThat(retry.getResponse().getContentAsString()).isEqualTo(first);
+        assertThat(liquidations.findByTaxpayerId(fixture.taxpayer.id).stream()
+            .filter(item -> item.taxConceptId.equals(fixture.concept.id) && item.period.equals(request.period()))).hasSize(1);
+        assertThat(jdbc.queryForObject("select count(*) from debt where liquidation_id=?", Long.class, liquidationId)).isOne();
+        assertThat(idempotencyRows(actor, "POST:/liquidations", key)).isOne();
+
         var changed = new ApiDtos.LiquidationRequest(fixture.taxpayer.id, fixture.concept.id,
             request.period(), BigDecimal.ONE, request.dueDate());
         mvc.perform(post("/api/v1/liquidations").with(authentication(auth)).header("Idempotency-Key", key)
