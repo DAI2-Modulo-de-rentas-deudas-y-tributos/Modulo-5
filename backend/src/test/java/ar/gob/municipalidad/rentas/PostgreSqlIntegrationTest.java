@@ -8,6 +8,7 @@ import org.hibernate.SessionFactory;
 import org.hibernate.stat.Statistics;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -55,7 +56,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import static org.assertj.core.api.Assertions.*;
 
-@SpringBootTest(properties={"spring.jpa.properties.hibernate.generate_statistics=true","spring.jpa.properties.hibernate.session.events.log=false","rentas.security.trusted-proxy-cidrs=10.0.0.0/8"})
+@SpringBootTest(properties={"spring.jpa.properties.hibernate.generate_statistics=true","spring.jpa.properties.hibernate.session.events.log=false","rentas.security.trusted-proxy-cidrs=10.0.0.0/8","rentas.due-date-processing-initial-delay-ms=3600000"})
 @AutoConfigureMockMvc
 @ActiveProfiles("postgres-it")
 @Testcontainers(disabledWithoutDocker=true)
@@ -341,6 +342,8 @@ class PostgreSqlIntegrationTest {
     @Autowired LateChargeService lateCharges;
     @Autowired FiscalProcessingDatePolicy fiscalDates;
     @Autowired DueDateService dueDates;
+    @Autowired DueDateProcessingWorker dueDateWorker;
+    @Autowired DueDateProcessor dueDateProcessor;
     @Autowired DueDateProcessingRepository dueDateRuns;
     @Autowired PaymentPlanConfigurationRepository planConfigurations;
     @Autowired TaxConfigurationRepository taxConfigurations;
@@ -884,8 +887,8 @@ class PostgreSqlIntegrationTest {
     }
 
     @Test void contextStartsAndFlywayAppliesEveryMigration(){
-        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(31);
-        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(30);
+        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(32);
+        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(31);
         assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version='29'",Integer.class)).isOne();
         assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version='31'",Integer.class)).isOne();
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='tax_configuration'",String.class)).contains("submitted_by");
@@ -1467,6 +1470,7 @@ class PostgreSqlIntegrationTest {
     @Test void dueDateProcessingHandlesMoreRowsThanOneBatch() {
         authenticate();
         TaxpayerReference taxpayer=taxpayer(TaxpayerType.CITIZEN,"PG-DUE-BATCH-"+UUID.randomUUID(),uniqueDigits(8),null);
+        taxpayer.canonicalCitizenId=UUID.randomUUID();taxpayers.saveAndFlush(taxpayer);
         Debt seed=debt("DUE-BATCH-SEED-"+UUID.randomUUID(),taxpayer.id);
         List<Debt> fixture=new ArrayList<>();fixture.add(seed);
         for(int i=1;i<101;i++){
@@ -1475,7 +1479,8 @@ class PostgreSqlIntegrationTest {
             debt.originalAmount=debt.currentAmount=debt.outstandingBalance=new BigDecimal("10.00");debt.status=DebtStatus.PENDING;
             debt.dueDate=LocalDate.of(1800,1,1);debt.createdAt=debt.updatedAt=OffsetDateTime.now();fixture.add(debt);
         }
-        seed.dueDate=LocalDate.of(1800,1,1);debts.save(seed);
+        LocalDate processingDate=uniqueProcessingDate(seed.id,3);
+        seed.dueDate=processingDate.minusDays(1);debts.save(seed);
         debts.saveAll(fixture);debts.flush();
         int version=planConfigurations.findAll().stream().mapToInt(config->config.version).max().orElse(0)+1;
         PaymentPlanConfiguration config=new PaymentPlanConfiguration();config.version=version;config.minimumInstallments=1;config.maximumInstallments=120;
@@ -1491,17 +1496,99 @@ class PostgreSqlIntegrationTest {
             installment.totalAmount=installment.outstandingAmount=BigDecimal.ONE;installment.paidAmount=BigDecimal.ZERO;installment.dueDate=LocalDate.of(1800,1,1);
             installment.status=InstallmentStatus.PENDING;installmentFixture.add(installment);}
         installments.saveAll(installmentFixture);installments.flush();
-        LocalDate processingDate=LocalDate.of(1800,1,2);
         long started=System.nanoTime();
 
-        var run=dueDates.process(processingDate);
+        var queued=dueDates.enqueue(processingDate);
+        var claim=dueDates.claimNext();
+        assertThat(claim).isNotNull();
+        assertThat(dueDateProcessor.processNextBatch(claim.id(),claim.attemptCount())).isFalse();
+        var checkpoint=dueDates.get(queued.id());
+        assertThat(checkpoint.status()).isEqualTo(DueDateRunStatus.PROCESSING);
+        assertThat(checkpoint.debtsOverdue()).isEqualTo(100);
+        long firstBatchEvents=jdbc.queryForObject("select count(*) from outbox_event o join debt d on o.aggregate_id=d.id::text where o.event_type='debtOverdue' and d.taxpayer_id=?",Long.class,taxpayer.id);
+        assertThat(firstBatchEvents).isBetween(1L,100L);
+        String lastDebtId=fixture.stream().map(debt->debt.id).max(Long::compareTo).orElseThrow().toString();
+        jdbc.execute("CREATE OR REPLACE FUNCTION fail_test_due_date_batch() RETURNS trigger AS $$ BEGIN IF NEW.event_type='debtOverdue' AND NEW.aggregate_id='"+lastDebtId+"' THEN RAISE EXCEPTION 'test due date batch failure'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql");
+        jdbc.execute("CREATE TRIGGER fail_test_due_date_batch BEFORE INSERT ON outbox_event FOR EACH ROW EXECUTE FUNCTION fail_test_due_date_batch()");
+        try {
+            assertThatThrownBy(()->dueDateProcessor.processNextBatch(claim.id(),claim.attemptCount())).hasMessageContaining("test due date batch failure");
+            dueDates.recordFailure(claim.id(),claim.attemptCount(),"DUE_DATE_PROCESSING_FAILED");
+            assertThat(dueDates.get(queued.id()).debtsOverdue()).isEqualTo(100);
+            assertThat(jdbc.queryForObject("select count(*) from outbox_event o join debt d on o.aggregate_id=d.id::text where o.event_type='debtOverdue' and d.taxpayer_id=?",Long.class,taxpayer.id)).isEqualTo(firstBatchEvents);
+            jdbc.execute("DROP TRIGGER IF EXISTS fail_test_due_date_batch ON outbox_event");jdbc.execute("DROP FUNCTION IF EXISTS fail_test_due_date_batch()");
+            jdbc.update("update due_date_processing set next_attempt_at=null where id=?",queued.id());
+            dueDateWorker.processNext();
+        } finally {
+            jdbc.execute("DROP TRIGGER IF EXISTS fail_test_due_date_batch ON outbox_event");jdbc.execute("DROP FUNCTION IF EXISTS fail_test_due_date_batch()");
+        }
+        var run=dueDates.get(queued.id());
+        assertThat(run.status()).isEqualTo(DueDateRunStatus.COMPLETED);
+        assertThat(run.debtsOverdue()).isGreaterThanOrEqualTo(101);
+        assertThat(jdbc.queryForObject("select count(*) from outbox_event o join debt d on o.aggregate_id=d.id::text where o.event_type='debtOverdue' and d.taxpayer_id=?",Long.class,taxpayer.id)).isEqualTo(101);
+        assertThat(jdbc.queryForObject("select count(distinct o.idempotency_key) from outbox_event o join debt d on o.aggregate_id=d.id::text where o.event_type='debtOverdue' and d.taxpayer_id=?",Long.class,taxpayer.id)).isEqualTo(101);
 
         long elapsedMillis=TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started);
         assertThat(run.debtsScanned()).isGreaterThanOrEqualTo(101);
-        assertThat(run.debtsOverdue()).isEqualTo(101);
-        assertThat(run.installmentsOverdue()).isEqualTo(101);
+        assertThat(run.installmentsOverdue()).isGreaterThanOrEqualTo(101);
         assertThat(installments.findByPaymentPlanIdOrderByNumber(plan.id)).allMatch(installment->installment.status==InstallmentStatus.OVERDUE);
         System.out.printf("due-date fixture rows=101 elapsedMs=%d%n",elapsedMillis);
+    }
+
+    @Test @EnabledIfSystemProperty(named="rentas.due-date-load-test",matches="true")
+    void queuedDueDateProcessingAcceptsAndProcessesTenThousandOverdueDebts() throws Exception {
+        authenticate();
+        TaxpayerReference taxpayer=taxpayer(TaxpayerType.CITIZEN,"PG-DUE-LOAD-"+UUID.randomUUID(),uniqueDigits(8),null);
+        taxpayer.canonicalCitizenId=UUID.randomUUID();taxpayers.saveAndFlush(taxpayer);
+        Debt seed=debt("DUE-LOAD-SEED-"+UUID.randomUUID(),taxpayer.id);
+        LocalDate processingDate=fiscalDates.today();
+        while(dueDateRuns.findByProcessingDate(processingDate).isPresent())processingDate=processingDate.minusDays(1);
+        LocalDate dueDate=processingDate.minusDays(1);
+        jdbc.update("""
+            insert into debt (integration_id,taxpayer_id,tax_concept_id,origin_type,liquidation_id,original_amount,current_amount,
+                              outstanding_balance,due_date,status,created_at,updated_at)
+            select gen_random_uuid(),?,?,'LIQUIDATION',?,10,10,10,?,'PENDING',now(),now()
+            from generate_series(1,10000)
+            """,taxpayer.id,seed.taxConceptId,seed.liquidationId,dueDate);
+
+        var rentas=new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("due-date-load-"+UUID.randomUUID(),null),null,
+            List.of(new SimpleGrantedAuthority("ROLE_RENTAS")));
+        String key=UUID.randomUUID().toString();
+        long requestStarted=System.nanoTime();
+        MockHttpServletResponse accepted=mvc.perform(post("/api/v1/administration/process-due-dates").with(authentication(rentas))
+                .header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsBytes(new FiscalProcessingController.DueDateRequest(processingDate))))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isAccepted())
+            .andReturn().getResponse();
+        long requestMillis=TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-requestStarted);
+        JsonNode acceptedBody=json.readTree(accepted.getContentAsByteArray());
+        long runId=acceptedBody.path("id").asLong();
+        assertThat(requestMillis).isLessThan(2000);
+        assertThat(acceptedBody.path("status").asText()).isEqualTo("PENDING");
+
+        mvc.perform(post("/api/v1/administration/process-due-dates").with(authentication(rentas))
+                .header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsBytes(new FiscalProcessingController.DueDateRequest(processingDate))))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isAccepted())
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.id").value(runId));
+        long processingStarted=System.nanoTime();
+        dueDateWorker.processNext();
+        long processingMillis=TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-processingStarted);
+
+        var completed=dueDates.get(runId);
+        assertThat(completed.status()).isEqualTo(DueDateRunStatus.COMPLETED);
+        assertThat(completed.debtsOverdue()).isEqualTo(10000);
+        assertThat(completed.errors()).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from outbox_event o join debt d on o.aggregate_id=d.id::text where o.event_type='debtOverdue' and d.taxpayer_id=? and d.due_date=?",Long.class,taxpayer.id,dueDate)).isEqualTo(10000);
+        assertThat(jdbc.queryForObject("select count(*) from late_charge_application l join debt d on l.debt_id=d.id where d.taxpayer_id=? and d.due_date=? and l.calculation_date=?",Long.class,taxpayer.id,dueDate,processingDate)).isEqualTo(10000);
+        mvc.perform(post("/api/v1/administration/process-due-dates").with(authentication(rentas))
+                .header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsBytes(new FiscalProcessingController.DueDateRequest(processingDate))))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isAccepted())
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.id").value(runId))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.status").value("COMPLETED"));
+        assertThat(jdbc.queryForObject("select count(*) from outbox_event o join debt d on o.aggregate_id=d.id::text where o.event_type='debtOverdue' and d.taxpayer_id=? and d.due_date=?",Long.class,taxpayer.id,dueDate)).isEqualTo(10000);
+        assertThat(jdbc.queryForObject("select count(*) from late_charge_application l join debt d on l.debt_id=d.id where d.taxpayer_id=? and d.due_date=? and l.calculation_date=?",Long.class,taxpayer.id,dueDate,processingDate)).isEqualTo(10000);
+        System.out.printf("due-date load rows=10000 responseMs=%d workerMs=%d processingStatus=%s outboxEvents=10000%n",requestMillis,processingMillis,completed.status());
     }
 
     @Test void concurrentDueDateProcessingForSameDateReturnsSingleIdempotentRun() throws Exception {
@@ -1520,6 +1607,28 @@ class PostgreSqlIntegrationTest {
         LocalDate firstDate=uniqueProcessingDate(eligible.id,2),secondDate=firstDate.plusDays(1);eligible.dueDate=firstDate.minusDays(1);debts.save(eligible);
         assertThat(runTogether(()->dueDates.process(firstDate),()->dueDates.process(secondDate))).containsOnlyNulls();
         assertThat(overdueEvents(eligible)).hasSize(1);
+    }
+
+    @Test void queuedDueDateRunRetriesRolledBackEffectsWithoutDuplicates() {
+        authenticate();Debt eligible=debt("DUE-DATE-QUEUE-"+UUID.randomUUID(),null);LocalDate date=uniqueProcessingDate(eligible.id,20);eligible.dueDate=date.minusDays(1);debts.save(eligible);
+        TaxpayerReference taxpayer=taxpayers.findById(eligible.taxpayerId).orElseThrow();taxpayer.canonicalCitizenId=UUID.randomUUID();taxpayers.save(taxpayer);
+        String aggregateId=eligible.id.toString();
+        jdbc.execute("CREATE OR REPLACE FUNCTION fail_test_due_date_queue() RETURNS trigger AS $$ BEGIN IF NEW.event_type='debtOverdue' AND NEW.aggregate_id='"+aggregateId+"' THEN RAISE EXCEPTION 'test due date queue failure'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql");
+        jdbc.execute("CREATE TRIGGER fail_test_due_date_queue BEFORE INSERT ON outbox_event FOR EACH ROW EXECUTE FUNCTION fail_test_due_date_queue()");
+        try {
+            var queued=dueDates.enqueue(date);var duplicate=dueDates.enqueue(date);
+            assertThat(queued.id()).isEqualTo(duplicate.id());assertThat(queued.status()).isEqualTo(DueDateRunStatus.PENDING);
+            assertThat(queued.processedAt()).isNull();
+            dueDateWorker.processNext();
+            var failedAttempt=dueDates.get(queued.id());assertThat(failedAttempt.status()).isEqualTo(DueDateRunStatus.PENDING);assertThat(failedAttempt.lastErrorCode()).isEqualTo("DUE_DATE_PROCESSING_FAILED");
+            assertThat(overdueEvents(eligible)).isEmpty();
+            jdbc.execute("DROP TRIGGER IF EXISTS fail_test_due_date_queue ON outbox_event");jdbc.execute("DROP FUNCTION IF EXISTS fail_test_due_date_queue()");
+            jdbc.update("update due_date_processing set next_attempt_at=null where id=?",queued.id());dueDateWorker.processNext();
+            var completed=dueDates.get(queued.id());assertThat(completed.status()).isEqualTo(DueDateRunStatus.COMPLETED);assertThat(completed.debtsOverdue()).isPositive();
+            assertThat(overdueEvents(eligible)).hasSize(1);
+        } finally {
+            jdbc.execute("DROP TRIGGER IF EXISTS fail_test_due_date_queue ON outbox_event");jdbc.execute("DROP FUNCTION IF EXISTS fail_test_due_date_queue()");
+        }
     }
 
     @Test void overdueOutboxFailureRollsBackTheDueDateProcessingTransaction() {
