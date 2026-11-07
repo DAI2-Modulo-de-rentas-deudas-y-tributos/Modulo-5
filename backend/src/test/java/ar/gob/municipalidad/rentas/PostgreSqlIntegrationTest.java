@@ -1125,7 +1125,7 @@ class PostgreSqlIntegrationTest {
         assertThat(integrationLogs.count()).isEqualTo(logsBefore+1);
 
         taxpayer(TaxpayerType.ORGANIZATION,"M4-PG-"+feeId,null,cuit);
-        IntegrationEventLog retried=integrationReprocess.reprocess(feeId,"Se proyectó la organización por CUIT");
+        IntegrationEventLog retried=integrationReprocess.reprocess(feeId.toString(),"Se proyectó la organización por CUIT");
         assertThat(retried.retryCount).isEqualTo(1);
         assertThat(retried.status).isEqualTo(IntegrationEventStatus.FAILED);
         assertThat(retried.errorMessage).startsWith(CoreM4Consumer.DUE_DATE_PENDING);
