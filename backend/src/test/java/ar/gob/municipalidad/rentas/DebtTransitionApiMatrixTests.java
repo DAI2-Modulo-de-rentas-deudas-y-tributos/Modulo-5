@@ -13,6 +13,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.transaction.TestTransaction;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -67,8 +68,13 @@ class DebtTransitionApiMatrixTests {
     @Autowired LiquidationRunRepository liquidationRuns;
     @Autowired LiquidationRunItemRepository liquidationRunItems;
     @Autowired LiquidationRepository liquidationRepository;
+    @Autowired LiquidationComponentRepository liquidationComponents;
+    @Autowired TaxConfigurationRepository taxConfigurations;
+    @Autowired TaxConceptRepository taxConcepts;
     @Autowired OutboxRepository outbox;
+    @Autowired AuditRepository audit;
     @Autowired DemoUserRepository demoUsers;
+    @Autowired DemoAuthSessionRepository demoAuthSessions;
     @Autowired TaxpayerRepository taxpayers;
     @Autowired org.springframework.security.crypto.password.PasswordEncoder passwordEncoder;
     @Autowired DemoAuthService demoAuth;
@@ -158,6 +164,99 @@ class DebtTransitionApiMatrixTests {
         assertThat(planRequests.count()).isEqualTo(planRequestsBefore);
         assertThat(planRequestDebts.count()).isEqualTo(planRequestDebtsBefore);
         assertThat(outbox.count()).isEqualTo(outboxBefore);
+    }
+
+    @ParameterizedTest(name = "POST payments rejects an allocation to {0} debt without persisting effects")
+    @EnumSource(value=DebtStatus.class,names={"PAID","CANCELLED"})
+    void registerPaymentRejectsAllocationToTerminalDebtAndRollsBackAllEffects(DebtStatus state) throws Exception {
+        LocalDate today=dates.today();
+        List<UUID> outboxIdsBeforeFixture=outbox.findAll().stream().map(event->event.id).toList();
+        List<Long> auditIdsBeforeFixture=audit.findAll().stream().map(entry->entry.id).toList();
+        Debt debt=createDebt(today);
+        if(state==DebtStatus.PAID)debt.imputar(debt.outstandingBalance);
+        else debt.anular();
+        debts.saveAndFlush(debt);
+
+        DemoAuthSessions sessions=new DemoAuthSessions(demoUsers,taxpayers,passwordEncoder,demoAuth);
+        String rentasSession=sessions.token(DemoRole.RENTAS);
+        long paymentsBefore=payments.count();
+        long allocationsBefore=allocations.count();
+        long outboxBefore=outbox.count();
+        BigDecimal currentBefore=debt.currentAmount;
+        BigDecimal outstandingBefore=debt.outstandingBalance;
+        Long debtId=debt.id;
+        Long taxpayerId=debt.taxpayerId;
+        Long liquidationId=debt.liquidationId;
+        Long configurationId=debt.configurationId;
+        Long taxConceptId=debt.taxConceptId;
+        DemoAuthSession session=demoAuthSessions.findByTokenHash(DemoAuthService.hashToken(rentasSession)).orElseThrow();
+        Long demoUserId=session.demoUserId;
+        String demoActorId=demoUsers.findById(demoUserId).orElseThrow().integrationActorId.toString();
+
+        // Commit only this synthetic H2 fixture so the HTTP request owns its transaction;
+        // a failed request must roll back the transient Payment row as it would in production.
+        TestTransaction.flagForCommit();
+        TestTransaction.end();
+
+        try {
+            SecurityContextHolder.clearContext();
+            mvc.perform(post("/api/v1/payments").header("X-Demo-Session",rentasSession)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(json.writeValueAsString(new ApiDtos.RegisterPaymentRequest(debt.taxpayerId,
+                        PaymentMethod.CASH,new BigDecimal("10.00"),
+                        List.of(new ApiDtos.AllocationRequest(debt.id,new BigDecimal("10.00")))))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("DEBT_NOT_PAYABLE"));
+
+            Debt stored=debts.findById(debt.id).orElseThrow();
+            assertThat(stored.status).isEqualTo(state);
+            assertThat(stored.currentAmount).isEqualByComparingTo(currentBefore);
+            assertThat(stored.outstandingBalance).isEqualByComparingTo(outstandingBefore);
+            assertThat(payments.count()).isEqualTo(paymentsBefore);
+            assertThat(allocations.count()).isEqualTo(allocationsBefore);
+            assertThat(outbox.count()).isEqualTo(outboxBefore);
+        } finally {
+            cleanupTerminalDebtFixture(debtId,taxpayerId,liquidationId,configurationId,taxConceptId,
+                session,demoUserId,demoActorId,outboxIdsBeforeFixture);
+        }
+
+        assertThat(debts.existsById(debtId)).isFalse();
+        assertThat(liquidationComponents.findByLiquidationIdOrderById(liquidationId)).isEmpty();
+        assertThat(liquidationRepository.existsById(liquidationId)).isFalse();
+        assertThat(taxConfigurations.existsById(configurationId)).isFalse();
+        assertThat(taxConcepts.existsById(taxConceptId)).isFalse();
+        assertThat(taxpayers.existsById(taxpayerId)).isFalse();
+        assertThat(demoAuthSessions.existsById(session.id)).isFalse();
+        assertThat(demoUsers.existsById(demoUserId)).isFalse();
+        assertThat(outbox.findAll().stream().map(event->event.id).toList()).containsExactlyInAnyOrderElementsOf(outboxIdsBeforeFixture);
+        assertThat(audit.findAll().stream().map(entry->entry.id).toList()).containsExactlyInAnyOrderElementsOf(auditIdsBeforeFixture);
+    }
+
+    private void cleanupTerminalDebtFixture(Long debtId,Long taxpayerId,Long liquidationId,Long configurationId,
+            Long taxConceptId,DemoAuthSession session,Long demoUserId,String demoActorId,List<UUID> outboxIdsBeforeFixture) {
+        TestTransaction.start();
+        debts.deleteById(debtId);
+        liquidationComponents.deleteAll(liquidationComponents.findByLiquidationIdOrderById(liquidationId));
+        liquidationRepository.deleteById(liquidationId);
+        taxConfigurations.deleteById(configurationId);
+        taxConcepts.deleteById(taxConceptId);
+        taxpayers.deleteById(taxpayerId);
+        demoAuthSessions.delete(session);
+        demoUsers.deleteById(demoUserId);
+        deleteAuditEntries("Debt",debtId);
+        deleteAuditEntries("Liquidation",liquidationId);
+        deleteAuditEntries("TaxConfiguration",configurationId);
+        deleteAuditEntries("TaxConcept",taxConceptId);
+        deleteAuditEntries("DemoUser",demoUserId);
+        audit.deleteAll(audit.findAll().stream()
+            .filter(entry->"SecurityEvent".equals(entry.entityType)&&demoActorId.equals(entry.userId)).toList());
+        outbox.deleteAll(outbox.findAll().stream().filter(event->!outboxIdsBeforeFixture.contains(event.id)).toList());
+        TestTransaction.flagForCommit();
+        TestTransaction.end();
+    }
+
+    private void deleteAuditEntries(String entityType,Long entityId) {
+        audit.deleteAll(audit.findByEntityTypeAndEntityIdOrderByOccurredAtAscIdAsc(entityType,entityId.toString()));
     }
 
     @ParameterizedTest(name = "{0} debt in active plan rejects direct allocation and adjustment")
