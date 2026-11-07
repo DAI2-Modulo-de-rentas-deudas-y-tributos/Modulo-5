@@ -51,6 +51,9 @@ public final class ApiDtos {
     public record LiquidationRunResponse(Long id,Long taxConceptId,String period,LocalDate dueDate,Long configurationId,Integer configurationVersion,LiquidationRunStatus status,int totalItems,int validItems,int errorItems,BigDecimal estimatedTotalAmount,String createdBy,OffsetDateTime createdAt,OffsetDateTime submittedAt,String resolvedBy,OffsetDateTime resolvedAt) {}
     public record LiquidationRunItemResponse(Long id,Long liquidationRunId,Long taxpayerId,BigDecimal taxableBase,BigDecimal previewAmount,LiquidationRunItemStatus status,String errorCode,String errorMessage,Long liquidationId) {}
     public record LiquidationRunDetailResponse(LiquidationRunResponse run,List<LiquidationRunItemResponse> items) {}
+    public record LiquidationRunMutationResponse(LiquidationRunResponse response,String etag) {}
+    public record LiquidationRunPreviewResponse(LiquidationRunDetailResponse response,String etag) {}
+    public record IfMatchIdempotencyRequest(String ifMatch,Object request) {}
     public record ExemptionRequestResponse(Long id,Long taxpayerId,Long taxConceptId,String reason,BigDecimal requestedPercentage,LocalDate requestedFrom,LocalDate requestedUntil,ExemptionRequestStatus status,String requestedBy,OffsetDateTime requestedAt,String reviewedBy,OffsetDateTime reviewStartedAt,String resolutionSubmittedBy,OffsetDateTime resolutionSubmittedAt,String resolvedBy,OffsetDateTime resolvedAt,String resolutionReason) {}
     public record ExemptionRequestDocumentResponse(Long id,Long exemptionRequestId,String externalDocumentId,String documentType,String fileName,String uploadedBy,OffsetDateTime uploadedAt) {}
     public record ExemptionRequestHistoryEntry(String type,OffsetDateTime date,ExemptionRequestStatus status,String action,String message,ExemptionRequestDocumentResponse document) {}

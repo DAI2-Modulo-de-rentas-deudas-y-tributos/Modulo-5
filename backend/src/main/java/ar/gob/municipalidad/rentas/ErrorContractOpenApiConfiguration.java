@@ -38,6 +38,14 @@ class ErrorContractOpenApiConfiguration {
                     ApiResponse response=operation.getResponses().get("200");if(response!=null)response.addHeaderObject("ETag",new io.swagger.v3.oas.models.headers.Header().description("Nueva versión del recurso").schema(new StringSchema()));
                 }
                 if(pathName.matches("/api/v1/(tax-concepts|tax-configurations|payment-plan-configurations)/\\{id\\}") && path.getGet()==operation){ApiResponse response=operation.getResponses().get("200");if(response!=null)response.addHeaderObject("ETag",new io.swagger.v3.oas.models.headers.Header().description("Versión actual del recurso").schema(new StringSchema()));}
+                if(pathName.matches("/api/v1/liquidation-runs/\\{id\\}") && path.getGet()==operation){ApiResponse response=operation.getResponses().get("200");if(response!=null)response.addHeaderObject("ETag",new io.swagger.v3.oas.models.headers.Header().description("Hash de la representación actual de la corrida y sus ítems").schema(new StringSchema()));}
+                if(pathName.matches("/api/v1/liquidation-runs/\\{id\\}/(preview|submit|approve|reject|execute)") && path.getPost()==operation){
+                    Parameter ifMatch=operation.getParameters()==null?null:operation.getParameters().stream().filter(parameter->"If-Match".equalsIgnoreCase(parameter.getName())).findFirst().orElse(null);
+                    if(ifMatch==null){ifMatch=new Parameter().name("If-Match");operation.addParametersItem(ifMatch);}
+                    ifMatch.setIn("header");ifMatch.setRequired(false);ifMatch.setDescription("ETag recibido del detalle de la corrida. Si se omite, se conserva compatibilidad sin precondición.");ifMatch.setSchema(new StringSchema());
+                    operation.getResponses().putIfAbsent("412",new ApiResponse().$ref("#/components/responses/ApiError"));
+                    ApiResponse response=operation.getResponses().get("200");if(response!=null)response.addHeaderObject("ETag",new io.swagger.v3.oas.models.headers.Header().description("Hash de la representación actualizada de la corrida y sus ítems").schema(new StringSchema()));
+                }
                 if(path.getPost()==operation&&!pathName.startsWith("/api/v1/dev-auth/")&&!isReadOnlyCalculation(pathName)
                     &&(operation.getParameters()==null||operation.getParameters().stream().noneMatch(p->"Idempotency-Key".equalsIgnoreCase(p.getName()))))
                     operation.addParametersItem(new Parameter().name("Idempotency-Key").in("header").required(false).description("Clave opcional para reintentos; misma clave y cuerpo repite la respuesta, distinto cuerpo produce 409.").schema(new StringSchema().maxLength(128)));
