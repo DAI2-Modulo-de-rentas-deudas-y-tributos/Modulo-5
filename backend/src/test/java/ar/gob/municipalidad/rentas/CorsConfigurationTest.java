@@ -42,12 +42,13 @@ class CorsConfigurationTest {
                 .header(HttpHeaders.ORIGIN, ORIGIN)
                 .header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, method)
                 .header(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS,
-                    "content-type,accept,authorization,x-demo-session,idempotency-key,x-correlation-id"))
+                    "content-type,accept,authorization,x-demo-session,idempotency-key,if-match,x-correlation-id"))
             .andExpect(status().isOk())
             .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, ORIGIN))
             .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_METHODS, containsString(method)))
             .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_HEADERS, containsString("x-demo-session")))
             .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_HEADERS, containsString("idempotency-key")))
+            .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_HEADERS, containsString("if-match")))
             .andExpect(header().doesNotExist(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS));
     }
 
@@ -74,6 +75,12 @@ class CorsConfigurationTest {
             .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS, containsString("Content-Disposition")))
             .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS, containsString("X-Correlation-Id")))
             .andExpect(header().string("X-Correlation-Id", "cors-health-test"));
+    }
+
+    @Test void corsConfigurationExposesEntityTagsToBrowserClients() {
+        var config=new SecurityConfig().corsConfigurationSource("https://dev.example.com");
+        var request=new MockHttpServletRequest("GET","/api/v1/debts/1");
+        assertThat(config.getCorsConfiguration(request).getExposedHeaders()).contains("ETag");
     }
 
     @Test void allowedOriginDoesNotBypassAuthenticationAndCanReadTheError() throws Exception {
