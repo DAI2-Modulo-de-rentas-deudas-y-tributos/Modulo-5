@@ -25,6 +25,8 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Stream;
@@ -1476,7 +1478,17 @@ class DebtTransitionApiMatrixTests {
     }
 
     @Test void invalidDebtTransitionCasesCoverEveryUnsupportedStateOperationPair() {
+        Set<DebtStateOperation> allOperations=Set.of(DebtStateOperation.values());
+        Map<DebtStatus,Set<DebtStateOperation>> forbidden=Map.of(
+            DebtStatus.PENDING,Set.of(),
+            DebtStatus.PARTIALLY_PAID,Set.of(),
+            DebtStatus.PAID,allOperations,
+            DebtStatus.CANCELLED,allOperations);
         List<String> expected=Stream.of(DebtStatus.values())
+            .flatMap(state->forbidden.get(state).stream()
+                .map(operation->transitionKey(state,operation.name,operation.code)))
+            .toList();
+        List<String> policy=Stream.of(DebtStatus.values())
             .flatMap(state->Stream.of(DebtStateOperation.values())
                 .filter(operation->!operation.allowed(state))
                 .map(operation->transitionKey(state,operation.name,operation.code)))
@@ -1485,6 +1497,7 @@ class DebtTransitionApiMatrixTests {
             .map(arguments->transitionKey((DebtStatus)arguments.get()[0],(String)arguments.get()[1],(String)arguments.get()[2]))
             .toList();
 
+        assertThat(policy).containsExactlyInAnyOrderElementsOf(expected);
         assertThat(enumerated).doesNotHaveDuplicates().containsExactlyInAnyOrderElementsOf(expected);
     }
 
