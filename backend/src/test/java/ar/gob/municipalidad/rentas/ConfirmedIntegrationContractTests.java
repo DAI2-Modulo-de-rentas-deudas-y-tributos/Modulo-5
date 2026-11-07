@@ -61,6 +61,26 @@ class ConfirmedIntegrationContractTests {
         assertThat(processed.existsByExternalEventId("M1-EVT-UPDATED-ACTIVE")).isTrue();
     }
 
+    @Test void repeatedRegistrationDoesNotReactivateAnExistingCitizen() throws Exception {
+        UUID citizenId=UUID.randomUUID();
+        long countBefore=taxpayers.count();
+        TaxpayerReference registered=m1.consumeCitizen(citizen(citizenId,"M1-EVT-REGISTERED-ORIGINAL","REGISTERED",
+            "{\"dni\":\"34567890\",\"cuil\":\"20345678901\",\"name\":\"Nombre\",\"lastname\":\"Inicial\",\"birthdate\":\"1990-04-12\",\"state\":\"ACTIVE\"}"));
+        registered.externalStatus=TaxpayerStatus.BLOCKED;taxpayers.saveAndFlush(registered);
+        long countAfterRegistration=taxpayers.count();
+        var repeatedRegistration=citizen(citizenId,"M1-EVT-REGISTERED-REDELIVERY","REGISTERED",
+            "{\"dni\":\"34567890\",\"cuil\":\"20345678901\",\"name\":\"Nombre\",\"lastname\":\"Inicial\",\"birthdate\":\"1990-04-12\",\"state\":\"ACTIVE\"}");
+
+        TaxpayerReference result=m1.consumeCitizen(repeatedRegistration);
+        TaxpayerReference duplicate=m1.consumeCitizen(repeatedRegistration);
+
+        assertThat(result.id).isEqualTo(registered.id);assertThat(duplicate.id).isEqualTo(registered.id);
+        assertThat(countAfterRegistration).isEqualTo(countBefore+1);
+        assertThat(taxpayers.count()).isEqualTo(countAfterRegistration);
+        assertThat(taxpayers.findById(registered.id).orElseThrow().externalStatus).isEqualTo(TaxpayerStatus.BLOCKED);
+        assertThat(processed.existsByExternalEventId("M1-EVT-REGISTERED-REDELIVERY")).isTrue();
+    }
+
     @Test void m1UpdatedWithConfirmedCanonicalUuidRefreshesTheExistingNumericReference() throws Exception {
         TaxpayerReference existing=new TaxpayerReference();existing.taxpayerType=TaxpayerType.CITIZEN;existing.externalId="4";
         existing.canonicalCitizenId=M1_CITIZEN_ID;existing.dni="30000000";existing.cuit="20300000001";
