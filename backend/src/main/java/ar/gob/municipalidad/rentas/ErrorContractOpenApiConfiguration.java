@@ -33,6 +33,10 @@ class ErrorContractOpenApiConfiguration {
                     documentIfMatch(operation,"ETag recibido del GET. Si se omite, se conserva compatibilidad sin precondición.","Nueva versión del recurso");
                 if(pathName.matches("/api/v1/(tax-concepts|tax-configurations|payment-plan-configurations)/\\{id\\}") && path.getGet()==operation)
                     documentEtag(operation,"Versión actual del recurso");
+                if(pathName.matches("/api/v1/tax-configurations/\\{id\\}/(submit|approve|reject|deactivate)") && path.getPost()==operation)
+                    documentIfMatch(operation,"ETag recibido del detalle de la configuración. Si se omite, se conserva compatibilidad sin precondición.","Versión actualizada de la configuración");
+                if(pathName.matches("/api/v1/(debts|liquidations|payment-plans|exemption-requests)/\\{id\\}") && path.getGet()==operation)
+                    documentEtag(operation,"Hash de la representación actual del recurso");
                 if(pathName.matches("/api/v1/liquidation-runs/\\{id\\}") && path.getGet()==operation)
                     documentEtag(operation,"Hash de la representación actual de la corrida y sus ítems");
                 if(pathName.matches("/api/v1/payment-plan-requests/\\{id\\}") && path.getGet()==operation)
@@ -43,6 +47,14 @@ class ErrorContractOpenApiConfiguration {
                 if(pathName.matches("/api/v1/payment-plan-requests/\\{id\\}/(grant|reject|submit-exception|approve-exception|reject-exception)") && path.getPost()==operation){
                     documentIfMatch(operation,"ETag recibido del detalle de la solicitud. Si se omite, se conserva compatibilidad sin precondición.","Hash de la solicitud actualizada");
                 }
+                if((pathName.matches("/api/v1/debts/\\{id\\}/late-charges")
+                    ||pathName.matches("/api/v1/payments/\\{id\\}/allocations")
+                    ||pathName.matches("/api/v1/payment-plans/\\{planId\\}/(expiration-requests|refinancing-requests)")
+                    ||pathName.matches("/api/v1/payment-plan-expirations/\\{id\\}/(approve|reject)")
+                    ||pathName.matches("/api/v1/refinancing-requests/\\{id\\}/grant")) && path.getPost()==operation)
+                    documentIfMatch(operation,"ETag recibido del recurso de deuda o plan relacionado. Si se omite, se conserva compatibilidad sin precondición.","Hash de la representación actual del recurso relacionado");
+                if(pathName.matches("/api/v1/exemption-requests/\\{id\\}/(start-review|request-documentation|documentation|submit-resolution|approve|reject)") && path.getPost()==operation)
+                    documentIfMatch(operation,"ETag recibido del detalle de la solicitud. Si se omite, se conserva compatibilidad sin precondición.","Hash de la solicitud actualizada");
                 if(path.getPost()==operation&&!pathName.startsWith("/api/v1/dev-auth/")&&!isReadOnlyCalculation(pathName)
                     &&(operation.getParameters()==null||operation.getParameters().stream().noneMatch(p->"Idempotency-Key".equalsIgnoreCase(p.getName()))))
                     operation.addParametersItem(new Parameter().name("Idempotency-Key").in("header").required(false).description("Clave opcional para reintentos; misma clave y cuerpo repite la respuesta, distinto cuerpo produce 409.").schema(new StringSchema().maxLength(128)));
@@ -64,6 +76,8 @@ class ErrorContractOpenApiConfiguration {
     private void documentEtag(Operation operation,String description){
         ApiResponse response=operation.getResponses().get("200");
         if(response!=null)response.addHeaderObject("ETag",new Header().description(description).schema(new StringSchema()));
+        ApiResponse created=operation.getResponses().get("201");
+        if(created!=null)created.addHeaderObject("ETag",new Header().description(description).schema(new StringSchema()));
     }
 
     private void allowNullInOptionalProperties(Schema<?> schema){

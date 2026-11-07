@@ -2,18 +2,27 @@
 
 ## SCRUM-810: ETag e If-Match
 
-El backend publica ETag en el GET de detalle y acepta `If-Match` en estos tres recursos que tienen PATCH:
+ETag se publica en los detalles modificables o usados como precondición:
 
-| GET / PATCH | Versión utilizada | Protección al actualizar |
+| Recurso | Representación del ETag | Operaciones con If-Match opcional |
 |---|---|---|
-| `/api/v1/tax-concepts/{id}` | `lock_version` JPA, distinto del código de concepto | `SELECT ... FOR UPDATE`, comparación bajo lock y `@Version` |
-| `/api/v1/tax-configurations/{id}` | `lock_version` JPA, distinto de la versión funcional de configuración | `SELECT ... FOR UPDATE`, comparación bajo lock y `@Version` |
-| `/api/v1/payment-plan-configurations/{id}` | versión funcional copy-on-write existente | lock de la secuencia, comparación del ETag y rechazo si dejó de ser la versión vigente |
+| /tax-concepts/{id} | lock_version JPA | PATCH |
+| /tax-configurations/{id} | lock_version JPA | PATCH, submit, approve, reject, deactivate |
+| /payment-plan-configurations/{id} | versión funcional copy-on-write | PATCH |
+| /debts/{id} | hash de la representación | late-charges; allocations que afectan la deuda |
+| /liquidations/{id} | hash del detalle | Sólo lectura; no hay modificación individual por id |
+| /payment-plans/{id} | hash de la representación | allocations de cuotas, expiración y refinanciación; aprobaciones/grants correspondientes |
+| /exemption-requests/{id} | hash de la representación | start-review, request-documentation, documentation, submit-resolution, approve, reject |
+| /liquidation-runs/{id} | hash de corrida e ítems | preview, submit, approve, reject, execute |
+| /payment-plan-requests/{id} | hash de solicitud | grant, reject y transiciones de excepción |
 
-Los tags son opacos, fuertes y específicos del recurso. El cliente debe conservar el valor de `ETag` y enviarlo sin alteraciones en `If-Match`. Si se omite el header, la actualización se admite por compatibilidad con clientes existentes; esa llamada no obtiene protección contra una edición obsoleta. Si se envía un valor obsoleto o desconocido, la respuesta es `412 application/problem+json` y no se ejecuta la modificación ni se genera Outbox. PATCH devuelve el ETag nuevo. La migración incremental V31 incorpora sólo los contadores técnicos y la tabla de idempotencia; no reescribe migraciones anteriores.
+Los tags son opacos, fuertes y específicos del recurso. El cliente debe conservar el valor de ETag y enviarlo sin alteraciones en If-Match. Si se omite el header, se mantiene compatibilidad con los clientes existentes, pero la llamada no queda protegida frente a una lectura obsoleta. Un tag obsoleto o desconocido devuelve HTTP 412 application/problem+json con PRECONDITION_FAILED; la operación y sus eventos se revierten. Las comparaciones se realizan bajo los bloqueos de fila existentes. Cuando una acción cambia el recurso, la respuesta incluye el ETag actualizado.
 
-Los demás POST que cambian estados o ejecutan acciones no reciben precondición ETag en esta entrega. El inventario incluye: envío/aprobación/rechazo/desactivación de configuraciones; envío/aprobación/rechazo/ejecución de corridas; aprobación/rechazo de ajustes; aprobación/rechazo/ejecución de reversiones; otorgamiento/rechazo/excepción de planes; aprobación/rechazo de caducidades; aprobación/rechazo de refinanciaciones; transiciones de exenciones y tickets; reintento de obligaciones externas; procesamiento fiscal y conciliación. Son comandos de transición y no PATCH/PUT; deben evaluarse por ticket si sus contratos exigen precondiciones explícitas.
+En las operaciones POST que aceptan Idempotency-Key, omitir If-Match conserva el fingerprint previo. Si se envía, el tag integra el fingerprint: repetir la misma clave con otro tag se rechaza como IDEMPOTENCY_KEY_REUSED (409). El replay idéntico devuelve el resultado almacenado sin repetir los efectos.
 
+La migración incremental V31 incorpora los contadores técnicos y la tabla de idempotencia; no reescribe migraciones anteriores.
+
+No todas las operaciones mutables tienen If-Match. El alcance de esta entrega excluye, entre otras, ajustes, reversiones, transiciones de tickets, reintentos de obligaciones externas, procesamiento fiscal y conciliación. Esas operaciones conservan sus bloqueos e idempotencia existentes y requieren decisión/criterios específicos antes de incorporar precondiciones.
 ## SCRUM-811: Idempotency-Key
 
 La tabla `idempotency_request` almacena en la transacción de negocio la identidad autenticada, operación, clave, fingerprint SHA-256 del cuerpo y la respuesta. El alcance usa la tupla usuario + operación (incluye el identificador de ruta cuando corresponde) + clave. La misma tupla y cuerpo, si la primera operación terminó correctamente, devuelve el mismo status del endpoint y el mismo JSON; la misma clave con otro cuerpo devuelve el conflicto `IDEMPOTENCY_KEY_REUSED` (409). El header es opcional por compatibilidad. El claim `INSERT ... ON CONFLICT DO NOTHING` de PostgreSQL serializa reintentos concurrentes; la respuesta y los efectos/outbox se confirman o revierten en una transacción. Si la operación falla y la transacción revierte, no se conserva una reserva ni un payload de error; un reintento vuelve a evaluar la operación. Este comportamiento preserva el rollback y reintento existentes.
@@ -51,4 +60,4 @@ El resto de POST mutables de negocio documentados en OpenAPI está cubierto; los
 
 Los endpoints de autenticación `/dev-auth/login`, `/logout`, `/bootstrap` y `/users` no usan `Idempotency-Key`: autentican, revocan sesiones o administran credenciales, y no son comandos económicos/de negocio aptos para guardar/reproducir la respuesta genérica. Las simulaciones de eventos M2/M4 permanecen ocultas y disponibles sólo en DEV; su deduplicación continúa basada en `eventId`, no en una clave HTTP adicional.
 
-La prueba de OpenAPI comprueba que los 66 POST mutables documentados incluyan el header opcional, mientras excluye los cinco cálculos sin escritura y los cuatro endpoints `/dev-auth`. Los controladores de simulación ocultos no forman parte del documento OpenAPI. La protección ETag se implementa sólo para los tres PATCH enumerados, no para cada POST de transición.
+La prueba de OpenAPI comprueba que los 66 POST mutables documentados incluyan el header opcional, mientras excluye los cinco cálculos sin escritura y los cuatro endpoints `/dev-auth`. Los controladores de simulación ocultos no forman parte del documento OpenAPI. ETag/If-Match se aplica a los PATCH de la tabla y al subconjunto de acciones enumeradas arriba; no cubre todos los POST mutables.

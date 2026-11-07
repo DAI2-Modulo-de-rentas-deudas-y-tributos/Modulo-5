@@ -42,9 +42,29 @@ final class EntityTags {
     }
 
     static String paymentPlanRequest(ApiDtos.PaymentPlanRequestResponse request) {
+        return hashed("payment-plan-request", request.id(), request);
+    }
+
+    static String debt(ApiDtos.DebtResponse debt) {
+        return hashed("debt", debt.id(), debt);
+    }
+
+    static String liquidation(ApiDtos.LiquidationDetailResponse liquidation) {
+        return hashed("liquidation", liquidation.id(), liquidation);
+    }
+
+    static String paymentPlan(ApiDtos.PaymentPlanResponse plan) {
+        return hashed("payment-plan", plan.id(), plan);
+    }
+
+    static String exemptionRequest(ApiDtos.ExemptionRequestResponse request) {
+        return hashed("exemption-request", request.id(), request);
+    }
+
+    private static String hashed(String resource, Long id, Object value) {
         try {
-            byte[] digest=MessageDigest.getInstance("SHA-256").digest(request.toString().getBytes(StandardCharsets.UTF_8));
-            return quoted("payment-plan-request-" + request.id() + "-" + HexFormat.of().formatHex(digest));
+            byte[] digest=MessageDigest.getInstance("SHA-256").digest(value.toString().getBytes(StandardCharsets.UTF_8));
+            return quoted(resource + "-" + id + "-" + HexFormat.of().formatHex(digest));
         } catch (NoSuchAlgorithmException ex) {
             throw new IllegalStateException("SHA-256 no disponible", ex);
         }
