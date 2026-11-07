@@ -341,6 +341,7 @@ class SecurityTests {
         org.assertj.core.api.Assertions.assertThat(paths.has("/api/v1/debts/{id}/history")).isTrue();
         org.assertj.core.api.Assertions.assertThat(paths.has("/api/v1/dev-auth/bootstrap")).isTrue();
         org.assertj.core.api.Assertions.assertThat(paths.has("/api/v1/dev-auth/logout")).isTrue();
+        org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/integrations/outbox/{id}/retry").has("post")).isTrue();
     }
 
     private TaxpayerReference taxpayer(String external) {
