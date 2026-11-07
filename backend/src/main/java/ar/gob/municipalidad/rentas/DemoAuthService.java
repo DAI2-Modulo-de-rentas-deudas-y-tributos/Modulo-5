@@ -59,7 +59,8 @@ class DemoAuthService {
         boolean active=user!=null&&user.active;
         boolean passwordMatches=passwords.matches(request.password(),active?user.passwordHash:unknownUserPasswordHash);
         if(!active||!passwordMatches) {
-            audit.recordSecurityEventRequiresNew("DEMO_LOGIN_FAILED","anonymous","ANONYMOUS",java.util.Map.of("reason","INVALID_CREDENTIALS"));
+            boolean identifiable=user!=null&&user.integrationActorId!=null;
+            audit.recordSecurityEventRequiresNew("DEMO_LOGIN_FAILED",identifiable?user.integrationActorId.toString():"anonymous",identifiable?user.role.name():"ANONYMOUS",java.util.Map.of("reason","INVALID_CREDENTIALS"));
             throw new BusinessException("INVALID_CREDENTIALS","Usuario o contraseña incorrectos",401);
         }
         loginAttempts.reset(key);

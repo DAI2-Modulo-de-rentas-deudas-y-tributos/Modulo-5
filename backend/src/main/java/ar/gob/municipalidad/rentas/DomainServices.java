@@ -12,6 +12,8 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.data.domain.Page;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 import java.math.*;
 import java.time.*;
 import java.util.*;
@@ -19,8 +21,9 @@ import java.util.*;
 @Service
 class AuditService {
     private final AuditRepository repository; private final CurrentIdentity identity; private final ObjectMapper json;
+    private final TrustedClientAddressResolver clientAddresses;
     private final TransactionTemplate requiresNew;
-    AuditService(AuditRepository repository, CurrentIdentity identity, ObjectMapper json, PlatformTransactionManager transactionManager) { this.repository=repository; this.identity=identity; this.json=json; this.requiresNew=new TransactionTemplate(transactionManager); this.requiresNew.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW); }
+    AuditService(AuditRepository repository, CurrentIdentity identity, ObjectMapper json, TrustedClientAddressResolver clientAddresses, PlatformTransactionManager transactionManager) { this.repository=repository; this.identity=identity; this.json=json; this.clientAddresses=clientAddresses; this.requiresNew=new TransactionTemplate(transactionManager); this.requiresNew.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW); }
     void record(String entityType, Object entityId, String action, Object newData) {
         record(entityType,entityId,action,null,newData);
     }
@@ -42,7 +45,8 @@ class AuditService {
         String actorId=authenticated&&authentication.getPrincipal() instanceof AuthenticatedIdentity actor
             ?actor.integrationActorId()!=null?actor.integrationActorId().toString():"authenticated":"anonymous";
         String actorRole=authenticated?authentication.getAuthorities().stream().map(org.springframework.security.core.GrantedAuthority::getAuthority).sorted().collect(java.util.stream.Collectors.joining(",")):"ANONYMOUS";
-        recordSecurityEventRequiresNew("ACCESS_DENIED",actorId,actorRole,Map.of("method",request.getMethod(),"path",routeFamily(request.getRequestURI()),"code",code));
+        String path=routeFamily(request.getRequestURI());
+        recordSecurityEventRequiresNew("ACCESS_DENIED",actorId,actorRole,Map.of("method",request.getMethod(),"path",path,"action",request.getMethod()+" "+path,"clientIp",clientAddresses.resolve(request),"code",code));
     }
     private String routeFamily(String requestUri) {
         String[] segments=requestUri.split("/");
@@ -52,7 +56,15 @@ class AuditService {
     private AuditEntry securityEvent(String action,String actorId,String actorRole,Object data) {
         AuditEntry e=new AuditEntry();e.entityType="SecurityEvent";e.entityId=UUID.randomUUID().toString();e.action=action;
         e.userId=actorId==null||actorId.isBlank()?"anonymous":actorId;e.userRole=actorRole==null||actorRole.isBlank()?"ANONYMOUS":actorRole;
-        e.correlationId=MDC.get("traceId");e.occurredAt=OffsetDateTime.now();e.newData=serialize(data);return e;
+        e.correlationId=MDC.get("traceId");e.occurredAt=OffsetDateTime.now();e.newData=serialize(withClientAddress(data));return e;
+    }
+    private Object withClientAddress(Object data) {
+        if(!(RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attributes))return data;
+        Map<String,Object> details=new LinkedHashMap<>();
+        if(data instanceof Map<?,?> values)values.forEach((key,value)->{if(key instanceof String name)details.put(name,value);});
+        else details.put("details",data);
+        details.put("clientIp",clientAddresses.resolve(attributes.getRequest()));
+        return details;
     }
     void requireDifferentActor(String entityType,Object entityId,String... initiatingActors) {
         String actor=identity.get().userId();
