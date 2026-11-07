@@ -37,6 +37,8 @@ class BeanValidationContractTests {
     @Autowired MockMvc mvc;
     @Autowired PaymentRepository payments;
     @Autowired LiquidationRepository liquidations;
+    @Autowired LiquidationRunRepository liquidationRuns;
+    @Autowired AdjustmentRepository adjustments;
     @Autowired PaymentPlanConfigurationRepository planConfigurations;
     @Autowired DemoUserRepository users;
     @Autowired DemoAuthSessionRepository sessions;
@@ -185,6 +187,14 @@ class BeanValidationContractTests {
             .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
             .andExpect(jsonPath("$.details.fieldErrors[0].field").value("amount"))
             .andExpect(jsonPath("$.details.fieldErrors[0].messages[0]").value("Debe tener como máximo 2 decimales"));
+        mvc.perform(post("/api/v1/payments")
+                .header("X-Demo-Session",demo.token(DemoRole.CASHIER))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"taxpayerId\":1,\"paymentMethod\":\"CASH\",\"amount\":0.004}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+            .andExpect(jsonPath("$.details.fieldErrors[0].field").value("amount"))
+            .andExpect(jsonPath("$.details.fieldErrors[0].messages[0]").value("Debe tener como máximo 2 decimales"));
         assertThat(payments.count()).isEqualTo(before);
     }
 
@@ -237,6 +247,51 @@ class BeanValidationContractTests {
             .andExpect(status().isBadRequest())
             .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
             .andExpect(jsonPath("$.details.fieldErrors[0].field").value("period"));
+        assertThat(liquidations.count()).isEqualTo(before);
+    }
+
+    @Test void adjustmentWithFractionalCentsReturns400BeforePersistence() throws Exception {
+        long before=adjustments.count();
+        mvc.perform(post("/api/v1/adjustments")
+                .header("X-Demo-Session",demo.token(DemoRole.RENTAS))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"debtId\":1,\"type\":\"DISCOUNT\",\"amount\":10.005,\"reason\":\"Test\"}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+            .andExpect(jsonPath("$.details.fieldErrors[0].field").value("amount"));
+        assertThat(adjustments.count()).isEqualTo(before);
+    }
+
+    @Test void liquidationRunWithFractionalCentBaseReturns400BeforePersistence() throws Exception {
+        long before=liquidationRuns.count();
+        mvc.perform(post("/api/v1/liquidation-runs")
+                .header("X-Demo-Session",demo.token(DemoRole.RENTAS))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"taxConceptId\":1,\"period\":\"2026-11\",\"dueDate\":\"2026-11-30\",\"items\":[{\"taxpayerId\":1,\"taxableBase\":10.005}]}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+            .andExpect(jsonPath("$.details.fieldErrors[0].field").value("items[0].taxableBase"));
+        assertThat(liquidationRuns.count()).isEqualTo(before);
+    }
+
+    @Test void individualLiquidationWithFractionalCentBaseReturns400BeforePersistence() throws Exception {
+        LocalDate today=LocalDate.now();
+        String period=java.time.YearMonth.from(today).toString();
+        ApiDtos.LiquidationRequest request=new ApiDtos.LiquidationRequest(1L,1L,period,
+            new BigDecimal("100.005"),today);
+        assertThat(validator.validate(request)).extracting(error->error.getPropertyPath().toString())
+            .containsExactly("taxableBase");
+
+        long before=liquidations.count();
+        mvc.perform(post("/api/v1/liquidations")
+                .header("X-Demo-Session",demo.token(DemoRole.RENTAS))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"taxpayerId\":1,\"taxConceptId\":1,\"period\":\""+period
+                    +"\",\"taxableBase\":100.005,\"dueDate\":\""+today+"\"}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+            .andExpect(jsonPath("$.details.fieldErrors[0].field").value("taxableBase"))
+            .andExpect(jsonPath("$.details.fieldErrors[0].messages[0]").value("Debe tener como máximo 2 decimales"));
         assertThat(liquidations.count()).isEqualTo(before);
     }
 
