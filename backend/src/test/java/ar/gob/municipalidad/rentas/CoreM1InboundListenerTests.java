@@ -70,12 +70,34 @@ class CoreM1InboundListenerTests {
         assertThat(taxpayers.count()).isEqualTo(before);
     }
 
+    @Test void citizenUpdatedRequiresExistingReferenceAndPreservesCoreCorrelationAndDeduplication() throws Exception {
+        UUID citizenId=UUID.randomUUID(),registrationId=UUID.randomUUID(),correlation=UUID.randomUUID();
+        send(citizen(citizenId,"REGISTERED","""
+            {"dni":"34567890","cuil":"20345678901","name":"Nombre","lastname":"Inicial","birthdate":"1990-04-12","state":"ACTIVE"}
+            """,registrationId,correlation,null),20);
+        TaxpayerReference registered=taxpayers.findByTaxpayerTypeAndCanonicalCitizenId(TaxpayerType.CITIZEN,citizenId).orElseThrow();
+        UUID updateId=UUID.randomUUID();String update=citizen(citizenId,"UPDATED","""
+            {"dni":"30123456","cuil":"20301234567","name":"Nombre","lastname":"Actualizado","birthdate":"1990-04-12","state":"ACTIVO"}
+            """,updateId,correlation,registrationId);
+        send(update,21);send(update,22);
+        TaxpayerReference updated=taxpayers.findById(registered.id).orElseThrow();
+        assertThat(updated.dni).isEqualTo("30123456");assertThat(updated.cuit).isEqualTo("20301234567");assertThat(updated.displayName).isEqualTo("Nombre Actualizado");
+        IntegrationEventLog log=logs.findFirstByExternalEventIdOrderByIdDesc(updateId.toString()).orElseThrow();
+        assertThat(log.status).isEqualTo(IntegrationEventStatus.PROCESSED);
+        var saved=json.readTree(log.payload);assertThat(saved.path("correlationId").asText()).isEqualTo(correlation.toString());assertThat(saved.path("causationId").asText()).isEqualTo(registrationId.toString());
+        assertThat(processed.existsByExternalEventId(updateId.toString())).isTrue();
+        UUID unknown=UUID.randomUUID();reject(citizen(unknown,"UPDATED","""
+            {"dni":"34567890","cuil":"20345678901","name":"Nombre","lastname":"No existente","birthdate":"1990-04-12","state":"ACTIVO"}
+            """,UUID.randomUUID(),correlation,null),23);
+        assertThat(taxpayers.findByTaxpayerTypeAndCanonicalCitizenId(TaxpayerType.CITIZEN,unknown)).isEmpty();
+    }
+
     @Test void organizationAndSupportedRepresentationEventsUseNestedData() throws Exception {
         long organizationId=100000L+Math.floorMod(UUID.randomUUID().getLeastSignificantBits(),100000L);
         long representationId=100000L+Math.floorMod(UUID.randomUUID().getMostSignificantBits(),100000L);
         UUID thread=UUID.randomUUID();
         send(envelope("organizationRegistered","ciudadanos",UUID.randomUUID(),thread,null,"""
-            {"cuit":%d,"taxId":"30712345678","legalName":"Comercio de prueba","tradeName":"Local","type":"COMPANY","status":"ACTIVE","holder":{"personId":8452,"personType":"CITIZEN"}}
+            {"cuit":%d,"taxId":"30712345678","legalName":"Comercio de prueba","tradeName":"Local","type":"COMPANY","status":"ACTIVA","holder":{"personId":8452,"personType":"CITIZEN"}}
             """.formatted(organizationId)),6);
         assertThat(taxpayers.findByTaxpayerTypeAndExternalId(TaxpayerType.ORGANIZATION,Long.toString(organizationId))).isPresent();
         send(envelope("representationGranted","ciudadanos",UUID.randomUUID(),thread,null,"""

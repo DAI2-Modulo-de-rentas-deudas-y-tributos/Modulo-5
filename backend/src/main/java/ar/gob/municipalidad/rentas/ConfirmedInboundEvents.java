@@ -8,6 +8,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.Pattern;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -34,6 +35,9 @@ public final class ConfirmedInboundEvents {
     public record UpdatedBy(@NotBlank String type,String id) {}
     public record M1CitizenRegisteredDetails(@NotBlank String dni,@NotBlank String cuil,@NotBlank String name,
         @NotBlank String lastname,@NotNull LocalDate birthdate,@NotBlank String state,JsonNode address) {}
+    public record M1CitizenUpdatedDetails(@NotBlank String dni,@NotBlank String cuil,@NotBlank String name,
+        @NotBlank String lastname,@NotNull LocalDate birthdate,
+        @NotBlank @Pattern(regexp="ACTIVO|INACTIVO|BLOQUEADO|FALLECIDO") String state) {}
     public record M1CitizenBlockedDetails(@NotBlank String reason,boolean reviewRequired) {}
     public record M1CitizenDeceasedDetails(@NotNull LocalDate deceasedAt,@NotBlank String source) {}
 

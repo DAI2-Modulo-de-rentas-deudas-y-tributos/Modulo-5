@@ -10,6 +10,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -48,11 +49,82 @@ class ConfirmedIntegrationContractTests {
     @Test void m1DeceasedUpdatesExistingReference() throws Exception {registerCitizen();TaxpayerReference result=m1.consumeCitizen(citizen("M1-EVT-DECEASED","DECEASED","{\"deceasedAt\":\"2026-08-19\",\"source\":\"REGISTRO_CIVIL\"}"));assertThat(result.externalStatus).isEqualTo(TaxpayerStatus.DECEASED);}
     @Test void m1AddressUpdatedIsAcceptedWithoutEconomicSideEffects() throws Exception {TaxpayerReference taxpayer=registerCitizen();long before=taxpayers.count();TaxpayerReference result=m1.consumeCitizen(citizen("M1-EVT-ADDRESS","ADDRESS_UPDATED","{\"previousAddress\":{},\"newAddress\":{\"street\":\"Nueva\"}}"));assertThat(result.id).isEqualTo(taxpayer.id);assertThat(taxpayers.count()).isEqualTo(before);assertThat(logs.findFirstByExternalEventIdOrderByIdDesc("M1-EVT-ADDRESS").orElseThrow().status).isEqualTo(IntegrationEventStatus.PROCESSED);}
 
+    @Test void m1UpdatedRequiresExistingCitizenUpdatesDemographicsAndDoesNotReactivate() throws Exception {
+        UUID citizenId=UUID.randomUUID();
+        TaxpayerReference registered=m1.consumeCitizen(citizen(citizenId,"M1-EVT-UPDATED-REGISTERED","REGISTERED","{\"dni\":\"34567890\",\"cuil\":\"20345678901\",\"name\":\"Nombre\",\"lastname\":\"Inicial\",\"birthdate\":\"1990-04-12\",\"state\":\"ACTIVE\"}"));
+        registered.externalStatus=TaxpayerStatus.BLOCKED;taxpayers.saveAndFlush(registered);
+        var updated=citizen(citizenId,"M1-EVT-UPDATED-ACTIVE","UPDATED","{\"dni\":\"30123456\",\"cuil\":\"20301234567\",\"name\":\"Nombre\",\"lastname\":\"Actualizado\",\"birthdate\":\"1990-04-12\",\"state\":\"ACTIVO\"}");
+        TaxpayerReference result=m1.consumeCitizen(updated);TaxpayerReference duplicate=m1.consumeCitizen(updated);
+        assertThat(result.id).isEqualTo(registered.id);assertThat(duplicate.id).isEqualTo(registered.id);
+        assertThat(result.dni).isEqualTo("30123456");assertThat(result.cuit).isEqualTo("20301234567");assertThat(result.displayName).isEqualTo("Nombre Actualizado");
+        assertThat(taxpayers.findById(registered.id).orElseThrow().externalStatus).isEqualTo(TaxpayerStatus.BLOCKED);
+        assertThat(processed.existsByExternalEventId("M1-EVT-UPDATED-ACTIVE")).isTrue();
+    }
+
+    @Test void m1UpdatedWithConfirmedCanonicalUuidRefreshesTheExistingNumericReference() throws Exception {
+        TaxpayerReference existing=new TaxpayerReference();existing.taxpayerType=TaxpayerType.CITIZEN;existing.externalId="4";
+        existing.canonicalCitizenId=M1_CITIZEN_ID;existing.dni="30000000";existing.cuit="20300000001";
+        existing.displayName="Nombre previo";existing.externalStatus=TaxpayerStatus.ACTIVE;
+        existing.createdAt=existing.updatedAt=OffsetDateTime.now();taxpayers.saveAndFlush(existing);
+        long countBefore=taxpayers.count();
+
+        TaxpayerReference result=m1.consumeCitizen(citizen(M1_CITIZEN_ID,"M1-EVT-UPDATED-CANONICAL","UPDATED",
+            "{\"dni\":\"30123456\",\"cuil\":\"20301234567\",\"name\":\"Nombre\",\"lastname\":\"Actualizado\",\"birthdate\":\"1990-04-12\",\"state\":\"ACTIVO\"}"));
+
+        assertThat(result.id).isEqualTo(existing.id);
+        assertThat(taxpayers.count()).isEqualTo(countBefore);
+        assertThat(taxpayers.findByTaxpayerTypeAndExternalId(TaxpayerType.CITIZEN,"4").orElseThrow().id).isEqualTo(existing.id);
+        assertThat(result.canonicalCitizenId).isEqualTo(M1_CITIZEN_ID);
+        assertThat(result.dni).isEqualTo("30123456");assertThat(result.cuit).isEqualTo("20301234567");
+        assertThat(result.displayName).isEqualTo("Nombre Actualizado");
+    }
+
+    @Test @Transactional(propagation=Propagation.NOT_SUPPORTED)
+    void m1UpdatedMapsInactiveBlockedAndDeceasedExplicitlyAndRollsBackUnknownState() throws Exception {
+        UUID citizenId=UUID.randomUUID();m1.consumeCitizen(citizen(citizenId,"M1-EVT-STATE-REGISTERED","REGISTERED","{\"dni\":\"34567890\",\"cuil\":\"20345678901\",\"name\":\"Nombre\",\"lastname\":\"Inicial\",\"birthdate\":\"1990-04-12\",\"state\":\"ACTIVE\"}"));
+        for(var state:List.of(Map.entry("INACTIVO",TaxpayerStatus.INACTIVE),Map.entry("BLOQUEADO",TaxpayerStatus.BLOCKED),Map.entry("FALLECIDO",TaxpayerStatus.DECEASED))){
+            m1.consumeCitizen(citizen(citizenId,"M1-EVT-STATE-"+state.getKey(),"UPDATED","{\"dni\":\"34567890\",\"cuil\":\"20345678901\",\"name\":\"Nombre\",\"lastname\":\"Actualizado\",\"birthdate\":\"1990-04-12\",\"state\":\""+state.getKey()+"\"}"));
+            assertThat(taxpayers.findByTaxpayerTypeAndCanonicalCitizenId(TaxpayerType.CITIZEN,citizenId).orElseThrow().externalStatus).isEqualTo(state.getValue());
+        }
+        TaxpayerReference beforeUnknown=taxpayers.findByTaxpayerTypeAndCanonicalCitizenId(TaxpayerType.CITIZEN,citizenId).orElseThrow();
+        String unknownEventId="M1-EVT-STATE-UNKNOWN";
+        assertThatThrownBy(()->m1.consumeCitizen(citizen(citizenId,unknownEventId,"UPDATED","{\"dni\":\"99999999\",\"cuil\":\"20999999999\",\"name\":\"Cambio\",\"lastname\":\"No valido\",\"birthdate\":\"1990-04-12\",\"state\":\"UNKNOWN\"}")))
+            .isInstanceOf(BusinessException.class).hasMessageContaining("state");
+        TaxpayerReference afterUnknown=taxpayers.findByTaxpayerTypeAndCanonicalCitizenId(TaxpayerType.CITIZEN,citizenId).orElseThrow();
+        assertThat(afterUnknown.id).isEqualTo(beforeUnknown.id);assertThat(afterUnknown.dni).isEqualTo(beforeUnknown.dni);
+        assertThat(afterUnknown.cuit).isEqualTo(beforeUnknown.cuit);assertThat(afterUnknown.displayName).isEqualTo(beforeUnknown.displayName);
+        assertThat(afterUnknown.externalStatus).isEqualTo(beforeUnknown.externalStatus);
+        assertThat(logs.findFirstByExternalEventIdOrderByIdDesc(unknownEventId)).isEmpty();
+        assertThat(processed.existsByExternalEventId(unknownEventId)).isFalse();
+    }
+
+    @Test void m1UpdatedDoesNotCreateMissingCitizenReference() throws Exception {
+        UUID citizenId=UUID.randomUUID();
+        assertThatThrownBy(()->m1.consumeCitizen(citizen(citizenId,"M1-EVT-UPDATED-MISSING","UPDATED","{\"dni\":\"34567890\",\"cuil\":\"20345678901\",\"name\":\"Nombre\",\"lastname\":\"Actualizado\",\"birthdate\":\"1990-04-12\",\"state\":\"ACTIVO\"}")))
+            .isInstanceOf(BusinessException.class).hasMessageContaining("referencia local");
+        assertThat(taxpayers.findByTaxpayerTypeAndCanonicalCitizenId(TaxpayerType.CITIZEN,citizenId)).isEmpty();
+    }
+
     @Test void m1OrganizationRegisteredUsesExternalReferenceInsteadOfInternalPk() throws Exception {
         var event=json.readValue("""
-            {"eventId":"M1-EVT-ORG","occurredAt":"2026-08-21T10:15:00-03:00","eventType":"organizationRegistered","producer":{"moduleId":"M1","service":"organizations-api"},"subject":"organizations/3311","data":{"cuit":3311,"taxId":"30712345678","legalName":"Panadería Del Sol S.R.L.","tradeName":"Panadería Del Sol","type":"COMMERCE","status":"ACTIVE","holder":{"personId":8452,"personType":"LEGAL"}}}
+            {"eventId":"M1-EVT-ORG","occurredAt":"2026-08-21T10:15:00-03:00","eventType":"organizationRegistered","producer":{"moduleId":"M1","service":"organizations-api"},"subject":"organizations/3311","data":{"cuit":3311,"taxId":"30712345678","legalName":"Panadería Del Sol S.R.L.","tradeName":"Panadería Del Sol","type":"COMMERCE","status":"ACTIVA","holder":{"personId":8452,"personType":"LEGAL"}}}
             """,ConfirmedInboundEvents.M1OrganizationRegisteredEvent.class);
-        TaxpayerReference result=m1.consumeOrganization(event);assertThat(result.taxpayerType).isEqualTo(TaxpayerType.ORGANIZATION);assertThat(result.externalId).isEqualTo("3311");assertThat(result.cuit).isEqualTo("30712345678");
+        TaxpayerReference result=m1.consumeOrganization(event);assertThat(result.taxpayerType).isEqualTo(TaxpayerType.ORGANIZATION);assertThat(result.externalId).isEqualTo("3311");assertThat(result.cuit).isEqualTo("30712345678");assertThat(result.externalStatus).isEqualTo(TaxpayerStatus.ACTIVA);
+    }
+
+    @Test void organizationRegistrationPreservesEveryConfirmedStateAndRejectsUnknownState() throws Exception {
+        Map<String,TaxpayerStatus> states=Map.of("PENDIENTE",TaxpayerStatus.PENDIENTE,"ACTIVA",TaxpayerStatus.ACTIVA,
+            "INACTIVA",TaxpayerStatus.INACTIVA,"BLOQUEADA",TaxpayerStatus.BLOQUEADA,"RECHAZADA",TaxpayerStatus.RECHAZADA);
+        long cuit=4_000_000_000L;
+        for(var state:states.entrySet()){
+            long organizationId=cuit++;
+            var event=organization("M1-ORG-"+state.getKey(),organizationId,state.getValue().name());
+            TaxpayerReference first=m1.consumeOrganization(event);TaxpayerReference duplicate=m1.consumeOrganization(event);
+            assertThat(duplicate.id).isEqualTo(first.id);assertThat(first.externalStatus).isEqualTo(state.getValue());
+        }
+        long unknownOrganizationId=cuit;
+        assertThatThrownBy(()->m1.consumeOrganization(organization("M1-ORG-UNKNOWN",unknownOrganizationId,"UNKNOWN")))
+            .isInstanceOf(BusinessException.class).hasMessageContaining("Estado de organización desconocido");
     }
 
     @Test void m1RepresentationGrantAndExpiryPreserveHistory() throws Exception {
@@ -234,7 +306,9 @@ class ConfirmedIntegrationContractTests {
     }
 
     private TaxpayerReference registerCitizen() throws Exception {return m1.consumeCitizen(citizen("M1-EVT-REGISTER-"+System.nanoTime(),"REGISTERED","{\"dni\":\"34567890\",\"cuil\":\"20345678901\",\"name\":\"Marcos\",\"lastname\":\"Ferreyra\",\"birthdate\":\"1990-04-12\",\"state\":\"ACTIVE\"}"));}
-    private ConfirmedInboundEvents.M1CitizenUpdatedEvent citizen(String id,String updateType,String details) throws Exception {return json.readValue("{\"eventId\":\""+id+"\",\"occurredAt\":\"2026-08-20T11:45:00-03:00\",\"eventType\":\"citizenUpdated\",\"producer\":{\"moduleId\":\"M1\",\"service\":\"citizens-api\"},\"subject\":\"citizens/"+M1_CITIZEN_ID+"\",\"data\":{\"citizenId\":\""+M1_CITIZEN_ID+"\",\"updateType\":\""+updateType+"\",\"details\":"+details+",\"updatedBy\":{\"type\":\"AREA_USER\",\"id\":\"USR-M1-14\"}}}",ConfirmedInboundEvents.M1CitizenUpdatedEvent.class);}
+    private ConfirmedInboundEvents.M1CitizenUpdatedEvent citizen(String id,String updateType,String details) throws Exception {return citizen(M1_CITIZEN_ID,id,updateType,details);}
+    private ConfirmedInboundEvents.M1CitizenUpdatedEvent citizen(UUID citizenId,String id,String updateType,String details) throws Exception {return json.readValue("{\"eventId\":\""+id+"\",\"occurredAt\":\"2026-08-20T11:45:00-03:00\",\"eventType\":\"citizenUpdated\",\"producer\":{\"moduleId\":\"M1\",\"service\":\"citizens-api\"},\"subject\":\"citizens/"+citizenId+"\",\"data\":{\"citizenId\":\""+citizenId+"\",\"updateType\":\""+updateType+"\",\"details\":"+details+",\"updatedBy\":{\"type\":\"AREA_USER\",\"id\":\"USR-M1-14\"}}}",ConfirmedInboundEvents.M1CitizenUpdatedEvent.class);}
+    private ConfirmedInboundEvents.M1OrganizationRegisteredEvent organization(String eventId,long organizationId,String status) throws Exception {return json.readValue("{\"eventId\":\""+eventId+"\",\"occurredAt\":\"2026-08-21T10:15:00-03:00\",\"eventType\":\"organizationRegistered\",\"producer\":{\"moduleId\":\"M1\",\"service\":\"organizations-api\"},\"subject\":\"organizations/"+organizationId+"\",\"data\":{\"cuit\":"+organizationId+",\"taxId\":\"30712345678\",\"legalName\":\"Comercio de prueba\",\"tradeName\":\"Local\",\"type\":\"COMPANY\",\"status\":\""+status+"\",\"holder\":{\"personId\":8452,\"personType\":\"CITIZEN\"}}}",ConfirmedInboundEvents.M1OrganizationRegisteredEvent.class);}
     private ConfirmedInboundEvents.M1RepresentationEvent representation(String id,String type,String data) throws Exception {return json.readValue("{\"eventId\":\""+id+"\",\"occurredAt\":\"2026-08-21T10:15:00-03:00\",\"eventType\":\""+type+"\",\"producer\":{\"moduleId\":\"M1\",\"service\":\"organizations-api\"},\"subject\":\"representations/990\",\"data\":"+data+"}",ConfirmedInboundEvents.M1RepresentationEvent.class);}
     private ConfirmedInboundEvents.M2TicketUpdatedEvent ticket(String id,String area,Long citizen,boolean anonymous,String update,String status,JsonNode details) throws Exception {String citizenJson=citizen==null?"null":"\""+UUID.nameUUIDFromBytes(("citizen-"+citizen).getBytes())+"\"";String eventId=M2_EVENT_IDS.computeIfAbsent(id,unused->UUID.randomUUID()).toString();return json.readValue("{\"eventId\":\""+eventId+"\",\"eventType\":\"ticketUpdated\",\"eventVersion\":\"1.0\",\"occurredAt\":\"2026-08-24T19:00:00-03:00\",\"sourceModule\":\"atencion-ciudadana\",\"correlationId\":\"294e7015-0e6a-4bd1-8240-ce3148fd937d\",\"data\":{\"ticketId\":\"550e8400-e29b-41d4-a716-446655440000\",\"publicId\":\"TK-2026-000123\",\"citizenId\":"+citizenJson+",\"isAnonymous\":"+anonymous+",\"responsibleAreaId\":\""+area+"\",\"updateType\":\""+update+"\",\"currentStatus\":\""+status+"\",\"currentPriority\":\"HIGH\",\"publicMessage\":\"El ciudadano aportó información.\",\"details\":"+details+",\"attachments\":[],\"updatedAt\":\"2026-08-24T19:10:00-03:00\"}}",ConfirmedInboundEvents.M2TicketUpdatedEvent.class);}
     private JsonNode routingDetails() throws Exception {return json.readTree("{\"routing\":{\"requestType\":\"Informar un pago no registrado\",\"category\":\"Pagos y deudas\",\"subcategory\":\"Pagos\",\"ticketType\":\"COMPLAINT\",\"summary\":\"Pago no registrado\",\"description\":\"El ciudadano informa que abonó pero el pago no figura.\",\"formData\":{},\"location\":null,\"resolutionDueAt\":\"2026-08-30T19:00:00-03:00\",\"escalation\":{\"active\":false}}}");}

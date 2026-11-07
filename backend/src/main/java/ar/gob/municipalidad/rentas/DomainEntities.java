@@ -7,7 +7,7 @@ import java.time.OffsetDateTime;
 import java.util.UUID;
 
 enum TaxpayerType { CITIZEN, ORGANIZATION }
-enum TaxpayerStatus { ACTIVE, BLOCKED, DECEASED, INACTIVE }
+enum TaxpayerStatus { ACTIVE, BLOCKED, DECEASED, INACTIVE, PENDIENTE, ACTIVA, INACTIVA, BLOQUEADA, RECHAZADA }
 enum TaxConceptType { FEE, FINE, CHARGE }
 enum CalculationType { PERCENTAGE, FIXED, EXTERNAL }
 enum TaxConfigurationStatus { DRAFT, PENDING_APPROVAL, ACTIVE, REJECTED, INACTIVE }
