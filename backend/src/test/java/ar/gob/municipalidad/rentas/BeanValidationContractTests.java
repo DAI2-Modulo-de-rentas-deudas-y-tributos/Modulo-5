@@ -187,6 +187,14 @@ class BeanValidationContractTests {
             .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
             .andExpect(jsonPath("$.details.fieldErrors[0].field").value("amount"))
             .andExpect(jsonPath("$.details.fieldErrors[0].messages[0]").value("Debe tener como máximo 2 decimales"));
+        mvc.perform(post("/api/v1/payments")
+                .header("X-Demo-Session",demo.token(DemoRole.CASHIER))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"taxpayerId\":1,\"paymentMethod\":\"CASH\",\"amount\":0.004}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+            .andExpect(jsonPath("$.details.fieldErrors[0].field").value("amount"))
+            .andExpect(jsonPath("$.details.fieldErrors[0].messages[0]").value("Debe tener como máximo 2 decimales"));
         assertThat(payments.count()).isEqualTo(before);
     }
 
