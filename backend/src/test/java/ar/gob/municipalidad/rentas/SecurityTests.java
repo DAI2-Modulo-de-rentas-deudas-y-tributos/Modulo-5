@@ -320,8 +320,8 @@ class SecurityTests {
         var paths=json.readTree(openApi).path("paths");int operations=0;for(var path=paths.fields();path.hasNext();)operations+=path.next().getValue().size();
         org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/tax-concepts").path("post").path("responses")
             .path("400").path("$ref").asText()).isEqualTo("#/components/responses/ApiError");
-        org.assertj.core.api.Assertions.assertThat(operations).isEqualTo(167);
-        org.assertj.core.api.Assertions.assertThat(paths.size()).isEqualTo(151);
+        org.assertj.core.api.Assertions.assertThat(operations).isEqualTo(168);
+        org.assertj.core.api.Assertions.assertThat(paths.size()).isEqualTo(152);
         org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/taxpayers/{id}/canonical-citizen-link").has("post")).isTrue();
         org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/tickets/{id}/return").has("post")).isTrue();
         org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/integrations/deferred/exemptions/{requestId}/reconcile").has("post")).isTrue();
@@ -341,6 +341,7 @@ class SecurityTests {
         org.assertj.core.api.Assertions.assertThat(paths.has("/api/v1/debts/{id}/history")).isTrue();
         org.assertj.core.api.Assertions.assertThat(paths.has("/api/v1/dev-auth/bootstrap")).isTrue();
         org.assertj.core.api.Assertions.assertThat(paths.has("/api/v1/dev-auth/logout")).isTrue();
+        org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/integrations/outbox/{id}/retry").has("post")).isTrue();
     }
 
     private TaxpayerReference taxpayer(String external) {
