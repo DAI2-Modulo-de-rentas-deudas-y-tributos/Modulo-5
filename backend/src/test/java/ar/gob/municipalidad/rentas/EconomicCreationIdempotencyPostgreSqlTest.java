@@ -57,6 +57,15 @@ class EconomicCreationIdempotencyPostgreSqlTest {
     @Autowired MockMvc mvc;
     @Autowired CatalogService catalog;
     @Autowired LiquidationService liquidationService;
+    @Autowired LiquidationRunService liquidationRunService;
+    @Autowired ExemptionService exemptionService;
+    @Autowired ReversalService reversalService;
+    @Autowired LateChargeRuleRepository lateChargeRules;
+    @Autowired LateChargeApplicationRepository lateChargeApplications;
+    @Autowired PaymentAllocationRepository allocations;
+    @Autowired LiquidationRunRepository liquidationRuns;
+    @Autowired LiquidationRunItemRepository liquidationRunItems;
+    @Autowired FiscalProcessingDatePolicy dates;
     @Autowired PlanWorkflowService planWorkflow;
     @Autowired PaymentService paymentService;
     @Autowired TaxpayerRepository taxpayers;
@@ -189,6 +198,130 @@ class EconomicCreationIdempotencyPostgreSqlTest {
             .andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"));
         assertThat(jdbc.queryForObject("select count(*) from payment_plan where request_id=?", Long.class, pending.id)).isOne();
         assertThat(jdbc.queryForObject("select count(*) from installment where payment_plan_id=?", Long.class, planId)).isEqualTo(3L);
+    }
+
+    @Test
+    void exemptionApprovalConcurrentReplayCreatesOneExemptionAndOutboxUpdate() throws Exception {
+        Fixture fixture = fixture("EXEMPTION_APPROVAL");
+        fixture.taxpayer.canonicalCitizenId = UUID.randomUUID();
+        taxpayers.saveAndFlush(fixture.taxpayer);
+        LocalDate today = dates.today();
+        var requester = identity("exemption-approval-requester-" + UUID.randomUUID(), fixture.taxpayer.id, "TAXPAYER");
+        setActor(requester);
+        var request = exemptionService.create(new ApiDtos.CreateExemptionRequest(fixture.taxpayer.id, fixture.concept.id,
+            "Solicitud sintética", new BigDecimal("20.00"), today.minusDays(1), today.plusDays(30)));
+        var reviewer = identity("exemption-approval-reviewer-" + UUID.randomUUID(), null, "RENTAS");
+        setActor(reviewer);
+        exemptionService.start(request.id);
+        exemptionService.submit(request.id);
+
+        var approver = identity("exemption-approval-supervisor-" + UUID.randomUUID(), null, "SUPERVISOR");
+        String key = "exemption-approval-" + UUID.randomUUID();
+        String path = "/api/v1/exemption-requests/" + request.id + "/approve";
+        List<MvcResult> responses = runTogether(
+            () -> httpPost(path, approver, key, "null"),
+            () -> httpPost(path, approver, key, "null"));
+
+        String first = responses.get(0).getResponse().getContentAsString();
+        assertThat(responses).allSatisfy(response -> assertThat(response.getResponse().getStatus()).isEqualTo(200));
+        assertThat(responses.get(1).getResponse().getContentAsString()).isEqualTo(first);
+        long exemptionId = json.readTree(first).path("id").asLong();
+        assertThat(jdbc.queryForObject("select count(*) from exemption where request_id=?", Long.class, request.id)).isOne();
+        assertThat(outbox.findAll().stream().filter(event -> event.eventType.equals("updateExemptionStatus")
+            && event.aggregateId.equals(Long.toString(request.id)))).hasSize(1);
+        assertThat(idempotencyRows(approver.getName(), "POST:/exemption-requests/{id}/approve:" + request.id, key)).isOne();
+        assertThat(exemptionId).isPositive();
+    }
+
+    @Test
+    void reversalExecutionConcurrentReplayReversesPaymentOnce() throws Exception {
+        Fixture fixture = fixture("REVERSAL_EXECUTE");
+        setActor(identity("reversal-execute-payment-" + UUID.randomUUID(), null, "RENTAS"));
+        var payment = paymentService.register(new ApiDtos.RegisterPaymentRequest(fixture.taxpayer.id,
+            PaymentMethod.CASH, new BigDecimal("100.00"), List.of(new ApiDtos.AllocationRequest(fixture.debtId, new BigDecimal("100.00")))));
+        var cashier = identity("reversal-execute-requester-" + UUID.randomUUID(), null, "CASHIER");
+        setActor(cashier);
+        var reversal = reversalService.request(payment.id, "Reversión sintética");
+        TestActorSupport.asApprover(() -> reversalService.approve(reversal.id));
+
+        var rentas = identity("reversal-execute-operator-" + UUID.randomUUID(), null, "RENTAS");
+        String key = "reversal-execute-" + UUID.randomUUID();
+        String path = "/api/v1/payment-reversals/" + reversal.id + "/execute";
+        long reversedEventsBefore = outbox.findAll().stream().filter(event -> event.eventType.equals("paymentReversed")).count();
+        List<MvcResult> responses = runTogether(() -> httpPost(path, rentas, key, ""), () -> httpPost(path, rentas, key, ""));
+
+        String first = responses.get(0).getResponse().getContentAsString();
+        assertThat(responses).allSatisfy(response -> assertThat(response.getResponse().getStatus()).isEqualTo(200));
+        assertThat(responses.get(1).getResponse().getContentAsString()).isEqualTo(first);
+        assertThat(reversals.findById(reversal.id).orElseThrow().status).isEqualTo(PaymentReversalStatus.EXECUTED);
+        assertThat(jdbc.queryForObject("select status from payment where id=?", String.class, payment.id)).isEqualTo("REVERSED");
+        assertThat(allocations.findByPaymentId(payment.id)).allSatisfy(allocation -> assertThat(allocation.status).isEqualTo("REVERSED"));
+        assertThat(outbox.findAll().stream().filter(event -> event.eventType.equals("paymentReversed")).count())
+            .isEqualTo(reversedEventsBefore);
+        assertThat(idempotencyRows(rentas.getName(), "POST:/payment-reversals/{id}/execute:" + reversal.id, key)).isOne();
+    }
+
+    @Test
+    void liquidationRunExecutionConcurrentReplayCreatesOneLiquidationPerItem() throws Exception {
+        Fixture fixture = fixture("RUN_EXECUTE");
+        String suffix = UUID.randomUUID().toString();
+        setActor(identity("run-execute-fixture-" + suffix, null, "RENTAS"));
+        TaxpayerReference runTaxpayer = catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(
+            TaxpayerType.CITIZEN, "RUN-" + suffix, suffix.replace("-", ""), null, "Synthetic idempotency test"));
+        LocalDate today = dates.today();
+        var run = liquidationRunService.create(new ApiDtos.CreateLiquidationRunRequest(fixture.concept.id,
+            YearMonth.from(today.plusMonths(1)).toString(), today.plusDays(30),
+            List.of(new ApiDtos.LiquidationRunItemRequest(runTaxpayer.id, new BigDecimal("100.00")))));
+        liquidationRunService.preview(run.id);
+        liquidationRunService.submit(run.id);
+        TestActorSupport.asApprover(() -> liquidationRunService.approve(run.id, null));
+
+        var rentas = identity("run-execute-operator-" + UUID.randomUUID(), null, "RENTAS");
+        String key = "run-execute-" + UUID.randomUUID();
+        String path = "/api/v1/liquidation-runs/" + run.id + "/execute";
+        List<MvcResult> responses = runTogether(() -> httpPost(path, rentas, key, ""), () -> httpPost(path, rentas, key, ""));
+
+        String first = responses.get(0).getResponse().getContentAsString();
+        assertThat(responses).allSatisfy(response -> assertThat(response.getResponse().getStatus()).isEqualTo(200));
+        assertThat(responses.get(1).getResponse().getContentAsString()).isEqualTo(first);
+        assertThat(liquidationRuns.findById(run.id).orElseThrow().status).isEqualTo(LiquidationRunStatus.EXECUTED);
+        var items = liquidationRunItems.findByLiquidationRunIdOrderById(run.id);
+        assertThat(items).hasSize(1);
+        assertThat(items.get(0).status).isEqualTo(LiquidationRunItemStatus.LIQUIDATED);
+        assertThat(items.get(0).liquidationId).isNotNull();
+        assertThat(jdbc.queryForObject("select count(*) from liquidation where id=?", Long.class, items.get(0).liquidationId)).isOne();
+        assertThat(idempotencyRows(rentas.getName(), "POST:/liquidation-runs/{id}/execute:" + run.id, key)).isOne();
+    }
+
+    @Test
+    void lateChargeApplicationConcurrentReplayCreatesOneApplicationAndTwoAdjustments() throws Exception {
+        Fixture fixture = fixture("LATE_CHARGE");
+        LocalDate today = dates.today();
+        var debt = debts.findById(fixture.debtId).orElseThrow();
+        debt.dueDate = today.minusDays(2);
+        debts.saveAndFlush(debt);
+        var rule = new LateChargeRule();
+        rule.code = "IDEMPOTENCY_" + UUID.randomUUID();
+        rule.surchargeRate = new BigDecimal("10.0000");
+        rule.dailyInterestRate = new BigDecimal("0.1000");
+        rule.active = true;
+        rule.validFrom = today.minusDays(30);
+        lateChargeRules.saveAndFlush(rule);
+
+        var rentas = identity("late-charge-operator-" + UUID.randomUUID(), null, "RENTAS");
+        String key = "late-charge-" + UUID.randomUUID();
+        String path = "/api/v1/debts/" + debt.id + "/late-charges";
+        String body = json.writeValueAsString(new FiscalProcessingController.CalculationDateRequest(today));
+        BigDecimal balanceBefore = debt.outstandingBalance;
+        List<MvcResult> responses = runTogether(() -> httpPost(path, rentas, key, body), () -> httpPost(path, rentas, key, body));
+
+        String first = responses.get(0).getResponse().getContentAsString();
+        assertThat(responses).allSatisfy(response -> assertThat(response.getResponse().getStatus()).isEqualTo(200));
+        assertThat(responses.get(1).getResponse().getContentAsString()).isEqualTo(first);
+        assertThat(lateChargeApplications.findByDebtId(debt.id)).hasSize(1);
+        assertThat(jdbc.queryForObject("select count(*) from adjustment_request where debt_id=?", Long.class, debt.id)).isEqualTo(2L);
+        assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isGreaterThan(balanceBefore);
+        assertThat(idempotencyRows(rentas.getName(), "POST:/debts/{id}/late-charges:" + debt.id, key)).isOne();
     }
 
     @Test
