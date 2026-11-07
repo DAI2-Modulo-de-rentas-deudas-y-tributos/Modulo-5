@@ -1475,6 +1475,47 @@ class DebtTransitionApiMatrixTests {
             new BigDecimal("10.00"),new BigDecimal("5.00"),0,2,true,true,2,today.minusDays(1),null,true));
     }
 
+    @Test void invalidDebtTransitionCasesCoverEveryUnsupportedStateOperationPair() {
+        List<String> expected=Stream.of(DebtStatus.values())
+            .flatMap(state->Stream.of(DebtStateOperation.values())
+                .filter(operation->!operation.allowed(state))
+                .map(operation->transitionKey(state,operation.name,operation.code)))
+            .toList();
+        List<String> enumerated=invalidTransitions()
+            .map(arguments->transitionKey((DebtStatus)arguments.get()[0],(String)arguments.get()[1],(String)arguments.get()[2]))
+            .toList();
+
+        assertThat(enumerated).doesNotHaveDuplicates().containsExactlyInAnyOrderElementsOf(expected);
+    }
+
+    private static String transitionKey(DebtStatus state,String operation,String code) {
+        return state+"/"+operation+"/"+code;
+    }
+
+    private enum DebtStateOperation {
+        PAYMENT_ALLOCATION("payment-allocation","DEBT_NOT_PAYABLE",false),
+        ADJUSTMENT("adjustment","DEBT_NOT_ADJUSTABLE",true),
+        LATE_CHARGE("late-charge","DEBT_NOT_CHARGEABLE",false),
+        CREDIT_APPLICATION("credit-application","DEBT_NOT_PAYABLE",false),
+        BILL("bill","DEBT_NOT_BILLABLE",false),
+        PLAN_REQUEST("plan-request","DEBT_NOT_ELIGIBLE_FOR_PLAN",false);
+
+        private final String name;
+        private final String code;
+        private final boolean adjustment;
+
+        DebtStateOperation(String name,String code,boolean adjustment) {
+            this.name=name;
+            this.code=code;
+            this.adjustment=adjustment;
+        }
+
+        private boolean allowed(DebtStatus status) {
+            DebtLifecycleState state=DebtLifecycleState.from(status);
+            return adjustment?state.admiteAjuste():state.admiteCobro(BigDecimal.ONE);
+        }
+    }
+
     private static Stream<Arguments> invalidTransitions() {
         return Stream.of(DebtStatus.PAID,DebtStatus.CANCELLED).flatMap(state->Stream.of(
             Arguments.of(state,"payment-allocation","DEBT_NOT_PAYABLE"),
