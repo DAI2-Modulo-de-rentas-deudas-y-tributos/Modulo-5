@@ -75,26 +75,67 @@ class SecurityTests {
         });
     }
 
-    @Test void securityEventsCanBeFilteredByAuditorAndSupervisorOnly() throws Exception {
+    @Test void securityEventsAreFilteredRedactedPaginatedAndLimitedToAuditorAndSupervisor() throws Exception {
         String actor="security-query-"+java.util.UUID.randomUUID();
-        AuditEntry event=new AuditEntry();event.entityType="SecurityEvent";event.entityId=java.util.UUID.randomUUID().toString();
-        event.action="DEMO_LOGIN_FAILED";event.userId=actor;event.userRole="ANONYMOUS";event.occurredAt=OffsetDateTime.now();
-        audit.saveAndFlush(event);
+        String secret="SENSITIVE-SECRET-"+java.util.UUID.randomUUID();
+        String personalData="SENSITIVE-PII-"+java.util.UUID.randomUUID();
+        OffsetDateTime firstAt=OffsetDateTime.now().minusMinutes(2),secondAt=firstAt.plusMinutes(1);
+        AuditEntry first=securityAudit(actor,firstAt,secret,personalData);audit.saveAndFlush(first);
+        AuditEntry second=securityAudit(actor,secondAt,"SECOND-SECRET","SECOND-PII");audit.saveAndFlush(second);
         AuditEntry unrelated=new AuditEntry();unrelated.entityType="Payment";unrelated.entityId="1";
-        unrelated.action=event.action;unrelated.userId=actor;unrelated.userRole=event.userRole;unrelated.occurredAt=event.occurredAt;
-        audit.saveAndFlush(unrelated);
+        unrelated.action=first.action;unrelated.userId=actor;unrelated.userRole=first.userRole;unrelated.occurredAt=firstAt;
+        unrelated.newData="{\"paymentReference\":\"unrelated\"}";audit.saveAndFlush(unrelated);
 
         for(DemoRole role:java.util.List.of(DemoRole.AUDITOR,DemoRole.SUPERVISOR)) {
-            mvc.perform(get("/api/v1/audit").header("X-Demo-Session",demo.token(role))
-                    .param("entityType","SecurityEvent").param("action",event.action).param("userId",actor))
+            String session=demo.token(role);
+            var firstPage=mvc.perform(get("/api/v1/audit").header("X-Demo-Session",session)
+                    .param("entityType","SecurityEvent").param("action",first.action).param("userId",actor)
+                    .param("page","0").param("size","1").param("sort","occurredAt,asc"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].id").value(first.id))
                 .andExpect(jsonPath("$.content[0].entityType").value("SecurityEvent"))
                 .andExpect(jsonPath("$.content[0].action").value("DEMO_LOGIN_FAILED"))
-                .andExpect(jsonPath("$.content[0].userId").value(actor));
+                .andExpect(jsonPath("$.content[0].userId").value(actor))
+                .andExpect(jsonPath("$.content[0].previousData").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.content[0].newData").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.page.number").value(0)).andExpect(jsonPath("$.page.size").value(1))
+                .andExpect(jsonPath("$.page.totalElements").value(2)).andExpect(jsonPath("$.page.totalPages").value(2))
+                .andReturn();
+            String firstJson=firstPage.getResponse().getContentAsString();
+            assertThat(firstJson).doesNotContain(secret,personalData,"SECOND-SECRET","SECOND-PII");
+
+            var secondPage=mvc.perform(get("/api/v1/audit").header("X-Demo-Session",session)
+                    .param("entityType","SecurityEvent").param("action",first.action).param("userId",actor)
+                    .param("page","1").param("size","1").param("sort","occurredAt,asc"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].id").value(second.id)).andExpect(jsonPath("$.page.number").value(1))
+                .andExpect(jsonPath("$.page.totalElements").value(2)).andReturn();
+            assertThat(secondPage.getResponse().getContentAsString()).doesNotContain("SECOND-SECRET","SECOND-PII");
+
+            mvc.perform(get("/api/v1/audit/{id}",first.id).header("X-Demo-Session",session))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.previousData").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.newData").value(org.hamcrest.Matchers.nullValue()));
+            mvc.perform(get("/api/v1/audit/entities/SecurityEvent/{id}",first.entityId).header("X-Demo-Session",session))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].previousData").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$[0].newData").value(org.hamcrest.Matchers.nullValue()));
         }
-        mvc.perform(get("/api/v1/audit").header("X-Demo-Session",demo.token(DemoRole.RENTAS))
-                .param("entityType","SecurityEvent").param("userId",actor))
-            .andExpect(status().isForbidden());
+        for(DemoRole role:java.util.List.of(DemoRole.RENTAS,DemoRole.CASHIER,DemoRole.TAXPAYER))
+            mvc.perform(get("/api/v1/audit").header("X-Demo-Session",demo.token(role)))
+                .andExpect(status().isForbidden());
+
+        mvc.perform(get("/api/v1/audit").header("X-Demo-Session",demo.token(DemoRole.AUDITOR))
+                .param("entityType","Payment").param("action",first.action).param("userId",actor))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.content.length()").value(1))
+            .andExpect(jsonPath("$.content[0].entityType").value("Payment"))
+            .andExpect(jsonPath("$.content[0].newData").value(unrelated.newData));
+    }
+
+    private AuditEntry securityAudit(String actor,OffsetDateTime occurredAt,String secret,String personalData) {
+        AuditEntry event=new AuditEntry();event.entityType="SecurityEvent";event.entityId=java.util.UUID.randomUUID().toString();
+        event.action="DEMO_LOGIN_FAILED";event.userId=actor;event.userRole="ANONYMOUS";event.occurredAt=occurredAt;
+        event.previousData="{\"password\":\""+secret+"\"}";
+        event.newData="{\"nationalId\":\""+personalData+"\",\"token\":\""+secret+"\"}";
+        return event;
     }
 
     @Test void auditorCanReadTicketsButCannotChangeThem() throws Exception {

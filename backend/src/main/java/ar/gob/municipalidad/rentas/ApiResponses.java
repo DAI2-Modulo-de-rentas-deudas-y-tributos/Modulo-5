@@ -37,7 +37,11 @@ final class ApiResponses {
     static ApiDtos.SocialBenefitResponse of(SocialBenefitReference x,List<String> taxConceptCodes){return new ApiDtos.SocialBenefitResponse(x.id,x.externalBenefitId,x.taxpayerId,x.externalCitizenId,x.benefitType,x.calculatedStatus,x.externalStatus,x.discountPercentage,x.validFrom,x.validUntil,x.externalSourceEventId,x.updatedAt,taxConceptCodes,x.externalApplicationId,x.externalProgramId,x.programName,x.externalReason,x.resolutionStatus,x.receivedAt);}
     static ApiDtos.SocialBenefitRuleResponse of(SocialBenefitRule x){return new ApiDtos.SocialBenefitRuleResponse(x.id,x.programId,x.taxConceptId,x.version,x.percentage,x.validFrom,x.validUntil,x.enabled,x.status,x.proposedBy,x.submittedBy,x.approvedBy,x.createdAt,x.approvedAt,x.disabledAt);}
     static ApiDtos.ExternalObligationResponse of(ExternalObligation x){return new ApiDtos.ExternalObligationResponse(x.id,x.sourceModule,x.externalType,x.externalReferenceId,x.sourceEventId,x.externalTaxpayerType,x.externalTaxpayerId,x.taxpayerId,x.taxConceptId,x.amount,x.dueDate,x.status,x.errorMessage,x.retryCount,x.receivedAt,x.processedAt);}
-    static ApiDtos.AuditEntryResponse of(AuditEntry x){return new ApiDtos.AuditEntryResponse(x.id,x.entityType,x.entityId,x.action,x.userId,x.userRole,x.previousData,x.newData,x.correlationId,x.occurredAt);}
+    static ApiDtos.AuditEntryResponse of(AuditEntry x){
+        boolean securityEvent="SecurityEvent".equals(x.entityType);
+        return new ApiDtos.AuditEntryResponse(x.id,x.entityType,x.entityId,x.action,x.userId,x.userRole,
+            securityEvent?null:x.previousData,securityEvent?null:x.newData,x.correlationId,x.occurredAt);
+    }
     static ApiDtos.IntegrationEventResponse of(IntegrationEventLog x){return new ApiDtos.IntegrationEventResponse(x.id,x.externalEventId==null&&x.eventId!=null?x.eventId.toString():x.externalEventId,x.eventType,x.sourceModule,x.targetModule,x.direction,x.status.name(),x.payload,x.retryCount,x.errorMessage,x.occurredAt,x.receivedAt,x.processedAt,x.lastRetryAt,null);}
     static ApiDtos.ElectronicPaymentResponse of(ElectronicPaymentAttempt x){return new ApiDtos.ElectronicPaymentResponse(x.id,x.paymentId,x.taxpayerId,x.debtId,x.amount,x.status,x.gatewayReference,x.rejectionReason,x.createdAt);}
     static ApiDtos.OutboxEventResponse of(OutboxEvent x){return new ApiDtos.OutboxEventResponse(x.id,x.eventType,x.targetModule,x.aggregateType,x.aggregateId,x.payload,x.status,x.retryCount,x.createdAt,x.publishedAt,x.lastAttemptAt,x.errorMessage);}
