@@ -265,6 +265,33 @@ class BeanValidationContractTests {
         assertThat(taxConcepts.count()).isEqualTo(conceptsCount);
     }
 
+    @Test void rejectsOversizedTaxConceptDescriptionOnPatchWithoutChangingConcept() throws Exception {
+        TaxConcept concept=new TaxConcept();
+        concept.code="PATCH_DESCRIPTION_LIMIT_"+UUID.randomUUID();
+        concept.name="Unchanged concept name";
+        concept.description="Original description";
+        concept.type=TaxConceptType.FEE;
+        concept.originModule="M5";
+        concept.active=true;
+        concept.createdAt=concept.updatedAt=OffsetDateTime.now();
+        taxConcepts.saveAndFlush(concept);
+
+        mvc.perform(patch("/api/v1/tax-concepts/{id}",concept.id)
+                .header("X-Demo-Session",demo.token(DemoRole.RENTAS))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"Changed concept name\",\"description\":\""
+                    +"x".repeat(256)+"\",\"active\":true}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+            .andExpect(jsonPath("$.details.fieldErrors[0].field").value("description"))
+            .andExpect(jsonPath("$.details.fieldErrors[0].messages[0]").value(org.hamcrest.Matchers.containsString("255")));
+
+        TaxConcept unchanged=taxConcepts.findById(concept.id).orElseThrow();
+        assertThat(unchanged.name).isEqualTo("Unchanged concept name");
+        assertThat(unchanged.description).isEqualTo("Original description");
+        assertThat(unchanged.active).isTrue();
+    }
+
     @Test void validatesMoneyScaleOnInboundModuleContractsWithoutChangingTheirShapes() {
         var external=new ApiDtos.ExternalObligationData("M7-1",TaxpayerType.CITIZEN,"citizen-1",
             new BigDecimal("12.345"),LocalDate.now());
