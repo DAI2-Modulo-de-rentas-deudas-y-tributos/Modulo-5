@@ -14,6 +14,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.transaction.TestTransaction;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -21,6 +22,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
@@ -100,6 +104,27 @@ class LiquidationRunEtagHttpTests {
         for(JsonNode parameter:submit.path("parameters"))if(parameter.path("name").asText().equals("If-Match"))ifMatch=parameter;
         assertThat(ifMatch).isNotNull();
         assertThat(ifMatch.path("required").asBoolean()).isFalse();
+    }
+
+    @Test void concurrentSubmissionsWithTheSameEtagAllowOnlyOneTransition() throws Exception {
+        LiquidationRun run=run();
+        TestTransaction.flagForCommit();
+        TestTransaction.end();
+
+        String path="/api/v1/liquidation-runs/"+run.id;
+        var rentas=actor("rentas-etag-concurrent", "RENTAS");
+        String tag=mvc.perform(get(path).with(authentication(rentas))).andReturn().getResponse().getHeader("ETag");
+        assertThat(tag).isNotBlank();
+
+        CountDownLatch start=new CountDownLatch(1);
+        var pool=Executors.newFixedThreadPool(2);
+        try{
+            var first=pool.submit(()->{start.await();return mvc.perform(post(path+"/submit").with(authentication(rentas)).header("If-Match",tag)).andReturn().getResponse().getStatus();});
+            var second=pool.submit(()->{start.await();return mvc.perform(post(path+"/submit").with(authentication(rentas)).header("If-Match",tag)).andReturn().getResponse().getStatus();});
+            start.countDown();
+            assertThat(List.of(first.get(10,TimeUnit.SECONDS),second.get(10,TimeUnit.SECONDS))).containsExactlyInAnyOrder(200,412);
+        } finally { pool.shutdownNow(); }
+        assertThat(runs.findById(run.id).orElseThrow().status).isEqualTo(LiquidationRunStatus.PENDING_APPROVAL);
     }
 
     private LiquidationRun run(){
