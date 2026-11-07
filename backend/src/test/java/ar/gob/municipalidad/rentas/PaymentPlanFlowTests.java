@@ -129,6 +129,31 @@ class PaymentPlanFlowTests {
             .isInstanceOfSatisfying(BusinessException.class,exception->assertThat(exception.code).isEqualTo("FORBIDDEN_OWNERSHIP"));
     }
 
+    @Test void taxpayerCanReadOnlyTheirOwnPlanRequestOverHttp() throws Exception {
+        Debt debt=debt("PLAN-REQUEST-HTTP-OWNER","PLAN-REQUEST-HTTP-CONCEPT");
+        Authentication owner=new UsernamePasswordAuthenticationToken(
+            new AuthenticatedIdentity("request-owner",debt.taxpayerId),null,
+            List.of(new SimpleGrantedAuthority("ROLE_TAXPAYER")));
+        SecurityContextHolder.getContext().setAuthentication(owner);
+        PaymentPlanRequest request=workflow.request(
+            new ApiDtos.CreatePaymentPlanRequest(debt.taxpayerId,List.of(debt.id),2));
+        TaxpayerReference foreign=catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(
+            TaxpayerType.CITIZEN,"PLAN-REQUEST-HTTP-FOREIGN","98765433",null,"Contribuyente ajeno"));
+        Authentication stranger=new UsernamePasswordAuthenticationToken(
+            new AuthenticatedIdentity("request-stranger",foreign.id),null,
+            List.of(new SimpleGrantedAuthority("ROLE_TAXPAYER")));
+
+        mvc.perform(get("/api/v1/payment-plan-requests/{id}",request.id).with(authentication(owner)))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.id").value(request.id))
+            .andExpect(jsonPath("$.taxpayerId").value(debt.taxpayerId));
+        mvc.perform(get("/api/v1/payment-plan-requests/{id}",request.id).with(authentication(stranger)))
+            .andExpect(status().isForbidden())
+            .andExpect(jsonPath("$.code").value("FORBIDDEN_OWNERSHIP"))
+            .andExpect(jsonPath("$.taxpayerId").doesNotExist())
+            .andExpect(jsonPath("$.totalDebtAtRequest").doesNotExist());
+    }
+
     @Test void taxpayerCanReadOnlyTheirOwnPlanAndInstallmentsOverHttp() throws Exception {
         Debt debt=debt("PLAN-HTTP-OWNER","PLAN-HTTP-CONCEPT");
         PaymentPlan plan=grant(debt,2);
