@@ -3,6 +3,7 @@ package ar.gob.municipalidad.rentas;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -159,9 +160,16 @@ class DebtTransitionApiMatrixTests {
         assertThat(outbox.count()).isEqualTo(outboxBefore);
     }
 
-    @Test void activePlanDebtRejectsAllocationAdjustmentAndAnotherPlanRequestWithoutPersistingEffects() throws Exception {
+    @ParameterizedTest(name = "{0} debt in active plan rejects direct allocation and adjustment")
+    @EnumSource(value=DebtStatus.class,names={"PENDING","PARTIALLY_PAID"})
+    void activePlanDebtRejectsAllocationAdjustmentAndAnotherPlanRequestWithoutPersistingEffects(DebtStatus initialState) throws Exception {
         LocalDate today=dates.today();
         Debt debt=createDebt(today);
+        if(initialState==DebtStatus.PARTIALLY_PAID){
+            paymentService.register(new ApiDtos.RegisterPaymentRequest(debt.taxpayerId,PaymentMethod.CASH,
+                new BigDecimal("10.00"),List.of(new ApiDtos.AllocationRequest(debt.id,new BigDecimal("10.00")))));
+        }
+        assertThat(debt.status).isEqualTo(initialState);
         createPlanConfiguration(today);
         DemoAuthSessions sessions=new DemoAuthSessions(demoUsers,taxpayers,passwordEncoder,demoAuth);
         String taxpayerSession=sessions.token(DemoRole.TAXPAYER,debt.taxpayerId);
@@ -218,7 +226,7 @@ class DebtTransitionApiMatrixTests {
         assertThat(adjustments.count()).isEqualTo(adjustmentsBefore);
         assertThat(outbox.count()).isEqualTo(outboxBefore);
         assertThat(debts.findById(debt.id).orElseThrow()).satisfies(stored->{
-            assertThat(stored.status).isEqualTo(DebtStatus.PENDING);
+            assertThat(stored.status).isEqualTo(initialState);
             assertThat(stored.currentAmount).isEqualByComparingTo(currentBefore);
             assertThat(stored.outstandingBalance).isEqualByComparingTo(outstandingBefore);
         });
@@ -249,9 +257,16 @@ class DebtTransitionApiMatrixTests {
         assertThat(stored.outstandingBalance).isEqualByComparingTo("90.00");
     }
 
-    @Test void activePlanDebtRejectsCreditApplicationWithoutPersistingEconomicEffects() throws Exception {
+    @ParameterizedTest(name = "{0} debt in active plan rejects credit application")
+    @EnumSource(value=DebtStatus.class,names={"PENDING","PARTIALLY_PAID"})
+    void activePlanDebtRejectsCreditApplicationWithoutPersistingEconomicEffects(DebtStatus initialState) throws Exception {
         LocalDate today=dates.today();
         Debt planDebt=createDebt(today);
+        if(initialState==DebtStatus.PARTIALLY_PAID){
+            paymentService.register(new ApiDtos.RegisterPaymentRequest(planDebt.taxpayerId,PaymentMethod.CASH,
+                new BigDecimal("10.00"),List.of(new ApiDtos.AllocationRequest(planDebt.id,new BigDecimal("10.00")))));
+        }
+        assertThat(planDebt.status).isEqualTo(initialState);
         Debt creditSource=createDebt(today,planDebt.taxpayerId);
         createPlanConfiguration(today);
         DemoAuthSessions sessions=new DemoAuthSessions(demoUsers,taxpayers,passwordEncoder,demoAuth);
