@@ -431,6 +431,13 @@ class AuditEntry {
     @Column(name="new_data",columnDefinition="text") public String newData;
     @Column(name="correlation_id") public String correlationId;
     @Column(name="occurred_at",nullable=false) public OffsetDateTime occurredAt;
+    @Transient private boolean persistedSecurityEvent;
+    @PostLoad @PostPersist
+    void markSecurityEvent() { persistedSecurityEvent="SecurityEvent".equals(entityType); }
+    @PreUpdate @PreRemove
+    void preventSecurityEventMutation() {
+        if(persistedSecurityEvent||"SecurityEvent".equals(entityType))throw new IllegalStateException("SecurityEvent entries are append-only");
+    }
     protected AuditEntry() {}
 }
 

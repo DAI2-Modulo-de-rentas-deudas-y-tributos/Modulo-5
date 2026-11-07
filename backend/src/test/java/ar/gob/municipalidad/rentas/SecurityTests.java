@@ -15,6 +15,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -170,25 +171,25 @@ class SecurityTests {
     @Test void demoLoginAndLogoutArePersistentlyAuditedWithoutCredentialMaterial() throws Exception {
         DemoUser user=persist(DemoRole.RENTAS,null,true);
         String body="{\"username\":\""+user.username+"\",\"password\":\""+DemoAuthSessions.PASSWORD+"\"}";
-        JsonNode login=json.readTree(mvc.perform(post("/api/v1/dev-auth/login").contentType(MediaType.APPLICATION_JSON).content(body))
+        JsonNode login=json.readTree(mvc.perform(post("/api/v1/dev-auth/login").with(request->{request.setRemoteAddr("198.51.100.31");return request;}).contentType(MediaType.APPLICATION_JSON).content(body))
             .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
         String token=login.path("token").asText();
         AuditEntry success=audit.findAll().stream().filter(entry->entry.action.equals("DEMO_LOGIN_SUCCEEDED")&&entry.userId.equals(user.integrationActorId.toString())).findFirst().orElseThrow();
         assertThat(success.userRole).isEqualTo("RENTAS");
-        assertThat(success.newData).contains("SUCCESS").doesNotContain(token,DemoAuthSessions.PASSWORD);
+        assertThat(success.newData).contains("SUCCESS","198.51.100.31").doesNotContain(token,DemoAuthSessions.PASSWORD);
 
         String wrongPassword="wrong-password-not-for-audit";
-        mvc.perform(post("/api/v1/dev-auth/login").contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(post("/api/v1/dev-auth/login").with(request->{request.setRemoteAddr("198.51.100.32");return request;}).contentType(MediaType.APPLICATION_JSON)
             .content("{\"username\":\""+user.username+"\",\"password\":\""+wrongPassword+"\"}"))
             .andExpect(status().isUnauthorized());
-        AuditEntry failure=audit.findAll().stream().filter(entry->entry.action.equals("DEMO_LOGIN_FAILED")).findFirst().orElseThrow();
-        assertThat(failure.userId).isEqualTo("anonymous");
-        assertThat(failure.userRole).isEqualTo("ANONYMOUS");
-        assertThat(failure.newData).contains("INVALID_CREDENTIALS").doesNotContain(user.username,wrongPassword,DemoAuthSessions.PASSWORD,token);
+        AuditEntry failure=audit.findAll().stream().filter(entry->entry.action.equals("DEMO_LOGIN_FAILED")&&entry.newData.contains("198.51.100.32")).findFirst().orElseThrow();
+        assertThat(failure.userId).isEqualTo(user.integrationActorId.toString());
+        assertThat(failure.userRole).isEqualTo("RENTAS");
+        assertThat(failure.newData).contains("INVALID_CREDENTIALS","198.51.100.32").doesNotContain(user.username,wrongPassword,DemoAuthSessions.PASSWORD,token);
 
-        mvc.perform(post("/api/v1/dev-auth/logout").header("X-Demo-Session",token)).andExpect(status().isNoContent());
+        mvc.perform(post("/api/v1/dev-auth/logout").with(request->{request.setRemoteAddr("198.51.100.33");return request;}).header("X-Demo-Session",token)).andExpect(status().isNoContent());
         AuditEntry logout=audit.findAll().stream().filter(entry->entry.action.equals("DEMO_LOGOUT_SUCCEEDED")&&entry.userId.equals(user.integrationActorId.toString())).findFirst().orElseThrow();
-        assertThat(logout.newData).contains("SUCCESS").doesNotContain(token,DemoAuthSessions.PASSWORD);
+        assertThat(logout.newData).contains("SUCCESS","198.51.100.33").doesNotContain(token,DemoAuthSessions.PASSWORD);
     }
 
     @Test void ownership403IsPersistedWithoutQueryStringOrSensitiveValues() throws Exception {
@@ -196,12 +197,35 @@ class SecurityTests {
         TaxpayerReference other=taxpayer("SEC-AUDIT-OTHER");
         String session=demo.token(DemoRole.TAXPAYER,owner.id);
         String traceId="audit-denied-owner-"+java.util.UUID.randomUUID();
-        mvc.perform(get("/api/v1/taxpayers/{id}/summary?probe=secret-value",other.id).header("X-Demo-Session",session).header("X-Correlation-Id",traceId))
+        mvc.perform(get("/api/v1/taxpayers/{id}/summary?probe=secret-value",other.id).with(request->{request.setRemoteAddr("198.51.100.44");return request;}).header("X-Demo-Session",session).header("X-Correlation-Id",traceId))
             .andExpect(status().isForbidden());
         AuditEntry denied=audit.findAll().stream().filter(entry->entry.action.equals("ACCESS_DENIED")&&traceId.equals(entry.correlationId)).findFirst().orElseThrow();
         assertThat(denied.userId).isNotEqualTo("anonymous");
         assertThat(denied.userRole).contains("TAXPAYER");
-        assertThat(denied.newData).contains("FORBIDDEN_OWNERSHIP","/api/v1/taxpayers").doesNotContain(other.id.toString(),"probe","secret-value",session);
+        assertThat(denied.newData).contains("FORBIDDEN_OWNERSHIP","/api/v1/taxpayers","198.51.100.44","GET /api/v1/taxpayers")
+            .doesNotContain("/"+other.id+"/","probe","secret-value",session);
+    }
+
+    @Test void securityEventsCannotBeUpdatedThroughJpa() throws Exception {
+        DemoUser user=persist(DemoRole.RENTAS,null,true);
+        mvc.perform(post("/api/v1/dev-auth/login").contentType(MediaType.APPLICATION_JSON)
+            .content("{\"username\":\""+user.username+"\",\"password\":\""+DemoAuthSessions.PASSWORD+"\"}"))
+            .andExpect(status().isOk());
+        AuditEntry event=audit.findAll().stream().filter(entry->"SecurityEvent".equals(entry.entityType)
+            &&"DEMO_LOGIN_SUCCEEDED".equals(entry.action)&&user.integrationActorId.toString().equals(entry.userId)).findFirst().orElseThrow();
+        event.entityType="Audit";
+        event.action="TAMPERED";
+        assertThatThrownBy(()->audit.flush()).hasStackTraceContaining("SecurityEvent entries are append-only");
+    }
+
+    @Test void securityEventsCannotBeDeletedThroughJpa() throws Exception {
+        DemoUser user=persist(DemoRole.RENTAS,null,true);
+        mvc.perform(post("/api/v1/dev-auth/login").contentType(MediaType.APPLICATION_JSON)
+            .content("{\"username\":\""+user.username+"\",\"password\":\""+DemoAuthSessions.PASSWORD+"\"}"))
+            .andExpect(status().isOk());
+        AuditEntry event=audit.findAll().stream().filter(entry->"SecurityEvent".equals(entry.entityType)
+            &&"DEMO_LOGIN_SUCCEEDED".equals(entry.action)&&user.integrationActorId.toString().equals(entry.userId)).findFirst().orElseThrow();
+        assertThatThrownBy(()->{audit.delete(event);audit.flush();}).hasStackTraceContaining("SecurityEvent entries are append-only");
     }
 
     @Test void apiSecurityHeadersAndSwaggerRemainUsable() throws Exception {
