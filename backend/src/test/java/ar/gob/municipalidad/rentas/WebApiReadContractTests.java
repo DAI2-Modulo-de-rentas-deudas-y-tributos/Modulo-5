@@ -35,6 +35,7 @@ class WebApiReadContractTests {
     @Autowired TaxConceptRepository concepts;
     @Autowired TaxConfigurationRepository configurations;
     @Autowired DebtRepository debts;
+    @Autowired PaymentRepository payments;
     @Autowired DemoUserRepository demoUsers;
     @Autowired IntegrationEventLogRepository integrations;
     @Autowired OutboxRepository outbox;
@@ -70,6 +71,17 @@ class WebApiReadContractTests {
                 .andExpect(jsonPath("$.content").isArray())
                 .andExpect(jsonPath("$.page.size").value(2));
         }
+    }
+
+    @Test void paymentWithMoreThanFiftyAllocationsIsRejectedBeforePersistence() throws Exception {
+        long taxpayerCount=payments.count();
+        String allocations=java.util.stream.IntStream.range(0,51)
+            .mapToObj(i->"{\"debtId\":"+(i+1)+",\"amount\":\"1.00\"}")
+            .collect(java.util.stream.Collectors.joining(","));
+        mvc.perform(post("/api/v1/payments").header("X-Demo-Session",rentas).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"taxpayerId\":1,\"paymentMethod\":\"CASH\",\"amount\":\"51.00\",\"allocations\":["+allocations+"]}"))
+            .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
+        assertThat(payments.count()).isEqualTo(taxpayerCount);
     }
 
     @Test void integrationsBitacoraCombinesInboundAndOutboxWithFaithfulStatesAndPagination() throws Exception {
