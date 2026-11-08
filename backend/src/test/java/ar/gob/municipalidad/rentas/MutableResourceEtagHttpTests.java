@@ -51,6 +51,10 @@ class MutableResourceEtagHttpTests {
     @Autowired LiquidationRepository liquidations;
     @Autowired PaymentPlanRepository plans;
     @Autowired ExemptionRequestRepository requests;
+    @Autowired AdjustmentRepository adjustments;
+    @Autowired PaymentRepository payments;
+    @Autowired PaymentReversalRepository reversals;
+    @Autowired OutboxRepository outbox;
 
     @Test void mutableDetailsExposeEtagsAndExemptionTransitionsRejectStaleWithoutWriting() throws Exception {
         TaxpayerReference taxpayer=taxpayer();
@@ -119,6 +123,60 @@ class MutableResourceEtagHttpTests {
             .andReturn().getResponse();
         assertThat(approved.getHeader("ETag")).isNotBlank().isNotEqualTo(tag);
         assertThat(configurations.findById(configuration.id).orElseThrow().status).isEqualTo(TaxConfigurationStatus.ACTIVE);
+    }
+
+    @Test void staleAdjustmentTagDoesNotChangeDebtOrPublishAndFreshTagApproves() throws Exception {
+        TaxpayerReference taxpayer=taxpayer();TaxConcept concept=concept();Debt debt=debt(taxpayer,concept);
+        AdjustmentRequest adjustment=new AdjustmentRequest();adjustment.debtId=debt.id;adjustment.type=AdjustmentType.DISCOUNT;
+        adjustment.amount=new BigDecimal("10.00");adjustment.reason="ETag adjustment";adjustment.status=AdjustmentStatus.PENDING_APPROVAL;
+        adjustment.requestedBy="rentas-adjustment-etag";adjustment.requestedAt=OffsetDateTime.now();adjustment=adjustments.saveAndFlush(adjustment);
+        var supervisor=actor("supervisor-adjustment-etag","SUPERVISOR");String path="/api/v1/adjustments/"+adjustment.id;
+        String tag=mvc.perform(get(path).with(authentication(supervisor))).andExpect(status().isOk()).andReturn().getResponse().getHeader("ETag");
+        assertThat(tag).isNotBlank();long eventsBefore=outbox.count();
+
+        mvc.perform(post(path+"/approve").with(authentication(supervisor)).header("If-Match","\"stale-adjustment-tag\"")
+                .contentType(MediaType.APPLICATION_JSON).content("{}"))
+            .andExpect(status().isPreconditionFailed()).andExpect(jsonPath("$.code").value("PRECONDITION_FAILED"));
+        assertThat(adjustments.findById(adjustment.id).orElseThrow().status).isEqualTo(AdjustmentStatus.PENDING_APPROVAL);
+        assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("100.00");
+        assertThat(outbox.count()).isEqualTo(eventsBefore);
+
+        var approved=mvc.perform(post(path+"/approve").with(authentication(supervisor)).header("If-Match",tag)
+                .contentType(MediaType.APPLICATION_JSON).content("{}"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("APPROVED"))
+            .andReturn().getResponse();
+        assertThat(approved.getHeader("ETag")).isNotBlank().isNotEqualTo(tag);
+        assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("90.00");
+        assertThat(outbox.count()).isEqualTo(eventsBefore+1);
+    }
+
+    @Test void staleReversalTagDoesNotExecutePaymentAndFreshTagExecutes() throws Exception {
+        TaxpayerReference taxpayer=taxpayer();Payment payment=new Payment();payment.taxpayerId=taxpayer.id;
+        payment.paymentMethod=PaymentMethod.CASH;payment.amount=new BigDecimal("25.00");payment.allocatedAmount=BigDecimal.ZERO.setScale(2);
+        payment.unallocatedAmount=payment.amount;payment.status=PaymentStatus.CONFIRMED;
+        payment.allocationStatus=PaymentAllocationStatus.UNALLOCATED;payment.origin=PaymentOrigin.CASHIER;
+        payment.receiptNumber="ETAG-REVERSAL-"+java.util.UUID.randomUUID();payment.registeredBy="test";
+        payment.paidAt=payment.createdAt=OffsetDateTime.now();payment=payments.saveAndFlush(payment);
+        PaymentReversalRequest reversal=new PaymentReversalRequest();reversal.paymentId=payment.id;reversal.reason="ETag reversal";
+        reversal.status=PaymentReversalStatus.APPROVED;reversal.requestedBy="cashier-reversal-etag";
+        reversal.requestedAt=OffsetDateTime.now();reversal.resolvedBy="supervisor-reversal-etag";reversal.resolvedAt=OffsetDateTime.now();
+        reversal=reversals.saveAndFlush(reversal);
+        var rentas=actor("rentas-reversal-etag","RENTAS");String path="/api/v1/payment-reversals/"+reversal.id;
+        String tag=mvc.perform(get(path).with(authentication(rentas))).andExpect(status().isOk()).andReturn().getResponse().getHeader("ETag");
+        assertThat(tag).isNotBlank();long eventsBefore=outbox.count();
+
+        mvc.perform(post(path+"/execute").with(authentication(rentas)).header("If-Match","\"stale-reversal-tag\""))
+            .andExpect(status().isPreconditionFailed()).andExpect(jsonPath("$.code").value("PRECONDITION_FAILED"));
+        assertThat(reversals.findById(reversal.id).orElseThrow().status).isEqualTo(PaymentReversalStatus.APPROVED);
+        assertThat(payments.findById(payment.id).orElseThrow().status).isEqualTo(PaymentStatus.CONFIRMED);
+        assertThat(outbox.count()).isEqualTo(eventsBefore);
+
+        var executed=mvc.perform(post(path+"/execute").with(authentication(rentas)).header("If-Match",tag))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("EXECUTED"))
+            .andReturn().getResponse();
+        assertThat(executed.getHeader("ETag")).isNotBlank().isNotEqualTo(tag);
+        assertThat(payments.findById(payment.id).orElseThrow().status).isEqualTo(PaymentStatus.REVERSED);
+        assertThat(outbox.count()).isEqualTo(eventsBefore);
     }
 
     private TaxpayerReference taxpayer(){

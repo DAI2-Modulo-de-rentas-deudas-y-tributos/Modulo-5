@@ -62,6 +62,14 @@ final class EntityTags {
         return hashed("exemption-request", request.id(), request);
     }
 
+    static String adjustment(ApiDtos.AdjustmentResponse adjustment) {
+        return hashed("adjustment", adjustment.id(), adjustment);
+    }
+
+    static String paymentReversal(ApiDtos.PaymentReversalResponse reversal) {
+        return hashed("payment-reversal", reversal.id(), reversal);
+    }
+
     private static String hashed(String resource, Long id, Object value) {
         try {
             byte[] digest=MessageDigest.getInstance("SHA-256").digest(value.toString().getBytes(StandardCharsets.UTF_8));
