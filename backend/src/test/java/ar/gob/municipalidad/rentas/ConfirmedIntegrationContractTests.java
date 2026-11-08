@@ -100,11 +100,19 @@ class ConfirmedIntegrationContractTests {
     }
 
     @Test @Transactional(propagation=Propagation.NOT_SUPPORTED)
-    void m1UpdatedMapsInactiveBlockedAndDeceasedExplicitlyAndRollsBackUnknownState() throws Exception {
+    void m1UpdatedKeepsEveryExistingStatusAndRollsBackUnknownSnapshotState() throws Exception {
         UUID citizenId=UUID.randomUUID();m1.consumeCitizen(citizen(citizenId,"M1-EVT-STATE-REGISTERED","REGISTERED","{\"dni\":\"34567890\",\"cuil\":\"20345678901\",\"name\":\"Nombre\",\"lastname\":\"Inicial\",\"birthdate\":\"1990-04-12\",\"state\":\"ACTIVE\"}"));
-        for(var state:List.of(Map.entry("INACTIVO",TaxpayerStatus.INACTIVE),Map.entry("BLOQUEADO",TaxpayerStatus.BLOCKED),Map.entry("FALLECIDO",TaxpayerStatus.DECEASED))){
-            m1.consumeCitizen(citizen(citizenId,"M1-EVT-STATE-"+state.getKey(),"UPDATED","{\"dni\":\"34567890\",\"cuil\":\"20345678901\",\"name\":\"Nombre\",\"lastname\":\"Actualizado\",\"birthdate\":\"1990-04-12\",\"state\":\""+state.getKey()+"\"}"));
-            assertThat(taxpayers.findByTaxpayerTypeAndCanonicalCitizenId(TaxpayerType.CITIZEN,citizenId).orElseThrow().externalStatus).isEqualTo(state.getValue());
+        Map<TaxpayerStatus,String> snapshots=Map.of(TaxpayerStatus.ACTIVE,"FALLECIDO",TaxpayerStatus.INACTIVE,"ACTIVO",
+            TaxpayerStatus.BLOCKED,"ACTIVO",TaxpayerStatus.DECEASED,"ACTIVO");
+        for(var state:snapshots.entrySet()){
+            TaxpayerReference before=taxpayers.findByTaxpayerTypeAndCanonicalCitizenId(TaxpayerType.CITIZEN,citizenId).orElseThrow();
+            before.externalStatus=state.getKey();taxpayers.saveAndFlush(before);
+            String eventId="M1-EVT-STATE-"+state.getKey();
+            m1.consumeCitizen(citizen(citizenId,eventId,"UPDATED","{\"dni\":\"34567890\",\"cuil\":\"20345678901\",\"name\":\"Nombre\",\"lastname\":\"Actualizado\",\"birthdate\":\"1990-04-12\",\"state\":\""+state.getValue()+"\"}"));
+            TaxpayerReference updated=taxpayers.findById(before.id).orElseThrow();
+            assertThat(updated.externalStatus).isEqualTo(state.getKey());
+            assertThat(updated.displayName).isEqualTo("Nombre Actualizado");
+            assertThat(processed.existsByExternalEventId(eventId)).isTrue();
         }
         TaxpayerReference beforeUnknown=taxpayers.findByTaxpayerTypeAndCanonicalCitizenId(TaxpayerType.CITIZEN,citizenId).orElseThrow();
         String unknownEventId="M1-EVT-STATE-UNKNOWN";
