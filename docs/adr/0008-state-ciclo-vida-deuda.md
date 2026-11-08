@@ -55,5 +55,6 @@ de arquitectura.
   servicios existentes.
 - Las transiciones inválidas de deuda se normalizan a 409; los errores
   semánticos de datos permanecen en 422.
-- La implementación de State ya forma parte de `develop`; esta actualización
-  registra la decisión funcional delegada y no cambia el código productivo.
+- La implementación de State forma parte de la candidata de integración del PR
+  #134; todavía no está integrada en `develop`. Este ADR registra la decisión
+  funcional delegada y no cambia el código productivo.

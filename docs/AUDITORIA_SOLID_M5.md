@@ -16,6 +16,6 @@ Alcance de esta revisión: estructura relevante para liquidaciones, seguridad e 
 - **Repository (Spring Data):** aisla consultas/persistencia; `DebtRepository.findByIdForUpdate` apoya exclusión mutua en reglas monetarias. No se atribuye GoF Repository a interfaces que sólo representan DTOs.
 - **Transactional Outbox / Inbox idempotente (integración):** persistencia local en transacción y deduplicación por `eventId`. No implica entrega confirmada a Core.
 - **Adapter (integración):** adaptadores/event publishers aíslan productores y consumidores del modelo local. No implica que el broker real esté conectado.
-- **No se implementó State:** estados y flujos existentes no justificaron reemplazar sus transiciones en esta tarea.
+- **State para el ciclo de vida de deuda:** implementado en `DebtLifecycleState.java` y delegado por `Debt`; ver [ADR-0008](adr/0008-state-ciclo-vida-deuda.md). La implementación está en la candidata PR #134 y aún no está integrada en `develop`.
 
 ADRs relacionados: [0003](adr/0003-grasp-repository-separacion-responsabilidades.md), [0004](adr/0004-strategy-calculo-tributos.md) y [0006](adr/0006-outbox-transaccional-y-entrega.md).
