@@ -7,6 +7,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,12 +28,14 @@ class SecurityTests {
     @Autowired MockMvc mvc; @Autowired TaxpayerRepository taxpayers; @Autowired BillRepository bills;
     @Autowired ObjectMapper json; @Autowired DemoUserRepository users; @Autowired PasswordEncoder encoder;
     @Autowired DemoAuthService demoAuth; @Autowired DemoAuthSessionRepository sessions; @Autowired AuditRepository audit;
+    @Autowired JdbcTemplate jdbc;
     @Autowired PaymentRepository payments; @Autowired PaymentAllocationRepository allocations;
     @Autowired OutboxRepository outbox;
     @Autowired TicketCaseRepository ticketCases; @Autowired TicketCaseUpdateRepository ticketUpdates;
     private DemoAuthSessions demo;
 
     @BeforeEach void sessions() {
+        jdbc.execute("CREATE TABLE IF NOT EXISTS idempotency_request (actor_id VARCHAR(255) NOT NULL, operation VARCHAR(160) NOT NULL, idempotency_key VARCHAR(128) NOT NULL, request_fingerprint VARCHAR(64) NOT NULL, response_body TEXT, created_at TIMESTAMP WITH TIME ZONE NOT NULL, PRIMARY KEY (actor_id, operation, idempotency_key))");
         demo=new DemoAuthSessions(users,taxpayers,encoder,demoAuth);
     }
 
