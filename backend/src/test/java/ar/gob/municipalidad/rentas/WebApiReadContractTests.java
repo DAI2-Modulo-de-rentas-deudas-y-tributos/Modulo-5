@@ -36,6 +36,7 @@ class WebApiReadContractTests {
     @Autowired TaxConfigurationRepository configurations;
     @Autowired DebtRepository debts;
     @Autowired PaymentRepository payments;
+    @Autowired PaymentAllocationRepository paymentAllocations;
     @Autowired DemoUserRepository demoUsers;
     @Autowired IntegrationEventLogRepository integrations;
     @Autowired OutboxRepository outbox;
@@ -75,6 +76,7 @@ class WebApiReadContractTests {
 
     @Test void paymentWithMoreThanFiftyAllocationsIsRejectedBeforePersistence() throws Exception {
         long taxpayerCount=payments.count();
+        long allocationCount=paymentAllocations.count();
         String allocations=java.util.stream.IntStream.range(0,51)
             .mapToObj(i->"{\"debtId\":"+(i+1)+",\"amount\":\"1.00\"}")
             .collect(java.util.stream.Collectors.joining(","));
@@ -82,6 +84,7 @@ class WebApiReadContractTests {
                 .content("{\"taxpayerId\":1,\"paymentMethod\":\"CASH\",\"amount\":\"51.00\",\"allocations\":["+allocations+"]}"))
             .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
         assertThat(payments.count()).isEqualTo(taxpayerCount);
+        assertThat(paymentAllocations.count()).isEqualTo(allocationCount);
     }
 
     @Test void integrationsBitacoraCombinesInboundAndOutboxWithFaithfulStatesAndPagination() throws Exception {
@@ -137,6 +140,27 @@ class WebApiReadContractTests {
             .andExpect(status().isOk()).andExpect(jsonPath("$.content").isArray());
         mvc.perform(withStaff(get(base).param("direction"," ").param("status"," ").param("eventType"," ")))
             .andExpect(status().isOk());
+    }
+
+    @Test void integrationsDirectionAndStatusFiltersIncludePendingOutboundRows() throws Exception {
+        UUID id=UUID.randomUUID();
+        OutboxEvent pending=new OutboxEvent();pending.id=id;pending.eventType="scrum828Pending";pending.targetModule="CORE";
+        pending.aggregateType="ExemptionRequest";pending.aggregateId="request";pending.payload="{\"eventId\":\""+id+"\"}";
+        pending.status=OutboxStatus.PENDING;pending.retryCount=0;pending.createdAt=OffsetDateTime.now();outbox.saveAndFlush(pending);
+        String base="/api/v1/integrations/events";
+
+        mvc.perform(withStaff(get(base).param("eventType","scrum828Pending").param("direction","IN")))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.page.totalElements").value(0));
+        mvc.perform(withStaff(get(base).param("eventType","scrum828Pending").param("direction","OUT")))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.page.totalElements").value(1))
+            .andExpect(jsonPath("$.content[0].eventId").value(id.toString()))
+            .andExpect(jsonPath("$.content[0].direction").value("OUTBOUND"))
+            .andExpect(jsonPath("$.content[0].status").value("PENDING"));
+        mvc.perform(withStaff(get(base).param("eventType","scrum828Pending").param("direction","OUT").param("status","PENDING")))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.page.totalElements").value(1))
+            .andExpect(jsonPath("$.content[0].direction").value("OUTBOUND"));
+        mvc.perform(withStaff(get(base).param("eventType","scrum828Pending").param("direction","IN").param("status","PENDING")))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.page.totalElements").value(0));
     }
 
     @Test void missingResourcesUseTheSameSafeErrorContract() throws Exception {

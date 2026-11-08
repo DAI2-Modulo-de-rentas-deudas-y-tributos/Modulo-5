@@ -42,6 +42,8 @@ class BeanValidationContractTests {
     @Autowired TaxConceptRepository taxConcepts;
     @Autowired LiquidationRepository liquidations;
     @Autowired LiquidationRunRepository liquidationRuns;
+    @Autowired BillRepository bills;
+    @Autowired PaymentPlanRequestRepository planRequests;
     @Autowired PaymentPlanConfigurationRepository planConfigurations;
     @Autowired DemoUserRepository users;
     @Autowired DemoAuthSessionRepository sessions;
@@ -189,7 +191,7 @@ class BeanValidationContractTests {
             .andExpect(status().isBadRequest())
             .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
             .andExpect(jsonPath("$.details.fieldErrors[0].field").value("amount"))
-            .andExpect(jsonPath("$.details.fieldErrors[0].messages[0]").value("Debe tener como máximo 2 decimales"));
+            .andExpect(jsonPath("$.details.fieldErrors[0].messages[0]").value("El importe excede la precisión admitida (17 dígitos enteros y 2 decimales)"));
         mvc.perform(post("/api/v1/payments")
                 .header("X-Demo-Session",demo.token(DemoRole.CASHIER))
                 .contentType(MediaType.APPLICATION_JSON)
@@ -197,7 +199,7 @@ class BeanValidationContractTests {
             .andExpect(status().isBadRequest())
             .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
             .andExpect(jsonPath("$.details.fieldErrors[0].field").value("amount"))
-            .andExpect(jsonPath("$.details.fieldErrors[0].messages[0]").value("Debe tener como máximo 2 decimales"));
+            .andExpect(jsonPath("$.details.fieldErrors[0].messages[0]").value("El importe excede la precisión admitida (17 dígitos enteros y 2 decimales)"));
         assertThat(payments.count()).isEqualTo(before);
     }
 
@@ -394,8 +396,103 @@ class BeanValidationContractTests {
             .andExpect(status().isBadRequest())
             .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
             .andExpect(jsonPath("$.details.fieldErrors[0].field").value("taxableBase"))
-            .andExpect(jsonPath("$.details.fieldErrors[0].messages[0]").value("Debe tener como máximo 2 decimales"));
+            .andExpect(jsonPath("$.details.fieldErrors[0].messages[0]").value("El importe excede la precisión admitida (17 dígitos enteros y 2 decimales)"));
         assertThat(liquidations.count()).isEqualTo(before);
+    }
+
+    @Test void currencyAmountsRespectPostgresNumericPrecisionAndPercentagesStopAtOneHundred() throws Exception {
+        BigDecimal maximum=new BigDecimal("99999999999999999.99");
+        assertThat(validator.validate(new ApiDtos.RegisterPaymentRequest(1L,PaymentMethod.CASH,maximum,null))).isEmpty();
+        assertThat(validator.validate(new ApiDtos.RegisterPaymentRequest(1L,PaymentMethod.CASH,new BigDecimal("10.2300"),null))).isEmpty();
+        assertThat(validator.validate(new ApiDtos.RegisterPaymentRequest(1L,PaymentMethod.CASH,new BigDecimal("100000000000000000"),null)))
+            .extracting(error->error.getPropertyPath().toString()).contains("amount");
+        assertThat(validator.validate(new ApiDtos.CreateAdjustmentRequest(1L,AdjustmentType.SURCHARGE,
+            new BigDecimal("1000000000000"),"QA report value"))).isEmpty(); // Fits numeric(19,2); business cap needs approval.
+        assertThat(validator.validate(new ApiDtos.CreateTaxConfigurationRequest(1L,CalculationType.PERCENTAGE,
+            new BigDecimal("100"),null,null,null,true,true,LocalDate.now(),null))).isEmpty();
+        assertThat(validator.validate(new ApiDtos.CreateTaxConfigurationRequest(1L,CalculationType.PERCENTAGE,
+            new BigDecimal("100.01"),null,null,null,true,true,LocalDate.now(),null)))
+            .extracting(error->error.getPropertyPath().toString()).contains("rate");
+        assertThat(validator.validate(new ApiDtos.UpdateTaxConfigurationRequest(CalculationType.PERCENTAGE,
+            new BigDecimal("500"),null,null,null,null,null,null,null)))
+            .extracting(error->error.getPropertyPath().toString()).contains("rate");
+
+        long before=payments.count();
+        for (String amount : List.of("99999999999999999999","1e30","1e400")) {
+            mvc.perform(post("/api/v1/payments")
+                    .header("X-Demo-Session",demo.token(DemoRole.CASHIER))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"taxpayerId\":1,\"paymentMethod\":\"CASH\",\"amount\":"+amount+"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
+        }
+        assertThat(payments.count()).isEqualTo(before);
+
+        mvc.perform(post("/api/v1/tax-configurations")
+                .header("X-Demo-Session",demo.token(DemoRole.RENTAS))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"taxConceptId\":1,\"calculationType\":\"PERCENTAGE\",\"rate\":500,\"validFrom\":\"2026-11-01\"}"))
+            .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
+
+        long adjustmentCount=adjustments.count();
+        mvc.perform(post("/api/v1/adjustments")
+                .header("X-Demo-Session",demo.token(DemoRole.RENTAS))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"debtId\":1,\"type\":\"SURCHARGE\",\"amount\":99999999999999999999,\"reason\":\"QA\"}"))
+            .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
+        assertThat(adjustments.count()).isEqualTo(adjustmentCount);
+    }
+
+    @Test void collectionInputsAreBoundedBeforeRequestProcessing() throws Exception {
+        var fiftyDebts=java.util.Collections.nCopies(50,1L);
+        assertThat(validator.validate(new ApiDtos.PaymentPlanSimulationRequest(1L,fiftyDebts,3))).isEmpty();
+        assertThat(validator.validate(new ApiDtos.CreatePaymentPlanRequest(1L,fiftyDebts,3))).isEmpty();
+        assertThat(validator.validate(new ApiDtos.CreateBillRequest(1L,java.util.Collections.nCopies(500,1L),LocalDate.now().plusDays(1)))).isEmpty();
+        var tenThousandItems=java.util.Collections.nCopies(10_000,new ApiDtos.LiquidationRunItemRequest(1L,BigDecimal.ZERO));
+        assertThat(validator.validate(new ApiDtos.CreateLiquidationRunRequest(1L,"2026-11",LocalDate.now().plusDays(1),tenThousandItems))).isEmpty();
+
+        long beforeRuns=liquidationRuns.count(),beforeBills=bills.count(),beforePlanRequests=planRequests.count();
+        String billIds=java.util.Collections.nCopies(501,"1").stream().collect(java.util.stream.Collectors.joining(","));
+        mvc.perform(post("/api/v1/bills").header("X-Demo-Session",demo.token(DemoRole.RENTAS))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"taxpayerId\":1,\"debtIds\":["+billIds+"],\"dueDate\":\""+LocalDate.now().plusDays(1)+"\"}"))
+            .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
+        String planIds=java.util.Collections.nCopies(51,"1").stream().collect(java.util.stream.Collectors.joining(","));
+        mvc.perform(post("/api/v1/payment-plans/simulations").header("X-Demo-Session",demo.token(DemoRole.RENTAS))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"taxpayerId\":1,\"debtIds\":["+planIds+"],\"installments\":3}"))
+            .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
+        mvc.perform(post("/api/v1/payment-plan-requests").header("X-Demo-Session",demo.token(DemoRole.TAXPAYER))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"taxpayerId\":1,\"debtIds\":["+planIds+"],\"installments\":3}"))
+            .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
+        String runItems=java.util.Collections.nCopies(10_001,"{\"taxpayerId\":1,\"taxableBase\":0}")
+            .stream().collect(java.util.stream.Collectors.joining(","));
+        mvc.perform(post("/api/v1/liquidation-runs").header("X-Demo-Session",demo.token(DemoRole.RENTAS))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"taxConceptId\":1,\"period\":\"2026-11\",\"dueDate\":\"2026-11-30\",\"items\":["+runItems+"]}"))
+            .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
+        assertThat(liquidationRuns.count()).isEqualTo(beforeRuns);
+        assertThat(bills.count()).isEqualTo(beforeBills);
+        assertThat(planRequests.count()).isEqualTo(beforePlanRequests);
+    }
+
+    @Test void exemptionDocumentMetadataMatchesColumnLimitsAndRejectsUnsafeNames() throws Exception {
+        assertThat(validator.validate(new ApiDtos.SubmitDocumentationRequest("x".repeat(255),"D".repeat(255),"informe técnico (2026).pdf"))).isEmpty();
+        assertThat(validator.validate(new ApiDtos.SubmitDocumentationRequest("x".repeat(256),"DNI","ok.pdf")))
+            .extracting(error->error.getPropertyPath().toString()).contains("externalDocumentId");
+        assertThat(validator.validate(new ApiDtos.SubmitDocumentationRequest("id","x".repeat(256),"ok.pdf")))
+            .extracting(error->error.getPropertyPath().toString()).contains("documentType");
+        assertThat(validator.validate(new ApiDtos.SubmitDocumentationRequest("id","DNI","../../etc/passwd<script>")))
+            .extracting(error->error.getPropertyPath().toString()).contains("fileName");
+        long before=exemptionDocuments.count();
+        for (String body : List.of("{\"externalDocumentId\":\""+"x".repeat(5000)+"\",\"documentType\":\"DNI\"}",
+                "{\"externalDocumentId\":\"id\",\"documentType\":\"DNI\",\"fileName\":\"../../etc/passwd<script>\"}")) {
+            mvc.perform(post("/api/v1/exemption-requests/999/documentation")
+                    .header("X-Demo-Session",demo.token(DemoRole.TAXPAYER)).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
+        }
+        assertThat(exemptionDocuments.count()).isEqualTo(before);
     }
 
     @Test void optionalBodiesWithConstraintsAreValidatedWhenPresent() throws Exception {
