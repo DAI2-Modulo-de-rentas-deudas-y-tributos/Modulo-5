@@ -70,6 +70,14 @@ final class EntityTags {
         return hashed("payment-reversal", reversal.id(), reversal);
     }
 
+    static String refinancingRequest(ApiDtos.RefinancingRequestResponse request) {
+        return hashed("refinancing-request", request.id(), request);
+    }
+
+    static String ticket(ApiDtos.TicketResponse ticket) {
+        return hashed("ticket", ticket.id(), ticket);
+    }
+
     private static String hashed(String resource, Long id, Object value) {
         try {
             byte[] digest=MessageDigest.getInstance("SHA-256").digest(value.toString().getBytes(StandardCharsets.UTF_8));

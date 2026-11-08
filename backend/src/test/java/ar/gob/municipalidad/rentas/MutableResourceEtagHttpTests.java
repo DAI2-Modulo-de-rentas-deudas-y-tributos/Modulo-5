@@ -54,6 +54,9 @@ class MutableResourceEtagHttpTests {
     @Autowired AdjustmentRepository adjustments;
     @Autowired PaymentRepository payments;
     @Autowired PaymentReversalRepository reversals;
+    @Autowired RefinancingRequestRepository refinancingRequests;
+    @Autowired TicketCaseRepository tickets;
+    @Autowired TicketCaseUpdateRepository ticketUpdates;
     @Autowired OutboxRepository outbox;
 
     @Test void mutableDetailsExposeEtagsAndExemptionTransitionsRejectStaleWithoutWriting() throws Exception {
@@ -177,6 +180,51 @@ class MutableResourceEtagHttpTests {
         assertThat(executed.getHeader("ETag")).isNotBlank().isNotEqualTo(tag);
         assertThat(payments.findById(payment.id).orElseThrow().status).isEqualTo(PaymentStatus.REVERSED);
         assertThat(outbox.count()).isEqualTo(eventsBefore);
+    }
+
+    @Test void staleRefinancingRequestTagRejectsTransitionAndFreshTagReturnsNewTag() throws Exception {
+        TaxpayerReference taxpayer=taxpayer();Debt debt=debt(taxpayer,concept());PaymentPlan plan=plan(taxpayer,debt);
+        RefinancingRequest request=new RefinancingRequest();request.originalPlanId=plan.id;request.taxpayerId=taxpayer.id;
+        request.requestedInstallments=1;request.outstandingPrincipalAtRequest=new BigDecimal("100.00");
+        request.estimatedInterest=BigDecimal.ZERO;request.estimatedTotalAmount=new BigDecimal("100.00");
+        request.exceptional=false;request.exceptionApproved=false;request.status=RefinancingRequestStatus.PENDING;
+        request.requestedBy="taxpayer-refinancing-etag";request.requestedAt=OffsetDateTime.now();request=refinancingRequests.saveAndFlush(request);
+        var rentas=actor("rentas-refinancing-etag","RENTAS");String path="/api/v1/refinancing-requests/"+request.id;
+        String stale=mvc.perform(get(path).with(authentication(rentas))).andExpect(status().isOk()).andReturn().getResponse().getHeader("ETag");
+        request.exceptionReason="updated outside this request";refinancingRequests.saveAndFlush(request);
+
+        mvc.perform(post(path+"/reject").with(authentication(rentas)).header("If-Match",stale)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"declined\"}"))
+            .andExpect(status().isPreconditionFailed()).andExpect(jsonPath("$.code").value("PRECONDITION_FAILED"));
+        assertThat(refinancingRequests.findById(request.id).orElseThrow().status).isEqualTo(RefinancingRequestStatus.PENDING);
+
+        String current=mvc.perform(get(path).with(authentication(rentas))).andReturn().getResponse().getHeader("ETag");
+        var rejected=mvc.perform(post(path+"/reject").with(authentication(rentas)).header("If-Match",current)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"declined\"}"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("REJECTED"))
+            .andReturn().getResponse();
+        assertThat(rejected.getHeader("ETag")).isNotBlank().isNotEqualTo(current);
+    }
+
+    @Test void staleTicketTagRejectsUpdateWithoutAddingHistoryAndFreshTagReturnsNewTag() throws Exception {
+        TicketCase ticket=new TicketCase();ticket.externalTicketId="legacy-etag-"+java.util.UUID.randomUUID();
+        ticket.category="CONSULTA";ticket.description="Synthetic ticket";ticket.priority=TicketPriority.MEDIUM;
+        ticket.status=TicketCaseStatus.OPEN;ticket.createdAt=ticket.updatedAt=OffsetDateTime.now();ticket=tickets.saveAndFlush(ticket);
+        var rentas=actor("rentas-ticket-etag","RENTAS");String path="/api/v1/tickets/"+ticket.id;
+        String stale=mvc.perform(get(path).with(authentication(rentas))).andExpect(status().isOk()).andReturn().getResponse().getHeader("ETag");
+        ticket.description="Updated before the request";tickets.saveAndFlush(ticket);long historyBefore=ticketUpdates.count();
+
+        mvc.perform(post(path+"/updates").with(authentication(rentas)).header("If-Match",stale)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"message\":\"progress\"}"))
+            .andExpect(status().isPreconditionFailed()).andExpect(jsonPath("$.code").value("PRECONDITION_FAILED"));
+        assertThat(ticketUpdates.count()).isEqualTo(historyBefore);
+
+        String current=mvc.perform(get(path).with(authentication(rentas))).andReturn().getResponse().getHeader("ETag");
+        var updated=mvc.perform(post(path+"/updates").with(authentication(rentas)).header("If-Match",current)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"message\":\"progress\"}"))
+            .andExpect(status().isOk()).andReturn().getResponse();
+        assertThat(updated.getHeader("ETag")).isNotBlank().isNotEqualTo(current);
+        assertThat(ticketUpdates.count()).isEqualTo(historyBefore+1);
     }
 
     private TaxpayerReference taxpayer(){

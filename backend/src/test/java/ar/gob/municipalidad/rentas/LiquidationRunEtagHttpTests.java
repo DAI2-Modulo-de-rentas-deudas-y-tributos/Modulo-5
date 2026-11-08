@@ -135,7 +135,18 @@ class LiquidationRunEtagHttpTests {
                 "/paths/~1api~1v1~1adjustments~1{id}~1reject/post",
                 "/paths/~1api~1v1~1payment-reversals~1{id}~1approve/post",
                 "/paths/~1api~1v1~1payment-reversals~1{id}~1reject/post",
-                "/paths/~1api~1v1~1payment-reversals~1{id}~1execute/post"))
+                "/paths/~1api~1v1~1payment-reversals~1{id}~1execute/post",
+                "/paths/~1api~1v1~1refinancing-requests~1{id}~1grant/post",
+                "/paths/~1api~1v1~1refinancing-requests~1{id}~1reject/post",
+                "/paths/~1api~1v1~1refinancing-requests~1{id}~1submit-exception/post",
+                "/paths/~1api~1v1~1refinancing-requests~1{id}~1approve-exception/post",
+                "/paths/~1api~1v1~1refinancing-requests~1{id}~1reject-exception/post",
+                "/paths/~1api~1v1~1tickets~1{id}~1assign/post",
+                "/paths/~1api~1v1~1tickets~1{id}~1updates/post",
+                "/paths/~1api~1v1~1tickets~1{id}~1request-information/post",
+                "/paths/~1api~1v1~1tickets~1{id}~1return/post",
+                "/paths/~1api~1v1~1tickets~1{id}~1complete/post",
+                "/paths/~1api~1v1~1tickets~1{id}~1reject/post"))
             assertIfMatchContract(openApi,operation);
         for(String headerPath:List.of(
                 "/paths/~1api~1v1~1liquidation-runs~1{id}/get/responses/200/headers",
@@ -144,7 +155,9 @@ class LiquidationRunEtagHttpTests {
                 "/paths/~1api~1v1~1tax-configurations~1{id}/get/responses/200/headers",
                 "/paths/~1api~1v1~1payment-plan-configurations~1{id}/get/responses/200/headers",
                 "/paths/~1api~1v1~1adjustments~1{id}/get/responses/200/headers",
-                "/paths/~1api~1v1~1payment-reversals~1{id}/get/responses/200/headers"))
+                "/paths/~1api~1v1~1payment-reversals~1{id}/get/responses/200/headers",
+                "/paths/~1api~1v1~1refinancing-requests~1{id}/get/responses/200/headers",
+                "/paths/~1api~1v1~1tickets~1{id}/get/responses/200/headers"))
             assertThat(openApi.at(headerPath).has("ETag")).as("ETag documentado en %s",headerPath).isTrue();
     }
 

@@ -37,6 +37,8 @@ class ErrorContractOpenApiConfiguration {
                     documentIfMatch(operation,"ETag recibido del detalle de la configuración. Si se omite, se conserva compatibilidad sin precondición.","Versión actualizada de la configuración");
                 if(pathName.matches("/api/v1/(debts|liquidations|payment-plans|exemption-requests|adjustments|payment-reversals)/\\{id\\}") && path.getGet()==operation)
                     documentEtag(operation,"Hash de la representación actual del recurso");
+                if((pathName.equals("/api/v1/refinancing-requests/{id}")||pathName.equals("/api/v1/tickets/{id}")) && path.getGet()==operation)
+                    documentEtag(operation,"Hash de la representación actual del recurso");
                 if(pathName.matches("/api/v1/liquidation-runs/\\{id\\}") && path.getGet()==operation)
                     documentEtag(operation,"Hash de la representación actual de la corrida y sus ítems");
                 if(pathName.matches("/api/v1/payment-plan-requests/\\{id\\}") && path.getGet()==operation)
@@ -49,10 +51,15 @@ class ErrorContractOpenApiConfiguration {
                 }
                 if((pathName.matches("/api/v1/debts/\\{id\\}/late-charges")
                     ||pathName.matches("/api/v1/payments/\\{id\\}/allocations")
-                    ||pathName.matches("/api/v1/payment-plans/\\{planId\\}/(expiration-requests|refinancing-requests)")
-                    ||pathName.matches("/api/v1/payment-plan-expirations/\\{id\\}/(approve|reject)")
-                    ||pathName.matches("/api/v1/refinancing-requests/\\{id\\}/grant")) && path.getPost()==operation)
+                    ||pathName.matches("/api/v1/payment-plans/\\{planId\\}/expiration-requests")
+                    ||pathName.matches("/api/v1/payment-plan-expirations/\\{id\\}/(approve|reject)")) && path.getPost()==operation)
                     documentIfMatch(operation,"ETag recibido del recurso de deuda o plan relacionado. Si se omite, se conserva compatibilidad sin precondición.","Hash de la representación actual del recurso relacionado");
+                if(pathName.equals("/api/v1/payment-plans/{planId}/refinancing-requests") && path.getPost()==operation)
+                    documentIfMatch(operation,"ETag del plan relacionado; si se omite, se conserva compatibilidad sin precondición.","Hash de la solicitud de refinanciación creada");
+                if(pathName.matches("/api/v1/refinancing-requests/\\{id\\}/(grant|reject|submit-exception|approve-exception|reject-exception)") && path.getPost()==operation)
+                    documentIfMatch(operation,"ETag recibido del detalle de la solicitud. Si se omite, se conserva compatibilidad sin precondición.","Hash de la representación actualizada de la solicitud");
+                if(pathName.matches("/api/v1/tickets/\\{id\\}/(assign|updates|request-information|return|complete|reject)") && path.getPost()==operation)
+                    documentIfMatch(operation,"ETag recibido del detalle del ticket. Si se omite, se conserva compatibilidad sin precondición.","Hash de la representación actualizada del ticket");
                 if(pathName.matches("/api/v1/exemption-requests/\\{id\\}/(start-review|request-documentation|documentation|submit-resolution|approve|reject)") && path.getPost()==operation)
                     documentIfMatch(operation,"ETag recibido del detalle de la solicitud. Si se omite, se conserva compatibilidad sin precondición.","Hash de la solicitud actualizada");
                 if((pathName.matches("/api/v1/adjustments/\\{id\\}/(approve|reject)")
