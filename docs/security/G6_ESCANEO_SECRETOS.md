@@ -43,6 +43,7 @@ verificados. Ninguno es una credencial.
 | `ExternalPaymentEventsTests.java:145` | `ca01aed` | La misma línea en una versión anterior del test. | `.gitleaksignore` |
 | `OperationalLogPrivacyTests.java:131` | `b59cea9` | Datos ficticios que el test verifica que **no** aparezcan en los logs. | `.gitleaksignore` |
 | `OperationalLogPrivacyTests.java:131` | `c2dabd8` | La misma línea en una versión posterior del test. | `.gitleaksignore` |
+| `OperationalLogPrivacyTests.java:131` | `e05bbab` | La misma línea de datos ficticios en una rama de trabajo anterior; `secret-token` es un marcador de prueba, no una credencial. | `.gitleaksignore` |
 | `sonar-project.properties:5` | `6e84103` | Identificador público del proyecto en SonarQube Cloud. | `.gitleaksignore` |
 
 La regla dispara por la combinación de una palabra clave (`key`, `token`) con un valor de
