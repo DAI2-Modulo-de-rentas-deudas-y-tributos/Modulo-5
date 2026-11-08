@@ -400,7 +400,9 @@ class SecurityTests {
 
     @Test void healthAndOpenApiArePublic() throws Exception {
         mvc.perform(get("/actuator/health")).andExpect(status().isOk());
-        mvc.perform(get("/api/v1/health")).andExpect(status().isOk()).andExpect(jsonPath("$.status").value("UP"));
+        mvc.perform(get("/api/v1/health")).andExpect(status().isOk()).andExpect(jsonPath("$.status").value("UP"))
+            .andExpect(jsonPath("$.components").doesNotExist()).andExpect(jsonPath("$.details").doesNotExist())
+            .andExpect(jsonPath("$.status.details").doesNotExist());
         String openApi=mvc.perform(get("/v3/api-docs")).andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
         var errorSchema=json.readTree(openApi).path("components").path("schemas").path("ErrorResponse");
         org.assertj.core.api.Assertions.assertThat(errorSchema.path("properties").has("code")).isTrue();

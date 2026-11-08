@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.*;
 import io.swagger.v3.oas.annotations.Hidden;
 import java.time.Clock;
 import java.time.ZoneId;
+import java.util.Map;
 import static org.springframework.data.web.config.EnableSpringDataWebSupport.PageSerializationMode.VIA_DTO;
 
 @EnableScheduling
@@ -37,5 +38,5 @@ public class RentasApplication {
 class ApiHealthController {
     private final HealthEndpoint health;
     ApiHealthController(HealthEndpoint health){this.health=health;}
-    @GetMapping("/api/v1/health") HealthComponent health(){return health.health();}
+    @GetMapping("/api/v1/health") Map<String,String> health(){return Map.of("status",health.health().getStatus().getCode());}
 }

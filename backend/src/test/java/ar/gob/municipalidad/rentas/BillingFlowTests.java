@@ -72,6 +72,23 @@ class BillingFlowTests {
         assertThat(new String(documents.bill(billing.detail(bill.id)), StandardCharsets.ISO_8859_1)).startsWith("%PDF-1.4");
     }
 
+    @Test void paymentEndpointAcceptsFiftyValidAllocations() throws Exception {
+        Debt debt=debt("PAYMENT-50-ALLOCATIONS","PAYMENT-50-ALLOCATIONS-CONCEPT");
+        String allocations=java.util.stream.IntStream.range(0,50)
+            .mapToObj(i->"{\"debtId\":"+debt.id+",\"amount\":\"1.00\"}")
+            .collect(java.util.stream.Collectors.joining(","));
+        String session=new DemoAuthSessions(demoUsers,taxpayers,passwordEncoder,demoAuth).token(DemoRole.RENTAS);
+        long previousPayments=paymentRepository.count();
+
+        mvc.perform(post("/api/v1/payments").header("X-Demo-Session",session).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"taxpayerId\":"+debt.taxpayerId+",\"paymentMethod\":\"CASH\",\"amount\":\"50.00\",\"allocations\":["+allocations+"]}"))
+            .andExpect(status().isCreated());
+
+        assertThat(paymentRepository.count()).isEqualTo(previousPayments+1);
+        assertThat(paymentAllocations.findAll()).filteredOn(allocation->allocation.debtId.equals(debt.id)).hasSize(50);
+        assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("50.00");
+    }
+
     @Test void billRejectsDebtsFromAnotherTaxpayer() {
         Debt one = debt("BILL-2", "BILL-ONE");
         Debt two = debt("BILL-3", "BILL-TWO");

@@ -119,7 +119,7 @@ public final class ApiDtos {
         LiquidationOriginResponse origin,DebtResponse debt,String historyOrder,
         List<LiquidationHistoryEntryResponse> history,List<AdjustmentResponse> adjustments) {}
     public record RegisterPaymentRequest(@NotNull @Positive Long taxpayerId, @Positive Long billId, @NotNull PaymentMethod paymentMethod,
-        @NotNull @Positive @CurrencyAmount BigDecimal amount, List<@NotNull @Valid AllocationRequest> allocations) {
+        @NotNull @Positive @CurrencyAmount BigDecimal amount, @Size(max=50) List<@NotNull @Valid AllocationRequest> allocations) {
         public RegisterPaymentRequest(Long taxpayerId, PaymentMethod method, BigDecimal amount, List<AllocationRequest> allocations) { this(taxpayerId,null,method,amount,allocations); }
     }
     public record AllocationRequest(@Positive Long debtId, @Positive Long installmentId, @NotNull @Positive @CurrencyAmount BigDecimal amount) {
