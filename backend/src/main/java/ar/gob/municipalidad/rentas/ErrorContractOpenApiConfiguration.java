@@ -65,7 +65,7 @@ class ErrorContractOpenApiConfiguration {
                 if((pathName.matches("/api/v1/adjustments/\\{id\\}/(approve|reject)")
                     ||pathName.matches("/api/v1/payment-reversals/\\{id\\}/(approve|reject|execute)")) && path.getPost()==operation)
                     documentIfMatch(operation,"ETag recibido del detalle del recurso. Si se omite, se conserva compatibilidad sin precondición.","Hash de la representación actualizada del recurso");
-                if(path.getPost()==operation&&!pathName.startsWith("/api/v1/dev-auth/")&&!isReadOnlyCalculation(pathName)
+                if(path.getPost()==operation&&!java.util.Set.of("/api/v1/dev-auth/login","/api/v1/dev-auth/logout","/api/v1/dev-auth/bootstrap").contains(pathName)&&!isReadOnlyCalculation(pathName)
                     &&(operation.getParameters()==null||operation.getParameters().stream().noneMatch(p->"Idempotency-Key".equalsIgnoreCase(p.getName()))))
                     operation.addParametersItem(new Parameter().name("Idempotency-Key").in("header").required(false).description("Clave opcional para reintentos; misma clave y cuerpo repite la respuesta, distinto cuerpo produce 409.").schema(new StringSchema().maxLength(128)));
             }));

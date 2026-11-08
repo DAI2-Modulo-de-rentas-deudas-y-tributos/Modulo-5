@@ -547,7 +547,7 @@ class PostgreSqlIntegrationTest {
         }
     }
 
-    @Test void openApiDocumentsIdempotencyForEveryMutatingPostAndExcludesOnlyPreviewsAndSimulations() throws Exception {
+    @Test void openApiDocumentsIdempotencyForEveryBusinessPostAndExcludesPreviewsSimulationsAndAuthSetup() throws Exception {
         var document=json.readTree(mvc.perform(get("/v3/api-docs")).andReturn().getResponse().getContentAsString());
         var excluded=java.util.Set.of(
             "/api/v1/liquidations/preview",
@@ -571,7 +571,7 @@ class PostgreSqlIntegrationTest {
                     hasKey=true;
                 }
             }
-            boolean excludedFromIdempotency=excluded.contains(path)||path.startsWith("/api/v1/dev-auth/");
+            boolean excludedFromIdempotency=excluded.contains(path)||java.util.Set.of("/api/v1/dev-auth/login","/api/v1/dev-auth/logout","/api/v1/dev-auth/bootstrap").contains(path);
             assertThat(hasKey).as("Idempotency-Key en POST %s",path).isEqualTo(!excludedFromIdempotency);
             if(hasKey) covered++;
         }
@@ -579,7 +579,33 @@ class PostgreSqlIntegrationTest {
         assertThat(paths.path("/api/v1/taxpayers/{id}/canonical-citizen-link").path("post").isMissingNode()).isFalse();
         assertThat(paths.path("/api/v1/integrations/outbox/{id}/retry").path("post").isMissingNode()).isFalse();
         assertThat(postCount).isEqualTo(78);
-        assertThat(covered).isEqualTo(69);
+        assertThat(covered).isEqualTo(70);
+    }
+
+    @Test void demoUserCreationEndpointReplaysTheSameResponseAndRejectsChangedBody() throws Exception {
+        authenticate();String suffix=UUID.randomUUID().toString();
+        String supervisorName="qa.supervisor."+suffix;
+        demoAuth.create(new DemoAuthController.CreateUserRequest(supervisorName,"clave-segura","Supervisor QA",DemoRole.SUPERVISOR,null));
+        String token=demoAuth.login(new DemoAuthController.LoginRequest(supervisorName,"clave-segura")).token();
+        String username="qa.created."+suffix;String key="demo-user-"+suffix;
+        var request=new DemoAuthController.CreateUserRequest(username,"clave-segura","QA",DemoRole.RENTAS,null);
+        String first=mvc.perform(post("/api/v1/dev-auth/users").header(DemoAuthService.SESSION_HEADER,token).header("Idempotency-Key",key)
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(request)))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isCreated())
+            .andReturn().getResponse().getContentAsString();
+        String retry=mvc.perform(post("/api/v1/dev-auth/users").header(DemoAuthService.SESSION_HEADER,token).header("Idempotency-Key",key)
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(request)))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isCreated())
+            .andReturn().getResponse().getContentAsString();
+        assertThat(retry).isEqualTo(first);
+        assertThat(jdbc.queryForObject("select count(*) from demo_user where username=?",Integer.class,username)).isOne();
+
+        var changed=new DemoAuthController.CreateUserRequest(username,"clave-segura","Nombre cambiado",DemoRole.RENTAS,null);
+        mvc.perform(post("/api/v1/dev-auth/users").header(DemoAuthService.SESSION_HEADER,token).header("Idempotency-Key",key)
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(changed)))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isConflict())
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"));
+        assertThat(jdbc.queryForObject("select count(*) from demo_user where username=?",Integer.class,username)).isOne();
     }
 
     @Test void taxConceptCreationEndpointReplaysConcurrentRequestAndConflictsOnDifferentBody() throws Exception {

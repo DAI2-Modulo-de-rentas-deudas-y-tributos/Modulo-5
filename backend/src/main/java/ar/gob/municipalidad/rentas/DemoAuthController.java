@@ -27,7 +27,8 @@ class DemoAuthController {
 
     private final DemoAuthService auth;
     private final TrustedClientAddressResolver clientAddresses;
-    DemoAuthController(DemoAuthService auth,TrustedClientAddressResolver clientAddresses){this.auth=auth;this.clientAddresses=clientAddresses;}
+    private final IdempotencyExecutor idempotency;
+    DemoAuthController(DemoAuthService auth,TrustedClientAddressResolver clientAddresses,IdempotencyExecutor idempotency){this.auth=auth;this.clientAddresses=clientAddresses;this.idempotency=idempotency;}
 
     @PostMapping("/login")
     LoginResponse login(@Valid @RequestBody LoginRequest request,HttpServletRequest servletRequest){return auth.login(request,clientAddresses.resolve(servletRequest));}
@@ -46,7 +47,9 @@ class DemoAuthController {
             @Valid @RequestBody BootstrapRequest request,HttpServletRequest servletRequest){return auth.bootstrap(secret,request,clientAddresses.resolve(servletRequest));}
 
     @PostMapping("/users") @ResponseStatus(HttpStatus.CREATED) @PreAuthorize("hasRole('SUPERVISOR')")
-    @Transactional UserResponse create(@Valid @RequestBody CreateUserRequest request){return auth.create(request);}
+    @Transactional UserResponse create(@Valid @RequestBody CreateUserRequest request,@RequestHeader(name="Idempotency-Key",required=false) String key){return idempotency.execute("POST:/dev-auth/users",key,request,UserResponse.class,()->auth.create(request));}
+
+    UserResponse create(CreateUserRequest request){return auth.create(request);}
 
     @GetMapping("/users") @PreAuthorize("hasRole('SUPERVISOR')")
     List<UserResponse> list(){return auth.list();}
