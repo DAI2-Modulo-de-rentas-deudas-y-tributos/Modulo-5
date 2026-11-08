@@ -157,7 +157,7 @@ public final class ApiDtos {
     public record RefinancingSimulationResponse(Long originalPlanId,BigDecimal outstandingPrincipal,BigDecimal interest,
         BigDecimal total,int installments,boolean exceptional) {}
     public record CreateRefinancingRequest(@Min(1) @Max(60) int installments) {}
-    public record CreateAdjustmentRequest(@NotNull @Positive Long debtId,@NotNull AdjustmentType type,@NotNull @DecimalMin("0.01") @CurrencyAmount BigDecimal amount,@NotBlank @Size(max=1000) String reason) {}
+    public record CreateAdjustmentRequest(@NotNull @Positive Long debtId,@NotNull AdjustmentType type,@NotNull @DecimalMin("0.01") @DecimalMax("100000000.00") @CurrencyAmount BigDecimal amount,@NotBlank @Size(max=1000) String reason) {}
     public record LiquidationRunItemRequest(@NotNull @Positive Long taxpayerId,@NotNull @PositiveOrZero @CurrencyAmount BigDecimal taxableBase) {}
     public record CreateLiquidationRunRequest(@NotNull @Positive Long taxConceptId,@NotBlank @Pattern(regexp="\\d{4}-\\d{2}") String period,
         @NotNull LocalDate dueDate,@NotEmpty @Size(max=10000) List<@NotNull @Valid LiquidationRunItemRequest> items) {}

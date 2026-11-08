@@ -120,6 +120,21 @@ describe("bandeja de tickets", () => {
 });
 
 describe("bitácora de eventos", () => {
+  it("envía status=PENDING y muestra los eventos pendientes al seleccionar Pendiente", async () => {
+    const user = userEvent.setup();
+    const list = vi.spyOn(eventService, "list").mockResolvedValue([
+      { eventId: "pending-1", eventType: "exemptionRequested", sourceModule: "RENTAS", destinationModule: "CORE", occurredAt: "2026-11-08T12:00:00Z", processedAt: null, attempts: 0, status: "PENDING", direction: "OUT" },
+    ]);
+    render(<MemoryRouter><EventosPage /></MemoryRouter>);
+
+    expect(await screen.findByText("exemptionRequested")).toBeDefined();
+    const status = screen.getByLabelText("Estado");
+    expect(within(status).getByRole("option", { name: "Pendiente" }).value).toBe("PENDING");
+    await user.selectOptions(status, "PENDING");
+    await waitFor(() => expect(list).toHaveBeenLastCalledWith({ direction: "", status: "PENDING", eventType: "" }));
+    expect(screen.getByText("exemptionRequested")).toBeDefined();
+  });
+
   it("resume estados, filtra y muestra tanto éxito como error del reproceso", async () => {
     const user = userEvent.setup();
     vi.spyOn(eventService, "list").mockResolvedValue([
