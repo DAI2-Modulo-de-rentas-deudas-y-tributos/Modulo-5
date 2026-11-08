@@ -98,6 +98,6 @@ class FiscalProcessingDateValidationTests {
             .andExpect(status().isAccepted()).andExpect(jsonPath("$.id").value(77));
         mvc.perform(get("/api/v1/administration/process-due-dates/77"))
             .andExpect(status().isOk()).andExpect(jsonPath("$.id").value(77));
-        verify(dueDates,times(2)).enqueue(dates.today());verify(dueDates,times(3)).get(77L);verifyNoInteractions(lateCharges,reconciliations);
+        verify(dueDates,times(2)).enqueue(dates.today());verify(dueDates).get(77L);verifyNoInteractions(lateCharges,reconciliations);
     }
 }

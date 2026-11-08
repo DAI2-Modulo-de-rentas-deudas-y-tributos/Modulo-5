@@ -29,7 +29,7 @@ La tabla `idempotency_request` almacena en la transacción de negocio la identid
 
 ### POST cubiertos
 
-El header opcional está disponible en los 66 POST mutables de los controladores de negocio publicados en OpenAPI, incluyendo creación de recursos, efectos económicos y transiciones de estado:
+El header opcional está disponible en los 70 POST mutables publicados en OpenAPI, incluyendo creación de recursos, efectos económicos y transiciones de estado:
 
 - Configuración tributaria: `/tax-concepts`, `/tax-configurations`, `/tax-configurations/{id}/submit|approve|reject|deactivate`.
 - Liquidaciones y corridas: `/liquidations`, `/liquidation-runs`, `/liquidation-runs/{id}/preview|submit|approve|reject|execute`.
@@ -40,7 +40,7 @@ El header opcional está disponible en los 66 POST mutables de los controladores
 - Procesamiento fiscal y conciliación: `/debts/{id}/late-charges`, `/administration/process-due-dates`, `/payment-reconciliations/batches`, `/payment-reconciliations/items/{id}/resolve`.
 - Conciliación diferida de salientes: `/integrations/deferred/economic/{deferralId}/reconcile`, `/integrations/deferred/exemptions/{requestId}/reconcile` y `/integrations/deferred/payment-plans/{requestId}/reconcile`.
 
-Las operaciones `/bills`, `/payments` y `/electronic-payments` ya contaban con su propio almacenamiento de idempotencia y conservan su comportamiento. En el resto, la nueva envoltura reutiliza V31 y el mismo servicio transaccional.
+`/bills` y `/payments` conservan sus claves de idempotencia de servicio y además almacenan la respuesta HTTP para que un replay devuelva la representación original aunque el recurso haya cambiado después. `/electronic-payments` conserva su idempotencia específica del intento. En el resto, la envoltura reutiliza V31 y el mismo servicio transaccional.
 
 ### POST sin Idempotency-Key
 
@@ -58,6 +58,6 @@ El resto de POST mutables de negocio documentados en OpenAPI está cubierto; los
 
 ## Alcance de auditoría
 
-Los endpoints de autenticación `/dev-auth/login`, `/logout`, `/bootstrap` y `/users` no usan `Idempotency-Key`: autentican, revocan sesiones o administran credenciales, y no son comandos económicos/de negocio aptos para guardar/reproducir la respuesta genérica. Las simulaciones de eventos M2/M4 permanecen ocultas y disponibles sólo en DEV; su deduplicación continúa basada en `eventId`, no en una clave HTTP adicional.
+Los endpoints `/dev-auth/login`, `/logout` y `/bootstrap` no usan `Idempotency-Key`: autentican, revocan sesiones o inicializan el acceso. `/dev-auth/users` sí lo usa para que la creación repetida del mismo usuario devuelva la respuesta original sin duplicar la cuenta. Las simulaciones de eventos M2/M4 permanecen ocultas y disponibles sólo en DEV; su deduplicación continúa basada en `eventId`, no en una clave HTTP adicional.
 
-La prueba de OpenAPI comprueba que los 66 POST mutables documentados incluyan el header opcional, mientras excluye los cinco cálculos sin escritura y los cuatro endpoints `/dev-auth`. Los controladores de simulación ocultos no forman parte del documento OpenAPI. ETag/If-Match se aplica a los PATCH de la tabla y al subconjunto de acciones enumeradas arriba; no cubre todos los POST mutables.
+La prueba de OpenAPI comprueba que 70 de los 78 POST documentados incluyan el header opcional. Excluye los cinco cálculos sin escritura y `/dev-auth/login`, `/dev-auth/logout` y `/dev-auth/bootstrap`; `/dev-auth/users` está cubierto. Los controladores de simulación ocultos no forman parte del documento OpenAPI. ETag/If-Match se aplica a los PATCH de la tabla y al subconjunto de acciones enumeradas arriba; no cubre todos los POST mutables.

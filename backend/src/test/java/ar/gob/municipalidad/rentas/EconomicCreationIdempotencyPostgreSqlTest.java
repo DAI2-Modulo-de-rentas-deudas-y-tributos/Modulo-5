@@ -1,6 +1,7 @@
 package ar.gob.municipalidad.rentas;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -38,7 +39,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@SpringBootTest
+@SpringBootTest(properties={"rentas.due-date-processing-delay-ms=3600000","rentas.due-date-processing-initial-delay-ms=3600000"})
 @AutoConfigureMockMvc
 @ActiveProfiles("postgres-it")
 @Testcontainers(disabledWithoutDocker = true)
@@ -68,6 +69,8 @@ class EconomicCreationIdempotencyPostgreSqlTest {
     @Autowired FiscalProcessingDatePolicy dates;
     @Autowired PlanWorkflowService planWorkflow;
     @Autowired PaymentService paymentService;
+    @Autowired PaymentRepository payments;
+    @Autowired BillRepository bills;
     @Autowired TaxpayerRepository taxpayers;
     @Autowired LiquidationRepository liquidations;
     @Autowired DebtRepository debts;
@@ -77,6 +80,9 @@ class EconomicCreationIdempotencyPostgreSqlTest {
     @Autowired OutboxRepository outbox;
     @Autowired JdbcTemplate jdbc;
     @Autowired ObjectMapper json;
+    @Autowired DueDateProcessingRepository dueDateRuns;
+    @Autowired DueDateService dueDates;
+    @Autowired DueDateProcessingWorker dueDateWorker;
 
     @AfterEach
     void clearSecurityContext() {
@@ -124,6 +130,86 @@ class EconomicCreationIdempotencyPostgreSqlTest {
             .andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"));
         assertThat(liquidations.findByTaxpayerId(fixture.taxpayer.id).stream()
             .filter(item -> item.taxConceptId.equals(fixture.concept.id) && item.period.equals(request.period()))).hasSize(1);
+    }
+
+    @Test
+    void paymentReplayReturnsOriginalResponseAfterLaterAllocation() throws Exception {
+        Fixture fixture = fixture("PAYMENT_REPLAY");
+        var auth = identity("payment-replay-" + UUID.randomUUID(), null, "RENTAS");
+        var request = new ApiDtos.RegisterPaymentRequest(fixture.taxpayer.id, PaymentMethod.CASH,
+            new BigDecimal("50.00"), List.of());
+        String key = "payment-replay-" + UUID.randomUUID();
+        String body = json.writeValueAsString(request);
+
+        MvcResult created = httpPost("/api/v1/payments", auth, key, body);
+        assertThat(created.getResponse().getStatus()).isEqualTo(201);
+        String originalResponse = created.getResponse().getContentAsString();
+        long paymentId = json.readTree(originalResponse).path("id").asLong();
+
+        setActor(auth);
+        paymentService.allocateExisting(paymentId,
+            new ApiDtos.AllocationRequest(fixture.debtId, new BigDecimal("10.00")));
+
+        MvcResult replay = httpPost("/api/v1/payments", auth, key, body);
+        assertThat(replay.getResponse().getStatus()).isEqualTo(201);
+        assertThat(json.readTree(replay.getResponse().getContentAsString()))
+            .isEqualTo(json.readTree(originalResponse));
+        assertThat(json.readTree(replay.getResponse().getContentAsString()).path("allocatedAmount").decimalValue())
+            .isEqualByComparingTo("0.00");
+        assertThat(payments.findById(paymentId).orElseThrow().allocatedAmount).isEqualByComparingTo("10.00");
+        assertThat(jdbc.queryForObject("select count(*) from payment where taxpayer_id=? and idempotency_key=?",
+            Long.class, fixture.taxpayer.id, key)).isOne();
+        assertThat(idempotencyRows(auth.getName(), "POST:/payments", key)).isOne();
+    }
+
+    @Test
+    void billReplayReturnsOriginalExpirySnapshotAfterDueDateChanges() throws Exception {
+        Fixture fixture = fixture("BILL_REPLAY");
+        var auth = identity("bill-replay-" + UUID.randomUUID(), null, "RENTAS");
+        var request = new ApiDtos.CreateBillRequest(fixture.taxpayer.id, List.of(fixture.debtId), dates.today().plusDays(30));
+        String key = "bill-replay-" + UUID.randomUUID();
+        String body = json.writeValueAsString(request);
+
+        MvcResult created = httpPost("/api/v1/bills", auth, key, body);
+        assertThat(created.getResponse().getStatus()).isEqualTo(201);
+        JsonNode originalResponse = json.readTree(created.getResponse().getContentAsString());
+        assertThat(originalResponse.path("expired").asBoolean()).isFalse();
+        long billId = originalResponse.path("id").asLong();
+
+        Bill bill = bills.findById(billId).orElseThrow();
+        bill.dueDate = dates.today().minusDays(1);
+        bills.saveAndFlush(bill);
+
+        MvcResult replay = httpPost("/api/v1/bills", auth, key, body);
+        assertThat(replay.getResponse().getStatus()).isEqualTo(201);
+        assertThat(json.readTree(replay.getResponse().getContentAsString())).isEqualTo(originalResponse);
+        assertThat(bills.findById(billId).orElseThrow().dueDate).isBefore(dates.today());
+        assertThat(idempotencyRows(auth.getName(), "POST:/bills", key)).isOne();
+    }
+
+    @Test
+    void dueDateReplayReturnsOriginalAcceptedResponseAfterWorkerCompletes() throws Exception {
+        var auth = identity("due-date-replay-" + UUID.randomUUID(), null, "RENTAS");
+        LocalDate processingDate = LocalDate.of(1801, 1, 1);
+        while (dueDateRuns.findByProcessingDate(processingDate).isPresent()) processingDate = processingDate.plusDays(1);
+        var request = new FiscalProcessingController.DueDateRequest(processingDate);
+        String key = "due-date-replay-" + UUID.randomUUID();
+        String body = json.writeValueAsString(request);
+
+        MvcResult accepted = httpPost("/api/v1/administration/process-due-dates", auth, key, body);
+        assertThat(accepted.getResponse().getStatus()).isEqualTo(202);
+        JsonNode originalResponse = json.readTree(accepted.getResponse().getContentAsString());
+        long runId = originalResponse.path("id").asLong();
+        assertThat(originalResponse.path("status").asText()).isEqualTo("PENDING");
+
+        dueDateWorker.processNext();
+        assertThat(dueDates.get(runId).status()).isEqualTo(DueDateRunStatus.COMPLETED);
+
+        MvcResult replay = httpPost("/api/v1/administration/process-due-dates", auth, key, body);
+        assertThat(replay.getResponse().getStatus()).isEqualTo(202);
+        assertThat(json.readTree(replay.getResponse().getContentAsString())).isEqualTo(originalResponse);
+        assertThat(dueDateRuns.findByProcessingDate(processingDate)).isPresent();
+        assertThat(idempotencyRows(auth.getName(), "POST:/administration/process-due-dates", key)).isOne();
     }
 
     @Test

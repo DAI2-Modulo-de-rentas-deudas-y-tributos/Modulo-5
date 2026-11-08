@@ -1592,11 +1592,12 @@ class PostgreSqlIntegrationTest {
         assertThat(requestMillis).isLessThan(2000);
         assertThat(acceptedBody.path("status").asText()).isEqualTo("PENDING");
 
-        mvc.perform(post("/api/v1/administration/process-due-dates").with(authentication(rentas))
+        MockHttpServletResponse replayBeforeProcessing=mvc.perform(post("/api/v1/administration/process-due-dates").with(authentication(rentas))
                 .header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON)
                 .content(json.writeValueAsBytes(new FiscalProcessingController.DueDateRequest(processingDate))))
             .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isAccepted())
-            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.id").value(runId));
+            .andReturn().getResponse();
+        assertThat(json.readTree(replayBeforeProcessing.getContentAsByteArray())).isEqualTo(acceptedBody);
         long processingStarted=System.nanoTime();
         dueDateWorker.processNext();
         long processingMillis=TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-processingStarted);
@@ -1607,12 +1608,15 @@ class PostgreSqlIntegrationTest {
         assertThat(completed.errors()).isZero();
         assertThat(jdbc.queryForObject("select count(*) from outbox_event o join debt d on o.aggregate_id=d.id::text where o.event_type='debtOverdue' and d.taxpayer_id=? and d.due_date=?",Long.class,taxpayer.id,dueDate)).isEqualTo(10000);
         assertThat(jdbc.queryForObject("select count(*) from late_charge_application l join debt d on l.debt_id=d.id where d.taxpayer_id=? and d.due_date=? and l.calculation_date=?",Long.class,taxpayer.id,dueDate,processingDate)).isEqualTo(10000);
-        mvc.perform(post("/api/v1/administration/process-due-dates").with(authentication(rentas))
+        MockHttpServletResponse replayAfterProcessing=mvc.perform(post("/api/v1/administration/process-due-dates").with(authentication(rentas))
                 .header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON)
                 .content(json.writeValueAsBytes(new FiscalProcessingController.DueDateRequest(processingDate))))
             .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isAccepted())
-            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.id").value(runId))
-            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.status").value("COMPLETED"));
+            .andReturn().getResponse();
+        JsonNode replayAfterProcessingBody=json.readTree(replayAfterProcessing.getContentAsByteArray());
+        assertThat(replayAfterProcessingBody).isEqualTo(acceptedBody);
+        assertThat(replayAfterProcessingBody.path("status").asText()).isEqualTo("PENDING");
+        assertThat(dueDates.get(runId).status()).isEqualTo(DueDateRunStatus.COMPLETED);
         assertThat(jdbc.queryForObject("select count(*) from outbox_event o join debt d on o.aggregate_id=d.id::text where o.event_type='debtOverdue' and d.taxpayer_id=? and d.due_date=?",Long.class,taxpayer.id,dueDate)).isEqualTo(10000);
         assertThat(jdbc.queryForObject("select count(*) from late_charge_application l join debt d on l.debt_id=d.id where d.taxpayer_id=? and d.due_date=? and l.calculation_date=?",Long.class,taxpayer.id,dueDate,processingDate)).isEqualTo(10000);
         System.out.printf("due-date load rows=10000 responseMs=%d workerMs=%d processingStatus=%s outboxEvents=10000%n",requestMillis,processingMillis,completed.status());
