@@ -29,6 +29,14 @@ final class EntityTags {
         return quoted("tax-configuration-" + configuration.id + "-" + configuration.lockVersion);
     }
 
+    static String taxpayer(ApiDtos.TaxpayerResponse taxpayer) {
+        return hashed("taxpayer", taxpayer.id(), taxpayer);
+    }
+
+    static String payment(ApiDtos.PaymentResponse payment) {
+        return hashed("payment", payment.id(), payment);
+    }
+
     static String paymentPlanConfiguration(PaymentPlanConfiguration configuration) {
         return quoted("payment-plan-configuration-" + configuration.id + "-" + configuration.version);
     }

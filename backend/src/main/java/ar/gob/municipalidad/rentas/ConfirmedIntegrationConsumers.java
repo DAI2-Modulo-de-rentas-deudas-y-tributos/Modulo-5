@@ -39,6 +39,7 @@ class ConfirmedM1Consumer {
         Optional<TaxpayerReference> existing=byCanonical.isPresent()?byCanonical:byExternalId;
         if(inbox.processed(normalized.eventId()))return existing.orElse(null);
         IntegrationEventLog log=inbox.receive(normalized,raw);
+        existing=existing.map(reference->taxpayers.findByIdForUpdate(reference.id).orElseThrow(()->CatalogService.notFound("Contribuyente")));
         TaxpayerReference taxpayer;
         switch(data.updateType()){
             case "REGISTERED"->{var details=json.convertValue(data.details(),ConfirmedInboundEvents.M1CitizenRegisteredDetails.class);taxpayer=existing.orElseGet(TaxpayerReference::new);boolean created=taxpayer.id==null;if(created){taxpayer.taxpayerType=TaxpayerType.CITIZEN;taxpayer.externalId=externalId;taxpayer.createdAt=OffsetDateTime.now();taxpayer.externalStatus=TaxpayerStatus.ACTIVE;}requireCanonicalIdentity(taxpayer,canonicalId);taxpayer.dni=details.dni();taxpayer.cuit=details.cuil();taxpayer.displayName=(details.name()+" "+details.lastname()).trim();taxpayer.updatedAt=OffsetDateTime.now();taxpayers.save(taxpayer);}

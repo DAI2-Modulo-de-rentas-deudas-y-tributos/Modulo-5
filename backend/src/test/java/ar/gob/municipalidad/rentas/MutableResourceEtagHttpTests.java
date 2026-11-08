@@ -227,6 +227,51 @@ class MutableResourceEtagHttpTests {
         assertThat(ticketUpdates.count()).isEqualTo(historyBefore+1);
     }
 
+    @Test void taxpayerAndPaymentEtagsRejectStaleConditionalWrites() throws Exception {
+        TaxpayerReference taxpayer=taxpayer();taxpayer.externalId="987654321";taxpayer=taxpayers.saveAndFlush(taxpayer);
+        var supervisor=actor("supervisor-canonical-etag","SUPERVISOR");String taxpayerPath="/api/v1/taxpayers/"+taxpayer.id;
+        String staleTaxpayerTag=mvc.perform(get(taxpayerPath).with(authentication(supervisor))).andExpect(status().isOk())
+            .andReturn().getResponse().getHeader("ETag");
+        taxpayer.displayName="Changed before canonical link";taxpayer.updatedAt=OffsetDateTime.now().plusSeconds(1);taxpayers.saveAndFlush(taxpayer);
+        var linkRequest="{\"m1CitizenId\":987654321,\"canonicalCitizenId\":\"f398dbcb-a2b4-49af-a724-3529c6ddd0f6\",\"confirmationReference\":\"M1-confirmed-test\"}";
+        mvc.perform(post(taxpayerPath+"/canonical-citizen-link").with(authentication(supervisor)).header("If-Match",staleTaxpayerTag)
+                .contentType(MediaType.APPLICATION_JSON).content(linkRequest))
+            .andExpect(status().isPreconditionFailed()).andExpect(jsonPath("$.code").value("PRECONDITION_FAILED"));
+        assertThat(taxpayers.findById(taxpayer.id).orElseThrow().canonicalCitizenId).isNull();
+
+        String currentTaxpayerTag=mvc.perform(get(taxpayerPath).with(authentication(supervisor))).andReturn().getResponse().getHeader("ETag");
+        var linked=mvc.perform(post(taxpayerPath+"/canonical-citizen-link").with(authentication(supervisor)).header("If-Match",currentTaxpayerTag)
+                .contentType(MediaType.APPLICATION_JSON).content(linkRequest))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.canonicalCitizenId").value("f398dbcb-a2b4-49af-a724-3529c6ddd0f6"))
+            .andReturn().getResponse();
+        assertThat(linked.getHeader("ETag")).isNotBlank().isNotEqualTo(currentTaxpayerTag);
+        assertThat(taxpayers.findById(taxpayer.id).orElseThrow().canonicalCitizenId)
+            .isEqualTo(java.util.UUID.fromString("f398dbcb-a2b4-49af-a724-3529c6ddd0f6"));
+
+        Payment payment=new Payment();payment.taxpayerId=taxpayer.id;payment.paymentMethod=PaymentMethod.CASH;
+        payment.amount=new BigDecimal("25.00");payment.allocatedAmount=BigDecimal.ZERO.setScale(2);payment.unallocatedAmount=payment.amount;
+        payment.status=PaymentStatus.CONFIRMED;payment.allocationStatus=PaymentAllocationStatus.UNALLOCATED;
+        payment.origin=PaymentOrigin.CASHIER;payment.receiptNumber="ETAG-PAYMENT-"+java.util.UUID.randomUUID();
+        payment.registeredBy="test";payment.paidAt=payment.createdAt=OffsetDateTime.now();payment=payments.saveAndFlush(payment);
+        var cashier=actor("cashier-payment-etag","CASHIER");String paymentPath="/api/v1/payments/"+payment.id;
+        String stalePaymentTag=mvc.perform(get(paymentPath).with(authentication(cashier))).andExpect(status().isOk())
+            .andReturn().getResponse().getHeader("ETag");
+        payment.status=PaymentStatus.REVERSED;payments.saveAndFlush(payment);long reversalCount=reversals.count();
+        mvc.perform(post(paymentPath+"/reversal-requests").with(authentication(cashier)).header("If-Match",stalePaymentTag)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"test stale payment\"}"))
+            .andExpect(status().isPreconditionFailed()).andExpect(jsonPath("$.code").value("PRECONDITION_FAILED"));
+        assertThat(reversals.count()).isEqualTo(reversalCount);
+
+        payment.status=PaymentStatus.CONFIRMED;payments.saveAndFlush(payment);
+        String currentPaymentTag=mvc.perform(get(paymentPath).with(authentication(cashier))).andReturn().getResponse().getHeader("ETag");
+        var reversal=mvc.perform(post(paymentPath+"/reversal-requests").with(authentication(cashier)).header("If-Match",currentPaymentTag)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"test current payment\"}"))
+            .andExpect(status().isCreated()).andExpect(jsonPath("$.status").value("PENDING_APPROVAL"))
+            .andReturn().getResponse();
+        assertThat(reversal.getHeader("ETag")).isNotBlank();
+        assertThat(reversals.count()).isEqualTo(reversalCount+1);
+    }
+
     private TaxpayerReference taxpayer(){
         TaxpayerReference taxpayer=new TaxpayerReference();taxpayer.taxpayerType=TaxpayerType.CITIZEN;
         taxpayer.externalId="ETAG-MUTABLE-"+java.util.UUID.randomUUID();taxpayer.displayName="ETag test";

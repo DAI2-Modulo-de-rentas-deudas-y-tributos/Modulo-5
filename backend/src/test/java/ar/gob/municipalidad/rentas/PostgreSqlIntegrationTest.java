@@ -554,6 +554,16 @@ class PostgreSqlIntegrationTest {
         for(var parameter:creditApply.path("parameters"))
             if("If-Match".equals(parameter.path("name").asText())) optionalCreditIfMatch=!parameter.path("required").asBoolean();
         assertThat(optionalCreditIfMatch).isTrue();
+        for(String pathName:List.of("/api/v1/taxpayers/{id}","/api/v1/payments/{id}"))
+            assertThat(document.path("paths").path(pathName).path("get").path("responses").path("200").path("headers").has("ETag")).isTrue();
+        for(String pathName:List.of("/api/v1/taxpayers/{id}/canonical-citizen-link","/api/v1/payments/{id}/reversal-requests")) {
+            var operation=document.path("paths").path(pathName).path("post");
+            assertThat(operation.path("responses").path("412").path("$ref").asText()).isEqualTo("#/components/responses/ApiError");
+            assertThat(operation.path("responses").path("200").path("headers").has("ETag")||operation.path("responses").path("201").path("headers").has("ETag")).isTrue();
+            boolean optionalIfMatch=false;
+            for(var parameter:operation.path("parameters")) if("If-Match".equals(parameter.path("name").asText())) optionalIfMatch=!parameter.path("required").asBoolean();
+            assertThat(optionalIfMatch).isTrue();
+        }
     }
 
     @Test void openApiDocumentsIdempotencyForEveryBusinessPostAndExcludesPreviewsSimulationsAndAuthSetup() throws Exception {

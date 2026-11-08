@@ -33,6 +33,12 @@ class ErrorContractOpenApiConfiguration {
                     documentIfMatch(operation,"ETag recibido del GET. Si se omite, se conserva compatibilidad sin precondición.","Nueva versión del recurso");
                 if(pathName.matches("/api/v1/(tax-concepts|tax-configurations|payment-plan-configurations)/\\{id\\}") && path.getGet()==operation)
                     documentEtag(operation,"Versión actual del recurso");
+                if((pathName.equals("/api/v1/taxpayers/{id}")||pathName.equals("/api/v1/payments/{id}"))&&path.getGet()==operation)
+                    documentEtag(operation,"Hash de la representación actual del recurso");
+                if(pathName.equals("/api/v1/taxpayers/{id}/canonical-citizen-link")&&path.getPost()==operation)
+                    documentIfMatch(operation,"ETag recibido del detalle del contribuyente. Si se omite, se conserva compatibilidad sin precondición.","Hash de la representación actual del contribuyente");
+                if(pathName.equals("/api/v1/payments/{id}/reversal-requests")&&path.getPost()==operation)
+                    documentIfMatch(operation,"ETag recibido del detalle del pago. Si se omite, se conserva compatibilidad sin precondición.","Hash de la solicitud de reversión creada");
                 if(pathName.matches("/api/v1/tax-configurations/\\{id\\}/(submit|approve|reject|deactivate)") && path.getPost()==operation)
                     documentIfMatch(operation,"ETag recibido del detalle de la configuración. Si se omite, se conserva compatibilidad sin precondición.","Versión actualizada de la configuración");
                 if(pathName.matches("/api/v1/(debts|liquidations|payment-plans|exemption-requests|adjustments|payment-reversals)/\\{id\\}") && path.getGet()==operation)
