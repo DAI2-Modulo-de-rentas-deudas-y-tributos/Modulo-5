@@ -21,7 +21,8 @@ La estrategia se inyecta mediante la interfaz `TaxCalculationStrategy`; el
 servicio arma un registro por tipo. Esto aplica OCP al cálculo base y DIP entre
 el caso de uso y sus reglas. `LiquidationService` conserva coordinación,
 validación, reducciones, persistencia e historial; no se delega la liquidación
-completa ni se agrega un patrón State.
+completa. El patrón State para el ciclo de vida de Deuda se adopta por separado
+según ADR-0008.
 
 ## Alternativas
 
