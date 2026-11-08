@@ -286,23 +286,14 @@ class ConfirmedIntegrationOutbox {
     }
     void deferHistoricalPlanReversal(PaymentAllocation allocation){defer("paymentReversed","PaymentAllocation",allocation.id,"LEGACY_PLAN_DISTRIBUTION_UNAVAILABLE");}
 
-    ConfirmedOutboundEvents.CoreEnvelope<ConfirmedOutboundEvents.M2UpdateTicketStatusData> ticketStatus(String ticketId,String updateType,String publicMessage,String internalMessage,JsonNode details,UUID actorId,String correlationId,String causationId){
+    void ticketStatus(String ticketId,String aggregateId,String updateType,String publicMessage,String internalMessage,JsonNode details,UUID actorId,String correlationId,String causationId){
         CatalogService.require(actorId!=null,"INTEGRATION_ACTOR_ID_REQUIRED","El empleado autenticado no tiene UUID de integración; no se puede informar el cambio a M2");
-        return ticketStatus(ticketId,updateType,publicMessage,internalMessage,details,new ConfirmedOutboundEvents.UpdatedBy("EXTERNAL_USER",actorId.toString()),correlationId,causationId);
-    }
-    ConfirmedOutboundEvents.CoreEnvelope<ConfirmedOutboundEvents.M2UpdateTicketStatusData> systemTicketStatus(String ticketId,String updateType,String publicMessage,String internalMessage,JsonNode details,String correlationId,String causationId){
-        return ticketStatus(ticketId,updateType,publicMessage,internalMessage,details,new ConfirmedOutboundEvents.UpdatedBy("SYSTEM",null),correlationId,causationId);
-    }
-    private ConfirmedOutboundEvents.CoreEnvelope<ConfirmedOutboundEvents.M2UpdateTicketStatusData> ticketStatus(String ticketId,String updateType,String publicMessage,String internalMessage,JsonNode details,ConfirmedOutboundEvents.UpdatedBy actor,String correlationId,String causationId){
         CatalogService.require(isUuid(ticketId),"INVALID_TICKET_ID","ticketId de M2 debe ser UUID");
         CatalogService.require(correlationId!=null&&isUuid(correlationId),"M2_CORRELATION_REQUIRED","updateTicketStatus requiere el correlationId original de M2");
         CatalogService.require(causationId==null||isUuid(causationId),"INVALID_CAUSATION_ID","causationId debe ser UUID cuando exista");
         validateTicketStatus(updateType,publicMessage,internalMessage,details);
-        OffsetDateTime at=OffsetDateTime.now();var data=new ConfirmedOutboundEvents.M2UpdateTicketStatusData(ticketId,updateType,publicMessage,internalMessage,null,details,List.of(),actor,at);
-        return core("updateTicketStatus",data,"TicketCase",ticketId,correlationId,causationId);
-    }
-    void ticketStatus(String ticketId,String aggregateId,String updateType,String publicMessage,String internalMessage,JsonNode details,UUID actorId,String correlationId,String causationId){
-        var event=ticketStatus(ticketId,updateType,publicMessage,internalMessage,details,actorId,correlationId,causationId);
+        OffsetDateTime at=OffsetDateTime.now();var data=new ConfirmedOutboundEvents.M2UpdateTicketStatusData(ticketId,updateType,publicMessage,internalMessage,null,details,List.of(),new ConfirmedOutboundEvents.UpdatedBy("EXTERNAL_USER",actorId.toString()),at);
+        var event=core("updateTicketStatus",data,"TicketCase",ticketId,correlationId,causationId);
         enqueue("CORE","TicketCase",aggregateId,event);
     }
     private void validateTicketStatus(String type,String publicMessage,String internalMessage,JsonNode details){
@@ -329,13 +320,6 @@ class ConfirmedIntegrationOutbox {
     private boolean nonBlank(String value){return value!=null&&!value.isBlank();}
     private boolean allowed(String value,String... allowed){return value!=null&&Arrays.asList(allowed).contains(value);}
     private String detail(JsonNode details,String branch,String field){return details==null?null:details.path(branch).path(field).asText(null);}
-
-    ConfirmedOutboundEvents.CoreEnvelope<ConfirmedOutboundEvents.UpdateExemptionStatusPayload> exemptionStatusEvent(ConfirmedOutboundEvents.UpdateExemptionStatusPayload payload){return core("updateExemptionStatus",payload,"ExemptionRequest",payload.requestId().toString());}
-    ConfirmedOutboundEvents.CoreEnvelope<ConfirmedOutboundEvents.ExemptionRequestedPayload> exemptionRequestedEvent(ConfirmedOutboundEvents.ExemptionRequestedPayload payload){return core("exemptionRequested",payload,"ExemptionRequest",payload.requestId().toString());}
-    ConfirmedOutboundEvents.CoreEnvelope<ConfirmedOutboundEvents.PaymentPlanRequestedPayload> paymentPlanRequestedEvent(ConfirmedOutboundEvents.PaymentPlanRequestedPayload payload){return core("paymentPlanRequested",payload,"PaymentPlanRequest",payload.requestId().toString());}
-    ConfirmedOutboundEvents.CoreEnvelope<ConfirmedOutboundEvents.UpdatePaymentPlanStatusPayload> paymentPlanStatusEvent(ConfirmedOutboundEvents.UpdatePaymentPlanStatusPayload payload){return core("updatePaymentPlanStatus",payload,"PaymentPlanRequest",payload.requestId().toString());}
-    ConfirmedOutboundEvents.CoreEnvelope<ConfirmedOutboundEvents.OverdueDebtPayload> overdueDebtEvent(ConfirmedOutboundEvents.OverdueDebtPayload payload){return core("debtOverdue",payload,"Debt",payload.debtId().toString(),payload.debtId().toString());}
-    ConfirmedOutboundEvents.CoreEnvelope<ConfirmedOutboundEvents.DebtSettledPayload> debtSettledEvent(ConfirmedOutboundEvents.DebtSettledPayload payload){return core("debtSettled",payload,"Debt",payload.debtId().toString());}
 
     private <T> void enqueueSimple(String type,T payload,String aggregate,Object aggregateId){var event=core(type,payload,aggregate,String.valueOf(aggregateId));enqueue(aggregate,String.valueOf(aggregateId),event);}
     private <T> ConfirmedOutboundEvents.CoreEnvelope<T> core(String type,T data,String aggregate,String aggregateId){return new ConfirmedOutboundEvents.CoreEnvelope<>(UUID.randomUUID().toString(),type,"1.0",OffsetDateTime.now(),"rentas",UUID.randomUUID().toString(),null,data);}

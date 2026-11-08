@@ -9,6 +9,7 @@ ca01aed575c1053116db291087144b438c2014a1:backend/src/test/java/ar/gob/municipali
 # Datos ficticios que el test comprueba que NO aparecen en los logs operativos.
 b59cea994e96d6645d72e08307fff9bbdfd48332:backend/src/test/java/ar/gob/municipalidad/rentas/OperationalLogPrivacyTests.java:generic-api-key:131
 c2dabd8ea6145072ef30b2c3e32bfaa36a517e59:backend/src/test/java/ar/gob/municipalidad/rentas/OperationalLogPrivacyTests.java:generic-api-key:131
+e05bbab8a3db3986c6d8bbd9b10878070ffd5369:backend/src/test/java/ar/gob/municipalidad/rentas/OperationalLogPrivacyTests.java:generic-api-key:131
 
 # Identificador público del proyecto en el análisis estático (clave de proyecto), no un token.
 6e8410315b220fa1d2070692378651851ad1386e:sonar-project.properties:generic-api-key:5

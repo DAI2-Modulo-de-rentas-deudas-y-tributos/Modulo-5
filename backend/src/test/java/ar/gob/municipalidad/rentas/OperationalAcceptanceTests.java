@@ -95,14 +95,16 @@ class OperationalAcceptanceTests {
     }
 
     @Test
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     void massRunPreviewsFiftyValidItemsAndOneControlledErrorBeforeSingleExecution() {
         assertTimeout(Duration.ofSeconds(30), () -> {
-            TaxConcept concept = concept("MASS-ACCEPTANCE");
+            String suffix=java.util.UUID.randomUUID().toString();
+            TaxConcept concept = concept("MASS-ACCEPTANCE-"+suffix);
             activate(concept.id);
 
             List<ApiDtos.LiquidationRunItemRequest> items = new ArrayList<>();
             for (int index = 0; index < 50; index++) {
-                TaxpayerReference taxpayer = taxpayer("MASS-" + index);
+                TaxpayerReference taxpayer = taxpayer("MASS-" + suffix + "-" + index);
                 items.add(new ApiDtos.LiquidationRunItemRequest(taxpayer.id, BigDecimal.ZERO));
             }
             items.add(new ApiDtos.LiquidationRunItemRequest(9_000_000_000_000_000_000L, BigDecimal.ZERO));

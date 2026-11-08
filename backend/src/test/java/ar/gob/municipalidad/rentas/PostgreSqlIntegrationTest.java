@@ -8,6 +8,7 @@ import org.hibernate.SessionFactory;
 import org.hibernate.stat.Statistics;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -55,7 +56,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import static org.assertj.core.api.Assertions.*;
 
-@SpringBootTest(properties={"spring.jpa.properties.hibernate.generate_statistics=true","spring.jpa.properties.hibernate.session.events.log=false","rentas.security.trusted-proxy-cidrs=10.0.0.0/8"})
+@SpringBootTest(properties={"spring.jpa.properties.hibernate.generate_statistics=true","spring.jpa.properties.hibernate.session.events.log=false","rentas.security.trusted-proxy-cidrs=10.0.0.0/8","rentas.due-date-processing-initial-delay-ms=3600000"})
 @AutoConfigureMockMvc
 @ActiveProfiles("postgres-it")
 @Testcontainers(disabledWithoutDocker=true)
@@ -341,6 +342,8 @@ class PostgreSqlIntegrationTest {
     @Autowired LateChargeService lateCharges;
     @Autowired FiscalProcessingDatePolicy fiscalDates;
     @Autowired DueDateService dueDates;
+    @Autowired DueDateProcessingWorker dueDateWorker;
+    @Autowired DueDateProcessor dueDateProcessor;
     @Autowired DueDateProcessingRepository dueDateRuns;
     @Autowired PaymentPlanConfigurationRepository planConfigurations;
     @Autowired TaxConfigurationRepository taxConfigurations;
@@ -542,9 +545,28 @@ class PostgreSqlIntegrationTest {
             assertThat(path.path("get").path("responses").path("200").path("headers").has("ETag")).isTrue();
             assertThat(patchOperation.path("responses").path("200").path("headers").has("ETag")).isTrue();
         }
+        var creditPath=document.path("paths").path("/api/v1/credit-balances/{id}");
+        var creditApply=document.path("paths").path("/api/v1/credit-balances/{id}/apply").path("post");
+        assertThat(creditPath.path("get").path("responses").path("200").path("headers").has("ETag")).isTrue();
+        assertThat(creditApply.path("responses").path("200").path("headers").has("ETag")).isTrue();
+        assertThat(creditApply.path("responses").path("412").path("$ref").asText()).isEqualTo("#/components/responses/ApiError");
+        boolean optionalCreditIfMatch=false;
+        for(var parameter:creditApply.path("parameters"))
+            if("If-Match".equals(parameter.path("name").asText())) optionalCreditIfMatch=!parameter.path("required").asBoolean();
+        assertThat(optionalCreditIfMatch).isTrue();
+        for(String pathName:List.of("/api/v1/taxpayers/{id}","/api/v1/payments/{id}"))
+            assertThat(document.path("paths").path(pathName).path("get").path("responses").path("200").path("headers").has("ETag")).isTrue();
+        for(String pathName:List.of("/api/v1/taxpayers/{id}/canonical-citizen-link","/api/v1/payments/{id}/reversal-requests")) {
+            var operation=document.path("paths").path(pathName).path("post");
+            assertThat(operation.path("responses").path("412").path("$ref").asText()).isEqualTo("#/components/responses/ApiError");
+            assertThat(operation.path("responses").path("200").path("headers").has("ETag")||operation.path("responses").path("201").path("headers").has("ETag")).isTrue();
+            boolean optionalIfMatch=false;
+            for(var parameter:operation.path("parameters")) if("If-Match".equals(parameter.path("name").asText())) optionalIfMatch=!parameter.path("required").asBoolean();
+            assertThat(optionalIfMatch).isTrue();
+        }
     }
 
-    @Test void openApiDocumentsIdempotencyForEveryMutatingPostAndExcludesOnlyPreviewsAndSimulations() throws Exception {
+    @Test void openApiDocumentsIdempotencyForEveryBusinessPostAndExcludesPreviewsSimulationsAndAuthSetup() throws Exception {
         var document=json.readTree(mvc.perform(get("/v3/api-docs")).andReturn().getResponse().getContentAsString());
         var excluded=java.util.Set.of(
             "/api/v1/liquidations/preview",
@@ -568,14 +590,41 @@ class PostgreSqlIntegrationTest {
                     hasKey=true;
                 }
             }
-            boolean excludedFromIdempotency=excluded.contains(path)||path.startsWith("/api/v1/dev-auth/");
+            boolean excludedFromIdempotency=excluded.contains(path)||java.util.Set.of("/api/v1/dev-auth/login","/api/v1/dev-auth/logout","/api/v1/dev-auth/bootstrap").contains(path);
             assertThat(hasKey).as("Idempotency-Key en POST %s",path).isEqualTo(!excludedFromIdempotency);
             if(hasKey) covered++;
         }
         assertThat(paths.path("/api/v1/tickets/{id}/return").path("post").isMissingNode()).isFalse();
         assertThat(paths.path("/api/v1/taxpayers/{id}/canonical-citizen-link").path("post").isMissingNode()).isFalse();
-        assertThat(postCount).isEqualTo(77);
-        assertThat(covered).isEqualTo(68);
+        assertThat(paths.path("/api/v1/integrations/outbox/{id}/retry").path("post").isMissingNode()).isFalse();
+        assertThat(postCount).isEqualTo(78);
+        assertThat(covered).isEqualTo(70);
+    }
+
+    @Test void demoUserCreationEndpointReplaysTheSameResponseAndRejectsChangedBody() throws Exception {
+        authenticate();String suffix=UUID.randomUUID().toString();
+        String supervisorName="qa.supervisor."+suffix;
+        demoAuth.create(new DemoAuthController.CreateUserRequest(supervisorName,"clave-segura","Supervisor QA",DemoRole.SUPERVISOR,null));
+        String token=demoAuth.login(new DemoAuthController.LoginRequest(supervisorName,"clave-segura")).token();
+        String username="qa.created."+suffix;String key="demo-user-"+suffix;
+        var request=new DemoAuthController.CreateUserRequest(username,"clave-segura","QA",DemoRole.RENTAS,null);
+        String first=mvc.perform(post("/api/v1/dev-auth/users").header(DemoAuthService.SESSION_HEADER,token).header("Idempotency-Key",key)
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(request)))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isCreated())
+            .andReturn().getResponse().getContentAsString();
+        String retry=mvc.perform(post("/api/v1/dev-auth/users").header(DemoAuthService.SESSION_HEADER,token).header("Idempotency-Key",key)
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(request)))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isCreated())
+            .andReturn().getResponse().getContentAsString();
+        assertThat(retry).isEqualTo(first);
+        assertThat(jdbc.queryForObject("select count(*) from demo_user where username=?",Integer.class,username)).isOne();
+
+        var changed=new DemoAuthController.CreateUserRequest(username,"clave-segura","Nombre cambiado",DemoRole.RENTAS,null);
+        mvc.perform(post("/api/v1/dev-auth/users").header(DemoAuthService.SESSION_HEADER,token).header("Idempotency-Key",key)
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(changed)))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isConflict())
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"));
+        assertThat(jdbc.queryForObject("select count(*) from demo_user where username=?",Integer.class,username)).isOne();
     }
 
     @Test void taxConceptCreationEndpointReplaysConcurrentRequestAndConflictsOnDifferentBody() throws Exception {
@@ -625,20 +674,39 @@ class PostgreSqlIntegrationTest {
         CreditBalance credit=creditRepository.findBySourcePaymentId(payment.id).orElseThrow();
         String key="credit-apply-"+UUID.randomUUID(),actor="credit-apply-http-"+UUID.randomUUID();
         var auth=new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity(actor,null),null,List.of(new SimpleGrantedAuthority("ROLE_RENTAS")));
+        String path="/api/v1/credit-balances/"+credit.id;
+        String creditTag=mvc.perform(get(path).with(authentication(auth)))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+            .andReturn().getResponse().getHeader("ETag");
+        assertThat(creditTag).isNotBlank();
         var request=new ApiDtos.ApplyCreditBalanceRequest(target.id,new BigDecimal("10"));
         String body=json.writeValueAsString(request);
-        var first=mvc.perform(post("/api/v1/credit-balances/"+credit.id+"/apply").with(authentication(auth)).header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON).content(body))
-            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk()).andReturn().getResponse().getContentAsString();
-        var replay=mvc.perform(post("/api/v1/credit-balances/"+credit.id+"/apply").with(authentication(auth)).header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON).content(body))
+        mvc.perform(post(path+"/apply").with(authentication(auth)).header("If-Match","\"stale\"")
+                .contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isPreconditionFailed())
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.code").value("PRECONDITION_FAILED"));
+        assertThat(creditRepository.findById(credit.id).orElseThrow().availableAmount).isEqualByComparingTo("20.00");
+        assertThat(creditApplications.findAll().stream().filter(application->credit.id.equals(application.creditBalanceId))).isEmpty();
+        var firstResponse=mvc.perform(post(path+"/apply").with(authentication(auth)).header("If-Match",creditTag).header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk()).andReturn().getResponse();
+        String updatedCreditTag=firstResponse.getHeader("ETag");
+        assertThat(updatedCreditTag).isNotBlank().isNotEqualTo(creditTag);
+        var first=firstResponse.getContentAsString();
+        var replay=mvc.perform(post(path+"/apply").with(authentication(auth)).header("If-Match",creditTag).header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON).content(body))
             .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk()).andReturn().getResponse().getContentAsString();
         assertThat(json.readTree(replay).path("id").asLong()).isEqualTo(json.readTree(first).path("id").asLong());
         assertThat(creditApplications.findAll().stream().filter(application->credit.id.equals(application.creditBalanceId))).hasSize(1);
         assertThat(creditRepository.findById(credit.id).orElseThrow().availableAmount).isEqualByComparingTo("10.00");
         var changed=new ApiDtos.ApplyCreditBalanceRequest(target.id,new BigDecimal("5"));
-        mvc.perform(post("/api/v1/credit-balances/"+credit.id+"/apply").with(authentication(auth)).header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsBytes(changed)))
+        mvc.perform(post(path+"/apply").with(authentication(auth)).header("If-Match",creditTag).header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsBytes(changed)))
             .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isConflict())
             .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"));
         assertThat(creditApplications.findAll().stream().filter(application->credit.id.equals(application.creditBalanceId))).hasSize(1);
+        mvc.perform(post(path+"/apply").with(authentication(auth)).header("Idempotency-Key",key+"-legacy")
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsBytes(new ApiDtos.ApplyCreditBalanceRequest(target.id,new BigDecimal("5")))))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().exists("ETag"));
+        assertThat(creditRepository.findById(credit.id).orElseThrow().availableAmount).isEqualByComparingTo("5.00");
     }
 
     @Test void idempotencyForEconomicCreationIsTransactionalAndSerializesConcurrentRetries() throws Exception {
@@ -884,8 +952,8 @@ class PostgreSqlIntegrationTest {
     }
 
     @Test void contextStartsAndFlywayAppliesEveryMigration(){
-        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(31);
-        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(30);
+        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(32);
+        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(31);
         assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version='29'",Integer.class)).isOne();
         assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version='31'",Integer.class)).isOne();
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='tax_configuration'",String.class)).contains("submitted_by");
@@ -1121,7 +1189,7 @@ class PostgreSqlIntegrationTest {
         assertThat(integrationLogs.count()).isEqualTo(logsBefore+1);
 
         taxpayer(TaxpayerType.ORGANIZATION,"M4-PG-"+feeId,null,cuit);
-        IntegrationEventLog retried=integrationReprocess.reprocess(feeId,"Se proyectó la organización por CUIT");
+        IntegrationEventLog retried=integrationReprocess.reprocess(feeId.toString(),"Se proyectó la organización por CUIT");
         assertThat(retried.retryCount).isEqualTo(1);
         assertThat(retried.status).isEqualTo(IntegrationEventStatus.FAILED);
         assertThat(retried.errorMessage).startsWith(CoreM4Consumer.DUE_DATE_PENDING);
@@ -1467,6 +1535,7 @@ class PostgreSqlIntegrationTest {
     @Test void dueDateProcessingHandlesMoreRowsThanOneBatch() {
         authenticate();
         TaxpayerReference taxpayer=taxpayer(TaxpayerType.CITIZEN,"PG-DUE-BATCH-"+UUID.randomUUID(),uniqueDigits(8),null);
+        taxpayer.canonicalCitizenId=UUID.randomUUID();taxpayers.saveAndFlush(taxpayer);
         Debt seed=debt("DUE-BATCH-SEED-"+UUID.randomUUID(),taxpayer.id);
         List<Debt> fixture=new ArrayList<>();fixture.add(seed);
         for(int i=1;i<101;i++){
@@ -1475,7 +1544,8 @@ class PostgreSqlIntegrationTest {
             debt.originalAmount=debt.currentAmount=debt.outstandingBalance=new BigDecimal("10.00");debt.status=DebtStatus.PENDING;
             debt.dueDate=LocalDate.of(1800,1,1);debt.createdAt=debt.updatedAt=OffsetDateTime.now();fixture.add(debt);
         }
-        seed.dueDate=LocalDate.of(1800,1,1);debts.save(seed);
+        LocalDate processingDate=uniqueProcessingDate(seed.id,3);
+        seed.dueDate=processingDate.minusDays(1);debts.save(seed);
         debts.saveAll(fixture);debts.flush();
         int version=planConfigurations.findAll().stream().mapToInt(config->config.version).max().orElse(0)+1;
         PaymentPlanConfiguration config=new PaymentPlanConfiguration();config.version=version;config.minimumInstallments=1;config.maximumInstallments=120;
@@ -1491,17 +1561,103 @@ class PostgreSqlIntegrationTest {
             installment.totalAmount=installment.outstandingAmount=BigDecimal.ONE;installment.paidAmount=BigDecimal.ZERO;installment.dueDate=LocalDate.of(1800,1,1);
             installment.status=InstallmentStatus.PENDING;installmentFixture.add(installment);}
         installments.saveAll(installmentFixture);installments.flush();
-        LocalDate processingDate=LocalDate.of(1800,1,2);
         long started=System.nanoTime();
 
-        var run=dueDates.process(processingDate);
+        var queued=dueDates.enqueue(processingDate);
+        var claim=dueDates.claimNext();
+        assertThat(claim).isNotNull();
+        assertThat(dueDateProcessor.processNextBatch(claim.id(),claim.attemptCount())).isFalse();
+        var checkpoint=dueDates.get(queued.id());
+        assertThat(checkpoint.status()).isEqualTo(DueDateRunStatus.PROCESSING);
+        assertThat(checkpoint.debtsOverdue()).isEqualTo(100);
+        long firstBatchEvents=jdbc.queryForObject("select count(*) from outbox_event o join debt d on o.aggregate_id=d.id::text where o.event_type='debtOverdue' and d.taxpayer_id=?",Long.class,taxpayer.id);
+        assertThat(firstBatchEvents).isBetween(1L,100L);
+        String lastDebtId=fixture.stream().map(debt->debt.id).max(Long::compareTo).orElseThrow().toString();
+        jdbc.execute("CREATE OR REPLACE FUNCTION fail_test_due_date_batch() RETURNS trigger AS $$ BEGIN IF NEW.event_type='debtOverdue' AND NEW.aggregate_id='"+lastDebtId+"' THEN RAISE EXCEPTION 'test due date batch failure'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql");
+        jdbc.execute("CREATE TRIGGER fail_test_due_date_batch BEFORE INSERT ON outbox_event FOR EACH ROW EXECUTE FUNCTION fail_test_due_date_batch()");
+        try {
+            assertThatThrownBy(()->dueDateProcessor.processNextBatch(claim.id(),claim.attemptCount())).hasMessageContaining("test due date batch failure");
+            dueDates.recordFailure(claim.id(),claim.attemptCount(),"DUE_DATE_PROCESSING_FAILED");
+            assertThat(dueDates.get(queued.id()).debtsOverdue()).isEqualTo(100);
+            assertThat(jdbc.queryForObject("select count(*) from outbox_event o join debt d on o.aggregate_id=d.id::text where o.event_type='debtOverdue' and d.taxpayer_id=?",Long.class,taxpayer.id)).isEqualTo(firstBatchEvents);
+            jdbc.execute("DROP TRIGGER IF EXISTS fail_test_due_date_batch ON outbox_event");jdbc.execute("DROP FUNCTION IF EXISTS fail_test_due_date_batch()");
+            jdbc.update("update due_date_processing set next_attempt_at=null where id=?",queued.id());
+            dueDateWorker.processNext();
+        } finally {
+            jdbc.execute("DROP TRIGGER IF EXISTS fail_test_due_date_batch ON outbox_event");jdbc.execute("DROP FUNCTION IF EXISTS fail_test_due_date_batch()");
+        }
+        var run=dueDates.get(queued.id());
+        assertThat(run.status()).isEqualTo(DueDateRunStatus.COMPLETED);
+        assertThat(run.debtsOverdue()).isGreaterThanOrEqualTo(101);
+        assertThat(jdbc.queryForObject("select count(*) from outbox_event o join debt d on o.aggregate_id=d.id::text where o.event_type='debtOverdue' and d.taxpayer_id=?",Long.class,taxpayer.id)).isEqualTo(101);
+        assertThat(jdbc.queryForObject("select count(distinct o.idempotency_key) from outbox_event o join debt d on o.aggregate_id=d.id::text where o.event_type='debtOverdue' and d.taxpayer_id=?",Long.class,taxpayer.id)).isEqualTo(101);
 
         long elapsedMillis=TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started);
         assertThat(run.debtsScanned()).isGreaterThanOrEqualTo(101);
-        assertThat(run.debtsOverdue()).isEqualTo(101);
-        assertThat(run.installmentsOverdue()).isEqualTo(101);
+        assertThat(run.installmentsOverdue()).isGreaterThanOrEqualTo(101);
         assertThat(installments.findByPaymentPlanIdOrderByNumber(plan.id)).allMatch(installment->installment.status==InstallmentStatus.OVERDUE);
         System.out.printf("due-date fixture rows=101 elapsedMs=%d%n",elapsedMillis);
+    }
+
+    @Test @EnabledIfSystemProperty(named="rentas.due-date-load-test",matches="true")
+    void queuedDueDateProcessingAcceptsAndProcessesTenThousandOverdueDebts() throws Exception {
+        authenticate();
+        TaxpayerReference taxpayer=taxpayer(TaxpayerType.CITIZEN,"PG-DUE-LOAD-"+UUID.randomUUID(),uniqueDigits(8),null);
+        taxpayer.canonicalCitizenId=UUID.randomUUID();taxpayers.saveAndFlush(taxpayer);
+        Debt seed=debt("DUE-LOAD-SEED-"+UUID.randomUUID(),taxpayer.id);
+        LocalDate processingDate=fiscalDates.today();
+        while(dueDateRuns.findByProcessingDate(processingDate).isPresent())processingDate=processingDate.minusDays(1);
+        LocalDate dueDate=processingDate.minusDays(1);
+        jdbc.update("""
+            insert into debt (integration_id,taxpayer_id,tax_concept_id,origin_type,liquidation_id,original_amount,current_amount,
+                              outstanding_balance,due_date,status,created_at,updated_at)
+            select gen_random_uuid(),?,?,'LIQUIDATION',?,10,10,10,?,'PENDING',now(),now()
+            from generate_series(1,10000)
+            """,taxpayer.id,seed.taxConceptId,seed.liquidationId,dueDate);
+
+        var rentas=new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("due-date-load-"+UUID.randomUUID(),null),null,
+            List.of(new SimpleGrantedAuthority("ROLE_RENTAS")));
+        String key=UUID.randomUUID().toString();
+        long requestStarted=System.nanoTime();
+        MockHttpServletResponse accepted=mvc.perform(post("/api/v1/administration/process-due-dates").with(authentication(rentas))
+                .header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsBytes(new FiscalProcessingController.DueDateRequest(processingDate))))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isAccepted())
+            .andReturn().getResponse();
+        long requestMillis=TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-requestStarted);
+        JsonNode acceptedBody=json.readTree(accepted.getContentAsByteArray());
+        long runId=acceptedBody.path("id").asLong();
+        assertThat(requestMillis).isLessThan(2000);
+        assertThat(acceptedBody.path("status").asText()).isEqualTo("PENDING");
+
+        MockHttpServletResponse replayBeforeProcessing=mvc.perform(post("/api/v1/administration/process-due-dates").with(authentication(rentas))
+                .header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsBytes(new FiscalProcessingController.DueDateRequest(processingDate))))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isAccepted())
+            .andReturn().getResponse();
+        assertThat(json.readTree(replayBeforeProcessing.getContentAsByteArray())).isEqualTo(acceptedBody);
+        long processingStarted=System.nanoTime();
+        dueDateWorker.processNext();
+        long processingMillis=TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-processingStarted);
+
+        var completed=dueDates.get(runId);
+        assertThat(completed.status()).isEqualTo(DueDateRunStatus.COMPLETED);
+        assertThat(completed.debtsOverdue()).isEqualTo(10000);
+        assertThat(completed.errors()).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from outbox_event o join debt d on o.aggregate_id=d.id::text where o.event_type='debtOverdue' and d.taxpayer_id=? and d.due_date=?",Long.class,taxpayer.id,dueDate)).isEqualTo(10000);
+        assertThat(jdbc.queryForObject("select count(*) from late_charge_application l join debt d on l.debt_id=d.id where d.taxpayer_id=? and d.due_date=? and l.calculation_date=?",Long.class,taxpayer.id,dueDate,processingDate)).isEqualTo(10000);
+        MockHttpServletResponse replayAfterProcessing=mvc.perform(post("/api/v1/administration/process-due-dates").with(authentication(rentas))
+                .header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsBytes(new FiscalProcessingController.DueDateRequest(processingDate))))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isAccepted())
+            .andReturn().getResponse();
+        JsonNode replayAfterProcessingBody=json.readTree(replayAfterProcessing.getContentAsByteArray());
+        assertThat(replayAfterProcessingBody).isEqualTo(acceptedBody);
+        assertThat(replayAfterProcessingBody.path("status").asText()).isEqualTo("PENDING");
+        assertThat(dueDates.get(runId).status()).isEqualTo(DueDateRunStatus.COMPLETED);
+        assertThat(jdbc.queryForObject("select count(*) from outbox_event o join debt d on o.aggregate_id=d.id::text where o.event_type='debtOverdue' and d.taxpayer_id=? and d.due_date=?",Long.class,taxpayer.id,dueDate)).isEqualTo(10000);
+        assertThat(jdbc.queryForObject("select count(*) from late_charge_application l join debt d on l.debt_id=d.id where d.taxpayer_id=? and d.due_date=? and l.calculation_date=?",Long.class,taxpayer.id,dueDate,processingDate)).isEqualTo(10000);
+        System.out.printf("due-date load rows=10000 responseMs=%d workerMs=%d processingStatus=%s outboxEvents=10000%n",requestMillis,processingMillis,completed.status());
     }
 
     @Test void concurrentDueDateProcessingForSameDateReturnsSingleIdempotentRun() throws Exception {
@@ -1520,6 +1676,98 @@ class PostgreSqlIntegrationTest {
         LocalDate firstDate=uniqueProcessingDate(eligible.id,2),secondDate=firstDate.plusDays(1);eligible.dueDate=firstDate.minusDays(1);debts.save(eligible);
         assertThat(runTogether(()->dueDates.process(firstDate),()->dueDates.process(secondDate))).containsOnlyNulls();
         assertThat(overdueEvents(eligible)).hasSize(1);
+    }
+
+    @Test void paymentWaitingForDueDateLockDoesNotGetOverwrittenOrTriggerFalseExpiration() throws Exception {
+        authenticate();String suffix=UUID.randomUUID().toString();Debt debt=debt("DUE-PAYMENT-RACE-"+suffix,null);
+        workflow.createConfiguration(new ApiDtos.CreatePaymentPlanConfigurationRequest(2,2,BigDecimal.ZERO,BigDecimal.ZERO,0,1,true,false,0,LocalDate.now().minusDays(1),null,true));
+        PaymentPlanRequest request=workflow.request(new ApiDtos.CreatePaymentPlanRequest(debt.taxpayerId,List.of(debt.id),2));
+        PaymentPlanRequest granted=TestActorSupport.asApprover(()->workflow.grant(request.id,null));
+        PaymentPlan plan=planRepository.findById(granted.paymentPlanId).orElseThrow();
+        List<Installment> planInstallments=installments.findByPaymentPlanIdOrderByNumber(plan.id);
+        LocalDate processingDate=uniqueProcessingDate(debt.id,35);
+        planInstallments.forEach(installment->installment.dueDate=processingDate.minusDays(1));installments.saveAllAndFlush(planInstallments);
+        Installment paidInstallment=planInstallments.get(0);
+        CountDownLatch selected=new CountDownLatch(1),release=new CountDownLatch(1),paymentStarted=new CountDownLatch(1);
+        AtomicInteger paymentBackendPid=new AtomicInteger();ExecutorService pool=Executors.newFixedThreadPool(2);
+        try {
+            Future<?> overdueWorker=pool.submit(()->{
+                authenticate();
+                try { new TransactionTemplate(transactionManager).execute(status->{
+                    List<Installment> locked=installments.findOverdueBatchForUpdate(
+                        List.of(InstallmentStatus.PENDING,InstallmentStatus.PARTIALLY_PAID,InstallmentStatus.OVERDUE),BigDecimal.ZERO,processingDate,paidInstallment.id-1,PageRequest.of(0,100));
+                    assertThat(locked).hasSize(2);selected.countDown();
+                    try { if(!release.await(5,TimeUnit.SECONDS))throw new IllegalStateException("Timed out waiting to release due-date row locks"); }
+                    catch(InterruptedException ex){Thread.currentThread().interrupt();throw new IllegalStateException(ex);}
+                    locked.forEach(installment->installment.status=InstallmentStatus.OVERDUE);return null;
+                }); } finally { SecurityContextHolder.clearContext(); }
+            });
+            assertThat(selected.await(5,TimeUnit.SECONDS)).isTrue();
+            Future<?> payment=pool.submit(()->{
+                authenticate();
+                try { new TransactionTemplate(transactionManager).execute(status->{
+                    paymentBackendPid.set(jdbc.queryForObject("select pg_backend_pid()",Integer.class));paymentStarted.countDown();
+                    payments.register(new ApiDtos.RegisterPaymentRequest(debt.taxpayerId,null,PaymentMethod.CASH,paidInstallment.totalAmount,
+                        List.of(new ApiDtos.AllocationRequest(null,paidInstallment.id,paidInstallment.totalAmount))));return null;
+                }); } finally { SecurityContextHolder.clearContext(); }
+            });
+            assertThat(paymentStarted.await(5,TimeUnit.SECONDS)).isTrue();
+            long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(5);boolean waitingForRowLock=false;
+            while(System.nanoTime()<deadline&&!waitingForRowLock){waitingForRowLock=jdbc.queryForObject(
+                "select count(*) from pg_stat_activity where pid=? and wait_event_type='Lock'",Integer.class,paymentBackendPid.get())>0;
+                if(!waitingForRowLock)Thread.sleep(10);
+            }
+            assertThat(waitingForRowLock).as("payment should wait for the due-date row lock").isTrue();
+            release.countDown();overdueWorker.get(10,TimeUnit.SECONDS);payment.get(10,TimeUnit.SECONDS);
+        } finally { release.countDown();pool.shutdownNow();SecurityContextHolder.clearContext(); }
+
+        assertThat(installments.findById(paidInstallment.id).orElseThrow().status).isEqualTo(InstallmentStatus.PAID);
+        assertThat(planRepository.findById(plan.id).orElseThrow().status).isEqualTo(PaymentPlanStatus.ACTIVE);
+        DueDateProcessing run=planStageRun(processingDate,plan.id-1);
+        dueDateProcessor.processNextBatch(run.id,run.attemptCount);
+        assertThat(jdbc.queryForObject("select count(*) from plan_expiration_request where payment_plan_id=? and status='PENDING_APPROVAL'",Integer.class,plan.id)).isZero();
+    }
+
+    @Test void concurrentPlanBatchesCreateOnlyOnePendingExpirationRequest() throws Exception {
+        authenticate();String suffix=UUID.randomUUID().toString();Debt debt=debt("DUE-EXPIRATION-RACE-"+suffix,null);
+        workflow.createConfiguration(new ApiDtos.CreatePaymentPlanConfigurationRequest(1,1,BigDecimal.ZERO,BigDecimal.ZERO,0,0,true,false,0,LocalDate.now().minusDays(1),null,true));
+        PaymentPlanRequest request=workflow.request(new ApiDtos.CreatePaymentPlanRequest(debt.taxpayerId,List.of(debt.id),1));
+        PaymentPlanRequest granted=TestActorSupport.asApprover(()->workflow.grant(request.id,null));
+        PaymentPlan plan=planRepository.findById(granted.paymentPlanId).orElseThrow();Installment installment=installments.findByPaymentPlanIdOrderByNumber(plan.id).get(0);
+        LocalDate firstDate=uniqueProcessingDate(debt.id,37);installment.dueDate=firstDate.minusDays(1);installment.status=InstallmentStatus.OVERDUE;installments.saveAndFlush(installment);
+        DueDateProcessing first=planStageRun(firstDate,plan.id-1),second=planStageRun(firstDate.plusDays(1),plan.id-1);
+        String planId=plan.id.toString();
+        jdbc.execute("CREATE OR REPLACE FUNCTION delay_test_plan_expiration() RETURNS trigger AS $$ BEGIN IF NEW.payment_plan_id="+planId+" THEN PERFORM pg_sleep(0.3); END IF; RETURN NEW; END; $$ LANGUAGE plpgsql");
+        jdbc.execute("CREATE TRIGGER delay_test_plan_expiration BEFORE INSERT ON plan_expiration_request FOR EACH ROW EXECUTE FUNCTION delay_test_plan_expiration()");
+        try {
+            assertThat(runTogether(()->dueDateProcessor.processNextBatch(first.id,first.attemptCount),()->dueDateProcessor.processNextBatch(second.id,second.attemptCount))).containsOnlyNulls();
+            assertThat(jdbc.queryForObject("select count(*) from plan_expiration_request where payment_plan_id=? and status='PENDING_APPROVAL'",Integer.class,plan.id)).isEqualTo(1);
+        } finally {
+            jdbc.execute("DROP TRIGGER IF EXISTS delay_test_plan_expiration ON plan_expiration_request");
+            jdbc.execute("DROP FUNCTION IF EXISTS delay_test_plan_expiration()");
+        }
+    }
+
+    @Test void queuedDueDateRunRetriesRolledBackEffectsWithoutDuplicates() {
+        authenticate();Debt eligible=debt("DUE-DATE-QUEUE-"+UUID.randomUUID(),null);LocalDate date=uniqueProcessingDate(eligible.id,20);eligible.dueDate=date.minusDays(1);debts.save(eligible);
+        TaxpayerReference taxpayer=taxpayers.findById(eligible.taxpayerId).orElseThrow();taxpayer.canonicalCitizenId=UUID.randomUUID();taxpayers.save(taxpayer);
+        String aggregateId=eligible.id.toString();
+        jdbc.execute("CREATE OR REPLACE FUNCTION fail_test_due_date_queue() RETURNS trigger AS $$ BEGIN IF NEW.event_type='debtOverdue' AND NEW.aggregate_id='"+aggregateId+"' THEN RAISE EXCEPTION 'test due date queue failure'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql");
+        jdbc.execute("CREATE TRIGGER fail_test_due_date_queue BEFORE INSERT ON outbox_event FOR EACH ROW EXECUTE FUNCTION fail_test_due_date_queue()");
+        try {
+            var queued=dueDates.enqueue(date);var duplicate=dueDates.enqueue(date);
+            assertThat(queued.id()).isEqualTo(duplicate.id());assertThat(queued.status()).isEqualTo(DueDateRunStatus.PENDING);
+            assertThat(queued.processedAt()).isNull();
+            dueDateWorker.processNext();
+            var failedAttempt=dueDates.get(queued.id());assertThat(failedAttempt.status()).isEqualTo(DueDateRunStatus.PENDING);assertThat(failedAttempt.lastErrorCode()).isEqualTo("DUE_DATE_PROCESSING_FAILED");
+            assertThat(overdueEvents(eligible)).isEmpty();
+            jdbc.execute("DROP TRIGGER IF EXISTS fail_test_due_date_queue ON outbox_event");jdbc.execute("DROP FUNCTION IF EXISTS fail_test_due_date_queue()");
+            jdbc.update("update due_date_processing set next_attempt_at=null where id=?",queued.id());dueDateWorker.processNext();
+            var completed=dueDates.get(queued.id());assertThat(completed.status()).isEqualTo(DueDateRunStatus.COMPLETED);assertThat(completed.debtsOverdue()).isPositive();
+            assertThat(overdueEvents(eligible)).hasSize(1);
+        } finally {
+            jdbc.execute("DROP TRIGGER IF EXISTS fail_test_due_date_queue ON outbox_event");jdbc.execute("DROP FUNCTION IF EXISTS fail_test_due_date_queue()");
+        }
     }
 
     @Test void overdueOutboxFailureRollsBackTheDueDateProcessingTransaction() {
@@ -1669,6 +1917,67 @@ class PostgreSqlIntegrationTest {
         assertThat(jdbc.queryForObject("select sum(outstanding_balance) from debt where tax_concept_id=?", BigDecimal.class, concept.id)).isEqualByComparingTo("2005.00");
     }
 
+    @Test void concurrentIndividualAndBulkLiquidationRaceRecordsTheBulkConflictOnPostgreSql() throws Exception {
+        authenticate();
+        String suffix=UUID.randomUUID().toString();
+        TaxpayerReference owner=taxpayer(TaxpayerType.CITIZEN,"PG-LIQ-RACE-"+suffix,uniqueDigits(8),null);
+        TaxConcept concept=concept("PG_LIQ_RACE_"+suffix,TaxConceptType.FEE,"M5");
+        TaxConfiguration config=catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(
+            concept.id,CalculationType.FIXED,null,new BigDecimal("100.00"),null,null,true,true,LocalDate.now().minusDays(1),null));
+        catalog.submit(config.id);TestActorSupport.asApprover(()->catalog.approve(config.id));
+        String period=YearMonth.now().plusMonths(2).toString();
+        LocalDate dueDate=LocalDate.now().plusDays(30);
+        LiquidationRun run=bulkRuns.create(new ApiDtos.CreateLiquidationRunRequest(concept.id,period,dueDate,
+            List.of(new ApiDtos.LiquidationRunItemRequest(owner.id,BigDecimal.ZERO))));
+        bulkRuns.preview(run.id);bulkRuns.submit(run.id);TestActorSupport.asApprover(()->bulkRuns.approve(run.id,"race test"));
+        byte[] individualBody=json.writeValueAsBytes(new ApiDtos.LiquidationRequest(owner.id,concept.id,period,BigDecimal.ZERO,dueDate));
+        var rentasAuth=new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("postgres-it-race",null),null,
+            List.of(new SimpleGrantedAuthority("ROLE_RENTAS")));
+        Future<MockHttpServletResponse>[] responses=new Future[2];
+        ExecutorService pool=Executors.newFixedThreadPool(2);
+        jdbc.execute("CREATE FUNCTION test_hold_liquidation_race() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN "
+            +"PERFORM pg_advisory_xact_lock(177501,20261107); RETURN NEW; END $$");
+        jdbc.execute("CREATE TRIGGER test_hold_liquidation_race BEFORE INSERT ON liquidation FOR EACH ROW EXECUTE FUNCTION test_hold_liquidation_race()");
+        try {
+            new TransactionTemplate(transactionManager).executeWithoutResult(tx->{
+                jdbc.execute("select pg_advisory_xact_lock(177501,20261107)");
+                responses[0]=pool.submit(()->mvc.perform(post("/api/v1/liquidations").with(authentication(rentasAuth))
+                    .contentType(MediaType.APPLICATION_JSON).content(individualBody)).andReturn().getResponse());
+                awaitBlockedLiquidationInserts(1);
+                responses[1]=pool.submit(()->mvc.perform(post("/api/v1/liquidation-runs/{id}/execute",run.id)
+                    .with(authentication(rentasAuth)).header("Idempotency-Key","race-"+suffix))
+                    .andReturn().getResponse());
+                awaitBlockedLiquidationInserts(2);
+            });
+            MockHttpServletResponse individual=responses[0].get(15,TimeUnit.SECONDS);
+            MockHttpServletResponse bulk=responses[1].get(15,TimeUnit.SECONDS);
+            assertThat(individual.getStatus()).isEqualTo(201);
+            assertThat(bulk.getStatus()).isEqualTo(422);
+            assertThat(json.readTree(bulk.getContentAsString()).path("code").asText()).isEqualTo("DUPLICATE_LIQUIDATION");
+            assertThat(bulkRuns.detail(run.id).run().status).isEqualTo(LiquidationRunStatus.FAILED);
+            assertThat(jdbc.queryForObject("select count(*) from liquidation where taxpayer_id=? and tax_concept_id=? and period=?",Long.class,owner.id,concept.id,period)).isOne();
+            assertThat(jdbc.queryForObject("select count(*) from debt where taxpayer_id=? and tax_concept_id=?",Long.class,owner.id,concept.id)).isOne();
+        } finally {
+            pool.shutdownNow();
+            jdbc.execute("DROP TRIGGER IF EXISTS test_hold_liquidation_race ON liquidation");
+            jdbc.execute("DROP FUNCTION IF EXISTS test_hold_liquidation_race()");
+        }
+    }
+
+    private void awaitBlockedLiquidationInserts(int expected) {
+        long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(10);
+        int waiting=0;
+        while(System.nanoTime()<deadline) {
+            waiting=jdbc.queryForObject("select count(*) from pg_stat_activity a join pg_locks l on l.pid=a.pid "
+                +"where a.datname=current_database() and l.locktype='advisory' and not l.granted",Integer.class);
+            if(waiting==expected)return;
+            try{Thread.sleep(10);}catch(InterruptedException ex){Thread.currentThread().interrupt();throw new IllegalStateException(ex);}
+        }
+        assertThat(waiting).as("blocked liquidation inserts; lock waits="+jdbc.queryForList(
+            "select pid,wait_event_type,wait_event,query from pg_stat_activity where datname=current_database() and wait_event_type='Lock'"))
+            .isEqualTo(expected);
+    }
+
     @Test void percentageStrategyPreviewAndPersistedLiquidationMatchOnPostgreSql() {
         authenticate();
         TaxpayerReference owner = taxpayer(TaxpayerType.CITIZEN, "PG-STRATEGY-" + UUID.randomUUID(), uniqueDigits(8), null);
@@ -1693,6 +2002,7 @@ class PostgreSqlIntegrationTest {
     }
 
     private void assertEquation(Payment payment){Payment stored=paymentRepository.findById(payment.id).orElseThrow();assertThat(stored.allocatedAmount.add(stored.unallocatedAmount)).isEqualByComparingTo(stored.amount);}
+    private DueDateProcessing planStageRun(LocalDate date,long afterPlanId){DueDateProcessing run=new DueDateProcessing();run.processingDate=date;run.status=DueDateRunStatus.PROCESSING;run.processingStage=DueDateProcessingStage.PLANS;run.attemptCount=1;run.lastProcessedId=afterPlanId;run.requestedAt=OffsetDateTime.now();run.startedAt=run.requestedAt;run.processedBy="postgres-it";return dueDateRuns.saveAndFlush(run);}
     private LocalDate uniqueProcessingDate(Long debtId,int offset){return LocalDate.of(1900,1,1).plusDays(debtId*10+offset);}
     private List<OutboxEvent> overdueEvents(Debt debt){return outbox.findAll().stream().filter(x->x.eventType.equals("debtOverdue")&&x.targetModule.equals("CORE")&&x.aggregateType.equals("Debt")&&x.aggregateId.equals(debt.id.toString())).toList();}
     private void authenticate(){var authorities=List.of("RENTAS","SUPERVISOR","CASHIER").stream().map(x->new SimpleGrantedAuthority("ROLE_"+x)).toList();SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("postgres-it",null),null,authorities));}

@@ -10,10 +10,10 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.time.OffsetDateTime;
 import java.time.YearMonth;
 import java.util.List;
 import java.util.UUID;
@@ -26,7 +26,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 class PercentageBenefitRegressionTests {
     @Autowired CatalogService catalog;
     @Autowired LiquidationService liquidations;
-    @Autowired SocialBenefitIntegrationService benefitIntegration;
+    @Autowired ConfirmedM1Consumer m1;
+    @Autowired ConfirmedM8Consumer benefitIntegration;
+    @Autowired SocialBenefitRuleService socialRules;
+    @Autowired ObjectMapper json;
     @Autowired LiquidationComponentRepository components;
     @Autowired DebtRepository debts;
 
@@ -112,19 +115,19 @@ class PercentageBenefitRegressionTests {
 
     private Fixture fixture(YearMonth period, String discount, LocalDate validFrom, LocalDate validUntil) {
         Fixture fixture = fixtureWithoutBenefit(period);
-        ApiDtos.EventEnvelope<ApiDtos.SocialBenefitEventData> event = new ApiDtos.EventEnvelope<>(
-            UUID.randomUUID(), "socialBenefitUpdated", OffsetDateTime.now(), "M8",
-            new ApiDtos.SocialBenefitEventData("BEN-" + UUID.randomUUID(), fixture.taxpayer.externalId,
-                "SOCIAL", SocialBenefitStatus.ACTIVE, new BigDecimal(discount), validFrom, validUntil,
-                List.of(fixture.concept.code)));
-        benefitIntegration.consume(event);
+        UUID programId=UUID.randomUUID();
+        ConfirmedIntegrationTestFixtures.approveRule(socialRules,programId,fixture.concept.code,
+            new BigDecimal(discount),validFrom,validUntil);
+        ConfirmedIntegrationTestFixtures.approvedBenefit(benefitIntegration,fixture.taxpayer.canonicalCitizenId,
+            programId,validFrom,validUntil);
         return fixture;
     }
 
     private Fixture fixtureWithoutBenefit(YearMonth period) {
         String suffix = UUID.randomUUID().toString().replace("-", "");
-        TaxpayerReference taxpayer = catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(
-            TaxpayerType.CITIZEN, "SCRUM670-" + suffix, "12345678", null, "Contribuyente SCRUM-670"));
+        String dni=suffix.substring(0,8);
+        TaxpayerReference taxpayer = ConfirmedIntegrationTestFixtures.registerCitizen(m1,json,UUID.randomUUID(),
+            dni,"20"+dni+"9","Contribuyente","SCRUM-670");
         TaxConcept concept = catalog.createConcept(new ApiDtos.CreateTaxConceptRequest(
             "SCRUM670_" + suffix, "Concepto SCRUM-670", null, TaxConceptType.FEE, "M5"));
         TaxConfiguration configuration = catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(

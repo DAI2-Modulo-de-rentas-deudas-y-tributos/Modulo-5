@@ -115,7 +115,7 @@
                         <param>ar.gob.municipalidad.rentas.DomainCoverageGate</param>
                         <param>ar.gob.municipalidad.rentas.PdfDownloadTests</param>
                     </excludedTestClasses>
-                    <outputFormats><param>HTML</param><param>XML</param></outputFormats>
+                    <outputFormats><param>HTML</param><param>XML</param><param>CSV</param></outputFormats>
                     <mutationThreshold>60</mutationThreshold>
                     <threads>1</threads>
                     <timeoutConstant>60000</timeoutConstant>

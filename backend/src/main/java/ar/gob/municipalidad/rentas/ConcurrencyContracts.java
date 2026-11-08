@@ -1,6 +1,7 @@
 package ar.gob.municipalidad.rentas;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -28,8 +29,74 @@ final class EntityTags {
         return quoted("tax-configuration-" + configuration.id + "-" + configuration.lockVersion);
     }
 
+    static String taxpayer(ApiDtos.TaxpayerResponse taxpayer) {
+        return hashed("taxpayer", taxpayer.id(), taxpayer);
+    }
+
+    static String payment(ApiDtos.PaymentResponse payment) {
+        return hashed("payment", payment.id(), payment);
+    }
+
     static String paymentPlanConfiguration(PaymentPlanConfiguration configuration) {
         return quoted("payment-plan-configuration-" + configuration.id + "-" + configuration.version);
+    }
+
+    static String liquidationRun(ApiDtos.LiquidationRunDetailResponse detail) {
+        try {
+            byte[] digest=MessageDigest.getInstance("SHA-256").digest(detail.toString().getBytes(StandardCharsets.UTF_8));
+            return quoted("liquidation-run-" + detail.run().id() + "-" + HexFormat.of().formatHex(digest));
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("SHA-256 no disponible", ex);
+        }
+    }
+
+    static String paymentPlanRequest(ApiDtos.PaymentPlanRequestResponse request) {
+        return hashed("payment-plan-request", request.id(), request);
+    }
+
+    static String debt(ApiDtos.DebtResponse debt) {
+        return hashed("debt", debt.id(), debt);
+    }
+
+    static String creditBalance(ApiDtos.CreditBalanceResponse creditBalance) {
+        return hashed("credit-balance", creditBalance.id(), creditBalance);
+    }
+
+    static String liquidation(ApiDtos.LiquidationDetailResponse liquidation) {
+        return hashed("liquidation", liquidation.id(), liquidation);
+    }
+
+    static String paymentPlan(ApiDtos.PaymentPlanResponse plan) {
+        return hashed("payment-plan", plan.id(), plan);
+    }
+
+    static String exemptionRequest(ApiDtos.ExemptionRequestResponse request) {
+        return hashed("exemption-request", request.id(), request);
+    }
+
+    static String adjustment(ApiDtos.AdjustmentResponse adjustment) {
+        return hashed("adjustment", adjustment.id(), adjustment);
+    }
+
+    static String paymentReversal(ApiDtos.PaymentReversalResponse reversal) {
+        return hashed("payment-reversal", reversal.id(), reversal);
+    }
+
+    static String refinancingRequest(ApiDtos.RefinancingRequestResponse request) {
+        return hashed("refinancing-request", request.id(), request);
+    }
+
+    static String ticket(ApiDtos.TicketResponse ticket) {
+        return hashed("ticket", ticket.id(), ticket);
+    }
+
+    private static String hashed(String resource, Long id, Object value) {
+        try {
+            byte[] digest=MessageDigest.getInstance("SHA-256").digest(value.toString().getBytes(StandardCharsets.UTF_8));
+            return quoted(resource + "-" + id + "-" + HexFormat.of().formatHex(digest));
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("SHA-256 no disponible", ex);
+        }
     }
 
     static void requireIfMatch(String current, String provided) {
@@ -111,7 +178,9 @@ class IdempotencyService implements IdempotencyExecutor {
     }
 
     private <T> T deserialize(String value, Class<T> responseType) {
-        try { return json.readValue(value, responseType); }
+        try { return json.readerFor(responseType)
+            .without(DeserializationFeature.ADJUST_DATES_TO_CONTEXT_TIME_ZONE)
+            .readValue(value); }
         catch (JsonProcessingException ex) { throw new IllegalStateException("No se pudo recuperar el resultado idempotente", ex); }
     }
 

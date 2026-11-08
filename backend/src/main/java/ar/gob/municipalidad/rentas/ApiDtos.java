@@ -51,6 +51,7 @@ public final class ApiDtos {
     public record LiquidationRunResponse(Long id,Long taxConceptId,String period,LocalDate dueDate,Long configurationId,Integer configurationVersion,LiquidationRunStatus status,int totalItems,int validItems,int errorItems,BigDecimal estimatedTotalAmount,String createdBy,OffsetDateTime createdAt,OffsetDateTime submittedAt,String resolvedBy,OffsetDateTime resolvedAt) {}
     public record LiquidationRunItemResponse(Long id,Long liquidationRunId,Long taxpayerId,BigDecimal taxableBase,BigDecimal previewAmount,LiquidationRunItemStatus status,String errorCode,String errorMessage,Long liquidationId) {}
     public record LiquidationRunDetailResponse(LiquidationRunResponse run,List<LiquidationRunItemResponse> items) {}
+    public record IfMatchIdempotencyRequest(String ifMatch,Object request) {}
     public record ExemptionRequestResponse(Long id,Long taxpayerId,Long taxConceptId,String reason,BigDecimal requestedPercentage,LocalDate requestedFrom,LocalDate requestedUntil,ExemptionRequestStatus status,String requestedBy,OffsetDateTime requestedAt,String reviewedBy,OffsetDateTime reviewStartedAt,String resolutionSubmittedBy,OffsetDateTime resolutionSubmittedAt,String resolvedBy,OffsetDateTime resolvedAt,String resolutionReason) {}
     public record ExemptionRequestDocumentResponse(Long id,Long exemptionRequestId,String externalDocumentId,String documentType,String fileName,String uploadedBy,OffsetDateTime uploadedAt) {}
     public record ExemptionRequestHistoryEntry(String type,OffsetDateTime date,ExemptionRequestStatus status,String action,String message,ExemptionRequestDocumentResponse document) {}
@@ -77,9 +78,9 @@ public final class ApiDtos {
 
     public record CreateTaxpayerRequest(@NotNull TaxpayerType taxpayerType, @NotBlank String externalId,
         String dni, String cuit, @NotBlank String displayName) {}
-    public record CreateTaxConceptRequest(@NotBlank String code, @NotBlank String name, String description,
+    public record CreateTaxConceptRequest(@NotBlank String code, @NotBlank String name, @Size(max=255) String description,
         @NotNull TaxConceptType type, @NotBlank String originModule) {}
-    public record UpdateTaxConceptRequest(@NotBlank String name, String description, @NotNull Boolean active) {}
+    public record UpdateTaxConceptRequest(@NotBlank String name, @Size(max=255) String description, @NotNull Boolean active) {}
     public record CreateTaxConfigurationRequest(@NotNull @Positive Long taxConceptId, @NotNull CalculationType calculationType,
         @PositiveOrZero BigDecimal rate, @PositiveOrZero @CurrencyAmount BigDecimal fixedAmount,
         @PositiveOrZero @CurrencyAmount BigDecimal minimumAmount, @PositiveOrZero @CurrencyAmount BigDecimal maximumAmount,
@@ -156,12 +157,12 @@ public final class ApiDtos {
     public record RefinancingSimulationResponse(Long originalPlanId,BigDecimal outstandingPrincipal,BigDecimal interest,
         BigDecimal total,int installments,boolean exceptional) {}
     public record CreateRefinancingRequest(@Min(1) @Max(60) int installments) {}
-    public record CreateAdjustmentRequest(@NotNull @Positive Long debtId,@NotNull AdjustmentType type,@NotNull @DecimalMin("0.01") @CurrencyAmount BigDecimal amount,@NotBlank String reason) {}
+    public record CreateAdjustmentRequest(@NotNull @Positive Long debtId,@NotNull AdjustmentType type,@NotNull @DecimalMin("0.01") @CurrencyAmount BigDecimal amount,@NotBlank @Size(max=1000) String reason) {}
     public record LiquidationRunItemRequest(@NotNull @Positive Long taxpayerId,@NotNull @PositiveOrZero @CurrencyAmount BigDecimal taxableBase) {}
     public record CreateLiquidationRunRequest(@NotNull @Positive Long taxConceptId,@NotBlank @Pattern(regexp="\\d{4}-\\d{2}") String period,
         @NotNull LocalDate dueDate,@NotEmpty List<@NotNull @Valid LiquidationRunItemRequest> items) {}
     public record LiquidationRunDetail(LiquidationRun run,List<LiquidationRunItem> items) {}
-    public record CreateExemptionRequest(@NotNull @Positive Long taxpayerId, @NotNull @Positive Long taxConceptId, @NotBlank String reason,
+    public record CreateExemptionRequest(@NotNull @Positive Long taxpayerId, @NotNull @Positive Long taxConceptId, @NotBlank @Size(max=255) String reason,
         @NotNull @DecimalMin("0.01") @DecimalMax("100.00") BigDecimal percentage,
         @NotNull LocalDate validFrom, @NotNull LocalDate validUntil,
         List<@NotNull @Valid SubmitDocumentationRequest> documents) {
@@ -169,7 +170,7 @@ public final class ApiDtos {
             this(taxpayerId,taxConceptId,reason,percentage,validFrom,validUntil,null);
         }
     }
-    public record RequestDocumentationRequest(@NotBlank String message) {}
+    public record RequestDocumentationRequest(@NotBlank @Size(max=1000) String message) {}
     public record SubmitDocumentationRequest(@NotBlank String externalDocumentId,@NotBlank String documentType,String fileName) {}
     public record SubmitExemptionResolutionRequest(String observation) {}
     public record ApproveExemptionRequest(@DecimalMin("0.01") @DecimalMax("100.00") BigDecimal percentage,LocalDate validFrom,LocalDate validUntil,String observation) {}

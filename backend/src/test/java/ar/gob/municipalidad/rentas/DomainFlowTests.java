@@ -17,7 +17,7 @@ import static org.assertj.core.api.Assertions.*;
 class DomainFlowTests {
     @Autowired CatalogService catalog; @Autowired LiquidationService liquidationService; @Autowired PaymentService paymentService;
     @Autowired ReversalService reversalService; @Autowired PaymentPlanService planService; @Autowired ExemptionService exemptionService;
-    @Autowired ExternalObligationService externalService; @Autowired DebtRepository debts; @Autowired PaymentAllocationRepository allocations;
+    @Autowired ConfirmedM7Consumer m7; @Autowired DebtRepository debts; @Autowired PaymentAllocationRepository allocations;
     @Autowired CreditBalanceRepository credits; @Autowired PaymentRepository payments; @Autowired ProcessedEventRepository processed; @Autowired ExternalObligationRepository obligations; @Autowired LiquidationComponentRepository components;
     @Autowired TaxConceptRepository concepts;
 
@@ -74,14 +74,14 @@ class DomainFlowTests {
         assertThat(payments.findById(payment.id).orElseThrow().status).isEqualTo(PaymentStatus.REVERSED);
     }
 
-    @Test void duplicateEventAndBusinessDuplicateCreateSingleDebt() {
-        TaxpayerReference taxpayer=taxpayer("EXT-7"); concepts.findByCode("TRAFFIC_INFRACTION").orElseGet(()->concept("TRAFFIC_INFRACTION",TaxConceptType.FINE,"M7"));
-        UUID id=UUID.randomUUID(); var data=new ApiDtos.InfractionData("INF-2026-1",TaxpayerType.CITIZEN,"EXT-7",new BigDecimal("75"),LocalDate.now().plusDays(10));
-        var first=new ApiDtos.EventEnvelope<>(id,"infractionConfirmed",OffsetDateTime.now(),"M7",data);
-        ExternalObligation one=externalService.consumeInfraction(first); ExternalObligation same=externalService.consumeInfraction(first);
-        var businessDuplicate=new ApiDtos.EventEnvelope<>(UUID.randomUUID(),"infractionConfirmed",OffsetDateTime.now(),"M7",data);
-        ExternalObligation alsoSame=externalService.consumeInfraction(businessDuplicate);
-        assertThat(one.id).isEqualTo(same.id).isEqualTo(alsoSame.id); assertThat(debts.findByTaxpayerId(taxpayer.id)).hasSize(1); assertThat(processed.count()).isEqualTo(2);
+    @Test void confirmedM7DuplicateEventAndInfractionCreateSingleDebt() {
+        TaxpayerReference taxpayer=taxpayer("EXT-7");taxpayer.dni="40100007";concepts.findByCode("TRAFFIC_INFRACTION").orElseGet(()->concept("TRAFFIC_INFRACTION",TaxConceptType.FINE,"M7"));
+        UUID id=UUID.randomUUID(),infractionId=UUID.randomUUID();var data=new ConfirmedInboundEvents.M7InfractionData(infractionId,"40100007",ConfirmedInboundEvents.M7DebtorIdType.DNI,"AB123CD","ILLEGAL_PARKING",OffsetDateTime.now(),new BigDecimal("50.00"),List.of(),new BigDecimal("75.00"),"INSPECTOR-TEST",new ConfirmedInboundEvents.M7Location("Calle Test","Esquina Test",new BigDecimal("-34.60"),new BigDecimal("-58.40")));
+        var first=new ConfirmedInboundEvents.M7InfractionConfirmedEvent(id,"infractionConfirmed","1.0",OffsetDateTime.now(),"transito",UUID.randomUUID(),null,data);
+        ExternalObligation one=m7.consume(first);ExternalObligation same=m7.consume(first);
+        var businessDuplicate=new ConfirmedInboundEvents.M7InfractionConfirmedEvent(UUID.randomUUID(),first.eventType(),first.eventVersion(),OffsetDateTime.now(),first.sourceModule(),first.correlationId(),null,data);
+        ExternalObligation alsoSame=m7.consume(businessDuplicate);
+        assertThat(one.id).isEqualTo(same.id).isEqualTo(alsoSame.id);assertThat(debts.findByTaxpayerId(taxpayer.id)).hasSize(1);assertThat(processed.count()).isEqualTo(2);
     }
 
     @Test void debtCannotBelongToTwoActivePlans() {

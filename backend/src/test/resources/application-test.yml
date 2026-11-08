@@ -5,6 +5,7 @@ spring:
     password:
   jpa.hibernate.ddl-auto: create-drop
   flyway.enabled: false
+  sql.init.schema-locations: classpath:idempotency-test-schema.sql
 rentas:
   security.dev-mode: true
   security.demo-bootstrap-password: test-bootstrap-secret

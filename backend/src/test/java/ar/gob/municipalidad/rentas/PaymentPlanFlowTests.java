@@ -2,12 +2,15 @@ package ar.gob.municipalidad.rentas;
 
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.test.web.servlet.MockMvc;
 import jakarta.persistence.EntityManager;
 import com.fasterxml.jackson.databind.JsonNode;
 
@@ -17,9 +20,14 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.*;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @ActiveProfiles("test")
 @SpringBootTest
+@AutoConfigureMockMvc
 @Transactional
 class PaymentPlanFlowTests {
     @Autowired CatalogService catalog;
@@ -38,6 +46,7 @@ class PaymentPlanFlowTests {
     @Autowired ConfirmedIntegrationOutbox integrationOutbox;
     @Autowired DeferredPaymentPlanReconciliation deferredPlanReconciliation;
     @Autowired EntityManager entityManager;
+    @Autowired MockMvc mvc;
 
     @BeforeEach void authenticate() {
         var authorities=List.of("RENTAS","SUPERVISOR","CASHIER").stream().map(x->new SimpleGrantedAuthority("ROLE_"+x)).toList();
@@ -120,6 +129,74 @@ class PaymentPlanFlowTests {
             .isInstanceOfSatisfying(BusinessException.class,exception->assertThat(exception.code).isEqualTo("FORBIDDEN_OWNERSHIP"));
     }
 
+    @Test void taxpayerCanReadOnlyTheirOwnPlanRequestOverHttp() throws Exception {
+        Debt debt=debt("PLAN-REQUEST-HTTP-OWNER","PLAN-REQUEST-HTTP-CONCEPT");
+        Authentication owner=new UsernamePasswordAuthenticationToken(
+            new AuthenticatedIdentity("request-owner",debt.taxpayerId),null,
+            List.of(new SimpleGrantedAuthority("ROLE_TAXPAYER")));
+        SecurityContextHolder.getContext().setAuthentication(owner);
+        PaymentPlanRequest request=workflow.request(
+            new ApiDtos.CreatePaymentPlanRequest(debt.taxpayerId,List.of(debt.id),2));
+        TaxpayerReference foreign=catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(
+            TaxpayerType.CITIZEN,"PLAN-REQUEST-HTTP-FOREIGN","98765433",null,"Contribuyente ajeno"));
+        Authentication stranger=new UsernamePasswordAuthenticationToken(
+            new AuthenticatedIdentity("request-stranger",foreign.id),null,
+            List.of(new SimpleGrantedAuthority("ROLE_TAXPAYER")));
+
+        mvc.perform(get("/api/v1/payment-plan-requests/{id}",request.id).with(authentication(owner)))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.id").value(request.id))
+            .andExpect(jsonPath("$.taxpayerId").value(debt.taxpayerId));
+        mvc.perform(get("/api/v1/payment-plan-requests/{id}",request.id).with(authentication(stranger)))
+            .andExpect(status().isForbidden())
+            .andExpect(jsonPath("$.code").value("FORBIDDEN_OWNERSHIP"))
+            .andExpect(jsonPath("$.taxpayerId").doesNotExist())
+            .andExpect(jsonPath("$.totalDebtAtRequest").doesNotExist());
+    }
+
+    @Test void taxpayerCanReadOnlyTheirOwnPlanAndInstallmentsOverHttp() throws Exception {
+        Debt debt=debt("PLAN-HTTP-OWNER","PLAN-HTTP-CONCEPT");
+        PaymentPlan plan=grant(debt,2);
+        Installment installment=installments.findByPaymentPlanIdOrderByNumber(plan.id).get(0);
+        TaxpayerReference foreign=catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(
+            TaxpayerType.CITIZEN,"PLAN-HTTP-FOREIGN","98765431",null,"Contribuyente ajeno"));
+        Authentication owner=new UsernamePasswordAuthenticationToken(
+            new AuthenticatedIdentity("plan-owner",debt.taxpayerId),null,
+            List.of(new SimpleGrantedAuthority("ROLE_TAXPAYER")));
+        Authentication stranger=new UsernamePasswordAuthenticationToken(
+            new AuthenticatedIdentity("plan-stranger",foreign.id),null,
+            List.of(new SimpleGrantedAuthority("ROLE_TAXPAYER")));
+
+        mvc.perform(get("/api/v1/payment-plans/{id}",plan.id).with(authentication(owner)))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.id").value(plan.id))
+            .andExpect(jsonPath("$.taxpayerId").value(debt.taxpayerId));
+        mvc.perform(get("/api/v1/payment-plans/{id}",plan.id).with(authentication(stranger)))
+            .andExpect(status().isForbidden())
+            .andExpect(jsonPath("$.code").value("FORBIDDEN_OWNERSHIP"))
+            .andExpect(jsonPath("$.taxpayerId").doesNotExist())
+            .andExpect(jsonPath("$.totalPlanAmount").doesNotExist());
+
+        mvc.perform(get("/api/v1/payment-plans/{id}/installments",plan.id).with(authentication(owner)))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$[0].paymentPlanId").value(plan.id));
+        mvc.perform(get("/api/v1/payment-plans/{id}/installments",plan.id).with(authentication(stranger)))
+            .andExpect(status().isForbidden())
+            .andExpect(jsonPath("$.code").value("FORBIDDEN_OWNERSHIP"))
+            .andExpect(jsonPath("$.paymentPlanId").doesNotExist());
+
+        mvc.perform(get("/api/v1/payment-plans/{planId}/installments/{installmentId}",plan.id,installment.id)
+                .with(authentication(owner)))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.id").value(installment.id))
+            .andExpect(jsonPath("$.paymentPlanId").value(plan.id));
+        mvc.perform(get("/api/v1/payment-plans/{planId}/installments/{installmentId}",plan.id,installment.id)
+                .with(authentication(stranger)))
+            .andExpect(status().isForbidden())
+            .andExpect(jsonPath("$.code").value("FORBIDDEN_OWNERSHIP"))
+            .andExpect(jsonPath("$.paymentPlanId").doesNotExist());
+    }
+
     @Test void installmentPaymentReducesOnlyItsPrincipalAndBlocksDirectDebtPayment() {
         Debt debt=debt("PLAN-FLOW-2","PLAN-FLOW-CONCEPT-2"); PaymentPlan plan=grant(debt,2);
         assertThatThrownBy(()->payments.register(new ApiDtos.RegisterPaymentRequest(debt.taxpayerId,PaymentMethod.CASH,new BigDecimal("10"),List.of(new ApiDtos.AllocationRequest(debt.id,new BigDecimal("10"))))))
@@ -171,6 +248,10 @@ class PaymentPlanFlowTests {
         TestActorSupport.asApprover(() -> workflow.grantRefinancing(request.id));
 
         assertThat(plans.findById(old.id).orElseThrow().status).isEqualTo(PaymentPlanStatus.REFINANCED);
+        assertThat(installments.findByPaymentPlanIdOrderByNumber(old.id))
+            .allMatch(installment -> installment.status == InstallmentStatus.CANCELLED);
+        assertThat(planDebts.findByPaymentPlanId(old.id))
+            .allMatch(link -> link.status == PaymentPlanDebtStatus.RELEASED);
         assertThat(request.status).isEqualTo(RefinancingRequestStatus.GRANTED);
         assertThat(plans.findById(request.newPaymentPlanId).orElseThrow().refinancingCount).isEqualTo(1);
         OutboxEvent event=outbox.findAll().stream().filter(item->item.eventType.equals("paymentPlanRefinanced")&&item.aggregateId.equals(request.newPaymentPlanId.toString())).findFirst().orElseThrow();var payload=json.readTree(event.payload);assertThat(event.targetModule).isEqualTo("PLATFORM");assertThat(payload.path("oldPaymentPlanId").longValue()).isEqualTo(old.id);assertThat(payload.path("newPaymentPlanId").longValue()).isEqualTo(request.newPaymentPlanId);

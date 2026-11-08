@@ -87,9 +87,14 @@ class SegregationOfDutiesTests {
     }
 
     @Test void liquidationRunSubmitterCannotApproveAndOtherSupervisorCan(){
-        Scenario scenario=scenario("SOD-RUN");
+        String suffix="SOD-RUN-"+UUID.randomUUID();
+        authenticate("fixture-"+suffix,"RENTAS");
+        TaxpayerReference taxpayer=catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(TaxpayerType.CITIZEN,suffix,"123",null,"Persona "+suffix));
+        TaxConcept concept=concept(suffix);
+        TaxConfiguration configuration=catalog.createConfiguration(configurationRequest(concept.id));catalog.submit(configuration.id);
+        authenticate("fixture-supervisor-"+suffix,"SUPERVISOR");catalog.approve(configuration.id);
         authenticate("run-maker","RENTAS");
-        LiquidationRun run=runs.create(new ApiDtos.CreateLiquidationRunRequest(scenario.concept.id,YearMonth.now().toString(),LocalDate.now().plusDays(20),List.of(new ApiDtos.LiquidationRunItemRequest(scenario.taxpayer.id,BigDecimal.ZERO))));
+        LiquidationRun run=runs.create(new ApiDtos.CreateLiquidationRunRequest(concept.id,YearMonth.now().toString(),LocalDate.now().plusDays(20),List.of(new ApiDtos.LiquidationRunItemRequest(taxpayer.id,BigDecimal.ZERO))));
         runs.preview(run.id);
         authenticate("run-submitter","RENTAS");
         runs.submit(run.id);

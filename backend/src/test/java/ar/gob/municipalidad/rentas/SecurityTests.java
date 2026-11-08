@@ -7,6 +7,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
@@ -15,6 +16,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -26,12 +28,14 @@ class SecurityTests {
     @Autowired MockMvc mvc; @Autowired TaxpayerRepository taxpayers; @Autowired BillRepository bills;
     @Autowired ObjectMapper json; @Autowired DemoUserRepository users; @Autowired PasswordEncoder encoder;
     @Autowired DemoAuthService demoAuth; @Autowired DemoAuthSessionRepository sessions; @Autowired AuditRepository audit;
+    @Autowired JdbcTemplate jdbc;
     @Autowired PaymentRepository payments; @Autowired PaymentAllocationRepository allocations;
     @Autowired OutboxRepository outbox;
     @Autowired TicketCaseRepository ticketCases; @Autowired TicketCaseUpdateRepository ticketUpdates;
     private DemoAuthSessions demo;
 
     @BeforeEach void sessions() {
+        jdbc.execute("CREATE TABLE IF NOT EXISTS idempotency_request (actor_id VARCHAR(255) NOT NULL, operation VARCHAR(160) NOT NULL, idempotency_key VARCHAR(128) NOT NULL, request_fingerprint VARCHAR(64) NOT NULL, response_body TEXT, created_at TIMESTAMP WITH TIME ZONE NOT NULL, PRIMARY KEY (actor_id, operation, idempotency_key))");
         demo=new DemoAuthSessions(users,taxpayers,encoder,demoAuth);
     }
 
@@ -73,6 +77,69 @@ class SecurityTests {
             assertThat(entry.userRole).contains("AUDITOR");
             assertThat(entry.newData).contains("/api/v1/tax-concepts").doesNotContain("X-Demo-Session");
         });
+    }
+
+    @Test void securityEventsAreFilteredRedactedPaginatedAndLimitedToAuditorAndSupervisor() throws Exception {
+        String actor="security-query-"+java.util.UUID.randomUUID();
+        String secret="SENSITIVE-SECRET-"+java.util.UUID.randomUUID();
+        String personalData="SENSITIVE-PII-"+java.util.UUID.randomUUID();
+        OffsetDateTime firstAt=OffsetDateTime.now().minusMinutes(2),secondAt=firstAt.plusMinutes(1);
+        AuditEntry first=securityAudit(actor,firstAt,secret,personalData);audit.saveAndFlush(first);
+        AuditEntry second=securityAudit(actor,secondAt,"SECOND-SECRET","SECOND-PII");audit.saveAndFlush(second);
+        AuditEntry unrelated=new AuditEntry();unrelated.entityType="Payment";unrelated.entityId="1";
+        unrelated.action=first.action;unrelated.userId=actor;unrelated.userRole=first.userRole;unrelated.occurredAt=firstAt;
+        unrelated.newData="{\"paymentReference\":\"unrelated\"}";audit.saveAndFlush(unrelated);
+
+        for(DemoRole role:java.util.List.of(DemoRole.AUDITOR,DemoRole.SUPERVISOR)) {
+            String session=demo.token(role);
+            var firstPage=mvc.perform(get("/api/v1/audit").header("X-Demo-Session",session)
+                    .param("entityType","SecurityEvent").param("action",first.action).param("userId",actor)
+                    .param("page","0").param("size","1").param("sort","occurredAt,asc"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].id").value(first.id))
+                .andExpect(jsonPath("$.content[0].entityType").value("SecurityEvent"))
+                .andExpect(jsonPath("$.content[0].action").value("DEMO_LOGIN_FAILED"))
+                .andExpect(jsonPath("$.content[0].userId").value(actor))
+                .andExpect(jsonPath("$.content[0].previousData").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.content[0].newData").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.page.number").value(0)).andExpect(jsonPath("$.page.size").value(1))
+                .andExpect(jsonPath("$.page.totalElements").value(2)).andExpect(jsonPath("$.page.totalPages").value(2))
+                .andReturn();
+            String firstJson=firstPage.getResponse().getContentAsString();
+            assertThat(firstJson).doesNotContain(secret,personalData,"SECOND-SECRET","SECOND-PII");
+
+            var secondPage=mvc.perform(get("/api/v1/audit").header("X-Demo-Session",session)
+                    .param("entityType","SecurityEvent").param("action",first.action).param("userId",actor)
+                    .param("page","1").param("size","1").param("sort","occurredAt,asc"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].id").value(second.id)).andExpect(jsonPath("$.page.number").value(1))
+                .andExpect(jsonPath("$.page.totalElements").value(2)).andReturn();
+            assertThat(secondPage.getResponse().getContentAsString()).doesNotContain("SECOND-SECRET","SECOND-PII");
+
+            mvc.perform(get("/api/v1/audit/{id}",first.id).header("X-Demo-Session",session))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.previousData").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.newData").value(org.hamcrest.Matchers.nullValue()));
+            mvc.perform(get("/api/v1/audit/entities/SecurityEvent/{id}",first.entityId).header("X-Demo-Session",session))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].previousData").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$[0].newData").value(org.hamcrest.Matchers.nullValue()));
+        }
+        for(DemoRole role:java.util.List.of(DemoRole.RENTAS,DemoRole.CASHIER,DemoRole.TAXPAYER))
+            mvc.perform(get("/api/v1/audit").header("X-Demo-Session",demo.token(role)))
+                .andExpect(status().isForbidden());
+
+        mvc.perform(get("/api/v1/audit").header("X-Demo-Session",demo.token(DemoRole.AUDITOR))
+                .param("entityType","Payment").param("action",first.action).param("userId",actor))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.content.length()").value(1))
+            .andExpect(jsonPath("$.content[0].entityType").value("Payment"))
+            .andExpect(jsonPath("$.content[0].newData").value(unrelated.newData));
+    }
+
+    private AuditEntry securityAudit(String actor,OffsetDateTime occurredAt,String secret,String personalData) {
+        AuditEntry event=new AuditEntry();event.entityType="SecurityEvent";event.entityId=java.util.UUID.randomUUID().toString();
+        event.action="DEMO_LOGIN_FAILED";event.userId=actor;event.userRole="ANONYMOUS";event.occurredAt=occurredAt;
+        event.previousData="{\"password\":\""+secret+"\"}";
+        event.newData="{\"nationalId\":\""+personalData+"\",\"token\":\""+secret+"\"}";
+        return event;
     }
 
     @Test void auditorCanReadTicketsButCannotChangeThem() throws Exception {
@@ -170,25 +237,25 @@ class SecurityTests {
     @Test void demoLoginAndLogoutArePersistentlyAuditedWithoutCredentialMaterial() throws Exception {
         DemoUser user=persist(DemoRole.RENTAS,null,true);
         String body="{\"username\":\""+user.username+"\",\"password\":\""+DemoAuthSessions.PASSWORD+"\"}";
-        JsonNode login=json.readTree(mvc.perform(post("/api/v1/dev-auth/login").contentType(MediaType.APPLICATION_JSON).content(body))
+        JsonNode login=json.readTree(mvc.perform(post("/api/v1/dev-auth/login").with(request->{request.setRemoteAddr("198.51.100.31");return request;}).contentType(MediaType.APPLICATION_JSON).content(body))
             .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
         String token=login.path("token").asText();
         AuditEntry success=audit.findAll().stream().filter(entry->entry.action.equals("DEMO_LOGIN_SUCCEEDED")&&entry.userId.equals(user.integrationActorId.toString())).findFirst().orElseThrow();
         assertThat(success.userRole).isEqualTo("RENTAS");
-        assertThat(success.newData).contains("SUCCESS").doesNotContain(token,DemoAuthSessions.PASSWORD);
+        assertThat(success.newData).contains("SUCCESS","198.51.100.31").doesNotContain(token,DemoAuthSessions.PASSWORD);
 
         String wrongPassword="wrong-password-not-for-audit";
-        mvc.perform(post("/api/v1/dev-auth/login").contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(post("/api/v1/dev-auth/login").with(request->{request.setRemoteAddr("198.51.100.32");return request;}).contentType(MediaType.APPLICATION_JSON)
             .content("{\"username\":\""+user.username+"\",\"password\":\""+wrongPassword+"\"}"))
             .andExpect(status().isUnauthorized());
-        AuditEntry failure=audit.findAll().stream().filter(entry->entry.action.equals("DEMO_LOGIN_FAILED")).findFirst().orElseThrow();
-        assertThat(failure.userId).isEqualTo("anonymous");
-        assertThat(failure.userRole).isEqualTo("ANONYMOUS");
-        assertThat(failure.newData).contains("INVALID_CREDENTIALS").doesNotContain(user.username,wrongPassword,DemoAuthSessions.PASSWORD,token);
+        AuditEntry failure=audit.findAll().stream().filter(entry->entry.action.equals("DEMO_LOGIN_FAILED")&&entry.newData.contains("198.51.100.32")).findFirst().orElseThrow();
+        assertThat(failure.userId).isEqualTo(user.integrationActorId.toString());
+        assertThat(failure.userRole).isEqualTo("RENTAS");
+        assertThat(failure.newData).contains("INVALID_CREDENTIALS","198.51.100.32").doesNotContain(user.username,wrongPassword,DemoAuthSessions.PASSWORD,token);
 
-        mvc.perform(post("/api/v1/dev-auth/logout").header("X-Demo-Session",token)).andExpect(status().isNoContent());
+        mvc.perform(post("/api/v1/dev-auth/logout").with(request->{request.setRemoteAddr("198.51.100.33");return request;}).header("X-Demo-Session",token)).andExpect(status().isNoContent());
         AuditEntry logout=audit.findAll().stream().filter(entry->entry.action.equals("DEMO_LOGOUT_SUCCEEDED")&&entry.userId.equals(user.integrationActorId.toString())).findFirst().orElseThrow();
-        assertThat(logout.newData).contains("SUCCESS").doesNotContain(token,DemoAuthSessions.PASSWORD);
+        assertThat(logout.newData).contains("SUCCESS","198.51.100.33").doesNotContain(token,DemoAuthSessions.PASSWORD);
     }
 
     @Test void ownership403IsPersistedWithoutQueryStringOrSensitiveValues() throws Exception {
@@ -196,12 +263,35 @@ class SecurityTests {
         TaxpayerReference other=taxpayer("SEC-AUDIT-OTHER");
         String session=demo.token(DemoRole.TAXPAYER,owner.id);
         String traceId="audit-denied-owner-"+java.util.UUID.randomUUID();
-        mvc.perform(get("/api/v1/taxpayers/{id}/summary?probe=secret-value",other.id).header("X-Demo-Session",session).header("X-Correlation-Id",traceId))
+        mvc.perform(get("/api/v1/taxpayers/{id}/summary?probe=secret-value",other.id).with(request->{request.setRemoteAddr("198.51.100.44");return request;}).header("X-Demo-Session",session).header("X-Correlation-Id",traceId))
             .andExpect(status().isForbidden());
         AuditEntry denied=audit.findAll().stream().filter(entry->entry.action.equals("ACCESS_DENIED")&&traceId.equals(entry.correlationId)).findFirst().orElseThrow();
         assertThat(denied.userId).isNotEqualTo("anonymous");
         assertThat(denied.userRole).contains("TAXPAYER");
-        assertThat(denied.newData).contains("FORBIDDEN_OWNERSHIP","/api/v1/taxpayers").doesNotContain(other.id.toString(),"probe","secret-value",session);
+        assertThat(denied.newData).contains("FORBIDDEN_OWNERSHIP","/api/v1/taxpayers","198.51.100.44","GET /api/v1/taxpayers")
+            .doesNotContain("/"+other.id+"/","probe","secret-value",session);
+    }
+
+    @Test void securityEventsCannotBeUpdatedThroughJpa() throws Exception {
+        DemoUser user=persist(DemoRole.RENTAS,null,true);
+        mvc.perform(post("/api/v1/dev-auth/login").contentType(MediaType.APPLICATION_JSON)
+            .content("{\"username\":\""+user.username+"\",\"password\":\""+DemoAuthSessions.PASSWORD+"\"}"))
+            .andExpect(status().isOk());
+        AuditEntry event=audit.findAll().stream().filter(entry->"SecurityEvent".equals(entry.entityType)
+            &&"DEMO_LOGIN_SUCCEEDED".equals(entry.action)&&user.integrationActorId.toString().equals(entry.userId)).findFirst().orElseThrow();
+        event.entityType="Audit";
+        event.action="TAMPERED";
+        assertThatThrownBy(()->audit.flush()).hasStackTraceContaining("SecurityEvent entries are append-only");
+    }
+
+    @Test void securityEventsCannotBeDeletedThroughJpa() throws Exception {
+        DemoUser user=persist(DemoRole.RENTAS,null,true);
+        mvc.perform(post("/api/v1/dev-auth/login").contentType(MediaType.APPLICATION_JSON)
+            .content("{\"username\":\""+user.username+"\",\"password\":\""+DemoAuthSessions.PASSWORD+"\"}"))
+            .andExpect(status().isOk());
+        AuditEntry event=audit.findAll().stream().filter(entry->"SecurityEvent".equals(entry.entityType)
+            &&"DEMO_LOGIN_SUCCEEDED".equals(entry.action)&&user.integrationActorId.toString().equals(entry.userId)).findFirst().orElseThrow();
+        assertThatThrownBy(()->{audit.delete(event);audit.flush();}).hasStackTraceContaining("SecurityEvent entries are append-only");
     }
 
     @Test void apiSecurityHeadersAndSwaggerRemainUsable() throws Exception {
@@ -317,11 +407,12 @@ class SecurityTests {
         org.assertj.core.api.Assertions.assertThat(errorSchema.path("properties").has("message")).isTrue();
         org.assertj.core.api.Assertions.assertThat(errorSchema.path("properties").has("details")).isTrue();
         org.assertj.core.api.Assertions.assertThat(errorSchema.path("properties").has("traceId")).isTrue();
-        var paths=json.readTree(openApi).path("paths");int operations=0;for(var path=paths.fields();path.hasNext();)operations+=path.next().getValue().size();
+        var paths=json.readTree(openApi).path("paths");int operations=0;for(var path=paths.fields();path.hasNext();){var methods=path.next().getValue().fields();while(methods.hasNext()){String method=methods.next().getKey();if(java.util.Set.of("get","post","put","patch","delete","options","head","trace").contains(method))operations++;}}
         org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/tax-concepts").path("post").path("responses")
             .path("400").path("$ref").asText()).isEqualTo("#/components/responses/ApiError");
-        org.assertj.core.api.Assertions.assertThat(operations).isEqualTo(167);
-        org.assertj.core.api.Assertions.assertThat(paths.size()).isEqualTo(151);
+        org.assertj.core.api.Assertions.assertThat(operations).isEqualTo(169);
+        org.assertj.core.api.Assertions.assertThat(paths.size()).isEqualTo(153);
+        org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/administration/process-due-dates/{id}").has("get")).isTrue();
         org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/taxpayers/{id}/canonical-citizen-link").has("post")).isTrue();
         org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/tickets/{id}/return").has("post")).isTrue();
         org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/integrations/deferred/exemptions/{requestId}/reconcile").has("post")).isTrue();
@@ -341,6 +432,7 @@ class SecurityTests {
         org.assertj.core.api.Assertions.assertThat(paths.has("/api/v1/debts/{id}/history")).isTrue();
         org.assertj.core.api.Assertions.assertThat(paths.has("/api/v1/dev-auth/bootstrap")).isTrue();
         org.assertj.core.api.Assertions.assertThat(paths.has("/api/v1/dev-auth/logout")).isTrue();
+        org.assertj.core.api.Assertions.assertThat(paths.path("/api/v1/integrations/outbox/{id}/retry").has("post")).isTrue();
     }
 
     private TaxpayerReference taxpayer(String external) {

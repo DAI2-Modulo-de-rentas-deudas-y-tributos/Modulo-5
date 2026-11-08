@@ -7,7 +7,7 @@ import java.time.OffsetDateTime;
 import java.util.UUID;
 
 enum TaxpayerType { CITIZEN, ORGANIZATION }
-enum TaxpayerStatus { ACTIVE, BLOCKED, DECEASED, INACTIVE }
+enum TaxpayerStatus { ACTIVE, BLOCKED, DECEASED, INACTIVE, PENDIENTE, ACTIVA, INACTIVA, BLOQUEADA, RECHAZADA }
 enum TaxConceptType { FEE, FINE, CHARGE }
 enum CalculationType { PERCENTAGE, FIXED, EXTERNAL }
 enum TaxConfigurationStatus { DRAFT, PENDING_APPROVAL, ACTIVE, REJECTED, INACTIVE }
@@ -36,7 +36,7 @@ enum PlanExpirationStatus { PENDING_APPROVAL, APPROVED, REJECTED }
 enum RefinancingRequestStatus { PENDING, PENDING_EXCEPTION_APPROVAL, GRANTED, REJECTED }
 enum AdjustmentType { DISCOUNT, SURCHARGE, INTEREST, CORRECTION }
 enum AdjustmentStatus { PENDING_APPROVAL, APPROVED, REJECTED }
-enum LiquidationRunStatus { DRAFT, PENDING_APPROVAL, APPROVED, REJECTED, EXECUTED }
+enum LiquidationRunStatus { DRAFT, PENDING_APPROVAL, APPROVED, REJECTED, EXECUTED, FAILED }
 enum LiquidationRunItemStatus { PENDING, VALID, ERROR, LIQUIDATED }
 enum TicketPriority { LOW, MEDIUM, HIGH }
 enum TicketCaseStatus { OPEN, IN_REVIEW, DUPLICATE, IN_PROGRESS, WAITING_FOR_INFORMATION, COMPLETED, REJECTED, CANCELLED }
@@ -431,6 +431,13 @@ class AuditEntry {
     @Column(name="new_data",columnDefinition="text") public String newData;
     @Column(name="correlation_id") public String correlationId;
     @Column(name="occurred_at",nullable=false) public OffsetDateTime occurredAt;
+    @Transient private boolean persistedSecurityEvent;
+    @PostLoad @PostPersist
+    void markSecurityEvent() { persistedSecurityEvent="SecurityEvent".equals(entityType); }
+    @PreUpdate @PreRemove
+    void preventSecurityEventMutation() {
+        if(persistedSecurityEvent||"SecurityEvent".equals(entityType))throw new IllegalStateException("SecurityEvent entries are append-only");
+    }
     protected AuditEntry() {}
 }
 
@@ -534,7 +541,7 @@ class AdjustmentRequest {
     @Column(name="debt_id",nullable=false) public Long debtId;
     @Enumerated(EnumType.STRING) @Column(nullable=false) public AdjustmentType type;
     @Column(nullable=false,precision=19,scale=2) public BigDecimal amount;
-    @Column(nullable=false) public String reason;
+    @Column(nullable=false,length=1000) public String reason;
     @Enumerated(EnumType.STRING) @Column(nullable=false) public AdjustmentStatus status;
     @Column(name="requested_by",nullable=false) public String requestedBy;
     @Column(name="requested_at",nullable=false) public OffsetDateTime requestedAt;

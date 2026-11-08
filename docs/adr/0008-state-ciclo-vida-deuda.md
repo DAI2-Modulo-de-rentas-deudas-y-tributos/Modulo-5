@@ -1,7 +1,7 @@
 # ADR-0008: State para el ciclo de vida de la deuda
 
-- Estado: propuesto, pendiente de revisión arquitectónica.
-- Fecha: 2026-11-04.
+- Estado: decisión funcional adoptada por delegación del Product Owner.
+- Fecha: 2026-11-07.
 - Relacionado: SCRUM-624, SCRUM-808.
 
 ## Contexto
@@ -11,15 +11,15 @@ asignan el estado después de pagos, ajustes y reversiones. Las validaciones de
 transición están dispersas y algunas respuestas de conflicto históricamente
 usaron HTTP 422.
 
-## Decisión propuesta
+## Decisión
 
-Derivar un `DebtLifecycleState` sellado del enum persistido, sin cambiar el
-esquema. Los estados `PENDING`, `PARTIALLY_PAID`, `PAID` y `CANCELLED` delegan
-las operaciones `imputar`, `revertirImputacion`, `ajustar`, `anular` y
-`admiteCobro`. Una transición de estado no permitida usa HTTP 409 y conserva el
-código de negocio de la operación.
+Se adopta el patrón `DebtLifecycleState` sellado, derivado del enum persistido,
+sin cambiar el esquema. Los estados `PENDING`, `PARTIALLY_PAID`, `PAID` y
+`CANCELLED` delegan las operaciones `imputar`, `revertirImputacion`, `ajustar`,
+`anular` y `admiteCobro`. Una transición de estado no permitida usa HTTP 409 y
+conserva el código de negocio de la operación.
 
-Reglas propuestas para esta candidata:
+Reglas adoptadas:
 
 - PENDING y PARTIALLY_PAID admiten cobro si conservan saldo; ambos pueden
   ajustarse sujeto a las validaciones económicas existentes.
@@ -30,9 +30,14 @@ Reglas propuestas para esta candidata:
 - El estado continúa almacenándose como enum; `@PostLoad` lo reconstruye desde
   la columna actual. No requiere migración.
 
-Estas reglas se implementan como propuesta técnica de M5. Este ADR no afirma
-aprobación del Product Owner ni ratificación de Seguridad/QA. La regla de
-anulación requiere revisión antes de exponerse como una operación API.
+La implementación conserva los códigos y el enum de persistencia existentes;
+no agrega una ruta API para anular deudas. Si se incorpora una operación de
+anulación en el futuro, deberá mantener las reglas de este estado y definir su
+autorización y contrato HTTP antes de exponerse.
+
+La decisión funcional fue delegada por el Product Owner y adoptada por M5 el
+2026-11-07. No implica aprobación de Seguridad, QA ni de una revisión externa
+de arquitectura.
 
 ## Alternativas
 
@@ -50,4 +55,6 @@ anulación requiere revisión antes de exponerse como una operación API.
   servicios existentes.
 - Las transiciones inválidas de deuda se normalizan a 409; los errores
   semánticos de datos permanecen en 422.
-- El ADR queda pendiente de revisión antes de integrar el cambio en develop.
+- La implementación de State forma parte de la candidata de integración del PR
+  #134; todavía no está integrada en `develop`. Este ADR registra la decisión
+  funcional delegada y no cambia el código productivo.

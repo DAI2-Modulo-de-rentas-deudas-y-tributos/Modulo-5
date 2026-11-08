@@ -39,9 +39,11 @@ class ConfirmedM1Consumer {
         Optional<TaxpayerReference> existing=byCanonical.isPresent()?byCanonical:byExternalId;
         if(inbox.processed(normalized.eventId()))return existing.orElse(null);
         IntegrationEventLog log=inbox.receive(normalized,raw);
+        existing=existing.map(reference->taxpayers.findByIdForUpdate(reference.id).orElseThrow(()->CatalogService.notFound("Contribuyente")));
         TaxpayerReference taxpayer;
         switch(data.updateType()){
-            case "REGISTERED"->{var details=json.convertValue(data.details(),ConfirmedInboundEvents.M1CitizenRegisteredDetails.class);taxpayer=existing.orElseGet(TaxpayerReference::new);if(taxpayer.id==null){taxpayer.taxpayerType=TaxpayerType.CITIZEN;taxpayer.externalId=externalId;taxpayer.createdAt=OffsetDateTime.now();}requireCanonicalIdentity(taxpayer,canonicalId);taxpayer.dni=details.dni();taxpayer.cuit=details.cuil();taxpayer.displayName=(details.name()+" "+details.lastname()).trim();taxpayer.externalStatus=TaxpayerStatus.ACTIVE;taxpayer.updatedAt=OffsetDateTime.now();taxpayers.save(taxpayer);}
+            case "REGISTERED"->{var details=json.convertValue(data.details(),ConfirmedInboundEvents.M1CitizenRegisteredDetails.class);taxpayer=existing.orElseGet(TaxpayerReference::new);boolean created=taxpayer.id==null;if(created){taxpayer.taxpayerType=TaxpayerType.CITIZEN;taxpayer.externalId=externalId;taxpayer.createdAt=OffsetDateTime.now();taxpayer.externalStatus=TaxpayerStatus.ACTIVE;}requireCanonicalIdentity(taxpayer,canonicalId);taxpayer.dni=details.dni();taxpayer.cuit=details.cuil();taxpayer.displayName=(details.name()+" "+details.lastname()).trim();taxpayer.updatedAt=OffsetDateTime.now();taxpayers.save(taxpayer);}
+            case "UPDATED"->{taxpayer=existing.orElseThrow(()->new BusinessException("TAXPAYER_REFERENCE_NOT_FOUND","No existe la referencia local del ciudadano",422));var details=json.convertValue(data.details(),ConfirmedInboundEvents.M1CitizenUpdatedDetails.class);validator.validate(details);requireCanonicalIdentity(taxpayer,canonicalId);taxpayer.dni=details.dni();taxpayer.cuit=details.cuil();taxpayer.displayName=(details.name()+" "+details.lastname()).trim();updateCitizenStatus(taxpayer,details.state());taxpayer.updatedAt=OffsetDateTime.now();taxpayers.save(taxpayer);}
             case "BLOCKED"->{json.convertValue(data.details(),ConfirmedInboundEvents.M1CitizenBlockedDetails.class);taxpayer=existing.orElseThrow(()->new BusinessException("TAXPAYER_REFERENCE_NOT_FOUND","No existe la referencia local del ciudadano",422));requireCanonicalIdentity(taxpayer,canonicalId);taxpayer.externalStatus=TaxpayerStatus.BLOCKED;taxpayer.updatedAt=OffsetDateTime.now();}
             case "DECEASED"->{json.convertValue(data.details(),ConfirmedInboundEvents.M1CitizenDeceasedDetails.class);taxpayer=existing.orElseThrow(()->new BusinessException("TAXPAYER_REFERENCE_NOT_FOUND","No existe la referencia local del ciudadano",422));requireCanonicalIdentity(taxpayer,canonicalId);taxpayer.externalStatus=TaxpayerStatus.DECEASED;taxpayer.updatedAt=OffsetDateTime.now();}
             case "ADDRESS_UPDATED"->{taxpayer=existing.orElseThrow(()->new BusinessException("TAXPAYER_REFERENCE_NOT_FOUND","No existe la referencia local del ciudadano",422));requireCanonicalIdentity(taxpayer,canonicalId);}
@@ -54,6 +56,16 @@ class ConfirmedM1Consumer {
         CatalogService.require(taxpayer.canonicalCitizenId==null||taxpayer.canonicalCitizenId.equals(canonicalId),
             "CANONICAL_CITIZEN_LINK_CONFLICT","La referencia ya tiene otro UUID canónico");
         taxpayer.canonicalCitizenId=canonicalId;
+    }
+
+    private void updateCitizenStatus(TaxpayerReference taxpayer,String state){
+        switch(state){
+            case "ACTIVO"->{if(taxpayer.externalStatus==TaxpayerStatus.ACTIVE)taxpayer.externalStatus=TaxpayerStatus.ACTIVE;}
+            case "INACTIVO"->taxpayer.externalStatus=TaxpayerStatus.INACTIVE;
+            case "BLOQUEADO"->taxpayer.externalStatus=TaxpayerStatus.BLOCKED;
+            case "FALLECIDO"->taxpayer.externalStatus=TaxpayerStatus.DECEASED;
+            default->throw new BusinessException("INVALID_EVENT","Estado de ciudadano desconocido",422);
+        }
     }
 
     @Transactional TaxpayerReference consumeOrganization(ConfirmedInboundEvents.M1OrganizationRegisteredEvent event){
@@ -93,7 +105,14 @@ class ConfirmedM1Consumer {
         CatalogService.require("1.0".equals(event.eventVersion()),"UNSUPPORTED_EVENT_VERSION","Evento de M1 requiere eventVersion 1.0");
         CatalogService.require("ciudadanos".equals(event.sourceModule()),"INVALID_SOURCE_MODULE","Evento de M1 debe provenir de ciudadanos");
     }
-    private TaxpayerStatus mapTaxpayerStatus(String status){try{return TaxpayerStatus.valueOf(status);}catch(IllegalArgumentException ex){throw new BusinessException("INVALID_EVENT","Estado de organización desconocido",422);}}
+    private TaxpayerStatus mapTaxpayerStatus(String status){return switch(status){
+        case "PENDIENTE"->TaxpayerStatus.PENDIENTE;
+        case "ACTIVA"->TaxpayerStatus.ACTIVA;
+        case "INACTIVA"->TaxpayerStatus.INACTIVA;
+        case "BLOQUEADA"->TaxpayerStatus.BLOQUEADA;
+        case "RECHAZADA"->TaxpayerStatus.RECHAZADA;
+        default->throw new BusinessException("INVALID_EVENT","Estado de organización desconocido",422);
+    };}
 }
 
 @Service
