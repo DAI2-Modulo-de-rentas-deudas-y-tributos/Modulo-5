@@ -15,6 +15,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -108,6 +109,18 @@ class OutboxRetryHttpTests {
         mvc.perform(post("/api/v1/integrations/outbox/{id}/retry", UUID.randomUUID())
                 .header("X-Demo-Session", sessions.token(DemoRole.SUPERVISOR)))
             .andExpect(status().isNotFound());
+    }
+
+    @Test void staleOutboxTagDoesNotQueueRetryAndCurrentTagDoes() throws Exception {
+        UUID id=UUID.randomUUID();outbox.saveAndFlush(event(id,OutboxStatus.FAILED,3,"{}","CORE"));
+        String supervisor=sessions.token(DemoRole.SUPERVISOR);String path="/api/v1/integrations/outbox/"+id;
+        String tag=mvc.perform(get(path).header("X-Demo-Session",supervisor)).andExpect(status().isOk()).andReturn().getResponse().getHeader("ETag");
+        mvc.perform(post(path+"/retry").header("X-Demo-Session",supervisor).header("If-Match","\"stale\""))
+            .andExpect(status().isPreconditionFailed()).andExpect(jsonPath("$.code").value("PRECONDITION_FAILED"));
+        assertThat(outbox.findById(id).orElseThrow().status).isEqualTo(OutboxStatus.FAILED);
+        var queued=mvc.perform(post(path+"/retry").header("X-Demo-Session",supervisor).header("If-Match",tag))
+            .andExpect(status().isAccepted()).andExpect(jsonPath("$.status").value("PENDING")).andReturn().getResponse();
+        assertThat(queued.getHeader("ETag")).isNotBlank().isNotEqualTo(tag);
     }
 
     private OutboxEvent event(UUID id, OutboxStatus status, int retryCount, String payload, String target) {

@@ -90,7 +90,20 @@ final class EntityTags {
         return hashed("ticket", ticket.id(), ticket);
     }
 
+    static String externalObligation(ApiDtos.ExternalObligationResponse obligation) { return hashed("external-obligation", obligation.id(), obligation); }
+    static String integrationEvent(ApiDtos.IntegrationEventResponse event) { return hashed("integration-event", event.id(), event); }
+    static String outbox(ApiDtos.OutboxEventResponse event) { return hashed("outbox-event", event.id(), event); }
+    static String reconciliationItem(FiscalProcessingController.ReconciliationItemResponse item) { return hashed("reconciliation-item", item.id(), item); }
+
     private static String hashed(String resource, Long id, Object value) {
+        return hashed(resource, String.valueOf(id), value);
+    }
+
+    private static String hashed(String resource, java.util.UUID id, Object value) {
+        return hashed(resource, id.toString(), value);
+    }
+
+    private static String hashed(String resource, String id, Object value) {
         try {
             byte[] digest=MessageDigest.getInstance("SHA-256").digest(value.toString().getBytes(StandardCharsets.UTF_8));
             return quoted(resource + "-" + id + "-" + HexFormat.of().formatHex(digest));
