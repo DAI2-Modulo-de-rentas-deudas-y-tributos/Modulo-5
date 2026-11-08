@@ -50,6 +50,10 @@ final class EntityTags {
         return hashed("debt", debt.id(), debt);
     }
 
+    static String creditBalance(ApiDtos.CreditBalanceResponse creditBalance) {
+        return hashed("credit-balance", creditBalance.id(), creditBalance);
+    }
+
     static String liquidation(ApiDtos.LiquidationDetailResponse liquidation) {
         return hashed("liquidation", liquidation.id(), liquidation);
     }

@@ -545,6 +545,15 @@ class PostgreSqlIntegrationTest {
             assertThat(path.path("get").path("responses").path("200").path("headers").has("ETag")).isTrue();
             assertThat(patchOperation.path("responses").path("200").path("headers").has("ETag")).isTrue();
         }
+        var creditPath=document.path("paths").path("/api/v1/credit-balances/{id}");
+        var creditApply=document.path("paths").path("/api/v1/credit-balances/{id}/apply").path("post");
+        assertThat(creditPath.path("get").path("responses").path("200").path("headers").has("ETag")).isTrue();
+        assertThat(creditApply.path("responses").path("200").path("headers").has("ETag")).isTrue();
+        assertThat(creditApply.path("responses").path("412").path("$ref").asText()).isEqualTo("#/components/responses/ApiError");
+        boolean optionalCreditIfMatch=false;
+        for(var parameter:creditApply.path("parameters"))
+            if("If-Match".equals(parameter.path("name").asText())) optionalCreditIfMatch=!parameter.path("required").asBoolean();
+        assertThat(optionalCreditIfMatch).isTrue();
     }
 
     @Test void openApiDocumentsIdempotencyForEveryBusinessPostAndExcludesPreviewsSimulationsAndAuthSetup() throws Exception {
@@ -655,20 +664,39 @@ class PostgreSqlIntegrationTest {
         CreditBalance credit=creditRepository.findBySourcePaymentId(payment.id).orElseThrow();
         String key="credit-apply-"+UUID.randomUUID(),actor="credit-apply-http-"+UUID.randomUUID();
         var auth=new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity(actor,null),null,List.of(new SimpleGrantedAuthority("ROLE_RENTAS")));
+        String path="/api/v1/credit-balances/"+credit.id;
+        String creditTag=mvc.perform(get(path).with(authentication(auth)))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+            .andReturn().getResponse().getHeader("ETag");
+        assertThat(creditTag).isNotBlank();
         var request=new ApiDtos.ApplyCreditBalanceRequest(target.id,new BigDecimal("10"));
         String body=json.writeValueAsString(request);
-        var first=mvc.perform(post("/api/v1/credit-balances/"+credit.id+"/apply").with(authentication(auth)).header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON).content(body))
-            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk()).andReturn().getResponse().getContentAsString();
-        var replay=mvc.perform(post("/api/v1/credit-balances/"+credit.id+"/apply").with(authentication(auth)).header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON).content(body))
+        mvc.perform(post(path+"/apply").with(authentication(auth)).header("If-Match","\"stale\"")
+                .contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isPreconditionFailed())
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.code").value("PRECONDITION_FAILED"));
+        assertThat(creditRepository.findById(credit.id).orElseThrow().availableAmount).isEqualByComparingTo("20.00");
+        assertThat(creditApplications.findAll().stream().filter(application->credit.id.equals(application.creditBalanceId))).isEmpty();
+        var firstResponse=mvc.perform(post(path+"/apply").with(authentication(auth)).header("If-Match",creditTag).header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk()).andReturn().getResponse();
+        String updatedCreditTag=firstResponse.getHeader("ETag");
+        assertThat(updatedCreditTag).isNotBlank().isNotEqualTo(creditTag);
+        var first=firstResponse.getContentAsString();
+        var replay=mvc.perform(post(path+"/apply").with(authentication(auth)).header("If-Match",creditTag).header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON).content(body))
             .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk()).andReturn().getResponse().getContentAsString();
         assertThat(json.readTree(replay).path("id").asLong()).isEqualTo(json.readTree(first).path("id").asLong());
         assertThat(creditApplications.findAll().stream().filter(application->credit.id.equals(application.creditBalanceId))).hasSize(1);
         assertThat(creditRepository.findById(credit.id).orElseThrow().availableAmount).isEqualByComparingTo("10.00");
         var changed=new ApiDtos.ApplyCreditBalanceRequest(target.id,new BigDecimal("5"));
-        mvc.perform(post("/api/v1/credit-balances/"+credit.id+"/apply").with(authentication(auth)).header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsBytes(changed)))
+        mvc.perform(post(path+"/apply").with(authentication(auth)).header("If-Match",creditTag).header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsBytes(changed)))
             .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isConflict())
             .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"));
         assertThat(creditApplications.findAll().stream().filter(application->credit.id.equals(application.creditBalanceId))).hasSize(1);
+        mvc.perform(post(path+"/apply").with(authentication(auth)).header("Idempotency-Key",key+"-legacy")
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsBytes(new ApiDtos.ApplyCreditBalanceRequest(target.id,new BigDecimal("5")))))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().exists("ETag"));
+        assertThat(creditRepository.findById(credit.id).orElseThrow().availableAmount).isEqualByComparingTo("5.00");
     }
 
     @Test void idempotencyForEconomicCreationIsTransactionalAndSerializesConcurrentRetries() throws Exception {

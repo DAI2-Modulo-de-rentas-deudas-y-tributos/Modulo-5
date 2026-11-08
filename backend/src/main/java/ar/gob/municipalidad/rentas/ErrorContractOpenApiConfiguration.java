@@ -37,6 +37,10 @@ class ErrorContractOpenApiConfiguration {
                     documentIfMatch(operation,"ETag recibido del detalle de la configuración. Si se omite, se conserva compatibilidad sin precondición.","Versión actualizada de la configuración");
                 if(pathName.matches("/api/v1/(debts|liquidations|payment-plans|exemption-requests|adjustments|payment-reversals)/\\{id\\}") && path.getGet()==operation)
                     documentEtag(operation,"Hash de la representación actual del recurso");
+                if(pathName.equals("/api/v1/credit-balances/{id}") && path.getGet()==operation)
+                    documentEtag(operation,"Hash de la representación actual del saldo a favor");
+                if(pathName.equals("/api/v1/credit-balances/{id}/apply") && path.getPost()==operation)
+                    documentIfMatch(operation,"ETag recibido del saldo a favor. Si se omite, se conserva compatibilidad sin precondición.","Hash de la representación actualizada del saldo a favor");
                 if((pathName.equals("/api/v1/refinancing-requests/{id}")||pathName.equals("/api/v1/tickets/{id}")) && path.getGet()==operation)
                     documentEtag(operation,"Hash de la representación actual del recurso");
                 if(pathName.matches("/api/v1/liquidation-runs/\\{id\\}") && path.getGet()==operation)
