@@ -1610,6 +1610,76 @@ class PostgreSqlIntegrationTest {
         assertThat(overdueEvents(eligible)).hasSize(1);
     }
 
+    @Test void paymentWaitingForDueDateLockDoesNotGetOverwrittenOrTriggerFalseExpiration() throws Exception {
+        authenticate();String suffix=UUID.randomUUID().toString();Debt debt=debt("DUE-PAYMENT-RACE-"+suffix,null);
+        workflow.createConfiguration(new ApiDtos.CreatePaymentPlanConfigurationRequest(2,2,BigDecimal.ZERO,BigDecimal.ZERO,0,1,true,false,0,LocalDate.now().minusDays(1),null,true));
+        PaymentPlanRequest request=workflow.request(new ApiDtos.CreatePaymentPlanRequest(debt.taxpayerId,List.of(debt.id),2));
+        PaymentPlanRequest granted=TestActorSupport.asApprover(()->workflow.grant(request.id,null));
+        PaymentPlan plan=planRepository.findById(granted.paymentPlanId).orElseThrow();
+        List<Installment> planInstallments=installments.findByPaymentPlanIdOrderByNumber(plan.id);
+        LocalDate processingDate=uniqueProcessingDate(debt.id,35);
+        planInstallments.forEach(installment->installment.dueDate=processingDate.minusDays(1));installments.saveAllAndFlush(planInstallments);
+        Installment paidInstallment=planInstallments.get(0);
+        CountDownLatch selected=new CountDownLatch(1),release=new CountDownLatch(1),paymentStarted=new CountDownLatch(1);
+        AtomicInteger paymentBackendPid=new AtomicInteger();ExecutorService pool=Executors.newFixedThreadPool(2);
+        try {
+            Future<?> overdueWorker=pool.submit(()->{
+                authenticate();
+                try { new TransactionTemplate(transactionManager).execute(status->{
+                    List<Installment> locked=installments.findOverdueBatchForUpdate(
+                        List.of(InstallmentStatus.PENDING,InstallmentStatus.PARTIALLY_PAID,InstallmentStatus.OVERDUE),BigDecimal.ZERO,processingDate,paidInstallment.id-1,PageRequest.of(0,100));
+                    assertThat(locked).hasSize(2);selected.countDown();
+                    try { if(!release.await(5,TimeUnit.SECONDS))throw new IllegalStateException("Timed out waiting to release due-date row locks"); }
+                    catch(InterruptedException ex){Thread.currentThread().interrupt();throw new IllegalStateException(ex);}
+                    locked.forEach(installment->installment.status=InstallmentStatus.OVERDUE);return null;
+                }); } finally { SecurityContextHolder.clearContext(); }
+            });
+            assertThat(selected.await(5,TimeUnit.SECONDS)).isTrue();
+            Future<?> payment=pool.submit(()->{
+                authenticate();
+                try { new TransactionTemplate(transactionManager).execute(status->{
+                    paymentBackendPid.set(jdbc.queryForObject("select pg_backend_pid()",Integer.class));paymentStarted.countDown();
+                    payments.register(new ApiDtos.RegisterPaymentRequest(debt.taxpayerId,null,PaymentMethod.CASH,paidInstallment.totalAmount,
+                        List.of(new ApiDtos.AllocationRequest(null,paidInstallment.id,paidInstallment.totalAmount))));return null;
+                }); } finally { SecurityContextHolder.clearContext(); }
+            });
+            assertThat(paymentStarted.await(5,TimeUnit.SECONDS)).isTrue();
+            long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(5);boolean waitingForRowLock=false;
+            while(System.nanoTime()<deadline&&!waitingForRowLock){waitingForRowLock=jdbc.queryForObject(
+                "select count(*) from pg_stat_activity where pid=? and wait_event_type='Lock'",Integer.class,paymentBackendPid.get())>0;
+                if(!waitingForRowLock)Thread.sleep(10);
+            }
+            assertThat(waitingForRowLock).as("payment should wait for the due-date row lock").isTrue();
+            release.countDown();overdueWorker.get(10,TimeUnit.SECONDS);payment.get(10,TimeUnit.SECONDS);
+        } finally { release.countDown();pool.shutdownNow();SecurityContextHolder.clearContext(); }
+
+        assertThat(installments.findById(paidInstallment.id).orElseThrow().status).isEqualTo(InstallmentStatus.PAID);
+        assertThat(planRepository.findById(plan.id).orElseThrow().status).isEqualTo(PaymentPlanStatus.ACTIVE);
+        DueDateProcessing run=planStageRun(processingDate,plan.id-1);
+        dueDateProcessor.processNextBatch(run.id,run.attemptCount);
+        assertThat(jdbc.queryForObject("select count(*) from plan_expiration_request where payment_plan_id=? and status='PENDING_APPROVAL'",Integer.class,plan.id)).isZero();
+    }
+
+    @Test void concurrentPlanBatchesCreateOnlyOnePendingExpirationRequest() throws Exception {
+        authenticate();String suffix=UUID.randomUUID().toString();Debt debt=debt("DUE-EXPIRATION-RACE-"+suffix,null);
+        workflow.createConfiguration(new ApiDtos.CreatePaymentPlanConfigurationRequest(1,1,BigDecimal.ZERO,BigDecimal.ZERO,0,0,true,false,0,LocalDate.now().minusDays(1),null,true));
+        PaymentPlanRequest request=workflow.request(new ApiDtos.CreatePaymentPlanRequest(debt.taxpayerId,List.of(debt.id),1));
+        PaymentPlanRequest granted=TestActorSupport.asApprover(()->workflow.grant(request.id,null));
+        PaymentPlan plan=planRepository.findById(granted.paymentPlanId).orElseThrow();Installment installment=installments.findByPaymentPlanIdOrderByNumber(plan.id).get(0);
+        LocalDate firstDate=uniqueProcessingDate(debt.id,37);installment.dueDate=firstDate.minusDays(1);installment.status=InstallmentStatus.OVERDUE;installments.saveAndFlush(installment);
+        DueDateProcessing first=planStageRun(firstDate,plan.id-1),second=planStageRun(firstDate.plusDays(1),plan.id-1);
+        String planId=plan.id.toString();
+        jdbc.execute("CREATE OR REPLACE FUNCTION delay_test_plan_expiration() RETURNS trigger AS $$ BEGIN IF NEW.payment_plan_id="+planId+" THEN PERFORM pg_sleep(0.3); END IF; RETURN NEW; END; $$ LANGUAGE plpgsql");
+        jdbc.execute("CREATE TRIGGER delay_test_plan_expiration BEFORE INSERT ON plan_expiration_request FOR EACH ROW EXECUTE FUNCTION delay_test_plan_expiration()");
+        try {
+            assertThat(runTogether(()->dueDateProcessor.processNextBatch(first.id,first.attemptCount),()->dueDateProcessor.processNextBatch(second.id,second.attemptCount))).containsOnlyNulls();
+            assertThat(jdbc.queryForObject("select count(*) from plan_expiration_request where payment_plan_id=? and status='PENDING_APPROVAL'",Integer.class,plan.id)).isEqualTo(1);
+        } finally {
+            jdbc.execute("DROP TRIGGER IF EXISTS delay_test_plan_expiration ON plan_expiration_request");
+            jdbc.execute("DROP FUNCTION IF EXISTS delay_test_plan_expiration()");
+        }
+    }
+
     @Test void queuedDueDateRunRetriesRolledBackEffectsWithoutDuplicates() {
         authenticate();Debt eligible=debt("DUE-DATE-QUEUE-"+UUID.randomUUID(),null);LocalDate date=uniqueProcessingDate(eligible.id,20);eligible.dueDate=date.minusDays(1);debts.save(eligible);
         TaxpayerReference taxpayer=taxpayers.findById(eligible.taxpayerId).orElseThrow();taxpayer.canonicalCitizenId=UUID.randomUUID();taxpayers.save(taxpayer);
@@ -1864,6 +1934,7 @@ class PostgreSqlIntegrationTest {
     }
 
     private void assertEquation(Payment payment){Payment stored=paymentRepository.findById(payment.id).orElseThrow();assertThat(stored.allocatedAmount.add(stored.unallocatedAmount)).isEqualByComparingTo(stored.amount);}
+    private DueDateProcessing planStageRun(LocalDate date,long afterPlanId){DueDateProcessing run=new DueDateProcessing();run.processingDate=date;run.status=DueDateRunStatus.PROCESSING;run.processingStage=DueDateProcessingStage.PLANS;run.attemptCount=1;run.lastProcessedId=afterPlanId;run.requestedAt=OffsetDateTime.now();run.startedAt=run.requestedAt;run.processedBy="postgres-it";return dueDateRuns.saveAndFlush(run);}
     private LocalDate uniqueProcessingDate(Long debtId,int offset){return LocalDate.of(1900,1,1).plusDays(debtId*10+offset);}
     private List<OutboxEvent> overdueEvents(Debt debt){return outbox.findAll().stream().filter(x->x.eventType.equals("debtOverdue")&&x.targetModule.equals("CORE")&&x.aggregateType.equals("Debt")&&x.aggregateId.equals(debt.id.toString())).toList();}
     private void authenticate(){var authorities=List.of("RENTAS","SUPERVISOR","CASHIER").stream().map(x->new SimpleGrantedAuthority("ROLE_"+x)).toList();SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("postgres-it",null),null,authorities));}

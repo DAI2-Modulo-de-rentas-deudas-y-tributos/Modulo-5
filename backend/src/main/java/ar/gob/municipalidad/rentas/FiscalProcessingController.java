@@ -217,13 +217,13 @@ class DueDateProcessor {
         run.lastProcessedId=batch.get(batch.size()-1).id;run.debtsOverdue+=overdue;run.adjustmentsGenerated+=adjustments;run.skippedAlreadyProcessed+=skipped;run.errors+=errors;flushAndClear();return false;
     }
     private boolean processInstallmentBatch(DueDateProcessing run){
-        List<Installment> batch=installments.findByStatusInAndOutstandingAmountGreaterThanAndDueDateLessThanAndIdGreaterThanOrderByIdAsc(OPEN_INSTALLMENTS,BigDecimal.ZERO,run.processingDate,run.lastProcessedId,PageRequest.of(0,BATCH_SIZE));
+        List<Installment> batch=installments.findOverdueBatchForUpdate(OPEN_INSTALLMENTS,BigDecimal.ZERO,run.processingDate,run.lastProcessedId,PageRequest.of(0,BATCH_SIZE));
         if(batch.isEmpty()){run.processingStage=DueDateProcessingStage.PLANS;run.lastProcessedId=0;return false;}
         int overdue=0;for(Installment installment:batch)if(installment.status!=InstallmentStatus.OVERDUE){installment.status=InstallmentStatus.OVERDUE;overdue++;}
         run.lastProcessedId=batch.get(batch.size()-1).id;run.installmentsOverdue+=overdue;flushAndClear();return false;
     }
     private boolean processPlanBatch(DueDateProcessing run){
-        List<PaymentPlan> batch=plans.findByStatusAndConfigurationIdIsNotNullAndIdGreaterThanOrderByIdAsc(PaymentPlanStatus.ACTIVE,run.lastProcessedId,PageRequest.of(0,BATCH_SIZE));
+        List<PaymentPlan> batch=plans.findBatchForUpdate(PaymentPlanStatus.ACTIVE,run.lastProcessedId,PageRequest.of(0,BATCH_SIZE));
         if(batch.isEmpty()){run.processingStage=DueDateProcessingStage.COMPLETED;return complete(run);}
         List<Long> planIds=batch.stream().map(plan->plan.id).toList();Map<Long,PaymentPlanConfiguration> configById=new HashMap<>();configurations.findAllById(batch.stream().map(plan->plan.configurationId).distinct().toList()).forEach(config->configById.put(config.id,config));
         Map<Long,Long> overdueByPlan=new HashMap<>();installments.countByPlanIdsAndStatus(planIds,InstallmentStatus.OVERDUE).forEach(count->overdueByPlan.put(count.getPaymentPlanId(),count.getInstallmentCount()));

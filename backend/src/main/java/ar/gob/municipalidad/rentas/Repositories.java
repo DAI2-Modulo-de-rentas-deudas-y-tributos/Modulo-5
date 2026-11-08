@@ -168,6 +168,8 @@ interface PaymentPlanRepository extends FilteredRepository<PaymentPlan,Long> {
     long countByTaxpayerIdAndStatus(Long taxpayerId,PaymentPlanStatus status);
     Page<PaymentPlan> findByTaxpayerId(Long taxpayerId,Pageable pageable);
     List<PaymentPlan> findByStatusAndConfigurationIdIsNotNullAndIdGreaterThanOrderByIdAsc(PaymentPlanStatus status,Long afterId,Pageable pageable);
+    @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select p from PaymentPlan p where p.status=:status and p.configurationId is not null and p.id>:afterId order by p.id asc")
+    List<PaymentPlan> findBatchForUpdate(@Param("status") PaymentPlanStatus status,@Param("afterId") Long afterId,Pageable pageable);
     @Query("select p.debtId from PaymentPlan p where p.debtId in :debtIds and p.status=:status") Set<Long> findDebtIdsByStatus(@Param("debtIds") Collection<Long> debtIds,@Param("status") PaymentPlanStatus status);
     @Query("""
         select p from PaymentPlan p where p.status=ar.gob.municipalidad.rentas.PaymentPlanStatus.ACTIVE
@@ -188,6 +190,8 @@ interface InstallmentRepository extends JpaRepository<Installment,Long> {
     List<Installment> findByPaymentPlanIdOrderByNumber(Long planId);
     List<Installment> findByPaymentPlanIdInOrderByPaymentPlanIdAscNumberAsc(Collection<Long> planIds);
     List<Installment> findByStatusInAndOutstandingAmountGreaterThanAndDueDateLessThanAndIdGreaterThanOrderByIdAsc(Collection<InstallmentStatus> statuses,BigDecimal amount,LocalDate date,Long afterId,Pageable pageable);
+    @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select i from Installment i where i.status in :statuses and i.outstandingAmount>:amount and i.dueDate<:date and i.id>:afterId order by i.id asc")
+    List<Installment> findOverdueBatchForUpdate(@Param("statuses") Collection<InstallmentStatus> statuses,@Param("amount") BigDecimal amount,@Param("date") LocalDate date,@Param("afterId") Long afterId,Pageable pageable);
     @Query("select i.paymentPlanId as paymentPlanId,count(i.id) as installmentCount from Installment i where i.paymentPlanId in :planIds and i.status=:status group by i.paymentPlanId")
     List<PlanInstallmentCount> countByPlanIdsAndStatus(@Param("planIds") Collection<Long> planIds,@Param("status") InstallmentStatus status);
     @Query("select i.paymentPlanId from Installment i where i.id=:id") Optional<Long> findPaymentPlanIdById(Long id);
