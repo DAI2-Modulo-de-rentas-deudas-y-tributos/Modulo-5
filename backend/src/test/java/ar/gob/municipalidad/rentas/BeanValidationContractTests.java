@@ -406,8 +406,20 @@ class BeanValidationContractTests {
         assertThat(validator.validate(new ApiDtos.RegisterPaymentRequest(1L,PaymentMethod.CASH,new BigDecimal("10.2300"),null))).isEmpty();
         assertThat(validator.validate(new ApiDtos.RegisterPaymentRequest(1L,PaymentMethod.CASH,new BigDecimal("100000000000000000"),null)))
             .extracting(error->error.getPropertyPath().toString()).contains("amount");
-        assertThat(validator.validate(new ApiDtos.CreateAdjustmentRequest(1L,AdjustmentType.SURCHARGE,
-            new BigDecimal("1000000000000"),"QA report value"))).isEmpty(); // Fits numeric(19,2); business cap needs approval.
+        for (AdjustmentType type : AdjustmentType.values()) {
+            assertThat(validator.validate(new ApiDtos.CreateAdjustmentRequest(1L,type,
+                new BigDecimal("100000000.00"),"En el límite"))).isEmpty();
+            assertThat(validator.validate(new ApiDtos.CreateAdjustmentRequest(1L,type,
+                new BigDecimal("100000000.01"),"Excede el límite")))
+                .extracting(error->error.getPropertyPath().toString()).contains("amount");
+        }
+        assertThat(validator.validate(new ApiDtos.CreateAdjustmentRequest(1L,AdjustmentType.CORRECTION,
+            new BigDecimal("1000000000000"),"Excede el límite")))
+            .extracting(error->error.getPropertyPath().toString()).contains("amount");
+        assertThat(validator.validate(new ApiDtos.RegisterPaymentRequest(1L,PaymentMethod.CASH,
+            new BigDecimal("100000000.01"),null))).isEmpty();
+        assertThat(validator.validate(new ApiDtos.LiquidationRunItemRequest(1L,
+            new BigDecimal("100000000.01")))).isEmpty();
         assertThat(validator.validate(new ApiDtos.CreateTaxConfigurationRequest(1L,CalculationType.PERCENTAGE,
             new BigDecimal("100"),null,null,null,true,true,LocalDate.now(),null))).isEmpty();
         assertThat(validator.validate(new ApiDtos.CreateTaxConfigurationRequest(1L,CalculationType.PERCENTAGE,

@@ -14,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.*;
 import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -33,6 +34,28 @@ class AdjustmentRunFlowTests {
     @AfterEach void clear(){SecurityContextHolder.clearContext();}
 
     @Test void adjustmentChangesDebtAndPublishesTypedPlatformEventOnlyWhenApproved() throws Exception {Debt debt=debt("ADJUST-1","ADJUST-CONCEPT-1");AdjustmentRequest request=adjustments.create(new ApiDtos.CreateAdjustmentRequest(debt.id,AdjustmentType.DISCOUNT,new BigDecimal("25"),"Bonificación autorizada"));assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("100.00");TestActorSupport.asApprover(() -> adjustments.approve(request.id,"Verificado"));assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("75.00");assertThat(debts.findById(debt.id).orElseThrow().originalAmount).isEqualByComparingTo("100.00");List<OutboxEvent> events=outbox.findAll().stream().filter(x->x.eventType.equals("debtAdjusted")&&x.aggregateId.equals(debt.id.toString())).toList();assertThat(events).hasSize(1);assertThat(events.get(0).targetModule).isEqualTo("PLATFORM");var payload=json.readTree(events.get(0).payload);assertThat(payload.path("debtId").longValue()).isEqualTo(debt.id);assertThat(payload.path("adjustmentId").longValue()).isEqualTo(request.id);}
+
+    @Test void manualAdjustmentLimitIsInclusiveAndRejectsEveryTypeAboveItWithoutPersistence() throws Exception {
+        Debt debt=debt("ADJUST-LIMIT-"+UUID.randomUUID(),"ADJUST-LIMIT-CONCEPT-"+UUID.randomUUID());
+        long before=jdbc.queryForObject("select count(*) from adjustment_request where debt_id=?",Long.class,debt.id);
+        var atLimit=new ApiDtos.CreateAdjustmentRequest(debt.id,AdjustmentType.SURCHARGE,
+            new BigDecimal("100000000.00"),"En el límite");
+        mvc.perform(post("/api/v1/adjustments").with(authentication(asRole("RENTAS")))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content(json.writeValueAsBytes(atLimit)))
+            .andExpect(status().isCreated());
+        long afterAllowed=jdbc.queryForObject("select count(*) from adjustment_request where debt_id=?",Long.class,debt.id);
+        assertThat(afterAllowed).isEqualTo(before+1);
+
+        for (AdjustmentType type : AdjustmentType.values()) {
+            var aboveLimit=new ApiDtos.CreateAdjustmentRequest(debt.id,type,
+                new BigDecimal("100000000.01"),"Supera el límite");
+            mvc.perform(post("/api/v1/adjustments").with(authentication(asRole("RENTAS")))
+                    .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content(json.writeValueAsBytes(aboveLimit)))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
+            assertThat(jdbc.queryForObject("select count(*) from adjustment_request where debt_id=?",Long.class,debt.id))
+                .isEqualTo(afterAllowed);
+        }
+    }
 
     @Test void rejectedAdjustmentDoesNotPublishDebtAdjusted(){Debt debt=debt("ADJUST-REJECTED","ADJUST-CONCEPT-REJECTED");AdjustmentRequest request=adjustments.create(new ApiDtos.CreateAdjustmentRequest(debt.id,AdjustmentType.DISCOUNT,new BigDecimal("10"),"Solicitud de prueba"));TestActorSupport.asApprover(() -> adjustments.reject(request.id,"No corresponde"));assertThat(outbox.findAll()).noneMatch(x->x.eventType.equals("debtAdjusted")&&x.aggregateId.equals(debt.id.toString()));}
 

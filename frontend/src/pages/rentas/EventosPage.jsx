@@ -158,6 +158,7 @@ export default function EventosPage() {
               name: "status",
               label: "Estado",
               options: [
+                { value: "PENDING", label: "Pendiente" },
                 { value: "PUBLISHED", label: "Publicado" },
                 { value: "PROCESSED", label: "Procesado" },
                 { value: "RETRYING", label: "Reintentando" },
