@@ -130,14 +130,21 @@ class LiquidationRunEtagHttpTests {
                 "/paths/~1api~1v1~1payment-plan-requests~1{id}~1reject-exception/post",
                 "/paths/~1api~1v1~1tax-concepts~1{id}/patch",
                 "/paths/~1api~1v1~1tax-configurations~1{id}/patch",
-                "/paths/~1api~1v1~1payment-plan-configurations~1{id}/patch"))
+                "/paths/~1api~1v1~1payment-plan-configurations~1{id}/patch",
+                "/paths/~1api~1v1~1adjustments~1{id}~1approve/post",
+                "/paths/~1api~1v1~1adjustments~1{id}~1reject/post",
+                "/paths/~1api~1v1~1payment-reversals~1{id}~1approve/post",
+                "/paths/~1api~1v1~1payment-reversals~1{id}~1reject/post",
+                "/paths/~1api~1v1~1payment-reversals~1{id}~1execute/post"))
             assertIfMatchContract(openApi,operation);
         for(String headerPath:List.of(
                 "/paths/~1api~1v1~1liquidation-runs~1{id}/get/responses/200/headers",
                 "/paths/~1api~1v1~1payment-plan-requests~1{id}/get/responses/200/headers",
                 "/paths/~1api~1v1~1tax-concepts~1{id}/get/responses/200/headers",
                 "/paths/~1api~1v1~1tax-configurations~1{id}/get/responses/200/headers",
-                "/paths/~1api~1v1~1payment-plan-configurations~1{id}/get/responses/200/headers"))
+                "/paths/~1api~1v1~1payment-plan-configurations~1{id}/get/responses/200/headers",
+                "/paths/~1api~1v1~1adjustments~1{id}/get/responses/200/headers",
+                "/paths/~1api~1v1~1payment-reversals~1{id}/get/responses/200/headers"))
             assertThat(openApi.at(headerPath).has("ETag")).as("ETag documentado en %s",headerPath).isTrue();
     }
 
