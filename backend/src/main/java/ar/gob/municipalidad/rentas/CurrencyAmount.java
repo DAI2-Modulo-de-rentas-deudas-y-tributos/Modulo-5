@@ -14,13 +14,15 @@ import java.math.BigDecimal;
 @Retention(RetentionPolicy.RUNTIME)
 @Constraint(validatedBy = CurrencyAmount.Validator.class)
 public @interface CurrencyAmount {
-    String message() default "Debe tener como máximo 2 decimales";
+    String message() default "El importe excede la precisión admitida (17 dígitos enteros y 2 decimales)";
     Class<?>[] groups() default {};
     Class<? extends Payload>[] payload() default {};
 
     final class Validator implements ConstraintValidator<CurrencyAmount, BigDecimal> {
         @Override public boolean isValid(BigDecimal value, ConstraintValidatorContext context) {
-            return value == null || value.stripTrailingZeros().scale() <= 2;
+            if (value == null) return true;
+            BigDecimal normalized = value.stripTrailingZeros();
+            return normalized.scale() <= 2 && normalized.precision() - normalized.scale() <= 17;
         }
     }
 }
