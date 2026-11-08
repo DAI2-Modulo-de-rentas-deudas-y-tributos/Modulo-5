@@ -12,6 +12,8 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -58,6 +60,75 @@ class MutableResourceEtagHttpTests {
     @Autowired TicketCaseRepository tickets;
     @Autowired TicketCaseUpdateRepository ticketUpdates;
     @Autowired OutboxRepository outbox;
+    @Autowired IntegrationEventLogRepository integrationEvents;
+    @Autowired ElectronicReconciliationBatchRepository reconciliationBatches;
+    @Autowired ElectronicReconciliationItemRepository reconciliationItems;
+    @Autowired ObjectMapper json;
+
+    @Test void retryableResourceEtagsAndIfMatchAreDocumentedInOpenApi() throws Exception {
+        JsonNode openApi=json.readTree(mvc.perform(get("/v3/api-docs")).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        for(String path:List.of("/api/v1/external-obligations/{id}","/api/v1/integrations/events/{eventId}","/api/v1/integrations/outbox/{id}","/api/v1/payment-reconciliations/items/{id}"))
+            assertThat(openApi.path("paths").path(path).path("get").path("responses").path("200").path("headers").has("ETag")).as("GET %s documenta ETag",path).isTrue();
+        for(String path:List.of("/api/v1/external-obligations/{id}/retry","/api/v1/integrations/events/{eventId}/reprocess","/api/v1/integrations/outbox/{id}/retry","/api/v1/payment-reconciliations/items/{id}/resolve")){
+            JsonNode operation=openApi.path("paths").path(path).path("post");
+            assertThat(operation.path("parameters").findValuesAsText("name")).as("POST %s documenta If-Match",path).contains("If-Match");
+            assertThat(operation.path("responses").has("412")).as("POST %s documenta 412",path).isTrue();
+            String success=path.contains("integrations/outbox")?"202":"200";
+            assertThat(operation.path("responses").path(success).path("headers").has("ETag")).as("POST %s devuelve ETag",path).isTrue();
+        }
+    }
+
+    @Test void retryAndReprocessCommandsRejectStaleTagsBeforeIncrementingAttempts() throws Exception {
+        ExternalObligation obligation=new ExternalObligation();obligation.sourceModule="M7";obligation.externalType=ExternalObligationType.TRAFFIC_INFRACTION;
+        obligation.externalReferenceId="ETAG-RETRY-"+java.util.UUID.randomUUID();obligation.sourceEventId=java.util.UUID.randomUUID();
+        obligation.externalTaxpayerType=TaxpayerType.CITIZEN;obligation.externalTaxpayerId="missing-"+java.util.UUID.randomUUID();
+        obligation.amount=new BigDecimal("20.00");obligation.dueDate=LocalDate.now();obligation.status=ExternalObligationStatus.ERROR;
+        obligation.retryCount=0;obligation.receivedAt=OffsetDateTime.now();obligation=externalObligations.saveAndFlush(obligation);
+        var rentas=actor("rentas-obligation-etag","RENTAS");String obligationPath="/api/v1/external-obligations/"+obligation.id;
+        String obligationTag=mvc.perform(get(obligationPath).with(authentication(rentas))).andExpect(status().isOk()).andReturn().getResponse().getHeader("ETag");
+        mvc.perform(post(obligationPath+"/retry").with(authentication(rentas)).header("If-Match","\"stale\""))
+            .andExpect(status().isPreconditionFailed()).andExpect(jsonPath("$.code").value("PRECONDITION_FAILED"));
+        assertThat(externalObligations.findById(obligation.id).orElseThrow().retryCount).isZero();
+        var retried=mvc.perform(post(obligationPath+"/retry").with(authentication(rentas)).header("If-Match",obligationTag))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.retryCount").value(1)).andReturn().getResponse();
+        assertThat(retried.getHeader("ETag")).isNotBlank().isNotEqualTo(obligationTag);
+
+        IntegrationEventLog event=new IntegrationEventLog();event.eventId=java.util.UUID.randomUUID();event.externalEventId="ETAG-EVENT-"+java.util.UUID.randomUUID();
+        event.eventType="unsupportedEtagTestEvent";event.sourceModule="test";event.direction=EventDirection.INBOUND;
+        event.status=IntegrationEventStatus.FAILED;event.payload="{}";event.retryCount=0;event.occurredAt=event.receivedAt=OffsetDateTime.now();
+        event=integrationEvents.saveAndFlush(event);var supervisor=actor("supervisor-event-etag","SUPERVISOR");
+        String eventPath="/api/v1/integrations/events/"+event.externalEventId;
+        String eventTag=mvc.perform(get(eventPath).with(authentication(supervisor))).andExpect(status().isOk()).andReturn().getResponse().getHeader("ETag");
+        mvc.perform(post(eventPath+"/reprocess").with(authentication(supervisor)).header("If-Match","\"stale\""))
+            .andExpect(status().isPreconditionFailed()).andExpect(jsonPath("$.code").value("PRECONDITION_FAILED"));
+        assertThat(integrationEvents.findById(event.id).orElseThrow().retryCount).isZero();
+        var reprocessed=mvc.perform(post(eventPath+"/reprocess").with(authentication(supervisor)).header("If-Match",eventTag))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.retryCount").value(1)).andReturn().getResponse();
+        assertThat(reprocessed.getHeader("ETag")).isNotBlank().isNotEqualTo(eventTag);
+    }
+
+    @Test void reconciliationItemUsesStaleTagGuardBeforeResolution() throws Exception {
+        TaxpayerReference taxpayer=taxpayer();taxpayer.dni="ETG"+java.util.UUID.randomUUID().toString().substring(0,15);taxpayer=taxpayers.saveAndFlush(taxpayer);
+        ElectronicReconciliationBatch batch=new ElectronicReconciliationBatch();batch.externalBatchReference="ETAG-BATCH-"+java.util.UUID.randomUUID();
+        batch.totalItems=1;batch.observedItems=1;batch.importedBy="test";batch.importedAt=OffsetDateTime.now();batch=reconciliationBatches.saveAndFlush(batch);
+        ElectronicReconciliationItem item=new ElectronicReconciliationItem();item.batchId=batch.id;item.externalReference="EI"+java.util.UUID.randomUUID().toString().substring(0,20);
+        item.taxpayerDocument=taxpayer.dni;item.amount=new BigDecimal("25.00");item.paidAt=OffsetDateTime.now();item.status=ReconciliationStatus.OBSERVED;
+        item=reconciliationItems.saveAndFlush(item);
+        Payment payment=new Payment();payment.taxpayerId=taxpayer.id;payment.paymentMethod=PaymentMethod.CASH;payment.amount=new BigDecimal("25.00");
+        payment.allocatedAmount=BigDecimal.ZERO.setScale(2);payment.unallocatedAmount=payment.amount;payment.status=PaymentStatus.CONFIRMED;
+        payment.allocationStatus=PaymentAllocationStatus.UNALLOCATED;payment.origin=PaymentOrigin.CASHIER;
+        payment.receiptNumber="ETAG-RECON-"+java.util.UUID.randomUUID();payment.registeredBy="test";payment.paidAt=payment.createdAt=OffsetDateTime.now();payment=payments.saveAndFlush(payment);
+        var rentas=actor("rentas-reconciliation-etag","RENTAS");String path="/api/v1/payment-reconciliations/items/"+item.id;
+        String tag=mvc.perform(get(path).with(authentication(rentas))).andExpect(status().isOk()).andReturn().getResponse().getHeader("ETag");
+        mvc.perform(post(path+"/resolve").with(authentication(rentas)).header("If-Match","\"stale\"")
+                .contentType(MediaType.APPLICATION_JSON).content("{\"paymentId\":"+payment.id+",\"reason\":\"manual match\"}"))
+            .andExpect(status().isPreconditionFailed()).andExpect(jsonPath("$.code").value("PRECONDITION_FAILED"));
+        assertThat(reconciliationItems.findById(item.id).orElseThrow().status).isEqualTo(ReconciliationStatus.OBSERVED);
+        var resolved=mvc.perform(post(path+"/resolve").with(authentication(rentas)).header("If-Match",tag)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"paymentId\":"+payment.id+",\"reason\":\"manual match\"}"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("CONCILIATED")).andReturn().getResponse();
+        assertThat(resolved.getHeader("ETag")).isNotBlank().isNotEqualTo(tag);
+    }
 
     @Test void mutableDetailsExposeEtagsAndExemptionTransitionsRejectStaleWithoutWriting() throws Exception {
         TaxpayerReference taxpayer=taxpayer();

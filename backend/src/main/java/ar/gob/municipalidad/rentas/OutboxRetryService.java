@@ -19,10 +19,18 @@ class OutboxRetryService {
         this.audit = audit;
     }
 
+    @Transactional(readOnly = true)
+    OutboxEvent get(UUID id) {
+        OutboxEvent event = entities.find(OutboxEvent.class, id);
+        if (event == null) throw CatalogService.notFound("Evento Outbox");
+        return event;
+    }
+
     @Transactional
-    OutboxRetryResponse requeue(UUID id) {
+    OutboxRetryResult requeue(UUID id, String ifMatch) {
         OutboxEvent event = entities.find(OutboxEvent.class, id, LockModeType.PESSIMISTIC_WRITE);
         if (event == null) throw CatalogService.notFound("Evento Outbox");
+        EntityTags.requireIfMatch(EntityTags.outbox(ApiResponses.of(event)), ifMatch);
         CatalogService.requireConflict(event.status == OutboxStatus.FAILED || event.status == OutboxStatus.DEAD_LETTER,
             "OUTBOX_EVENT_NOT_RETRYABLE", "Solo se pueden reenviar eventos fallidos o en DLQ");
         CatalogService.requireConflict(!"PLATFORM".equals(event.targetModule),
@@ -36,6 +44,9 @@ class OutboxRetryService {
         audit.record("OutboxEvent", event.id, "OUTBOX_MANUAL_RETRY_QUEUED",
             Map.of("status", previousStatus.name(), "retryCount", previousRetryCount),
             Map.of("status", event.status.name(), "eventType", event.eventType, "targetModule", event.targetModule));
-        return new OutboxRetryResponse(event.id, event.eventType, event.targetModule, event.status, event.retryCount, queuedAt);
+        return new OutboxRetryResult(new OutboxRetryResponse(event.id, event.eventType, event.targetModule, event.status, event.retryCount, queuedAt),
+            EntityTags.outbox(ApiResponses.of(event)));
     }
 }
+
+record OutboxRetryResult(OutboxRetryResponse response, String etag) {}

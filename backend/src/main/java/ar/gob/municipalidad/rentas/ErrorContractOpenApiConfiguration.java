@@ -49,6 +49,10 @@ class ErrorContractOpenApiConfiguration {
                     documentIfMatch(operation,"ETag recibido del saldo a favor. Si se omite, se conserva compatibilidad sin precondición.","Hash de la representación actualizada del saldo a favor");
                 if((pathName.equals("/api/v1/refinancing-requests/{id}")||pathName.equals("/api/v1/tickets/{id}")) && path.getGet()==operation)
                     documentEtag(operation,"Hash de la representación actual del recurso");
+                if((pathName.equals("/api/v1/external-obligations/{id}")||pathName.equals("/api/v1/integrations/events/{eventId}")||pathName.equals("/api/v1/integrations/outbox/{id}")||pathName.equals("/api/v1/payment-reconciliations/items/{id}"))&&path.getGet()==operation)
+                    documentEtag(operation,"Hash de la representación actual del recurso");
+                if((pathName.equals("/api/v1/external-obligations/{id}/retry")||pathName.equals("/api/v1/integrations/events/{eventId}/reprocess")||pathName.equals("/api/v1/integrations/outbox/{id}/retry")||pathName.equals("/api/v1/payment-reconciliations/items/{id}/resolve"))&&path.getPost()==operation)
+                    documentIfMatch(operation,"ETag recibido del detalle. Si se omite, se conserva compatibilidad sin precondición.","Hash de la representación posterior a la operación");
                 if(pathName.matches("/api/v1/liquidation-runs/\\{id\\}") && path.getGet()==operation)
                     documentEtag(operation,"Hash de la representación actual de la corrida y sus ítems");
                 if(pathName.matches("/api/v1/payment-plan-requests/\\{id\\}") && path.getGet()==operation)
@@ -96,6 +100,8 @@ class ErrorContractOpenApiConfiguration {
     private void documentEtag(Operation operation,String description){
         ApiResponse response=operation.getResponses().get("200");
         if(response!=null)response.addHeaderObject("ETag",new Header().description(description).schema(new StringSchema()));
+        ApiResponse accepted=operation.getResponses().get("202");
+        if(accepted!=null)accepted.addHeaderObject("ETag",new Header().description(description).schema(new StringSchema()));
         ApiResponse created=operation.getResponses().get("201");
         if(created!=null)created.addHeaderObject("ETag",new Header().description(description).schema(new StringSchema()));
     }

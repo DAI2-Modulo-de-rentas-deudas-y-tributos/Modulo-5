@@ -68,6 +68,7 @@ interface DebtRepository extends FilteredRepository<Debt,Long> {
 interface ExternalObligationRepository extends FilteredRepository<ExternalObligation,Long> {
     Optional<ExternalObligation> findBySourceModuleAndExternalTypeAndExternalReferenceId(String module, ExternalObligationType type, String reference);
     Page<ExternalObligation> findByStatus(ExternalObligationStatus status,Pageable pageable);
+    @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select o from ExternalObligation o where o.id=:id") Optional<ExternalObligation> findByIdForUpdate(@Param("id") Long id);
 }
 interface PaymentRepository extends FilteredRepository<Payment,Long> {
     List<Payment> findByTaxpayerId(Long taxpayerId); Page<Payment> findByTaxpayerId(Long taxpayerId,Pageable pageable); Optional<Payment> findByTaxpayerIdAndIdempotencyKey(Long taxpayerId,String idempotencyKey);
@@ -277,6 +278,7 @@ interface DueDateProcessingRepository extends JpaRepository<DueDateProcessing,Lo
 }
 interface ElectronicReconciliationBatchRepository extends JpaRepository<ElectronicReconciliationBatch,Long> { Optional<ElectronicReconciliationBatch> findByExternalBatchReference(String reference); }
 interface ElectronicReconciliationItemRepository extends JpaRepository<ElectronicReconciliationItem,Long> {
+    @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select i from ElectronicReconciliationItem i where i.id=:id") Optional<ElectronicReconciliationItem> findByIdForUpdate(@Param("id") Long id);
     Optional<ElectronicReconciliationItem> findByExternalReference(String reference);
     Page<ElectronicReconciliationItem> findByBatchId(Long batchId,Pageable pageable);
     Page<ElectronicReconciliationItem> findByStatusIn(Collection<ReconciliationStatus> statuses,Pageable pageable);

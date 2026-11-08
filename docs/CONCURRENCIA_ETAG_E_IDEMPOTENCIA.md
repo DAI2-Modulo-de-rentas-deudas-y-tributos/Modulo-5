@@ -15,6 +15,10 @@ ETag se publica en los detalles modificables o usados como precondición:
 | /exemption-requests/{id} | hash de la representación | start-review, request-documentation, documentation, submit-resolution, approve, reject |
 | /liquidation-runs/{id} | hash de corrida e ítems | preview, submit, approve, reject, execute |
 | /payment-plan-requests/{id} | hash de solicitud | grant, reject y transiciones de excepción |
+| /external-obligations/{id} | hash de la representación | retry |
+| /integrations/events/{eventId} | hash de la representación | reprocess |
+| /integrations/outbox/{id} | hash de la representación | retry |
+| /payment-reconciliations/items/{id} | hash de la representación | resolve |
 
 Los tags son opacos, fuertes y específicos del recurso. El cliente debe conservar el valor de ETag y enviarlo sin alteraciones en If-Match. Si se omite el header, se mantiene compatibilidad con los clientes existentes, pero la llamada no queda protegida frente a una lectura obsoleta. Un tag obsoleto o desconocido devuelve HTTP 412 application/problem+json con PRECONDITION_FAILED; la operación y sus eventos se revierten. Las comparaciones se realizan bajo los bloqueos de fila existentes. Cuando una acción cambia el recurso, la respuesta incluye el ETag actualizado.
 
@@ -22,7 +26,7 @@ En las operaciones POST que aceptan Idempotency-Key, omitir If-Match conserva el
 
 La migración incremental V31 incorpora los contadores técnicos y la tabla de idempotencia; no reescribe migraciones anteriores.
 
-No todas las operaciones mutables tienen If-Match. El alcance de esta entrega excluye, entre otras, ajustes, reversiones, transiciones de tickets, reintentos de obligaciones externas, procesamiento fiscal y conciliación. Esas operaciones conservan sus bloqueos e idempotencia existentes y requieren decisión/criterios específicos antes de incorporar precondiciones.
+If-Match es opcional por compatibilidad. El control se limita a los recursos y acciones enumerados; no se aplica indiscriminadamente a todos los POST. Las demás operaciones conservan sus mecanismos de bloqueo e idempotencia existentes.
 ## SCRUM-811: Idempotency-Key
 
 La tabla `idempotency_request` almacena en la transacción de negocio la identidad autenticada, operación, clave, fingerprint SHA-256 del cuerpo y la respuesta. El alcance usa la tupla usuario + operación (incluye el identificador de ruta cuando corresponde) + clave. La misma tupla y cuerpo, si la primera operación terminó correctamente, devuelve el mismo status del endpoint y el mismo JSON; la misma clave con otro cuerpo devuelve el conflicto `IDEMPOTENCY_KEY_REUSED` (409). El header es opcional por compatibilidad. El claim `INSERT ... ON CONFLICT DO NOTHING` de PostgreSQL serializa reintentos concurrentes; la respuesta y los efectos/outbox se confirman o revierten en una transacción. Si la operación falla y la transacción revierte, no se conserva una reserva ni un payload de error; un reintento vuelve a evaluar la operación. Este comportamiento preserva el rollback y reintento existentes.
@@ -35,7 +39,7 @@ El header opcional está disponible en los 70 POST mutables publicados en OpenAP
 - Liquidaciones y corridas: `/liquidations`, `/liquidation-runs`, `/liquidation-runs/{id}/preview|submit|approve|reject|execute`.
 - Ajustes, boletas y pagos: `/adjustments`, `/adjustments/{id}/approve|reject`, `/bills`, `/payments`, `/payments/{id}/allocations`, `/electronic-payments`, `/credit-balances/{id}/apply`, `/payments/{id}/reversal-requests`, `/payment-reversals/{id}/approve|reject|execute`.
 - Planes: `/payment-plan-configurations`, `/payment-plan-requests`, `/payment-plan-requests/{id}/grant|reject|submit-exception|approve-exception|reject-exception`, `/payment-plans/{planId}/expiration-requests`, `/payment-plan-expirations/{id}/approve|reject`, `/payment-plans/{planId}/refinancing-requests`, `/refinancing-requests/{id}/grant|reject|submit-exception|approve-exception|reject-exception`.
-- Exenciones, tickets e integración: `/exemption-requests`, `/exemption-requests/{id}/start-review|request-documentation|documentation|submit-resolution|approve|reject`, `/tickets/{id}/assign|updates|request-information|complete|reject`, `/external-obligations/{id}/retry`, `/integrations/events/{eventId}/reprocess`.
+- Exenciones, tickets e integración: `/exemption-requests`, `/exemption-requests/{id}/start-review|request-documentation|documentation|submit-resolution|approve|reject`, `/tickets/{id}/assign|updates|request-information|complete|reject`, `/external-obligations/{id}/retry`, `/integrations/events/{eventId}/reprocess`, `/integrations/outbox/{id}/retry`.
 - Reglas de beneficios sociales: `/social-benefit-rules`, `/social-benefit-rules/{id}/submit|approve|disable`.
 - Procesamiento fiscal y conciliación: `/debts/{id}/late-charges`, `/administration/process-due-dates`, `/payment-reconciliations/batches`, `/payment-reconciliations/items/{id}/resolve`.
 - Conciliación diferida de salientes: `/integrations/deferred/economic/{deferralId}/reconcile`, `/integrations/deferred/exemptions/{requestId}/reconcile` y `/integrations/deferred/payment-plans/{requestId}/reconcile`.
@@ -60,4 +64,4 @@ El resto de POST mutables de negocio documentados en OpenAPI está cubierto; los
 
 Los endpoints `/dev-auth/login`, `/logout` y `/bootstrap` no usan `Idempotency-Key`: autentican, revocan sesiones o inicializan el acceso. `/dev-auth/users` sí lo usa para que la creación repetida del mismo usuario devuelva la respuesta original sin duplicar la cuenta. Las simulaciones de eventos M2/M4 permanecen ocultas y disponibles sólo en DEV; su deduplicación continúa basada en `eventId`, no en una clave HTTP adicional.
 
-La prueba de OpenAPI comprueba que 70 de los 78 POST documentados incluyan el header opcional. Excluye los cinco cálculos sin escritura y `/dev-auth/login`, `/dev-auth/logout` y `/dev-auth/bootstrap`; `/dev-auth/users` está cubierto. Los controladores de simulación ocultos no forman parte del documento OpenAPI. ETag/If-Match se aplica a los PATCH de la tabla y al subconjunto de acciones enumeradas arriba; no cubre todos los POST mutables.
+La prueba de OpenAPI comprueba que los POST mutables documentados incluyan el header de idempotencia opcional y que las acciones ETag enumeradas documenten If-Match, ETag y 412. Excluye los cinco cálculos sin escritura y `/dev-auth/login`, `/dev-auth/logout` y `/dev-auth/bootstrap`; `/dev-auth/users` está cubierto. Los controladores de simulación ocultos no forman parte del documento OpenAPI. If-Match sólo se envía cuando el cliente usa la precondición; no se aplica indiscriminadamente a todos los POST.
