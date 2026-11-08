@@ -14,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -90,6 +91,47 @@ class CoreM1InboundListenerTests {
             {"dni":"34567890","cuil":"20345678901","name":"Nombre","lastname":"No existente","birthdate":"1990-04-12","state":"ACTIVO"}
             """,UUID.randomUUID(),correlation,null),23);
         assertThat(taxpayers.findByTaxpayerTypeAndCanonicalCitizenId(TaxpayerType.CITIZEN,unknown)).isEmpty();
+    }
+
+    @Test void updatedPersonalDataNeverChangesCitizenStatusAndAcceptsConfirmedSelfServiceEnvelope() throws Exception {
+        Map<TaxpayerStatus,String> snapshots = java.util.Map.of(
+            TaxpayerStatus.ACTIVE, "FALLECIDO",
+            TaxpayerStatus.INACTIVE, "ACTIVO",
+            TaxpayerStatus.BLOCKED, "ACTIVO",
+            TaxpayerStatus.DECEASED, "ACTIVO");
+        for (var entry : snapshots.entrySet()) {
+            UUID citizenId=UUID.randomUUID(),eventId=UUID.randomUUID(),correlationId=UUID.randomUUID();
+            TaxpayerReference reference=new TaxpayerReference();reference.taxpayerType=TaxpayerType.CITIZEN;
+            reference.externalId=citizenId.toString();reference.canonicalCitizenId=citizenId;
+            reference.dni="30000000";reference.cuit="20300000001";reference.displayName="Nombre anterior";
+            reference.externalStatus=entry.getKey();reference.createdAt=reference.updatedAt=OffsetDateTime.now();
+            taxpayers.saveAndFlush(reference);
+            String update="""
+                {"eventId":"%s","eventType":"citizenUpdated","eventVersion":"1.0",
+                 "occurredAt":"2026-11-08T10:00:00-03:00","sourceModule":"ciudadanos",
+                 "correlationId":"%s","data":{"citizenId":"%s","updateType":"UPDATED",
+                 "details":{"dni":"30123456","cuil":"20301234567","name":"Nombre",
+                 "lastname":"Actualizado","birthdate":"1990-04-12","state":"%s"},
+                 "updatedBy":{"type":"SELF_SERVICE"}}}
+                """.formatted(eventId,correlationId,citizenId,entry.getValue());
+
+            send(update,30);
+            TaxpayerReference updated=taxpayers.findById(reference.id).orElseThrow();
+            assertThat(updated.externalStatus).isEqualTo(entry.getKey());
+            assertThat(updated.canonicalCitizenId).isEqualTo(citizenId);
+            assertThat(updated.dni).isEqualTo("30123456");assertThat(updated.cuit).isEqualTo("20301234567");
+            assertThat(updated.displayName).isEqualTo("Nombre Actualizado");
+            IntegrationEventLog log=logs.findFirstByExternalEventIdOrderByIdDesc(eventId.toString()).orElseThrow();
+            assertThat(log.status).isEqualTo(IntegrationEventStatus.PROCESSED);
+            var saved=json.readTree(log.payload);
+            assertThat(saved.path("correlationId").asText()).isEqualTo(correlationId.toString());
+            assertThat(saved.path("causationId").isNull()).isTrue();
+            assertThat(saved.path("data").path("updatedBy").path("type").asText()).isEqualTo("SELF_SERVICE");
+            assertThat(saved.path("data").path("updatedBy").path("id").isNull()).isTrue();
+            send(update,31);
+            assertThat(logs.findAll().stream().filter(x->eventId.toString().equals(x.externalEventId))).hasSize(1);
+            assertThat(taxpayers.findById(reference.id).orElseThrow().externalStatus).isEqualTo(entry.getKey());
+        }
     }
 
     @Test void organizationAndSupportedRepresentationEventsUseNestedData() throws Exception {

@@ -52,6 +52,7 @@ class BillingFlowTests {
     @Autowired MockMvc mvc;
     @Autowired DemoUserRepository demoUsers;
     @Autowired TaxpayerRepository taxpayers;
+    @Autowired TaxpayerRepresentationRepository representations;
     @Autowired org.springframework.security.crypto.password.PasswordEncoder passwordEncoder;
     @Autowired DemoAuthService demoAuth;
 
@@ -85,6 +86,12 @@ class BillingFlowTests {
             TaxpayerType.ORGANIZATION,"M1-ORG-BILL-STATUS-"+java.util.UUID.randomUUID(),null,"30712345678","Organización de prueba"));
         debt.taxpayerId=organization.id;debts.saveAndFlush(debt);
         organization.externalStatus=TaxpayerStatus.PENDIENTE;taxpayers.saveAndFlush(organization);
+        TaxpayerRepresentationReference unverified=new TaxpayerRepresentationReference();
+        unverified.externalRepresentationId="M1-REP-UNVERIFIED-"+java.util.UUID.randomUUID();
+        unverified.externalPersonId="8452";unverified.externalOrganizationId=organization.externalId;
+        unverified.scope="LEGAL_REPRESENTATIVE";unverified.status="PENDING";
+        unverified.sourceEventId="M1-EVT-UNVERIFIED-"+java.util.UUID.randomUUID();unverified.updatedAt=OffsetDateTime.now();
+        representations.saveAndFlush(unverified);
         var request=new ApiDtos.CreateBillRequest(organization.id,List.of(debt.id),LocalDate.now().plusDays(5));
         assertThatThrownBy(()->billing.create(request)).isInstanceOf(BusinessException.class)
             .extracting(ex->((BusinessException)ex).code).isEqualTo("ORGANIZATION_NOT_ACTIVE");
