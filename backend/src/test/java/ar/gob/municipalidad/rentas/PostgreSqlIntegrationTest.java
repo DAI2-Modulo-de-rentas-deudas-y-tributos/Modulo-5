@@ -566,7 +566,7 @@ class PostgreSqlIntegrationTest {
         }
     }
 
-    @Test void openApiDocumentsIdempotencyForEveryBusinessPostAndExcludesPreviewsSimulationsAndAuthSetup() throws Exception {
+    @Test void openApiDocumentsIdempotencyForEveryBusinessPostAndExcludesPreviewsSimulationsAndSessionSetup() throws Exception {
         var document=json.readTree(mvc.perform(get("/v3/api-docs")).andReturn().getResponse().getContentAsString());
         var excluded=java.util.Set.of(
             "/api/v1/liquidations/preview",
@@ -590,7 +590,7 @@ class PostgreSqlIntegrationTest {
                     hasKey=true;
                 }
             }
-            boolean excludedFromIdempotency=excluded.contains(path)||java.util.Set.of("/api/v1/dev-auth/login","/api/v1/dev-auth/logout","/api/v1/dev-auth/bootstrap").contains(path);
+            boolean excludedFromIdempotency=excluded.contains(path)||java.util.Set.of("/api/v1/dev-auth/login","/api/v1/dev-auth/logout").contains(path);
             assertThat(hasKey).as("Idempotency-Key en POST %s",path).isEqualTo(!excludedFromIdempotency);
             if(hasKey) covered++;
         }
@@ -598,7 +598,50 @@ class PostgreSqlIntegrationTest {
         assertThat(paths.path("/api/v1/taxpayers/{id}/canonical-citizen-link").path("post").isMissingNode()).isFalse();
         assertThat(paths.path("/api/v1/integrations/outbox/{id}/retry").path("post").isMissingNode()).isFalse();
         assertThat(postCount).isEqualTo(78);
-        assertThat(covered).isEqualTo(70);
+        assertThat(covered).isEqualTo(71);
+    }
+
+    @Test void demoBootstrapReplaysConcurrentRequestAndRejectsChangedSecretOrBody() throws Exception {
+        jdbc.update("delete from demo_auth_session");jdbc.update("delete from demo_user");
+        mvc.perform(post("/api/v1/dev-auth/bootstrap").header(DemoAuthService.BOOTSTRAP_HEADER,"wrong-secret")
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(new DemoAuthController.BootstrapRequest("ignored","clave-segura","Ignored"))))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isUnauthorized())
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.code").value("INVALID_BOOTSTRAP_SECRET"));
+        String suffix=UUID.randomUUID().toString();String key="demo-bootstrap-"+suffix;
+        var request=new DemoAuthController.BootstrapRequest("qa.bootstrap."+suffix,"clave-segura","Supervisor QA");
+        var caller=new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("bootstrap-idempotency-test",null),null,List.of());
+        String body=json.writeValueAsString(request);var responses=new java.util.concurrent.CopyOnWriteArrayList<String>();
+        assertThat(runTogether(
+            ()->{var response=mvc.perform(post("/api/v1/dev-auth/bootstrap").with(authentication(caller)).header(DemoAuthService.BOOTSTRAP_HEADER,"test-bootstrap-secret")
+                .header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON).content(body)).andReturn().getResponse();
+                assertThat(response.getStatus()).isEqualTo(201);responses.add(response.getContentAsString());return null;},
+            ()->{var response=mvc.perform(post("/api/v1/dev-auth/bootstrap").with(authentication(caller)).header(DemoAuthService.BOOTSTRAP_HEADER,"test-bootstrap-secret")
+                .header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON).content(body)).andReturn().getResponse();
+                assertThat(response.getStatus()).isEqualTo(201);responses.add(response.getContentAsString());return null;}))
+            .containsOnlyNulls();
+        assertThat(responses).hasSize(2).doesNotContainNull();
+        assertThat(responses.get(0)).isEqualTo(responses.get(1));
+        assertThat(demoUsers.findAll()).singleElement().satisfies(user->assertThat(user.username).isEqualTo(request.username()));
+        var changedSecret=mvc.perform(post("/api/v1/dev-auth/bootstrap").with(authentication(caller)).header(DemoAuthService.BOOTSTRAP_HEADER,"wrong-secret")
+                .header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isConflict())
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"))
+            .andReturn().getResponse().getContentAsString();
+        assertThat(json.readTree(responses.get(0)).path("id").asLong()).isEqualTo(json.readTree(responses.get(1)).path("id").asLong());
+        assertThat(json.readTree(responses.get(0)).path("id").asLong()).isNotZero();
+        assertThat(changedSecret).doesNotContain("test-bootstrap-secret");
+        var changedBody=new DemoAuthController.BootstrapRequest(request.username(),request.password(),"Otro nombre");
+        mvc.perform(post("/api/v1/dev-auth/bootstrap").with(authentication(caller)).header(DemoAuthService.BOOTSTRAP_HEADER,"test-bootstrap-secret")
+                .header("Idempotency-Key",key).contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(changedBody)))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isConflict())
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"));
+        assertThat(jdbc.queryForObject("select count(*) from demo_user where username=?",Integer.class,request.username())).isOne();
+        assertThat(jdbc.queryForObject("select count(*) from idempotency_request where operation=? and idempotency_key=?",Integer.class,
+            "POST:/dev-auth/bootstrap",key)).isOne();
+        Map<String,Object> stored=jdbc.queryForMap("select request_fingerprint,response_body from idempotency_request where operation=? and idempotency_key=?",
+            "POST:/dev-auth/bootstrap",key);
+        assertThat(stored.get("request_fingerprint").toString()).matches("[a-f0-9]{64}");
+        assertThat(stored.get("response_body").toString()).doesNotContain("test-bootstrap-secret");
     }
 
     @Test void demoUserCreationEndpointReplaysTheSameResponseAndRejectsChangedBody() throws Exception {
@@ -1538,15 +1581,19 @@ class PostgreSqlIntegrationTest {
         taxpayer.canonicalCitizenId=UUID.randomUUID();taxpayers.saveAndFlush(taxpayer);
         Debt seed=debt("DUE-BATCH-SEED-"+UUID.randomUUID(),taxpayer.id);
         List<Debt> fixture=new ArrayList<>();fixture.add(seed);
-        for(int i=1;i<101;i++){
+        for(int i=1;i<200;i++){
             Debt debt=new Debt();debt.taxpayerId=taxpayer.id;debt.taxConceptId=seed.taxConceptId;debt.originType=DebtOriginType.LIQUIDATION;
             debt.liquidationId=seed.liquidationId;debt.configurationId=seed.configurationId;
             debt.originalAmount=debt.currentAmount=debt.outstandingBalance=new BigDecimal("10.00");debt.status=DebtStatus.PENDING;
             debt.dueDate=LocalDate.of(1800,1,1);debt.createdAt=debt.updatedAt=OffsetDateTime.now();fixture.add(debt);
         }
-        LocalDate processingDate=uniqueProcessingDate(seed.id,3);
+        LocalDate processingDate=LocalDate.of(1800,1,2);
+        while(dueDateRuns.findByProcessingDate(processingDate).isPresent())processingDate=processingDate.plusDays(1);
+        seed.originalAmount=seed.currentAmount=seed.outstandingBalance=new BigDecimal("10.00");seed.status=DebtStatus.PENDING;
         seed.dueDate=processingDate.minusDays(1);debts.save(seed);
         debts.saveAll(fixture);debts.flush();
+        LateChargeRule rule=new LateChargeRule();rule.code="PG-DUE-BATCH-"+UUID.randomUUID();rule.surchargeRate=new BigDecimal("10.0000");
+        rule.dailyInterestRate=BigDecimal.ZERO;rule.active=true;rule.validFrom=processingDate;rule.validUntil=processingDate;lateChargeRules.saveAndFlush(rule);
         int version=planConfigurations.findAll().stream().mapToInt(config->config.version).max().orElse(0)+1;
         PaymentPlanConfiguration config=new PaymentPlanConfiguration();config.version=version;config.minimumInstallments=1;config.maximumInstallments=120;
         config.minimumDownPaymentPercentage=BigDecimal.ZERO;config.interestRate=BigDecimal.ZERO;config.graceDays=0;config.maxOverdueInstallments=101;
@@ -1561,7 +1608,7 @@ class PostgreSqlIntegrationTest {
             installment.totalAmount=installment.outstandingAmount=BigDecimal.ONE;installment.paidAmount=BigDecimal.ZERO;installment.dueDate=LocalDate.of(1800,1,1);
             installment.status=InstallmentStatus.PENDING;installmentFixture.add(installment);}
         installments.saveAll(installmentFixture);installments.flush();
-        long started=System.nanoTime();
+        long started=System.nanoTime(),expectedScanned=debts.count();
 
         var queued=dueDates.enqueue(processingDate);
         var claim=dueDates.claimNext();
@@ -1570,16 +1617,29 @@ class PostgreSqlIntegrationTest {
         var checkpoint=dueDates.get(queued.id());
         assertThat(checkpoint.status()).isEqualTo(DueDateRunStatus.PROCESSING);
         assertThat(checkpoint.debtsOverdue()).isEqualTo(100);
+        assertThat(checkpoint.adjustmentsGenerated()).isEqualTo(100);
+        assertThat(checkpoint.errors()).isZero();
         long firstBatchEvents=jdbc.queryForObject("select count(*) from outbox_event o join debt d on o.aggregate_id=d.id::text where o.event_type='debtOverdue' and d.taxpayer_id=?",Long.class,taxpayer.id);
-        assertThat(firstBatchEvents).isBetween(1L,100L);
-        String lastDebtId=fixture.stream().map(debt->debt.id).max(Long::compareTo).orElseThrow().toString();
-        jdbc.execute("CREATE OR REPLACE FUNCTION fail_test_due_date_batch() RETURNS trigger AS $$ BEGIN IF NEW.event_type='debtOverdue' AND NEW.aggregate_id='"+lastDebtId+"' THEN RAISE EXCEPTION 'test due date batch failure'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql");
+        assertThat(firstBatchEvents).isEqualTo(100);
+        assertThat(jdbc.queryForObject("select count(*) from late_charge_application l join debt d on l.debt_id=d.id where d.taxpayer_id=? and l.calculation_date=?",Long.class,taxpayer.id,processingDate)).isEqualTo(100);
+        assertThat(jdbc.queryForObject("select count(*) from adjustment_request a join debt d on a.debt_id=d.id where d.taxpayer_id=? and a.type='SURCHARGE' and a.reason=?",Long.class,taxpayer.id,"Recargo automático "+rule.code)).isEqualTo(100);
+        String failureDebtId=fixture.get(149).id.toString();
+        assertThat(Long.valueOf(failureDebtId)).isGreaterThan(fixture.get(99).id).isLessThan(fixture.get(199).id);
+        jdbc.execute("CREATE OR REPLACE FUNCTION fail_test_due_date_batch() RETURNS trigger AS $$ BEGIN IF NEW.event_type='debtOverdue' AND NEW.aggregate_id='"+failureDebtId+"' THEN RAISE EXCEPTION 'test due date batch failure'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql");
         jdbc.execute("CREATE TRIGGER fail_test_due_date_batch BEFORE INSERT ON outbox_event FOR EACH ROW EXECUTE FUNCTION fail_test_due_date_batch()");
         try {
             assertThatThrownBy(()->dueDateProcessor.processNextBatch(claim.id(),claim.attemptCount())).hasMessageContaining("test due date batch failure");
             dueDates.recordFailure(claim.id(),claim.attemptCount(),"DUE_DATE_PROCESSING_FAILED");
-            assertThat(dueDates.get(queued.id()).debtsOverdue()).isEqualTo(100);
+            var failed=dueDates.get(queued.id());
+            assertThat(failed.status()).isEqualTo(DueDateRunStatus.PENDING);
+            assertThat(failed.lastErrorCode()).isEqualTo("DUE_DATE_PROCESSING_FAILED");
+            assertThat(failed.debtsScanned()).isEqualTo(Math.toIntExact(expectedScanned));
+            assertThat(failed.debtsOverdue()).isEqualTo(100);
+            assertThat(failed.adjustmentsGenerated()).isEqualTo(100);
+            assertThat(failed.errors()).isZero();
             assertThat(jdbc.queryForObject("select count(*) from outbox_event o join debt d on o.aggregate_id=d.id::text where o.event_type='debtOverdue' and d.taxpayer_id=?",Long.class,taxpayer.id)).isEqualTo(firstBatchEvents);
+            assertThat(jdbc.queryForObject("select count(*) from late_charge_application l join debt d on l.debt_id=d.id where d.taxpayer_id=? and l.calculation_date=?",Long.class,taxpayer.id,processingDate)).isEqualTo(100);
+            assertThat(jdbc.queryForObject("select count(*) from adjustment_request a join debt d on a.debt_id=d.id where d.taxpayer_id=? and a.type='SURCHARGE' and a.reason=?",Long.class,taxpayer.id,"Recargo automático "+rule.code)).isEqualTo(100);
             jdbc.execute("DROP TRIGGER IF EXISTS fail_test_due_date_batch ON outbox_event");jdbc.execute("DROP FUNCTION IF EXISTS fail_test_due_date_batch()");
             jdbc.update("update due_date_processing set next_attempt_at=null where id=?",queued.id());
             dueDateWorker.processNext();
@@ -1588,15 +1648,20 @@ class PostgreSqlIntegrationTest {
         }
         var run=dueDates.get(queued.id());
         assertThat(run.status()).isEqualTo(DueDateRunStatus.COMPLETED);
-        assertThat(run.debtsOverdue()).isGreaterThanOrEqualTo(101);
-        assertThat(jdbc.queryForObject("select count(*) from outbox_event o join debt d on o.aggregate_id=d.id::text where o.event_type='debtOverdue' and d.taxpayer_id=?",Long.class,taxpayer.id)).isEqualTo(101);
-        assertThat(jdbc.queryForObject("select count(distinct o.idempotency_key) from outbox_event o join debt d on o.aggregate_id=d.id::text where o.event_type='debtOverdue' and d.taxpayer_id=?",Long.class,taxpayer.id)).isEqualTo(101);
+        assertThat(run.debtsOverdue()).isEqualTo(200);
+        assertThat(jdbc.queryForObject("select count(*) from outbox_event o join debt d on o.aggregate_id=d.id::text where o.event_type='debtOverdue' and d.taxpayer_id=?",Long.class,taxpayer.id)).isEqualTo(200);
+        assertThat(jdbc.queryForObject("select count(distinct o.idempotency_key) from outbox_event o join debt d on o.aggregate_id=d.id::text where o.event_type='debtOverdue' and d.taxpayer_id=?",Long.class,taxpayer.id)).isEqualTo(200);
+        assertThat(run.adjustmentsGenerated()).isEqualTo(200);
+        assertThat(run.debtsScanned()).isEqualTo(Math.toIntExact(expectedScanned));
+        assertThat(run.errors()).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from late_charge_application l join debt d on l.debt_id=d.id where d.taxpayer_id=? and l.calculation_date=?",Long.class,taxpayer.id,processingDate)).isEqualTo(200);
+        assertThat(jdbc.queryForObject("select count(distinct l.debt_id) from late_charge_application l join debt d on l.debt_id=d.id where d.taxpayer_id=? and l.calculation_date=?",Long.class,taxpayer.id,processingDate)).isEqualTo(200);
+        assertThat(jdbc.queryForObject("select count(*) from adjustment_request a join debt d on a.debt_id=d.id where d.taxpayer_id=? and a.type='SURCHARGE' and a.reason=?",Long.class,taxpayer.id,"Recargo automático "+rule.code)).isEqualTo(200);
 
         long elapsedMillis=TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started);
-        assertThat(run.debtsScanned()).isGreaterThanOrEqualTo(101);
-        assertThat(run.installmentsOverdue()).isGreaterThanOrEqualTo(101);
+        assertThat(run.installmentsOverdue()).isEqualTo(101);
         assertThat(installments.findByPaymentPlanIdOrderByNumber(plan.id)).allMatch(installment->installment.status==InstallmentStatus.OVERDUE);
-        System.out.printf("due-date fixture rows=101 elapsedMs=%d%n",elapsedMillis);
+        System.out.printf("due-date fixture rows=200 elapsedMs=%d%n",elapsedMillis);
     }
 
     @Test @EnabledIfSystemProperty(named="rentas.due-date-load-test",matches="true")
