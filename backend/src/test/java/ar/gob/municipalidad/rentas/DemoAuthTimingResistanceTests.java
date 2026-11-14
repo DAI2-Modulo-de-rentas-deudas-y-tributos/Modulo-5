@@ -30,7 +30,9 @@ class DemoAuthTimingResistanceTests {
     @BeforeEach void setup() {
         when(passwords.encode(anyString())).thenReturn("dummy-bcrypt-hash");
         when(loginAttempts.allowAttempt(anyString())).thenReturn(true);
-        service=new DemoAuthService(users,bootstrapLock,sessions,taxpayers,passwords,audit,loginAttempts,"",Duration.ofHours(8));
+        when(loginAttempts.allowOriginAttempt(anyString(),anyLong())).thenReturn(true);
+        when(loginAttempts.recordOriginFailure(anyString(),anyLong())).thenReturn(true);
+        service=new DemoAuthService(users,bootstrapLock,sessions,taxpayers,passwords,audit,loginAttempts,"",Duration.ofHours(8),20);
     }
 
     @Test void missingAndInactiveUsersPerformPasswordCheckAndReturnSameGenericError() {

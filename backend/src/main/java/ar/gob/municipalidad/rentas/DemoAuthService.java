@@ -33,16 +33,20 @@ class DemoAuthService {
     private final DemoLoginAttemptLimiter loginAttempts;
     private final String bootstrapSecret;
     private final Duration sessionTtl;
+    private final long loginOriginMaxFailures;
     private final SecureRandom random=new SecureRandom();
 
     DemoAuthService(DemoUserRepository users,DemoBootstrapLockRepository bootstrapLock,DemoAuthSessionRepository sessions,TaxpayerRepository taxpayers,
             PasswordEncoder passwords,AuditService audit,DemoLoginAttemptLimiter loginAttempts,
             @Value("${rentas.security.demo-bootstrap-password:}") String bootstrapSecret,
-            @Value("${rentas.security.demo-session-ttl:PT8H}") Duration sessionTtl) {
+            @Value("${rentas.security.demo-session-ttl:PT8H}") Duration sessionTtl,
+            @Value("${rentas.security.demo-login-origin-max-failures:20}") long loginOriginMaxFailures) {
         this.users=users;this.bootstrapLock=bootstrapLock;this.sessions=sessions;this.taxpayers=taxpayers;this.passwords=passwords;this.audit=audit;this.loginAttempts=loginAttempts;
         this.unknownUserPasswordHash=passwords.encode(newToken());
         this.bootstrapSecret=bootstrapSecret==null?"":bootstrapSecret;
         this.sessionTtl=sessionTtl;
+        if(loginOriginMaxFailures<1||loginOriginMaxFailures==Long.MAX_VALUE)throw new IllegalArgumentException("El límite DEMO por origen debe ser positivo y finito");
+        this.loginOriginMaxFailures=loginOriginMaxFailures;
     }
 
     @Transactional DemoAuthController.LoginResponse login(DemoAuthController.LoginRequest request) {
@@ -50,15 +54,15 @@ class DemoAuthService {
     }
 
     @Transactional DemoAuthController.LoginResponse login(DemoAuthController.LoginRequest request, String remoteAddress) {
+        String originKey=attemptKey("login-origin:"+remoteAddress);
+        if(!loginAttempts.allowOriginAttempt(originKey,loginOriginMaxFailures))throw loginRateLimited();
         String key=attemptKey("login:"+normalize(request.username())+":"+remoteAddress);
-        if(!loginAttempts.allowAttempt(key)) {
-            audit.recordSecurityEventRequiresNew("DEMO_LOGIN_RATE_LIMITED","anonymous","ANONYMOUS",java.util.Map.of("reason","DEMO_LOGIN_RATE_LIMITED"));
-            throw new BusinessException("DEMO_LOGIN_RATE_LIMITED","Demasiados intentos. Reintentá en 15 minutos",429,900);
-        }
+        if(!loginAttempts.allowAttempt(key))throw loginRateLimited();
         DemoUser user=users.findByUsernameIgnoreCase(normalize(request.username())).orElse(null);
         boolean active=user!=null&&user.active;
         boolean passwordMatches=passwords.matches(request.password(),active?user.passwordHash:unknownUserPasswordHash);
         if(!active||!passwordMatches) {
+            if(!loginAttempts.recordOriginFailure(originKey,loginOriginMaxFailures))throw loginRateLimited();
             boolean identifiable=user!=null&&user.integrationActorId!=null;
             audit.recordSecurityEventRequiresNew("DEMO_LOGIN_FAILED",identifiable?user.integrationActorId.toString():"anonymous",identifiable?user.role.name():"ANONYMOUS",java.util.Map.of("reason","INVALID_CREDENTIALS"));
             throw new BusinessException("INVALID_CREDENTIALS","Usuario o contraseña incorrectos",401);
@@ -73,6 +77,11 @@ class DemoAuthService {
         sessions.save(session);
         audit.recordSecurityEvent("DEMO_LOGIN_SUCCEEDED",user.integrationActorId.toString(),user.role.name(),java.util.Map.of("outcome","SUCCESS"));
         return new DemoAuthController.LoginResponse(token,response(user));
+    }
+
+    private BusinessException loginRateLimited() {
+        audit.recordSecurityEventRequiresNew("DEMO_LOGIN_RATE_LIMITED","anonymous","ANONYMOUS",java.util.Map.of("reason","DEMO_LOGIN_RATE_LIMITED"));
+        return new BusinessException("DEMO_LOGIN_RATE_LIMITED","Demasiados intentos. Reintentá en 15 minutos",429,900);
     }
 
     @Transactional void logout(String rawToken) {
