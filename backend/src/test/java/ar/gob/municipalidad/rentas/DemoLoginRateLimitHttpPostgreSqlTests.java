@@ -32,7 +32,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest(properties = {
         "rentas.security.trusted-proxy-cidrs=10.0.0.0/8",
-        "rentas.security.demo-login-origin-max-failures=20"
+        "rentas.security.demo-login-origin-max-failures=20",
+        "rentas.security.demo-bootstrap-password=test-bootstrap-secret"
 })
 @AutoConfigureMockMvc
 @ActiveProfiles("postgres-it")
@@ -60,6 +61,7 @@ class DemoLoginRateLimitHttpPostgreSqlTests {
     @Autowired ObjectMapper json;
     @Autowired JdbcTemplate jdbc;
     @Autowired DemoAuthService demoAuth;
+    @Autowired PostgreSqlDemoLoginAttemptLimiter loginAttemptLimiter;
 
     @BeforeEach
     void authenticateFixtureSetup() {
@@ -89,6 +91,8 @@ class DemoLoginRateLimitHttpPostgreSqlTests {
                             .content(json.writeValueAsBytes(new DemoAuthController.LoginRequest(username, "incorrecta"))))
                     .andExpect(status().isUnauthorized());
         }
+        jdbc.update("update demo_login_attempt set window_started_at=CURRENT_TIMESTAMP - INTERVAL '13 minutes' where attempt_key_hash=?",
+                DemoAuthService.hashToken("login:" + username + ":" + REMOTE_ADDRESS));
 
         var response = mvc.perform(post("/api/v1/dev-auth/login")
                         .with(request -> {
@@ -102,7 +106,7 @@ class DemoLoginRateLimitHttpPostgreSqlTests {
                 .andReturn()
                 .getResponse();
 
-        assertThat(response.getHeader("Retry-After")).isEqualTo("900");
+        assertRetryAfterAroundTwoMinutes(response.getHeader("Retry-After"));
         JsonNode error = json.readTree(response.getContentAsByteArray());
         assertThat(error.has("token")).isFalse();
         assertThat(error.has("session")).isFalse();
@@ -135,6 +139,9 @@ class DemoLoginRateLimitHttpPostgreSqlTests {
         assertThat(jdbc.queryForObject("select count(*) from demo_login_origin_attempt where origin_key_hash=?",
                 Long.class, DemoAuthService.hashToken("login-origin:203.0.113.20"))).isZero();
 
+        jdbc.update("update demo_login_origin_attempt set window_started_at=CURRENT_TIMESTAMP - INTERVAL '13 minutes' where origin_key_hash=?",
+                originKey);
+
         var blockedUnknown = mvc.perform(login("spray-missing-" + UUID.randomUUID(), "incorrecta", SPRAY_REMOTE_ADDRESS,
                         "203.0.113.30"))
                 .andExpect(status().isTooManyRequests())
@@ -144,8 +151,8 @@ class DemoLoginRateLimitHttpPostgreSqlTests {
                 .andExpect(status().isTooManyRequests())
                 .andExpect(jsonPath("$.code").value("DEMO_LOGIN_RATE_LIMITED"))
                 .andReturn().getResponse();
-        assertThat(blockedUnknown.getHeader("Retry-After")).isEqualTo("900");
-        assertThat(blockedKnown.getHeader("Retry-After")).isEqualTo("900");
+        assertRetryAfterAroundTwoMinutes(blockedUnknown.getHeader("Retry-After"));
+        assertRetryAfterAroundTwoMinutes(blockedKnown.getHeader("Retry-After"));
         assertThat(json.readTree(blockedKnown.getContentAsByteArray()).path("message").asText())
                 .isEqualTo(json.readTree(blockedUnknown.getContentAsByteArray()).path("message").asText());
         assertThat(jdbc.queryForObject("select count(*) from demo_auth_session where demo_user_id=?",
@@ -172,8 +179,51 @@ class DemoLoginRateLimitHttpPostgreSqlTests {
 
         mvc.perform(login(username, "clave-segura", EXPIRY_REMOTE_ADDRESS, null))
                 .andExpect(status().isOk());
-        assertThat(jdbc.queryForObject("select count(*) from demo_login_origin_attempt where origin_key_hash=?",
-                Long.class, originKey)).isZero();
+        mvc.perform(login("spray-expired-wrong-" + UUID.randomUUID(), "incorrecta", EXPIRY_REMOTE_ADDRESS, null))
+                .andExpect(status().isUnauthorized());
+        assertThat(jdbc.queryForObject("select failures from demo_login_origin_attempt where origin_key_hash=?",
+                Long.class, originKey)).isEqualTo(1);
+    }
+
+    @Test
+    void bootstrapRetainsItsLimitAndReturnsTheRemainingRetryWindow() throws Exception {
+        String remoteAddress = "198.51.100.81";
+        for (int attempt = 0; attempt < 5; attempt++) {
+            mvc.perform(bootstrap(remoteAddress, "incorrect-secret"))
+                    .andExpect(status().isUnauthorized())
+                    .andExpect(jsonPath("$.code").value("INVALID_BOOTSTRAP_SECRET"));
+        }
+        String attemptKey = DemoAuthService.hashToken("bootstrap:" + remoteAddress);
+        jdbc.update("update demo_login_attempt set window_started_at=CURRENT_TIMESTAMP - INTERVAL '13 minutes' where attempt_key_hash=?",
+                attemptKey);
+
+        var blocked = mvc.perform(bootstrap(remoteAddress, "incorrect-secret"))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.code").value("DEMO_LOGIN_RATE_LIMITED"))
+                .andReturn().getResponse();
+        assertRetryAfterAroundTwoMinutes(blocked.getHeader("Retry-After"));
+    }
+
+    @Test
+    void scheduledCleanupRemovesExpiredRowsAndPreservesActiveWindows() {
+        String expiredUser = DemoAuthService.hashToken("expired-user:" + UUID.randomUUID());
+        String activeUser = DemoAuthService.hashToken("active-user:" + UUID.randomUUID());
+        jdbc.update("insert into demo_login_attempt(attempt_key_hash,window_started_at,attempts) values (?,CURRENT_TIMESTAMP - INTERVAL '16 minutes',1)", expiredUser);
+        jdbc.update("insert into demo_login_attempt(attempt_key_hash,window_started_at,attempts) values (?,CURRENT_TIMESTAMP,1)", activeUser);
+
+        var expiredOrigins = java.util.stream.IntStream.range(0, 5_001)
+                .mapToObj(index -> new Object[]{DemoAuthService.hashToken("expired-origin:" + index + ":" + UUID.randomUUID())})
+                .toList();
+        jdbc.batchUpdate("insert into demo_login_origin_attempt(origin_key_hash,window_started_at,failures) values (?,CURRENT_TIMESTAMP - INTERVAL '16 minutes',1)", expiredOrigins);
+        String activeOrigin = DemoAuthService.hashToken("active-origin:" + UUID.randomUUID());
+        jdbc.update("insert into demo_login_origin_attempt(origin_key_hash,window_started_at,failures) values (?,CURRENT_TIMESTAMP,1)", activeOrigin);
+
+        loginAttemptLimiter.cleanupExpiredAttempts();
+
+        assertThat(jdbc.queryForObject("select count(*) from demo_login_attempt where attempt_key_hash=?", Long.class, expiredUser)).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from demo_login_attempt where attempt_key_hash=?", Long.class, activeUser)).isOne();
+        assertThat(jdbc.queryForObject("select count(*) from demo_login_origin_attempt where window_started_at<=CURRENT_TIMESTAMP - INTERVAL '15 minutes'", Long.class)).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from demo_login_origin_attempt where origin_key_hash=?", Long.class, activeOrigin)).isOne();
     }
 
     @Test
@@ -217,5 +267,20 @@ class DemoLoginRateLimitHttpPostgreSqlTests {
                 .content(json.writeValueAsBytes(new DemoAuthController.LoginRequest(username, password)));
         if (forwardedFor != null) request.header("X-Forwarded-For", forwardedFor);
         return request;
+    }
+
+    private org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder bootstrap(String remoteAddress, String secret) {
+        return post("/api/v1/dev-auth/bootstrap")
+                .with(request -> {
+                    request.setRemoteAddr(remoteAddress);
+                    return request;
+                })
+                .header("X-Demo-Bootstrap-Secret", secret)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"username\":\"bootstrap-test\",\"password\":\"strong-bootstrap-password\",\"displayName\":\"Bootstrap test\"}");
+    }
+
+    private void assertRetryAfterAroundTwoMinutes(String value) {
+        assertThat(Integer.parseInt(value)).isBetween(110, 120);
     }
 }
