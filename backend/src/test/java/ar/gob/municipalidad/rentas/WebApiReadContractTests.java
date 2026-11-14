@@ -142,24 +142,36 @@ class WebApiReadContractTests {
             .andExpect(status().isOk());
     }
 
-    @Test void integrationsDirectionAndStatusFiltersIncludePendingOutboundRows() throws Exception {
-        UUID id=UUID.randomUUID();
-        OutboxEvent pending=new OutboxEvent();pending.id=id;pending.eventType="scrum828Pending";pending.targetModule="CORE";
-        pending.aggregateType="ExemptionRequest";pending.aggregateId="request";pending.payload="{\"eventId\":\""+id+"\"}";
-        pending.status=OutboxStatus.PENDING;pending.retryCount=0;pending.createdAt=OffsetDateTime.now();outbox.saveAndFlush(pending);
+    @Test void integrationsDirectionAndStatusFiltersIncludeDeferredOutboundLogRows() throws Exception {
+        String eventType="scrum831Direction";OffsetDateTime now=OffsetDateTime.now();
+        UUID inboundId=UUID.randomUUID();IntegrationEventLog inbound=new IntegrationEventLog();inbound.eventId=inboundId;
+        inbound.externalEventId=inboundId.toString();inbound.eventType=eventType;inbound.sourceModule="m1";inbound.targetModule="rentas";
+        inbound.direction=EventDirection.INBOUND;inbound.status=IntegrationEventStatus.PROCESSED;inbound.payload="{}";
+        inbound.retryCount=0;inbound.occurredAt=inbound.receivedAt=now;integrations.saveAndFlush(inbound);
+
+        UUID deferredId=UUID.randomUUID();IntegrationEventLog deferred=new IntegrationEventLog();deferred.eventId=deferredId;
+        deferred.externalEventId=deferredId.toString();deferred.eventType=eventType;deferred.sourceModule="rentas";deferred.targetModule="CORE";
+        deferred.direction=EventDirection.OUTBOUND;deferred.status=IntegrationEventStatus.PENDING;deferred.payload="{\"phase\":\"DEFERRED\"}";
+        deferred.retryCount=0;deferred.occurredAt=deferred.receivedAt=now;integrations.saveAndFlush(deferred);
+
+        UUID outboxId=UUID.randomUUID();OutboxEvent pending=new OutboxEvent();pending.id=outboxId;pending.eventType=eventType;pending.targetModule="CORE";
+        pending.aggregateType="ExemptionRequest";pending.aggregateId="request";pending.payload="{\"eventId\":\""+outboxId+"\"}";
+        pending.status=OutboxStatus.PENDING;pending.retryCount=0;pending.createdAt=now;outbox.saveAndFlush(pending);
         String base="/api/v1/integrations/events";
 
-        mvc.perform(withStaff(get(base).param("eventType","scrum828Pending").param("direction","IN")))
-            .andExpect(status().isOk()).andExpect(jsonPath("$.page.totalElements").value(0));
-        mvc.perform(withStaff(get(base).param("eventType","scrum828Pending").param("direction","OUT")))
+        mvc.perform(withStaff(get(base).param("eventType",eventType).param("direction","IN")))
             .andExpect(status().isOk()).andExpect(jsonPath("$.page.totalElements").value(1))
-            .andExpect(jsonPath("$.content[0].eventId").value(id.toString()))
-            .andExpect(jsonPath("$.content[0].direction").value("OUTBOUND"))
-            .andExpect(jsonPath("$.content[0].status").value("PENDING"));
-        mvc.perform(withStaff(get(base).param("eventType","scrum828Pending").param("direction","OUT").param("status","PENDING")))
-            .andExpect(status().isOk()).andExpect(jsonPath("$.page.totalElements").value(1))
-            .andExpect(jsonPath("$.content[0].direction").value("OUTBOUND"));
-        mvc.perform(withStaff(get(base).param("eventType","scrum828Pending").param("direction","IN").param("status","PENDING")))
+            .andExpect(jsonPath("$.content[0].eventId").value(inboundId.toString()))
+            .andExpect(jsonPath("$.content[0].direction").value("INBOUND"));
+        mvc.perform(withStaff(get(base).param("eventType",eventType).param("direction","OUT")))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.page.totalElements").value(2))
+            .andExpect(jsonPath("$.content[*].eventId").value(org.hamcrest.Matchers.containsInAnyOrder(deferredId.toString(),outboxId.toString())))
+            .andExpect(jsonPath("$.content[*].direction").value(org.hamcrest.Matchers.everyItem(org.hamcrest.Matchers.is("OUTBOUND"))));
+        mvc.perform(withStaff(get(base).param("eventType",eventType).param("direction","OUT").param("status","PENDING")))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.page.totalElements").value(2));
+        mvc.perform(withStaff(get(base).param("eventType",eventType).param("direction","IN").param("status","PROCESSED")))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.page.totalElements").value(1));
+        mvc.perform(withStaff(get(base).param("eventType",eventType).param("direction","IN").param("status","PENDING")))
             .andExpect(status().isOk()).andExpect(jsonPath("$.page.totalElements").value(0));
     }
 
