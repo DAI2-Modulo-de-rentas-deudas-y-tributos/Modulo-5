@@ -36,7 +36,7 @@ contrato Core/JWT sigue pendiente; PROD usa el perfil `prod`, sin modo demo:
 
 | Componente | Variable | DEV | TEST | PROD |
 | --- | --- | --- | --- | --- |
-| Backend | `backend_spring_profiles_active` | `dev` | `dev` | `prod` |
+| Backend | `backend_spring_profiles_active` | `dev` | `staging` | `prod` |
 | Backend | `BROKER_ADAPTER` | `local-log` | `local-log` | `local-log` |
 | Backend | `OUTBOX_DELAY_MS` | `5000` | `5000` | `5000` |
 | Backend | `RENTAS_SECURITY_DEV_MODE` | `true` | `true` | `false` |
@@ -65,6 +65,7 @@ no contienen credenciales:
 | `TF_STATE_BUCKET` | bucket de estado compartido | bucket de estado compartido | bucket de estado compartido |
 | `TF_STATE_KEY` | `environments/dev/terraform.tfstate` | `environments/test/terraform.tfstate` | `environments/prod/terraform.tfstate` |
 | `BUDGET_ALERT_EMAIL` | no aplica | opcional | no aplica |
+| `TEST_BACKEND_SECRET_ARNS` | no aplica | mapa JSON de nombres de variables a ARN | no aplica |
 
 Los workflows obtienen credenciales AWS temporales mediante OIDC; no crear access
 keys de AWS en GitHub. El environment `test` debe conservar reviewer obligatorio y
@@ -72,6 +73,9 @@ keys de AWS en GitHub. El environment `test` debe conservar reviewer obligatorio
 Mientras TEST use autenticación DEMO, agregar allí los secrets
 `TEST_DEMO_USERNAME`, `TEST_DEMO_PASSWORD` y `RENTAS_DEMO_BOOTSTRAP_PASSWORD`.
 Este último debe coincidir con el secreto que ECS obtiene desde Secrets Manager.
+`TEST_BACKEND_SECRET_ARNS` debe incluir las referencias activas de
+`RENTAS_DEMO_BOOTSTRAP_PASSWORD` y `CORE_MODULE_SECRET`. Guardar los ARN en la
+variable del environment. Los valores permanecen en Secrets Manager.
 
 ## Alta y rotacion
 

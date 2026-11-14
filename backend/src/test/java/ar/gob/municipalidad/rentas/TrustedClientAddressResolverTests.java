@@ -18,6 +18,14 @@ class TrustedClientAddressResolverTests {
         assertThat(resolver.resolve(request("10.1.2.3","198.51.100.7, 10.2.3.4"))).isEqualTo("198.51.100.7");
     }
 
+    @Test void distinguishesViewersBehindTheSameCloudFrontAndAlbHops(){
+        var resolver=new TrustedClientAddressResolver("10.60.0.0/24,10.60.1.0/24,13.124.199.0/24");
+        assertThat(resolver.resolve(request("10.60.0.171","203.0.113.9, 198.51.100.101, 13.124.199.12")))
+            .isEqualTo("198.51.100.101");
+        assertThat(resolver.resolve(request("10.60.0.171","198.51.100.102, 13.124.199.12")))
+            .isEqualTo("198.51.100.102");
+    }
+
     @Test void malformedForwardedChainFallsBackToDirectPeer(){
         var resolver=new TrustedClientAddressResolver("10.0.0.0/8");
         assertThat(resolver.resolve(request("10.1.2.3","203.0.113.1,not-an-ip"))).isEqualTo("10.1.2.3");

@@ -16,7 +16,7 @@ import org.springframework.web.bind.annotation.RestController;
 @Hidden
 @RestController
 @RequestMapping("/api/v1/dev/integrations/m2")
-@Profile("!prod")
+@Profile("!prod & !staging")
 @ConditionalOnProperty(name="rentas.security.dev-mode",havingValue="true")
 class DevM2EventController {
     private final TicketIntegrationService consumer;

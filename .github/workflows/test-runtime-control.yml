@@ -36,7 +36,6 @@ jobs:
       AWS_REGION: ${{ vars.AWS_REGION }}
       ECS_CLUSTER: "modulo-5-rentas-test-cluster"
       ECS_SERVICE: "modulo-5-rentas-test-backend"
-      ECS_TASK_FAMILY: "modulo-5-rentas-test-backend"
       ECS_CONTAINER_NAME: "backend"
       RDS_INSTANCE: "modulo-5-rentas-test-postgres"
       REQUESTED_OPERATION: ${{ inputs.operation }}
@@ -85,8 +84,13 @@ jobs:
         run: |
           set -euo pipefail
 
+          service_task=$(aws ecs describe-services \
+            --cluster "${ECS_CLUSTER}" \
+            --services "${ECS_SERVICE}" \
+            --query 'services[0].taskDefinition' \
+            --output text)
           task_image=$(aws ecs describe-task-definition \
-            --task-definition "${ECS_TASK_FAMILY}" \
+            --task-definition "${service_task}" \
             --query "taskDefinition.containerDefinitions[?name=='${ECS_CONTAINER_NAME}'].image | [0]" \
             --output text)
 

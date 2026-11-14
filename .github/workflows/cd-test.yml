@@ -51,6 +51,7 @@ jobs:
       APPLY_CONFIRMATION: ${{ inputs.confirmation }}
       DESTROY_DATA_CONFIRMATION: ${{ inputs.destroy_data_confirmation }}
       TF_VAR_budget_alert_email: ${{ vars.BUDGET_ALERT_EMAIL }}
+      TF_VAR_backend_secret_variables: ${{ vars.TEST_BACKEND_SECRET_ARNS || '{}' }}
 
     steps:
       - name: Checkout
@@ -78,6 +79,13 @@ jobs:
           set -euo pipefail
           : "${TF_STATE_BUCKET:?Missing TF_STATE_BUCKET in the test environment}"
           : "${TF_STATE_KEY:?Missing TF_STATE_KEY in the test environment}"
+          if [[ "${REQUESTED_OPERATION}" != "destroy" ]]; then
+            jq -e 'has("RENTAS_DEMO_BOOTSTRAP_PASSWORD") and has("CORE_MODULE_SECRET")' \
+              <<< "${TF_VAR_backend_secret_variables}" > /dev/null || {
+                echo "TEST_BACKEND_SECRET_ARNS must include DEMO and Core secret references."
+                exit 1
+              }
+          fi
           : "${AWS_REGION:?Missing AWS_REGION in the test environment}"
 
       - name: Validate requested operation

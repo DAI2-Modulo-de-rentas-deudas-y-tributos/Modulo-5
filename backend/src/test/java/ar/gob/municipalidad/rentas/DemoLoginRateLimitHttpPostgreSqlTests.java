@@ -31,7 +31,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest(properties = {
-        "rentas.security.trusted-proxy-cidrs=10.0.0.0/8",
+        "rentas.security.trusted-proxy-cidrs=10.60.0.0/24,10.60.1.0/24,13.124.199.0/24",
         "rentas.security.demo-login-origin-max-failures=20",
         "rentas.security.demo-bootstrap-password=test-bootstrap-secret"
 })
@@ -160,6 +160,25 @@ class DemoLoginRateLimitHttpPostgreSqlTests {
 
         mvc.perform(login(username, "clave-segura", OTHER_REMOTE_ADDRESS, "203.0.113.30"))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    void twoAwsViewersUsingTheSameAlbAndCloudFrontEdgeHaveSeparateOriginLimits() throws Exception {
+        String username = "aws-viewer-" + UUID.randomUUID();
+        demoAuth.create(new DemoAuthController.CreateUserRequest(
+                username, "clave-segura", "AWS viewer", DemoRole.RENTAS, null));
+        String alb = "10.60.0.171";
+        String firstViewer = "198.51.100.101, 13.124.199.12";
+        String secondViewer = "198.51.100.102, 13.124.199.12";
+
+        for (int attempt = 0; attempt < 20; attempt++) {
+            mvc.perform(login("aws-missing-" + UUID.randomUUID(), "incorrecta", alb, firstViewer))
+                .andExpect(status().isUnauthorized());
+        }
+        mvc.perform(login(username, "clave-segura", alb, "203.0.113.9, " + firstViewer))
+            .andExpect(status().isTooManyRequests());
+        mvc.perform(login(username, "clave-segura", alb, secondViewer))
+            .andExpect(status().isOk());
     }
 
     @Test
