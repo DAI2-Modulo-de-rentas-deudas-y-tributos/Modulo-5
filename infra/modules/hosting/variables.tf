@@ -19,3 +19,8 @@ variable "environment_variables" {
   type        = map(string)
   default     = {}
 }
+variable "custom_domains" {
+  description = "Dominios completos del frontend y sus zonas públicas en Route 53."
+  type        = map(string)
+  default     = {}
+}

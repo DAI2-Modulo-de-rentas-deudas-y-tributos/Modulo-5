@@ -14,7 +14,7 @@ import org.springframework.web.bind.annotation.*;
 @Hidden
 @RestController
 @RequestMapping("/api/v1/dev/integrations/m4")
-@Profile("!prod")
+@Profile("!prod & !staging")
 @ConditionalOnProperty(name="rentas.security.dev-mode",havingValue="true")
 class DevM4EventController {
     private final CoreM4Consumer consumer;

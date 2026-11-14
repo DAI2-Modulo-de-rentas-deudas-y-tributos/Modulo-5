@@ -129,9 +129,9 @@ variable "backend_task_memory" {
 }
 
 variable "backend_spring_profiles_active" {
-  description = "Perfiles activos del backend en TEST mientras Core/JWT sigue pendiente."
+  description = "Perfil del backend en AWS TEST con autenticación DEMO."
   type        = string
-  default     = "dev"
+  default     = "staging"
 }
 
 variable "backend_environment_variables" {
@@ -139,6 +139,7 @@ variable "backend_environment_variables" {
   type        = map(string)
   default = {
     BROKER_ADAPTER           = "local-log"
+    CORE_HTTP_BASE_URL       = "https://core-uade-2026.duckdns.org"
     OUTBOX_DELAY_MS          = "5000"
     RENTAS_SECURITY_DEV_MODE = "true"
   }

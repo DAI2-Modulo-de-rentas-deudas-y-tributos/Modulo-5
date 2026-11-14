@@ -99,7 +99,7 @@ class SecurityConfig {
 
     @Bean SecurityFilterChain securityFilterChain(HttpSecurity http, DevIdentityFilter filter,
             SecurityErrorResponseWriter errors, Environment environment) throws Exception {
-        boolean production=environment.acceptsProfiles(Profiles.of("prod"));
+        boolean publicDocs=!environment.acceptsProfiles(Profiles.of("prod", "staging"));
         return http.csrf(csrf -> csrf.disable())
             .sessionManagement(session -> session.sessionCreationPolicy(org.springframework.security.config.http.SessionCreationPolicy.STATELESS))
             .exceptionHandling(securityErrors -> securityErrors
@@ -115,7 +115,7 @@ class SecurityConfig {
             .authorizeHttpRequests(auth -> {
                 auth.requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                     .requestMatchers("/actuator/health", "/api/v1/health").permitAll();
-                if (!production) auth.requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll();
+                if (publicDocs) auth.requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll();
                 auth
                 .requestMatchers(HttpMethod.POST, "/api/v1/dev-auth/login", "/api/v1/dev-auth/bootstrap").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/v1/**").authenticated()

@@ -6,8 +6,9 @@ de Amplify mediante OIDC, evitando tokens personales y secretos permanentes.
 
 Las cabeceras de seguridad (CSP con `frame-ancestors 'none'`, HSTS, `nosniff`,
 `Referrer-Policy`) se configuran en `custom_headers` de la app: con despliegue manual
-Amplify no lee `amplify.yml`, por eso no van ahí. La CSP admite la API
-(`VITE_API_BASE_URL`) y Google Fonts; si el frontend suma otro origen, hay que agregarlo.
+Amplify aplica los cambios después de desplegar nuevamente la rama. La CSP
+admite la API (`VITE_API_BASE_URL`), las fuentes servidas por el portal y los
+formularios con destino en el mismo origen.
 
 El modulo combina `VITE_API_BASE_URL` con `environment_variables`. Todas las
 variables `VITE_*` son publicas porque Vite las incorpora al JavaScript del navegador;
