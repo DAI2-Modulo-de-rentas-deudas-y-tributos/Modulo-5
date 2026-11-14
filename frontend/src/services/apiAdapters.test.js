@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { cleanup, render, screen } from "@testing-library/react";
 import { adaptApiRequest, adaptApiResponse, enumMappings, pageItems } from "./apiAdapters.js";
+import { formatCurrency } from "../lib/format.js";
 
 describe("API adapters", () => {
   it("unwraps Spring Page and retains pagination metadata", () => {
@@ -323,15 +324,28 @@ describe("API client modes", () => {
       .rejects.toMatchObject({ code: "CORE_AUTH_PENDING", status: 503 });
   });
 
-  it("uses numeric zeroes for dashboard counts absent from the backend summary", () => {
+  it("usa el conteo de mora y deja indisponibles las métricas ausentes", () => {
     const result = adaptApiResponse("/api/v1/dashboard/metrics", "/api/v1/indicators/summary", {
       debt: { openCount: 2 },
+      delinquency: { overdueDebtCount: 1, overdueAmount: 1250 },
       collection: { paymentCount: 3 },
     });
 
-    expect(result.planes).toBe(0);
-    expect(result.exenciones).toBe(0);
-    expect(result.planes + result.exenciones).toBe(0);
+    expect(result.deudas).toBe(1);
+    expect(result.totalOverdueAmount).toBe(1250);
+    expect(result.planes).toBeNull();
+    expect(result.exenciones).toBeNull();
+    expect(result.contribuyentes).toBeNull();
+  });
+
+  it("formatea avisos vencidos y excluye obligaciones pagadas", () => {
+    const notices = adaptApiResponse("/api/v1/portal/123/notices", "/api/v1/portal/123/debts", [
+      { id: 1, overdue: true, status: "PENDING", outstandingBalance: 1234.5 },
+      { id: 2, overdue: true, status: "PAID", outstandingBalance: 0 },
+    ]);
+
+    expect(notices).toHaveLength(1);
+    expect(notices[0].detail).toBe(`Saldo pendiente: ${formatCurrency(1234.5)}`);
   });
 
   it("restores the backend profile from GET /me and clears storage when the session is invalid", async () => {

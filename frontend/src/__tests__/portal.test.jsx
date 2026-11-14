@@ -5,6 +5,7 @@ import App from "../App.jsx";
 import { PORTAL_MODULES } from "../config/portalModules.js";
 import { portalService } from "../services/rentasService.js";
 import { instalarBackendFalso } from "./fixtures/backendFalso.js";
+import { formatCurrency } from "../lib/format.js";
 
 /**
  * Portal del contribuyente: el ciudadano entra a su propio legajo, consulta y puede
@@ -50,7 +51,8 @@ describe("portal del contribuyente", () => {
 
     expect(await screen.findByText(/^avisos$/i)).toBeDefined();
     expect(screen.getAllByText(/tenés una deuda vencida|tenés \d+ deudas vencidas/i).length).toBeGreaterThan(0);
-    expect(screen.getByText(/tenés saldo a favor/i)).toBeDefined();
+    expect(screen.getByText(/saldo pendiente:/i).textContent).toBe(`Saldo pendiente: ${formatCurrency(40000)}`);
+    expect(screen.getByText(/podés aplicarlo a una deuda/i)).toBeDefined();
   });
 
   it.each(PORTAL_MODULES.map((module) => [module.label, module]))(

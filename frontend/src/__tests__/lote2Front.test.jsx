@@ -233,4 +233,26 @@ describe("lote 2 de tareas frontend", () => {
     const breadcrumb = await screen.findByRole("navigation", { name: /breadcrumb/i });
     expect(within(breadcrumb).getByText(/caducidad de planes/i)).toBeDefined();
   });
+
+  it("muestra en Rentas la mora real y los conteos del padrón y listados", async () => {
+    const pageWithTotal = (totalElements) => ({ content: [], page: { number: 0, size: 1, totalElements, totalPages: totalElements } });
+    instalarBackendFalso({
+      "GET /api/v1/indicators/summary": {
+        debt: { openCount: 6 },
+        delinquency: { overdueDebtCount: 1, overdueAmount: 1200 },
+        collection: { paymentCount: 2, unallocatedAmount: 0 },
+      },
+      "GET /api/v1/dashboards/rentas": { pendingPlanRequests: 0, pendingExemptions: 0, openTickets: 0 },
+      "GET /api/v1/taxpayers": pageWithTotal(41),
+      "GET /api/v1/liquidations": pageWithTotal(12),
+      "GET /api/v1/bills": pageWithTotal(29),
+    });
+    render(<App />);
+    await ingresarComoAgente(user, "mrivas");
+
+    expect(await screen.findByText("1 deuda en mora")).toBeDefined();
+    expect(screen.getByText("41 registrados")).toBeDefined();
+    expect(screen.getByText("12 en el período")).toBeDefined();
+    expect(screen.getByText("29 emitidas")).toBeDefined();
+  });
 });
