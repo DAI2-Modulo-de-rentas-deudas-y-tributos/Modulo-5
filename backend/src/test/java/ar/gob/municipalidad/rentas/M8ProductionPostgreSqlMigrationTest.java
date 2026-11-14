@@ -31,6 +31,7 @@ class M8ProductionPostgreSqlMigrationTest {
         assertThat(jdbc.queryForObject("select current_setting('server_version')",String.class)).startsWith("17.");
         assertThat(jdbc.queryForObject("select to_regclass('public.demo_user')::text",String.class)).isNull();
         assertThat(jdbc.queryForObject("select to_regclass('public.demo_login_attempt')::text",String.class)).isNull();
+        assertThat(jdbc.queryForObject("select to_regclass('public.demo_login_origin_attempt')::text",String.class)).isNull();
         assertThat(jdbc.queryForList("select version from flyway_schema_history where success and version in ('18','24','25','26','27','28','30') order by installed_rank",String.class))
             .containsExactly("18","24","25","26","27","28","30");
         assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version='29'",Integer.class)).isZero();

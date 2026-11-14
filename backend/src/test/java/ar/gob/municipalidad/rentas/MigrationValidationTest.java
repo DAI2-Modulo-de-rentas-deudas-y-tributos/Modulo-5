@@ -23,6 +23,7 @@ class MigrationValidationTest {
         assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(30);
         assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version='29'",Integer.class)).isZero();
         assertThat(jdbc.queryForObject("select count(*) from information_schema.tables where table_name='demo_login_attempt'",Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from information_schema.tables where table_name='demo_login_origin_attempt'",Integer.class)).isZero();
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='bill'",String.class))
             .contains("idempotency_key","idempotency_fingerprint");
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='ticket_case'",String.class))

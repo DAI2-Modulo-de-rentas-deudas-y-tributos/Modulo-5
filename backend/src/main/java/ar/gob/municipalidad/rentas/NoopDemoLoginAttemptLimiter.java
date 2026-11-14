@@ -9,5 +9,7 @@ import org.springframework.stereotype.Service;
 @ConditionalOnProperty(name="rentas.security.dev-mode", havingValue="true")
 class NoopDemoLoginAttemptLimiter implements DemoLoginAttemptLimiter {
     @Override public boolean allowAttempt(String hashedKey) { return true; }
+    @Override public boolean allowOriginAttempt(String hashedOriginKey,long maximumFailures) { return true; }
+    @Override public boolean recordOriginFailure(String hashedOriginKey,long maximumFailures) { return true; }
     @Override public void reset(String hashedKey) { }
 }
