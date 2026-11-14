@@ -33,6 +33,8 @@ pwsh -File contracts/tests/Validate-M5M1RequestSchemas.ps1
 
 El script valida los cuatro documentos como JSON, los seis ejemplos existentes y 23 casos negativos de UUID, porcentajes/importes, fechas, lista vacía, estados desconocidos, propiedades adicionales y campos exclusivos de otra variante. También comprueba campos nulos frente a omitidos y la variante aprobada sin `validUntil`. Los ejemplos son salidas locales de Jackson; el test no accede a Core ni a M1.
 
+El job obligatorio `backend` de CI ejecuta este mismo script antes de Maven. Un fallo detiene el job y, por su dependencia en `ci-required`, bloquea el check requerido. El alcance sigue siendo exclusivamente los cuatro schemas del campo `data` de M5 → M1, sus seis ejemplos locales y los 23 casos negativos; no valida el envelope completo, los contratos entrantes ni los eventos de otros módulos, y no es validación JSON Schema en runtime.
+
 ## Registro y consulta en Core/M9
 
 La documentación local menciona `POST /api/v1/publications` como path comunicado, pero no incluye su OpenAPI ni el contrato de request/response. Por eso el endpoint no está verificado como interfaz operable y no se debe invocar todavía. Tampoco se documentan en este repositorio el mecanismo de autenticación del módulo, el campo exacto para asociar/subir un schema a una publicación ya existente, ni endpoints confirmados para consultar publicaciones y suscripciones después del cambio.

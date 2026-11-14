@@ -79,6 +79,10 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Validate M5 to M1 data schemas
+        shell: pwsh
+        run: ./contracts/tests/Validate-M5M1RequestSchemas.ps1
+
       - name: Setup Java
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
