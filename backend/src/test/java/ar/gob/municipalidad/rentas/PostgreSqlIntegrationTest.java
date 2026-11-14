@@ -404,9 +404,12 @@ class PostgreSqlIntegrationTest {
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isUnauthorized());
         mvc.perform(post("/api/v1/dev-auth/login").contentType(MediaType.APPLICATION_JSON).content(request))
             .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isTooManyRequests())
-            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Retry-After","900"))
+            .andExpect(result -> {
+                int retryAfter = Integer.parseInt(result.getResponse().getHeader("Retry-After"));
+                assertThat(retryAfter).isBetween(1, 900);
+            })
             .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.code").value("DEMO_LOGIN_RATE_LIMITED"))
-            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.message").value("Demasiados intentos. Reintentá en 15 minutos"));
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.message").value("Demasiados intentos. Reintentá cuando venza el bloqueo"));
     }
 
     @Test void etagProtectsAllThreePatchResourcesAndRejectsStaleWrites() {

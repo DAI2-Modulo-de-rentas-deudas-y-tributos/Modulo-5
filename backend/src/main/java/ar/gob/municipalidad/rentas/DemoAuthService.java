@@ -55,14 +55,14 @@ class DemoAuthService {
 
     @Transactional DemoAuthController.LoginResponse login(DemoAuthController.LoginRequest request, String remoteAddress) {
         String originKey=attemptKey("login-origin:"+remoteAddress);
-        if(!loginAttempts.allowOriginAttempt(originKey,loginOriginMaxFailures))throw loginRateLimited();
+        if(!loginAttempts.allowOriginAttempt(originKey,loginOriginMaxFailures))throw loginRateLimited(loginAttempts.retryAfterOriginAttempt(originKey));
         String key=attemptKey("login:"+normalize(request.username())+":"+remoteAddress);
-        if(!loginAttempts.allowAttempt(key))throw loginRateLimited();
+        if(!loginAttempts.allowAttempt(key))throw loginRateLimited(loginAttempts.retryAfterAttempt(key));
         DemoUser user=users.findByUsernameIgnoreCase(normalize(request.username())).orElse(null);
         boolean active=user!=null&&user.active;
         boolean passwordMatches=passwords.matches(request.password(),active?user.passwordHash:unknownUserPasswordHash);
         if(!active||!passwordMatches) {
-            if(!loginAttempts.recordOriginFailure(originKey,loginOriginMaxFailures))throw loginRateLimited();
+            if(!loginAttempts.recordOriginFailure(originKey,loginOriginMaxFailures))throw loginRateLimited(loginAttempts.retryAfterOriginAttempt(originKey));
             boolean identifiable=user!=null&&user.integrationActorId!=null;
             audit.recordSecurityEventRequiresNew("DEMO_LOGIN_FAILED",identifiable?user.integrationActorId.toString():"anonymous",identifiable?user.role.name():"ANONYMOUS",java.util.Map.of("reason","INVALID_CREDENTIALS"));
             throw new BusinessException("INVALID_CREDENTIALS","Usuario o contraseña incorrectos",401);
@@ -79,9 +79,9 @@ class DemoAuthService {
         return new DemoAuthController.LoginResponse(token,response(user));
     }
 
-    private BusinessException loginRateLimited() {
+    private BusinessException loginRateLimited(int retryAfterSeconds) {
         audit.recordSecurityEventRequiresNew("DEMO_LOGIN_RATE_LIMITED","anonymous","ANONYMOUS",java.util.Map.of("reason","DEMO_LOGIN_RATE_LIMITED"));
-        return new BusinessException("DEMO_LOGIN_RATE_LIMITED","Demasiados intentos. Reintentá en 15 minutos",429,900);
+        return new BusinessException("DEMO_LOGIN_RATE_LIMITED","Demasiados intentos. Reintentá cuando venza el bloqueo",429,Math.max(1,retryAfterSeconds));
     }
 
     @Transactional void logout(String rawToken) {
@@ -115,7 +115,7 @@ class DemoAuthService {
     @Transactional DemoAuthController.UserResponse bootstrap(String secret,DemoAuthController.BootstrapRequest request,String remoteAddress) {
         if(bootstrapSecret.isBlank()) throw new BusinessException("DEMO_BOOTSTRAP_DISABLED","El bootstrap DEMO no está configurado",403);
         String key=attemptKey("bootstrap:"+remoteAddress);
-        if(!loginAttempts.allowAttempt(key)) throw new BusinessException("DEMO_LOGIN_RATE_LIMITED","Demasiados intentos. Reintentá en 15 minutos",429,900);
+        if(!loginAttempts.allowAttempt(key)) throw loginRateLimited(loginAttempts.retryAfterAttempt(key));
         if(secret==null||!constantEquals(secret,bootstrapSecret)) {
             throw new BusinessException("INVALID_BOOTSTRAP_SECRET","Secreto de bootstrap inválido",401);
         }
