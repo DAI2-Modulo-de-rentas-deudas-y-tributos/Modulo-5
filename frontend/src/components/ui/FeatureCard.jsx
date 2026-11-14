@@ -54,7 +54,7 @@ export default function FeatureCard({
 
       <div className="flex items-start justify-between">
         <div
-          className="text-neutral-400 transition-colors duration-300"
+          className="text-neutral-500 transition-colors duration-300"
           style={{ "--hover-color": colors.iconHover }}
         >
           {IconComponent ? (
@@ -74,20 +74,20 @@ export default function FeatureCard({
         <h3 className="text-[15px] font-semibold text-neutral-900 leading-snug transition-colors">
           {title}
         </h3>
-        <p className="text-[13px] text-neutral-400 leading-relaxed line-clamp-2">
+        <p className="text-[13px] text-neutral-600 leading-relaxed line-clamp-2">
           {description}
         </p>
       </div>
 
       <div className="mt-auto flex items-center justify-between pt-1">
         {showItemCount && itemCount !== undefined && (
-          <span className="text-[11px] text-neutral-300 tabular-nums">
+          <span className="text-[11px] text-neutral-600 tabular-nums">
             {itemCount} {itemCountLabel}
           </span>
         )}
         {showArrow && (
           <ArrowUpRight
-            className="h-4 w-4 text-neutral-300 transition-all duration-300 group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
+            className="h-4 w-4 text-neutral-500 transition-all duration-300 group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
             strokeWidth={1.5}
             style={{ color: "inherit" }}
           />

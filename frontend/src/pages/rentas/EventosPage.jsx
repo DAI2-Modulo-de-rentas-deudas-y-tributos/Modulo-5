@@ -171,6 +171,7 @@ export default function EventosPage() {
         />
 
         <DataTable
+          ariaLabel="Tabla de eventos de integración"
           columns={columns}
           rows={rows}
           rowKey={(row) => row.eventId}

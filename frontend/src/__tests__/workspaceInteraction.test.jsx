@@ -19,6 +19,8 @@ describe("interacción del área de trabajo", () => {
     const row = { id: 123, name: "Juan Pérez" };
     render(<DataTable columns={[{ key: "name", header: "Contribuyente" }]} rows={[row]} rowKey={(item) => item.id} onRowClick={openDetail} />);
     await user.tab();
+    expect(document.activeElement).toBe(screen.getByRole("region", { name: "Tabla de datos desplazable" }));
+    await user.tab();
     await user.keyboard("{Enter} ");
     expect(openDetail.mock.calls).toEqual([[row], [row]]);
   });

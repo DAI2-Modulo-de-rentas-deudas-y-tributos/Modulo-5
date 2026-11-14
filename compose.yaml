@@ -8,7 +8,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-rentas}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Falta POSTGRES_PASSWORD en .env (copiar .env.example a .env y completarlo)}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -27,7 +27,7 @@ services:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-m5-local}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Falta RABBITMQ_PASSWORD en .env (copiar .env.example a .env y completarlo)}
     ports:
-      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+      - "127.0.0.1:${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
       interval: 5s
@@ -68,8 +68,9 @@ services:
       RENTAS_SECURITY_DEV_MODE: "true"
       RENTAS_DEMO_BOOTSTRAP_PASSWORD: ${RENTAS_DEMO_BOOTSTRAP_PASSWORD:?Falta RENTAS_DEMO_BOOTSTRAP_PASSWORD en .env (copiar .env.example a .env y completarlo)}
       RENTAS_DEMO_SESSION_TTL: ${RENTAS_DEMO_SESSION_TTL:-PT8H}
+      RENTAS_SECURITY_TRUSTED_PROXY_CIDRS: ${RENTAS_SECURITY_TRUSTED_PROXY_CIDRS:-}
     ports:
-      - "${BACKEND_PORT:-8080}:8080"
+      - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8080/actuator/health"]
       interval: 10s
@@ -107,7 +108,7 @@ services:
     environment:
       API_PROXY_TARGET: http://backend:8080
     ports:
-      - "${FRONTEND_PORT:-5173}:4173"
+      - "127.0.0.1:${FRONTEND_PORT:-5173}:4173"
     # `vite preview` empieza a escuchar unos segundos después de que arranca el contenedor.
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:4173/"]

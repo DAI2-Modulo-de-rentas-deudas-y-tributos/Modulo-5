@@ -134,6 +134,7 @@ export default function CajaDashboardPage() {
                 }
               >
                 <DataTable
+                  ariaLabel="Tabla de últimos pagos"
                   columns={latestColumns}
                   rows={summary.latest}
                   rowKey={(row) => row.id}
@@ -149,6 +150,7 @@ export default function CajaDashboardPage() {
                 description="Detalle cronológico de lo que pasó por esta caja."
               >
                 <DataTable
+                  ariaLabel="Tabla de operaciones de hoy"
                   columns={activityColumns}
                   rows={summary.activity}
                   rowKey={(row) => row.id}

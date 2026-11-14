@@ -1,16 +1,18 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { sanitizeProxyForwardedFor } from "./src/lib/sanitizeProxyForwardedFor.js";
 
-// Mismas cabeceras que publica Amplify (infra/modules/hosting, SCRUM-798), para el stack local de
-// compose.yaml. connect-src 'self' porque la API llega por el proxy; HSTS no aplica sobre http.
+// Cabeceras del stack local; la política de Amplify se mantiene bajo responsabilidad DevOps.
+// connect-src 'self' porque la API llega por el proxy; HSTS no aplica sobre http.
 // Sólo en `vite preview`: el servidor de desarrollo inyecta scripts inline que la CSP bloquearía.
 const securityHeaders = {
   "Content-Security-Policy": [
     "default-src 'self'",
     "connect-src 'self'",
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-    "font-src 'self' https://fonts.gstatic.com",
+    "form-action 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "font-src 'self'",
     "img-src 'self' data:",
     "object-src 'none'",
     "base-uri 'self'",
@@ -21,14 +23,24 @@ const securityHeaders = {
   "Referrer-Policy": "strict-origin-when-cross-origin",
 };
 
+const apiProxy = {
+  target: process.env.API_PROXY_TARGET ?? "http://localhost:8080",
+  changeOrigin: true,
+  configure: (proxy) => proxy.on("proxyReq", sanitizeProxyForwardedFor),
+};
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     port: 5173,
     // Proxy local (también lo usa `vite preview` en compose.yaml): evita ampliar CORS.
-    proxy: { "/api": { target: process.env.API_PROXY_TARGET ?? "http://localhost:8080", changeOrigin: true } },
+    proxy: { "/api": apiProxy },
   },
-  preview: { headers: securityHeaders },
+  preview: {
+    allowedHosts: ["localhost", "127.0.0.1", "frontend"],
+    headers: securityHeaders,
+    proxy: { "/api": apiProxy },
+  },
   test: {
     // jsdom sólo para las pruebas de UI; las de dominio no necesitan DOM.
     environment: "jsdom",
