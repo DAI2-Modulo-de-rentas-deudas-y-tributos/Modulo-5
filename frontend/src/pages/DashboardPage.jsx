@@ -20,6 +20,9 @@ export default function DashboardPage() {
 
   const modules = modulesForRole(user.role);
   const firstName = user.fullName.split(" ")[0];
+  const pendingRequests = metrics?.planes == null || metrics?.exenciones == null
+    ? null
+    : metrics.planes + metrics.exenciones;
   const supervisionQueues = metrics ? [
     { id: "planes", label: "Planes excepcionales", path: "/rentas/planes", iconName: "CalendarClock", count: metrics.planes },
     { id: "exenciones", label: "Exenciones", path: "/rentas/exenciones", iconName: "ShieldCheck", count: metrics.exenciones },
@@ -51,7 +54,7 @@ export default function DashboardPage() {
                 <StatTile
                   label="Deuda vencida"
                   value={formatCurrency(metrics.totalOverdueAmount)}
-                  hint={`${metrics.deudas} deudas en mora`}
+                  hint={metrics.deudas == null ? "Cantidad no disponible" : `${metrics.deudas} ${metrics.deudas === 1 ? "deuda" : "deudas"} en mora`}
                   iconName="TrendingDown"
                   tone="danger"
                 />
@@ -60,17 +63,17 @@ export default function DashboardPage() {
                   value={formatCurrency(metrics.unallocatedPaymentAmount)}
                   hint="Requieren imputación manual"
                   iconName="Banknote"
-                  tone={metrics.unallocatedPaymentAmount > 0 ? "danger" : "success"}
+                  tone={metrics.unallocatedPaymentAmount == null ? "neutral" : metrics.unallocatedPaymentAmount > 0 ? "danger" : "success"}
                 />
                 <StatTile
                   label="Solicitudes pendientes"
-                  value={metrics.planes + metrics.exenciones}
-                  hint={`${metrics.planes} planes · ${metrics.exenciones} exenciones`}
+                  value={pendingRequests ?? "No disponible"}
+                  hint={pendingRequests == null ? "Datos no disponibles" : `${metrics.planes} planes · ${metrics.exenciones} exenciones`}
                   iconName="ClipboardList"
                 />
                 <StatTile
                   label="Tickets abiertos"
-                  value={metrics.tickets}
+                  value={metrics.tickets ?? "No disponible"}
                   hint="Derivados por Atención Ciudadana"
                   iconName="MessageSquare"
                 />
@@ -89,8 +92,8 @@ export default function DashboardPage() {
                         title={queue.label}
                         description="Solicitudes que requieren una decisión."
                         iconName={queue.iconName}
-                        itemCount={queue.count}
-                        itemCountLabel="pendientes"
+                        itemCount={queue.count ?? "No disponible"}
+                        itemCountLabel={queue.count == null ? "" : "pendientes"}
                         badge={queue.count > 0 ? { text: "Requiere atención", className: "bg-red-50 text-red-800" } : undefined}
                         onClick={() => navigate(queue.path)}
                       />
@@ -117,8 +120,8 @@ export default function DashboardPage() {
                       title={module.label}
                       description={module.description}
                       iconName={module.iconName}
-                      itemCount={metrics[module.id]}
-                      itemCountLabel={module.countLabel}
+                      itemCount={metrics[module.id] ?? "No disponible"}
+                      itemCountLabel={metrics[module.id] == null ? "" : module.countLabel}
                       badge={
                         module.roles.length === 1
                           ? { text: "Supervisor", className: "bg-[#0F2C59]/5 text-[#0F2C59]" }

@@ -26,11 +26,15 @@ export default function InicioPage() {
   );
   const { data: summary, loading, error } = useResource(summaryLoader);
 
-  const noticesLoader = useCallback(
-    () => portalService.notices(user.taxpayerId),
-    [user.taxpayerId],
-  );
-  const { data: notices } = useResource(noticesLoader, []);
+  const notices = summary?.obligations
+    ?.filter((debt) => debt.overdue || debt.status === "OVERDUE")
+    .map((debt) => ({
+      id: `deuda-${debt.id}`,
+      severity: "error",
+      title: "Tenés una deuda vencida",
+      detail: `Saldo pendiente: ${formatCurrency(debt.outstandingAmount)}`,
+      path: "/portal/deudas",
+    })) ?? [];
 
   const firstName = user.fullName.split(" ")[0];
 
@@ -101,12 +105,14 @@ export default function InicioPage() {
                   label="Deuda total"
                   value={formatCurrency(summary.totalDebt)}
                   hint={
-                    summary.overdueDebt > 0
+                    summary.overdueDebt == null
+                      ? "Monto vencido no disponible"
+                      : summary.overdueDebt > 0
                       ? `${formatCurrency(summary.overdueDebt)} vencidos`
                       : "Sin deuda vencida"
                   }
                   iconName="FileWarning"
-                  tone={summary.overdueDebt > 0 ? "danger" : "neutral"}
+                  tone={summary.overdueDebt == null ? "neutral" : summary.overdueDebt > 0 ? "danger" : "neutral"}
                 />
                 <StatTile
                   label="Próximo vencimiento"
@@ -116,16 +122,20 @@ export default function InicioPage() {
                   hint={
                     summary.nextDueDate
                       ? `${summary.nextDueDate.conceptName} · ${formatCurrency(summary.nextDueDate.amount)}`
-                      : "No tenés obligaciones pendientes"
+                      : summary.obligations?.length
+                        ? "No tenés vencimientos vigentes o futuros"
+                        : "No tenés obligaciones pendientes"
                   }
                   iconName="CalendarClock"
-                  tone={summary.nextDueDate?.overdue ? "danger" : "neutral"}
+                  tone={summary.nextDueDate?.overdue || summary.overdueDebt > 0 ? "danger" : "neutral"}
                 />
                 <StatTile
                   label="Saldo a favor"
                   value={formatCurrency(summary.creditBalance)}
                   hint={
-                    summary.creditBalance > 0
+                    summary.creditBalance == null
+                      ? "Saldo no disponible"
+                      : summary.creditBalance > 0
                       ? "Podés aplicarlo a una deuda"
                       : "No tenés saldo a favor"
                   }

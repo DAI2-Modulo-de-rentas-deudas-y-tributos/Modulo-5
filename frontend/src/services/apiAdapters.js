@@ -1,4 +1,6 @@
 /** Adapter between legacy screen shapes and the real M5 REST contract. */
+import { formatCurrency } from "../lib/format.js";
+
 const SIZE = "100";
 const CALC_TO_API = { PORCENTAJE: "PERCENTAGE", FIJO: "FIXED", IMPORTE_EXTERNO: "EXTERNAL" };
 const CALC_FROM_API = { PERCENTAGE: "PORCENTAJE", FIXED: "FIJO", EXTERNAL: "IMPORTE_EXTERNO" };
@@ -195,7 +197,7 @@ function portal(path) { const match = path.match(/^\/api\/v1\/portal\/(\d+)\/([^
 
 export function adaptApiResponse(original, actual, payload) {
   const data = pageItems(payload);
-  if (original.includes("/notices") && Array.isArray(data)) return data.filter((d) => d.overdue).map((d) => ({ id: `deuda-${d.id}`, severity: "error", title: "Tenés una deuda vencida", detail: `Saldo pendiente: ${d.outstandingBalance}`, path: "/portal/deudas" }));
+  if (original.includes("/notices") && Array.isArray(data)) return data.filter((d) => d.overdue && Number(d.outstandingAmount ?? d.outstandingBalance) > 0 && !["CANCELLED", "SETTLED", "PAID"].includes(d.status)).map((d) => ({ id: `deuda-${d.id}`, severity: "error", title: "Tenés una deuda vencida", detail: `Saldo pendiente: ${formatCurrency(d.outstandingAmount ?? d.outstandingBalance)}`, path: "/portal/deudas" }));
   if (Array.isArray(data)) {
     const rows = filterRows(original, actual, data.map((row) => adaptRow(actual, row)));
     if (original.startsWith("/api/v1/cashier/daily-summary")) return cashierSummary(original, rows);
@@ -205,7 +207,7 @@ export function adaptApiResponse(original, actual, payload) {
   if (original === "/api/v1/dashboard/metrics") return indicators(data);
   if (original === "/api/v1/audit/dashboard") return auditDashboard(data);
   if (original.startsWith("/api/v1/audit/indicators")) return auditIndicators(data);
-  if (original.endsWith("/account-summary")) return { ...data, totalDebt: data.outstandingDebt, overdueDebt: 0, creditBalance: 0, nextDueDate: null, obligations: [], counts: { debts: data.openDebts, overdue: 0, bills: 0, openRequests: data.activePlans } };
+  if (original.endsWith("/account-summary")) return { ...data, totalDebt: data.outstandingDebt ?? null, overdueDebt: null, creditBalance: null, nextDueDate: null, obligations: [], counts: { debts: data.openDebts ?? null, overdue: null, bills: null, openRequests: data.activePlans ?? null } };
   if (original === "/api/v1/cashier/agents") return [];
   return adaptRow(actual, data);
 }
@@ -276,7 +278,7 @@ function adaptRow(path, row) {
   if (/^\/api\/v1\/taxpayers(?:\/\d+)?$/.test(pathname)) return { ...row, type: row.taxpayerType, documentType: row.dni ? "DNI" : "CUIT", document: row.dni ?? row.cuit, name: row.displayName };
   return row;
 }
-function indicators(v = {}) { return { date: new Date().toISOString().slice(0, 10), contribuyentes: 0, liquidaciones: 0, deudas: v.debt?.openCount ?? 0, boletas: 0, pagos: v.collection?.paymentCount ?? 0, planes: 0, exenciones: 0, tickets: 0, eventos: 0, totalOverdueAmount: v.delinquency?.overdueAmount ?? 0, unallocatedPaymentAmount: v.collection?.unallocatedAmount ?? 0, recentActivity: [] }; }
+function indicators(v = {}) { return { date: new Date().toISOString().slice(0, 10), contribuyentes: null, liquidaciones: null, deudas: v.delinquency?.overdueDebtCount ?? null, boletas: null, pagos: v.collection?.paymentCount ?? null, planes: null, exenciones: null, tickets: null, eventos: null, totalOverdueAmount: v.delinquency?.overdueAmount ?? null, unallocatedPaymentAmount: v.collection?.unallocatedAmount ?? null, recentActivity: [] }; }
 
 function auditDashboard(v = {}) {
   return {

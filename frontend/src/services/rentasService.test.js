@@ -5,6 +5,7 @@ import {
   cashierService,
   debtAdjustmentService,
   debtService,
+  dashboardService,
   exemptionService,
   paymentService,
   paymentPlanService,
@@ -23,6 +24,7 @@ import { instalarBackendFalso, pagina } from "../__tests__/fixtures/backendFalso
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("simulación de planes de pago", () => {
@@ -207,6 +209,94 @@ describe("construcción de los requests", () => {
 });
 
 describe("lectura de la respuesta", () => {
+  const datosCuenta = (debts) => {
+    instalarBackendFalso({
+      "GET /api/v1/taxpayers/{id}/summary": { taxpayerId: 123, outstandingDebt: 999999, openDebts: debts.length, activePlans: 0 },
+      "GET /api/v1/taxpayers/{id}/debts": pagina(debts),
+      "GET /api/v1/taxpayers/{id}/bills": pagina([]),
+      "GET /api/v1/taxpayers/{id}/credit-balances": pagina([{ id: 1, availableAmount: 125 }]),
+      "GET /api/v1/tax-concepts": pagina([]),
+    });
+  };
+
+  it("calcula deuda vencida y el vencimiento futuro más cercano del contribuyente", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-14T15:00:00Z"));
+    datosCuenta([
+      { id: 1, status: "PENDING", overdue: true, outstandingBalance: 1500, dueDate: "2026-11-13" },
+      { id: 2, status: "PENDING", overdue: false, outstandingBalance: 3000, dueDate: "2026-11-15" },
+      { id: 3, status: "PENDING", overdue: false, outstandingBalance: 4000, dueDate: "2026-11-20" },
+    ]);
+
+    const summary = await portalService.accountSummary(123);
+
+    expect(summary).toMatchObject({
+      totalDebt: 8500,
+      overdueDebt: 1500,
+      creditBalance: 125,
+      nextDueDate: { debtId: 2, amount: 3000, dueDate: "2026-11-15" },
+      counts: { debts: 3, overdue: 1 },
+    });
+  });
+
+  it("no presenta vencimientos futuros si sólo hay deuda vencida o pagada", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-14T15:00:00Z"));
+    datosCuenta([
+      { id: 1, status: "PENDING", overdue: true, outstandingBalance: 250, dueDate: "2026-11-10" },
+      { id: 2, status: "PAID", overdue: false, outstandingBalance: 0, dueDate: "2026-11-20" },
+    ]);
+
+    const summary = await portalService.accountSummary(123);
+
+    expect(summary.totalDebt).toBe(250);
+    expect(summary.overdueDebt).toBe(250);
+    expect(summary.nextDueDate).toBeNull();
+    expect(summary.obligations.map((debt) => debt.id)).toEqual([1]);
+  });
+
+  it("acepta el vencimiento de hoy y deja los importes en cero cuando no hay obligaciones", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-14T15:00:00Z"));
+    datosCuenta([{ id: 4, status: "PENDING", overdue: false, outstandingBalance: 500, dueDate: "2026-11-14" }]);
+    const today = await portalService.accountSummary(123);
+    expect(today.nextDueDate).toMatchObject({ debtId: 4, dueDate: "2026-11-14" });
+
+    datosCuenta([]);
+    const empty = await portalService.accountSummary(123);
+    expect(empty).toMatchObject({ totalDebt: 0, overdueDebt: 0, nextDueDate: null, obligations: [], counts: { debts: 0, overdue: 0 } });
+  });
+
+  it("usa los conteos reales del padrón, liquidaciones y boletas para Rentas", async () => {
+    const pageWithTotal = (totalElements) => ({ content: [], page: { number: 0, size: 1, totalElements, totalPages: totalElements } });
+    instalarBackendFalso({
+      "GET /api/v1/indicators/summary": { debt: { openCount: 6 }, delinquency: { overdueDebtCount: 1, overdueAmount: 900 }, collection: { paymentCount: 4, unallocatedAmount: 25 } },
+      "GET /api/v1/dashboards/rentas": { pendingPlanRequests: 2, pendingExemptions: 3, openTickets: 1 },
+      "GET /api/v1/taxpayers": pageWithTotal(41),
+      "GET /api/v1/liquidations": pageWithTotal(12),
+      "GET /api/v1/bills": pageWithTotal(29),
+    });
+
+    const metrics = await dashboardService.metrics("PERSONAL");
+
+    expect(metrics).toMatchObject({ deudas: 1, contribuyentes: 41, liquidaciones: 12, boletas: 29, planes: 2, exenciones: 3, tickets: 1 });
+  });
+
+  it("no consulta boletas con el rol Supervisor y deja el conteo no disponible", async () => {
+    const pageWithTotal = (totalElements) => ({ content: [], page: { number: 0, size: 1, totalElements, totalPages: totalElements } });
+    const backend = instalarBackendFalso({
+      "GET /api/v1/indicators/summary": { debt: { openCount: 8 }, delinquency: { overdueDebtCount: 5, overdueAmount: 1200 } },
+      "GET /api/v1/dashboards/supervisor": { exceptionalPlans: 2 },
+      "GET /api/v1/taxpayers": pageWithTotal(30),
+      "GET /api/v1/liquidations": pageWithTotal(9),
+    });
+
+    const metrics = await dashboardService.metrics("SUPERVISOR");
+
+    expect(metrics).toMatchObject({ deudas: 5, contribuyentes: 30, liquidaciones: 9, boletas: null });
+    expect(backend.llamadas.some((call) => call.ruta === "/api/v1/bills")).toBe(false);
+  });
+
   it("muestra el nombre del concepto tributario en las deudas del portal", async () => {
     instalarBackendFalso({
       "GET /api/v1/taxpayers/{id}/debts": pagina([

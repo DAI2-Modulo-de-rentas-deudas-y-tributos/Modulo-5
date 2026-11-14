@@ -8,6 +8,7 @@
 import { AUTH_MODE, request, ApiError } from "./apiClient.js";
 import { allPages } from "./apiCollection.js";
 import { debtDetailsService } from "./debtDetailsService.js";
+import { todayFiscalDate } from "../lib/format.js";
 
 /** Los importes se redondean a centavos: el dinero nunca se muestra con ruido binario. */
 const round2 = (value) => Math.round(value * 100) / 100;
@@ -1448,17 +1449,29 @@ export const auditService = {
 export const portalService = {
   /** Resumen de la cuenta: lo que el ciudadano ve al entrar. */
   async accountSummary(taxpayerId) {
-    const [summary, debts] = await Promise.all([
+    const [summary, debts, credits] = await Promise.all([
       request(`/api/v1/portal/${taxpayerId}/account-summary`),
-      portalService.debts({ taxpayerId }),
+      portalService.debts({ taxpayerId, complete: true }),
+      allPages(`/api/v1/taxpayers/${taxpayerId}/credit-balances`),
     ]);
     const obligations = debts
-      .filter((debt) => Number(debt.outstandingAmount) > 0)
+      .filter((debt) => Number(debt.outstandingAmount) > 0 && !["CANCELLED", "SETTLED"].includes(debt.status))
       .sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate)));
-    const next = obligations[0];
+    const overdue = obligations.filter((debt) => debt.overdue || debt.status === "OVERDUE");
+    const today = todayFiscalDate();
+    const next = obligations.find((debt) => debt.dueDate && debt.dueDate >= today && debt.status !== "OVERDUE");
+    const totalDebt = round2(obligations.reduce((sum, debt) => sum + Number(debt.outstandingAmount), 0));
+    const overdueDebt = round2(overdue.reduce((sum, debt) => sum + Number(debt.outstandingAmount), 0));
+    const creditBalance = credits.some((credit) => credit.availableAmount == null || !Number.isFinite(Number(credit.availableAmount)))
+      ? null
+      : round2(credits.reduce((sum, credit) => sum + Number(credit.availableAmount), 0));
     return {
       ...summary,
+      totalDebt,
+      overdueDebt,
+      creditBalance,
       obligations,
+      counts: { ...summary.counts, debts: obligations.length, overdue: overdue.length },
       nextDueDate: next
         ? {
             debtId: next.id,
@@ -1469,7 +1482,6 @@ export const portalService = {
             overdue: next.status === "OVERDUE",
           }
         : null,
-      counts: { ...summary.counts, debts: obligations.length },
     };
   },
 
@@ -1480,11 +1492,13 @@ export const portalService = {
 
   // --------------------------------------------------------------- Consultas
 
-  async debts({ taxpayerId, status = "" }) {
+  async debts({ taxpayerId, status = "", complete = false }) {
     const params = new URLSearchParams({ status });
     const [debts, bills, concepts] = await Promise.all([
-      request(`/api/v1/portal/${taxpayerId}/debts?${params}`),
-      request(`/api/v1/portal/${taxpayerId}/bills`),
+      complete
+        ? allPages(`/api/v1/portal/${taxpayerId}/debts?${params}`)
+        : request(`/api/v1/portal/${taxpayerId}/debts?${params}`),
+      complete ? allPages(`/api/v1/taxpayers/${taxpayerId}/bills`) : request(`/api/v1/portal/${taxpayerId}/bills`),
       allPages("/api/v1/tax-concepts"),
     ]);
     const conceptById = new Map(concepts.map((concept) => [concept.id, concept]));
@@ -1650,40 +1664,53 @@ export const portalService = {
 export const dashboardService = {
   /** Métricas comunes más el resumen específico autorizado para cada rol operativo. */
   async metrics(role) {
-    const rolePath = role === "SUPERVISOR"
+    const effectiveRole = role === "PERSONAL" ? "RENTAS" : role;
+    const period = todayFiscalDate().slice(0, 7);
+    const rolePath = effectiveRole === "SUPERVISOR"
       ? "/api/v1/dashboards/supervisor"
-      : role === "RENTAS" ? "/api/v1/dashboards/rentas" : null;
-    const [base, specific] = await Promise.all([
+      : effectiveRole === "RENTAS" ? "/api/v1/dashboards/rentas" : null;
+    const canReadOperationalCounts = ["RENTAS", "SUPERVISOR"].includes(effectiveRole);
+    const count = async (path) => {
+      const rows = await request(path);
+      return Number.isFinite(rows.page?.totalElements) ? rows.page.totalElements : null;
+    };
+    const [base, specific, taxpayers, liquidations, bills] = await Promise.all([
       request("/api/v1/dashboard/metrics"),
       rolePath ? request(rolePath) : Promise.resolve({}),
+      canReadOperationalCounts ? count("/api/v1/taxpayers?size=1") : null,
+      canReadOperationalCounts ? count(`/api/v1/liquidations?period=${period}&size=1`) : null,
+      effectiveRole === "RENTAS" ? count("/api/v1/bills?size=1") : null,
     ]);
-    const supervisor = role === "SUPERVISOR" ? {
-      planes: specific.exceptionalPlans ?? 0,
-      exenciones: specific.exemptions ?? 0,
-      ajustes: specific.adjustments ?? 0,
-      refinanciacion: specific.exceptionalRefinancings ?? 0,
-      reversiones: specific.reversals ?? 0,
-      corridas: specific.liquidationRuns ?? 0,
-      caducidades: specific.planExpirations ?? 0,
-      pendingTotal: specific.totalPending ?? 0,
+    const supervisor = effectiveRole === "SUPERVISOR" ? {
+      planes: specific.exceptionalPlans ?? null,
+      exenciones: specific.exemptions ?? null,
+      ajustes: specific.adjustments ?? null,
+      refinanciacion: specific.exceptionalRefinancings ?? null,
+      reversiones: specific.reversals ?? null,
+      corridas: specific.liquidationRuns ?? null,
+      caducidades: specific.planExpirations ?? null,
+      pendingTotal: specific.totalPending ?? null,
     } : {};
-    const operational = role === "RENTAS" ? {
-      planes: specific.pendingPlanRequests ?? 0,
-      exenciones: specific.pendingExemptions ?? 0,
-      tickets: specific.openTickets ?? 0,
-      unallocatedPaymentAmount: specific.unallocatedPaymentAmount ?? 0,
+    const operational = effectiveRole === "RENTAS" ? {
+      planes: specific.pendingPlanRequests ?? null,
+      exenciones: specific.pendingExemptions ?? null,
+      tickets: specific.openTickets ?? null,
+      unallocatedPaymentAmount: specific.unallocatedPaymentAmount ?? base.unallocatedPaymentAmount ?? null,
       recentActivity: specific.recentOperations ?? [],
     } : {};
     return {
       ...base,
-      planes: 0,
-      exenciones: 0,
-      tickets: 0,
-      ajustes: 0,
-      refinanciacion: 0,
-      reversiones: 0,
-      corridas: 0,
-      caducidades: 0,
+      contribuyentes: taxpayers,
+      liquidaciones: liquidations,
+      boletas: bills,
+      planes: null,
+      exenciones: null,
+      tickets: null,
+      ajustes: null,
+      refinanciacion: null,
+      reversiones: null,
+      corridas: null,
+      caducidades: null,
       ...supervisor,
       ...operational,
     };
