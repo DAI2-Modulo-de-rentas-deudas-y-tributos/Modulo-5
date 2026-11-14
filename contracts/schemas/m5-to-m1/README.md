@@ -4,6 +4,8 @@ Estos schemas describen **sólo `data`**, no el envelope Core completo. Se basan
 
 El envelope común continúa definido por [common-event-envelope.schema.json](../common-event-envelope.schema.json). Estos cuatro schemas independientes no deben usarse para validar el envelope entero.
 
+M1 confirmó para `exemptionRequested` v1.0 que `data` requiere exactamente `requestId`, `citizenId`, `conceptCode`, `reason`, `requestedPercentage`, `requestedFrom` y `requestedUntil`; al registrarlo, M1 asigna el estado inicial `REQUESTED`. La confirmación quedó asentada en [SCRUM-727](https://santiagussan.atlassian.net/browse/SCRUM-727). Esto ratifica la forma del payload, no una recepción E2E.
+
 ## Matriz de contratos propuestos
 
 | eventType | Versión local | Schema de `data` | Campos requeridos | Opcionales / variantes | Origen Java | Ejemplos sintéticos | Estado informado por Core | Pendiente de ratificación |
@@ -32,6 +34,8 @@ pwsh -File contracts/tests/Validate-M5M1RequestSchemas.ps1
 ```
 
 El script valida los cuatro documentos como JSON, los seis ejemplos existentes y 23 casos negativos de UUID, porcentajes/importes, fechas, lista vacía, estados desconocidos, propiedades adicionales y campos exclusivos de otra variante. También comprueba campos nulos frente a omitidos y la variante aprobada sin `validUntil`. Los ejemplos son salidas locales de Jackson; el test no accede a Core ni a M1.
+
+El job obligatorio `backend` de CI ejecuta este mismo script antes de Maven. Un fallo detiene el job y, por su dependencia en `ci-required`, bloquea el check requerido. El alcance sigue siendo exclusivamente los cuatro schemas del campo `data` de M5 → M1, sus seis ejemplos locales y los 23 casos negativos; no valida el envelope completo, los contratos entrantes ni los eventos de otros módulos, y no es validación JSON Schema en runtime.
 
 ## Registro y consulta en Core/M9
 
