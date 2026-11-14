@@ -18,6 +18,8 @@ post() { wget -q -O - --header "Content-Type: application/json" "$@"; }
 
 psql -v ON_ERROR_STOP=1 -q -f /seed/seed-e2e-local.sql > /dev/null
 TAXPAYER_ID=$(sql "SELECT id FROM taxpayer_reference WHERE external_id = 'QA-M5-20261017-A'")
+M1_TAXPAYER_ID=$(sql "SELECT id FROM taxpayer_reference WHERE taxpayer_type = 'CITIZEN' AND external_id = '4' AND canonical_citizen_id = 'f398dbcb-a2b4-49af-a724-3529c6ddd0f6'")
+[ -n "$M1_TAXPAYER_ID" ] || fail "falta el fixture sintético M1 external_id=4 con UUID canónico confirmado."
 
 if [ "$(sql "SELECT count(*) FROM demo_user")" = "0" ]; then
   post --header "X-Demo-Bootstrap-Secret: ${RENTAS_DEMO_BOOTSTRAP_PASSWORD}" \
@@ -44,8 +46,11 @@ create_user rentas RENTAS "Personal de Rentas Demo"
 create_user cajero CASHIER "Cajero Demo"
 create_user auditor AUDITOR "Auditor Demo"
 create_user contribuyente TAXPAYER "QA Ciudadano A" "$TAXPAYER_ID"
+create_user contribuyente-m1 TAXPAYER "QA Ciudadano M1 4" "$M1_TAXPAYER_ID"
+[ "$(sql "SELECT taxpayer_id FROM demo_user WHERE username = 'contribuyente-m1'")" = "$M1_TAXPAYER_ID" ] \
+  || fail "el usuario DEMO 'contribuyente-m1' ya existe vinculado a otro contribuyente."
 
-echo "Usuarios DEMO listos: supervisor, rentas, cajero, auditor, contribuyente."
+echo "Usuarios DEMO listos: supervisor, rentas, cajero, auditor, contribuyente y contribuyente-m1."
 
 # --- Datos de demostración, por la API como lo haría el personal -----------------------------
 # rentas carga y envía la configuración de cada tributo y supervisor la aprueba (no puede aprobar
@@ -118,6 +123,13 @@ if [ -z "$(sql "SELECT 1 FROM bill WHERE taxpayer_id = $TAXPAYER_ID LIMIT 1")" ]
   DEBT_IDS=$(sql "SELECT string_agg(d.id::text, ',' ORDER BY d.id) FROM debt d JOIN liquidation l ON l.id = d.liquidation_id
                   WHERE l.taxpayer_id = $TAXPAYER_ID AND l.period = '$PERIOD'")
   api "$RENTAS_TOKEN" bills "{\"taxpayerId\":$TAXPAYER_ID,\"debtIds\":[$DEBT_IDS],\"dueDate\":\"$DUE\"}" > /dev/null
+fi
+
+# Deuda vencida sintética con identidad M1 confirmada para probar debtOverdue en el Outbox local.
+if [ -z "$(sql "SELECT 1 FROM debt d JOIN liquidation l ON l.id = d.liquidation_id
+                 WHERE l.taxpayer_id = $M1_TAXPAYER_ID AND d.due_date < CURRENT_DATE
+                   AND d.outstanding_balance > 0 AND d.status NOT IN ('PAID','CANCELLED') LIMIT 1")" ]; then
+  ensure_liquidation 4 ABL "$OLD_PERIOD" 13200000 "$OLD_DUE"
 fi
 
 echo "Datos de demo listos: $(sql "SELECT count(*) FROM tax_configuration WHERE status = 'ACTIVE'") configuraciones activas, $(sql "SELECT count(*) FROM debt") deudas, $(sql "SELECT count(*) FROM bill") boleta(s)."

@@ -15,10 +15,13 @@ describe("DataTable", () => {
     render(<DataTable columns={columns} rows={rows} rowKey={(row) => row.id} onRowClick={onRowClick} />);
 
     const action = screen.getByRole("button", { name: "Activar fila" });
+    const region = screen.getByRole("region", { name: "Tabla de datos desplazable" });
     await user.click(action);
     expect(onRowClick).toHaveBeenCalledTimes(1);
     onRowClick.mockClear();
     action.blur();
+    await user.tab();
+    expect(document.activeElement).toBe(region);
     await user.tab();
     expect(document.activeElement).toBe(action);
     await user.keyboard(key === "Enter" ? "{Enter}" : " ");
@@ -30,6 +33,13 @@ describe("DataTable", () => {
   it("no crea acciones de teclado en tablas de sólo lectura", () => {
     render(<DataTable columns={columns} rows={rows} rowKey={(row) => row.id} />);
     expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  it("expone la región desplazable al teclado con nombre y encabezados asociados", () => {
+    render(<DataTable ariaLabel="Tabla de deudas" columns={columns} rows={rows} rowKey={(row) => row.id} />);
+    const region = screen.getByRole("region", { name: "Tabla de deudas desplazable" });
+    expect(region.tabIndex).toBe(0);
+    expect(screen.getByRole("columnheader", { name: "Nombre" }).getAttribute("scope")).toBe("col");
   });
 
   it("no activa la fila al usar un control interactivo contenido", async () => {

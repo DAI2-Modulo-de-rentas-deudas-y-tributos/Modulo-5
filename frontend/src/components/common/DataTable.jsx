@@ -15,6 +15,7 @@ export default function DataTable({
   emptyDescription,
   emptyIconName,
   onRowClick,
+  ariaLabel = "Tabla de datos",
 }) {
   if (loading) {
     return (
@@ -39,13 +40,19 @@ export default function DataTable({
 
   return (
     <div className="workspace-table-region">
-      <div className={`workspace-table overflow-x-auto${columns.length > 3 ? " workspace-table-wide" : ""}`}>
+      <div
+        className={`workspace-table overflow-x-auto focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700${columns.length > 3 ? " workspace-table-wide" : ""}`}
+        role="region"
+        aria-label={`${ariaLabel} desplazable`}
+        tabIndex={0}
+      >
         <table className="w-full border-collapse text-left">
           <thead>
             <tr className="border-b border-neutral-200 bg-neutral-50/60">
               {columns.map((column) => (
                 <th
                   key={column.key}
+                  scope="col"
                   className={`px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-neutral-500 whitespace-nowrap first:pl-5 last:pr-5 ${
                     column.align === "right" ? "text-right" : ""
                   }`}

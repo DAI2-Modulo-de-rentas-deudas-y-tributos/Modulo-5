@@ -91,7 +91,7 @@ export default function DashboardPage() {
                         iconName={queue.iconName}
                         itemCount={queue.count}
                         itemCountLabel="pendientes"
-                        badge={queue.count > 0 ? { text: "Requiere atención", className: "bg-red-50 text-[#D63031]" } : undefined}
+                        badge={queue.count > 0 ? { text: "Requiere atención", className: "bg-red-50 text-red-800" } : undefined}
                         onClick={() => navigate(queue.path)}
                       />
                     ))}

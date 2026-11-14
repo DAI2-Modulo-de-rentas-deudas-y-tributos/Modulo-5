@@ -164,6 +164,7 @@ export default function ExencionesPage() {
         />
 
         <DataTable
+          ariaLabel="Tabla de exenciones"
           columns={columns}
           rows={exemptions ?? []}
           rowKey={(row) => row.requestId}
@@ -597,6 +598,7 @@ function ResolveExemptionModal({ exemption, citizenName, onClose, onDone }) {
             <h3 className="mb-2 text-[13px] font-bold text-[#0F2C59]">Documentación presentada</h3>
             <div className="overflow-hidden rounded-lg border border-neutral-200">
               <DataTable
+                ariaLabel="Tabla de documentación de exenciones"
                 columns={[
                   { key: "fileName", header: "Archivo" },
                   { key: "documentType", header: "Tipo", render: (row) => labelFor(row.documentType) },

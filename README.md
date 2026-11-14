@@ -68,8 +68,8 @@ dependencias y compila backend y frontend: tarda varios minutos.
    | `RENTAS_DEMO_BOOTSTRAP_PASSWORD` | Secreto interno para crear el primer usuario. |
    | `RENTAS_DEMO_USERS_PASSWORD` | Contraseña de ingreso de todos los usuarios de la tabla de abajo. |
 
-   El resto de las variables son opcionales y ya tienen valor. Si falta el `.env` o
-   alguna obligatoria, el arranque se corta con `Falta <VARIABLE> en .env`.
+   El resto de las variables son opcionales. Si falta el `.env` o alguna obligatoria,
+   el arranque se corta con `Falta <VARIABLE> en .env`.
 
 3. Levantar todo con un único comando:
 
@@ -82,7 +82,27 @@ dependencias y compila backend y frontend: tarda varios minutos.
    `healthy`). Si algo falla, indica qué servicio; sus logs se ven con
    `docker compose logs <servicio>`.
 
-4. Abrir <http://localhost:5173> e ingresar con alguno de estos usuarios. La
+4. Para que el backend confíe únicamente en el proxy de Vite, obtener la IP real del
+   contenedor frontend en la red de Compose:
+
+   ```shell
+   docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$(docker compose ps -q frontend)"
+   ```
+
+   Reemplazar el valor vacío de `RENTAS_SECURITY_TRUSTED_PROXY_CIDRS` en `.env` por esa
+   IP seguida de `/32` y recrear sólo el backend:
+
+   ```shell
+   docker compose up -d --force-recreate backend
+   ```
+
+   Vite reemplaza cualquier `X-Forwarded-For` recibido con la dirección de su socket
+   cliente. Repetir la configuración si se recrea la red o cambia la IP de `frontend`.
+   Clientes que efectivamente comparten NAT/gateway siguen compartiendo origen; no se
+   puede distinguirlos por cabeceras que el cliente controla. Los CIDR de AWS deben
+   venir de DevOps y no se infieren de esta configuración local.
+
+5. Abrir <http://localhost:5173> e ingresar con alguno de estos usuarios. La
    contraseña de todos es el valor que se puso en `RENTAS_DEMO_USERS_PASSWORD`:
 
    | Usuario | Perfil |
@@ -92,9 +112,10 @@ dependencias y compila backend y frontend: tarda varios minutos.
    | `cajero` | Cajero |
    | `auditor` | Auditor |
    | `contribuyente` | Contribuyente, vinculado a "QA Ciudadano A" |
+   | `contribuyente-m1` | Contribuyente sintético con `externalId=4` y UUID canónico M1 confirmado |
 
-5. Opcional: comprobar que el frontend responde con sus cabeceras de seguridad (CSP,
-   `X-Frame-Options`, `nosniff`, `Referrer-Policy`) y que los cinco usuarios ingresan, con
+6. Opcional: comprobar que el frontend responde con sus cabeceras de seguridad (CSP,
+   `X-Frame-Options`, `nosniff`, `Referrer-Policy`) y que los usuarios DEMO ingresan, con
    el mismo chequeo que corre el CI (en Windows, desde Git Bash):
 
    ```shell
@@ -117,14 +138,14 @@ lista para recorrer el flujo principal, cargando los datos por la API como lo ha
 
 | Qué | Detalle |
 |---|---|
-| Contribuyentes | QA Ciudadano A y QA Ciudadano B (ciudadanos) y QA Organización M4, de [`qa/seed-e2e-local.sql`](qa/seed-e2e-local.sql). |
+| Contribuyentes | QA Ciudadano A y B, QA Organización M4 y QA Ciudadano M1 4. El último usa la correspondencia M1 confirmada `externalId=4` → UUID canónico y el script falla ante un vínculo contradictorio. Sólo se carga en el PostgreSQL local de Compose. |
 | Configuración de tributos | `ABL` (0,15 % de la valuación, mínimo $5.000), `TASA_SERVICIOS` (fija, $12.000) y `PATENTE` (0,4 % de la valuación), vigentes desde el 1 de enero del año anterior. Las carga `rentas` y las aprueba `supervisor`. |
 | Plan de pagos | Una configuración de 2 a 12 cuotas, con 10 % de anticipo mínimo e `interestRate` 2.5. |
-| Deudas | 6 liquidaciones del mes anterior (una de ABL de dos meses atrás para QA Ciudadano A, ya vencida). Las fechas se calculan al arrancar. |
+| Deudas | Liquidaciones de QA Ciudadano A y B y una ABL vencida para QA Ciudadano M1 4. Las fechas se calculan al arrancar. |
 | Boleta | Una boleta de QA Ciudadano A (el usuario `contribuyente`) con sus dos deudas por vencer. |
 
-La deuda vencida figura pendiente hasta procesar los vencimientos (**Rentas → Deudas → Procesar
-vencimientos**), que es un paso de la demo. Los usuarios, la topología del broker y estos datos
+Las deudas vencidas figuran pendientes hasta procesar los vencimientos (**Rentas → Deudas → Procesar
+vencimientos**), que es un paso de la demo. El Outbox generado por esta prueba se mantiene en el broker local; no publica a Core ni prueba procesamiento de M1. Los usuarios, la topología del broker y estos datos
 los crean los servicios `broker-setup` y `demo-setup` ([`scripts/compose/`](scripts/compose/)),
 sólo si faltan: las deudas y la boleta se cargan una vez y no se repiten en los arranques siguientes.
 
