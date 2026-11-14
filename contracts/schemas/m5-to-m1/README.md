@@ -4,6 +4,8 @@ Estos schemas describen **sólo `data`**, no el envelope Core completo. Se basan
 
 El envelope común continúa definido por [common-event-envelope.schema.json](../common-event-envelope.schema.json). Estos cuatro schemas independientes no deben usarse para validar el envelope entero.
 
+M1 confirmó para `exemptionRequested` v1.0 que `data` requiere exactamente `requestId`, `citizenId`, `conceptCode`, `reason`, `requestedPercentage`, `requestedFrom` y `requestedUntil`; al registrarlo, M1 asigna el estado inicial `REQUESTED`. La confirmación quedó asentada en [SCRUM-727](https://santiagussan.atlassian.net/browse/SCRUM-727). Esto ratifica la forma del payload, no una recepción E2E.
+
 ## Matriz de contratos propuestos
 
 | eventType | Versión local | Schema de `data` | Campos requeridos | Opcionales / variantes | Origen Java | Ejemplos sintéticos | Estado informado por Core | Pendiente de ratificación |
