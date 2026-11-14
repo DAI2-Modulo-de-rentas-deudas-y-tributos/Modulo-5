@@ -29,13 +29,10 @@ resource "aws_lb" "api" {
   xff_header_processing_mode = "append"
   enable_xff_client_port     = false
 
-  dynamic "access_logs" {
-    for_each = var.access_logs_bucket[*]
-    content {
-      bucket  = access_logs.value
-      prefix  = "alb"
-      enabled = true
-    }
+  access_logs {
+    bucket  = var.access_logs_bucket == null ? "" : var.access_logs_bucket
+    prefix  = var.access_logs_bucket == null ? null : "alb"
+    enabled = var.access_logs_bucket != null
   }
 
   tags = {
