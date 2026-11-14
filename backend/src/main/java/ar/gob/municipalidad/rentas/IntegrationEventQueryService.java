@@ -33,8 +33,8 @@ class IntegrationEventQueryService {
         filters.keySet().stream().filter(key->!allowed.contains(key)).findFirst().ifPresent(key->{throw new BusinessException("INVALID_FILTER","Filtro no permitido: "+key,400);});
 
         MapSqlParameterSource params=new MapSqlParameterSource();
-        String logWhere=where("INBOUND",direction,status,eventType,source,target,from,to,params,false);
-        String outboxWhere=where("OUTBOUND",direction,status,eventType,source,target,from,to,params,true);
+        String logWhere=where(direction,status,eventType,source,target,from,to,params,false);
+        String outboxWhere=where(direction,status,eventType,source,target,from,to,params,true);
         String union="select id,event_id,event_type,source_module,target_module,direction,status,payload,retry_count,error_message,occurred_at,received_at,processed_at,last_retry_at,published_at from ("
             +"select id,coalesce(external_event_id,cast(event_id as varchar)) event_id,event_type,source_module,target_module,direction,cast(status as varchar) status,payload,retry_count,error_message,occurred_at,received_at,processed_at,last_retry_at,cast(null as timestamp with time zone) published_at from integration_event_log where "+logWhere
             +" union all select cast(null as bigint) id,cast(id as varchar) event_id,event_type,'rentas' source_module,target_module,'OUTBOUND' direction,cast(status as varchar) status,payload,retry_count,error_message,created_at occurred_at,cast(null as timestamp with time zone) received_at,cast(null as timestamp with time zone) processed_at,last_attempt_at last_retry_at,published_at from outbox_event where "+outboxWhere+") events";
@@ -46,9 +46,12 @@ class IntegrationEventQueryService {
         return new PageImpl<>(content,pageable,total);
     }
 
-    private String where(String rowDirection,String direction,String status,String eventType,String source,String target,OffsetDateTime from,OffsetDateTime to,MapSqlParameterSource params,boolean outbox){
-        boolean selected=direction==null||direction.equals(rowDirection);
-        StringBuilder sql=new StringBuilder(selected?"1=1":"1=0");
+    private String where(String direction,String status,String eventType,String source,String target,OffsetDateTime from,OffsetDateTime to,MapSqlParameterSource params,boolean outbox){
+        StringBuilder sql=new StringBuilder("1=1");
+        if(direction!=null){
+            if(outbox){if(!"OUTBOUND".equals(direction))sql.append(" and 1=0");}
+            else {sql.append(" and direction=:logDirection");params.addValue("logDirection",direction);}
+        }
         if("RETRYING".equals(status))sql.append(" and status in ('PENDING','FAILED') and retry_count>0");
         else if(status!=null){sql.append(" and status=:status");params.addValue("status",status);}
         if(eventType!=null){sql.append(" and event_type=:eventType");params.addValue("eventType",eventType);}
