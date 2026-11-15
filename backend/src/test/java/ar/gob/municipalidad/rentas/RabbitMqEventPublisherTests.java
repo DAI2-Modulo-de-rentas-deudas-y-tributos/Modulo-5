@@ -105,7 +105,7 @@ class RabbitMqEventPublisherTests {
         CoreInboundEventDispatcher dispatcher=mock(CoreInboundEventDispatcher.class);
         doAnswer(invocation->{attempts.incrementAndGet();throw new IllegalStateException("CORE_INBOUND_RETRY");})
             .when(dispatcher).dispatch(payload);
-        CoreRabbitMqConsumer listener=new CoreRabbitMqConsumer(dispatcher,template,topology.retryExchange(),topology.retryQueue1(),topology.retryQueue2(),topology.retryQueue3(),5000);
+        CoreRabbitMqConsumer listener=new CoreRabbitMqConsumer(dispatcher,template,"local",topology.retryExchange(),topology.retryQueue1(),topology.retryQueue2(),topology.retryQueue3(),5000);
 
         try(var connection=connections.createConnection();Channel channel=connection.createChannel(false)){
             for(int attempt=0;attempt<4;attempt++){
@@ -127,6 +127,34 @@ class RabbitMqEventPublisherTests {
         assertThat(attempts).hasValue(4);
     }
 
+    @Test void coreManagedModeNacksToBrokerDlxWithoutPublishingToLocalRetryQueues() throws Exception {
+        RetryTopology topology=declareRetryTopology();
+        String eventId=UUID.randomUUID().toString();
+        String payload="{\"eventId\":\""+eventId+"\",\"eventType\":\"ticketUpdated\",\"eventVersion\":\"1.0\",\"data\":{}}";
+        Message original=new Message(payload.getBytes(StandardCharsets.UTF_8),new org.springframework.amqp.core.MessageProperties());
+        original.getMessageProperties().setMessageId(eventId);
+        template.send("",topology.mainQueue(),original,new CorrelationData(eventId));
+        CoreInboundEventDispatcher dispatcher=mock(CoreInboundEventDispatcher.class);
+        doThrow(new IllegalStateException("CORE_INBOUND_RETRY")).when(dispatcher).dispatch(payload);
+        CoreRabbitMqConsumer listener=new CoreRabbitMqConsumer(dispatcher,template,"core-managed",topology.retryExchange(),
+            topology.retryQueue1(),topology.retryQueue2(),topology.retryQueue3(),5000);
+
+        try(var connection=connections.createConnection();Channel channel=connection.createChannel(false)){
+            GetResponse delivery=awaitGet(channel,topology.mainQueue(),2000);
+            assertThat(delivery).isNotNull();
+            listener.receive(asSpringMessage(delivery),channel,delivery.getEnvelope().getDeliveryTag());
+            GetResponse deadLetter=awaitGet(channel,topology.deadLetterQueue(),2000);
+            assertThat(deadLetter).isNotNull();
+            assertThat(deadLetter.getProps().getMessageId()).isEqualTo(eventId);
+            assertThat(deadLetter.getProps().getHeaders()).containsKey("x-death");
+            assertThat(awaitGet(channel,topology.retryQueue1(),200)).isNull();
+            assertThat(awaitGet(channel,topology.retryQueue2(),200)).isNull();
+            assertThat(awaitGet(channel,topology.retryQueue3(),200)).isNull();
+            channel.basicAck(deadLetter.getEnvelope().getDeliveryTag(),false);
+        }
+        verify(dispatcher,times(1)).dispatch(payload);
+    }
+
     @Test void permanentInboundFailureGoesDirectlyToDeadLetterWithoutRetry() throws Exception {
         RetryTopology topology=declareRetryTopology();
         String eventId=UUID.randomUUID().toString();
@@ -136,7 +164,7 @@ class RabbitMqEventPublisherTests {
         template.send("",topology.mainQueue(),original,new CorrelationData(eventId));
         CoreInboundEventDispatcher dispatcher=mock(CoreInboundEventDispatcher.class);
         doThrow(new IllegalArgumentException("UNSUPPORTED_CORE_EVENT_TYPE")).when(dispatcher).dispatch(payload);
-        CoreRabbitMqConsumer listener=new CoreRabbitMqConsumer(dispatcher,template,topology.retryExchange(),topology.retryQueue1(),topology.retryQueue2(),topology.retryQueue3(),5000);
+        CoreRabbitMqConsumer listener=new CoreRabbitMqConsumer(dispatcher,template,"local",topology.retryExchange(),topology.retryQueue1(),topology.retryQueue2(),topology.retryQueue3(),5000);
 
         try(var connection=connections.createConnection();Channel channel=connection.createChannel(false)){
             GetResponse delivery=awaitGet(channel,topology.mainQueue(),2000);

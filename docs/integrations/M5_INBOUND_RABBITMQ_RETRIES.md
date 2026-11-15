@@ -1,18 +1,34 @@
 # Reintentos de eventos entrantes en M5
 
-El consumidor de `q.rentas` permanece deshabilitado por defecto (`CORE_RABBITMQ_CONSUMER_ENABLED=false`). La topología de reintentos añadida por `scripts/compose/broker-setup.sh` es exclusivamente local; no declara ni modifica colas de Core/M9.
+El consumidor de `q.rentas` permanece deshabilitado por defecto (`CORE_RABBITMQ_CONSUMER_ENABLED=false`). La topología local de Compose/Testcontainers no configura ni modifica el broker de Core.
 
-## Política local
+## Modos explícitos
 
-- Envelope/payload inválido o error de negocio permanente: `NACK` sin requeue; RabbitMQ local enruta el mensaje a `q.rentas.dlq`.
-- Error transitorio (por ejemplo, base no disponible): publicación persistente a `q.rentas.retry.1` (TTL 1 s), `q.rentas.retry.2` (TTL 5 s) y `q.rentas.retry.3` (TTL 10 s). El mensaje original se confirma sólo después de recibir publisher-confirm y comprobar que fue enrutado.
-- M5 selecciona el siguiente paso mediante el header de broker `x-last-death-queue`; RabbitMQ lo actualiza al expirar el mensaje en cada cola de espera.
-- Después de la cuarta ejecución total (entrega original + tres reintentos), un nuevo fallo va a `q.rentas.dlq`.
-- Si la publicación de reintento no recibe confirmación o no se enruta, el original se envía directamente a la DLQ para no confirmarlo como entregado. Un fallo entre publisher-confirm y ACK puede producir una redelivery duplicada; el consumidor conserva el `eventId` y el Inbox debe deduplicarlo.
-- Para consultar la DLQ local, revisar el cuerpo del mensaje en `q.rentas.dlq`; el envelope contiene `eventId`. Las métricas/confirmaciones de RabbitMQ no prueban procesamiento por otro módulo.
+Si se habilita el consumidor, también es obligatorio elegir `CORE_RABBITMQ_RETRY_MODE`:
 
-La secuencia local se prueba con RabbitMQ 4.3 real en Testcontainers. En un entorno de Core/M9 se requiere acordar previamente nombres de exchange/colas, TTLs, DLX, routing, permisos y quién administra la topología. No activar el consumidor externo basándose sólo en estos valores locales.
+- `local`: sólo para el broker aislado de M5. M5 publica el mismo mensaje persistente a `rentas.retry`/`q.rentas.retry.1..3` y confirma el original únicamente después de un publisher-confirm positivo y sin retorno de enrutamiento. Un fallo de publicación confirma el original con `NACK(requeue=false)` para no perderlo silenciosamente.
+- `core-managed`: no publica a los exchanges/colas locales de M5. Ante una excepción de procesamiento usa `NACK(requeue=false)` y deja el DLX/reintentos al operador de la topología configurada en Core. El consumidor falla al arrancar si no se especifica un modo válido.
+
+En Core, la topología comunicada es `muni.dlx -> q.dlq` y reintentos comunes de 5 s, 30 s, 2 min y 10 min. Esa política debe comprobarse con Core para el vhost/cola y la revisión desplegada antes de habilitar M5. Este repositorio no declara `rentas.retry` ni `q.rentas.retry.*` en el broker compartido.
+
+## ACK, errores durables y recuperación
+
+- Un evento conocido y procesado, duplicado ya deduplicado o ignorado deliberadamente retorna del dispatcher; el listener confirma el ACK después de que los servicios transaccionales terminan.
+- `infractionConfirmed` que no puede asociarse aún a un contribuyente o concepto guarda una `ExternalObligation` en `ERROR` y el `IntegrationEventLog` en `FAILED`. Es un estado durable de conciliación, no un fallo transitorio: el listener ACKea y el equipo puede corregir la referencia y usar el flujo explícito de reintento de la obligación. No crea una deuda hasta que los datos necesarios existan.
+- Excepciones de contrato o procesamiento que escapan del dispatcher reciben `NACK(requeue=false)`. En modo Core-managed, la clasificación, el límite de intentos y el eventual DLQ corresponden al contrato operativo de Core; el AMQP nack por sí solo no informa si el error fue permanente o transitorio.
+- Los errores `FAILED` de M4 todavía se convierten en excepción del dispatcher y por eso siguen la ruta de reintento/NACK. Su semántica durable debe acordarse separadamente antes de habilitar esos tipos.
+
+Core y M5 deben conservar el `eventId` del envelope durante reintentos y dead-lettering. Para correlación operativa, Core debe confirmar que `dead_letters`/`retry_audit` conservan `eventId` y que expone headers de entrega como `x-death` o equivalentes. No se deben usar identificadores de mensajes locales como única evidencia de procesamiento del módulo destino.
+
+El log operativo de rechazo de M5 incluye timestamp del logger, `eventId`, `correlationId`, `eventType`, versión validada, código seguro de `BusinessException` (o clase de excepción) y stack trace sin mensaje. No registra el payload, DNI/CUIT ni credenciales. Los errores durables de conciliación quedan en `integration_event_log`/`external_obligation`, y se consultan por las APIs autorizadas; no se duplica la DLQ de Core.
+
+## Validación local
+
+Las pruebas de RabbitMQ usan un contenedor efímero y topología de prueba aislada. Cubren publisher confirms, mensaje no enrutable, retry local acotado, NACK hacia una DLX local en modo `core-managed` y conservación de `eventId`/headers de dead-letter. No prueban la configuración remota de Core ni su política de reintentos.
 
 ## Configuración
 
-`rentas.core.amqp.retry-exchange` y `rentas.core.amqp.retry-queue-1` a `retry-queue-3` admiten configuración externa mediante `CORE_RABBITMQ_RETRY_EXCHANGE` y `CORE_RABBITMQ_RETRY_QUEUE_1` a `_3`. El timeout de publisher-confirm se configura en milisegundos mediante `CORE_RABBITMQ_CONFIRM_TIMEOUT_MS` (5.000 por defecto). Deben coincidir con la topología del broker autorizado.
+- `CORE_RABBITMQ_CONSUMER_ENABLED` queda `false` por defecto.
+- `CORE_RABBITMQ_RETRY_MODE=local` sólo corresponde al broker local de Compose.
+- `CORE_RABBITMQ_RETRY_MODE=core-managed` requiere validación de Core/DevOps para la cola, DLX, política de retry, DLQ, permisos, TLS y observabilidad antes de cualquier habilitación.
+- `CORE_RABBITMQ_RETRY_EXCHANGE`, `CORE_RABBITMQ_RETRY_QUEUE_1..3` y `CORE_RABBITMQ_CONFIRM_TIMEOUT_MS` pertenecen exclusivamente a `local`; no deben apuntar a recursos compartidos de Core.

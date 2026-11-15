@@ -60,6 +60,7 @@ services:
       CORE_RABBITMQ_USERNAME: ${RABBITMQ_USER:-m5-local}
       CORE_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Falta RABBITMQ_PASSWORD en .env (copiar .env.example a .env y completarlo)}
       CORE_RABBITMQ_CONSUMER_ENABLED: "true"
+      CORE_RABBITMQ_RETRY_MODE: local
       # Plazo M5, en días, para las tasas y multas que llegan de M4 (Habilitaciones).
       RENTAS_M4_DUEDAYS_PERMITFEE: "14"
       RENTAS_M4_DUEDAYS_COMMERCIALFINE: "7"

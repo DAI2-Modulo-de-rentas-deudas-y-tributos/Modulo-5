@@ -313,6 +313,7 @@ class PostgreSqlIntegrationTest {
     @Autowired IntegrationReprocessService integrationReprocess;
     @Autowired ConfirmedM7Consumer m7;
     @Autowired IntegrationEventLogRepository integrationLogs;
+    @Autowired ProcessedEventRepository processedEvents;
     @Autowired ExternalObligationRepository externalObligations;
     @Autowired TaxpayerRepository taxpayers;
     @Autowired TaxConceptRepository concepts;
@@ -1371,6 +1372,30 @@ class PostgreSqlIntegrationTest {
         assertThat(failures.stream().filter(Objects::nonNull)).hasSizeLessThanOrEqualTo(1);
         assertThat(externalObligations.findAll().stream().filter(x->concurrentId.toString().equals(x.externalReferenceId))).hasSize(1);
         assertThat(debts.findByTaxpayerId(citizen.id).stream().filter(x->x.externalObligationId!=null&&x.externalObligationId.equals(externalObligations.findBySourceModuleAndExternalTypeAndExternalReferenceId("M7",ExternalObligationType.TRAFFIC_INFRACTION,concurrentId.toString()).orElseThrow().id))).hasSize(1);
+    }
+
+    @Test void coreManagedListenerAcknowledgesDurableM7ReconciliationErrorAfterPostgresCommit() throws Exception {
+        concept("TRAFFIC_INFRACTION",TaxConceptType.FINE,"M7");
+        String dni=uniqueDigits(8);
+        assertThat(taxpayers.findByTaxpayerTypeAndDni(TaxpayerType.CITIZEN,dni)).isEmpty();
+        UUID eventId=UUID.randomUUID(),infractionId=UUID.randomUUID();
+        var event=m7Event(eventId,"transito",m7Data(infractionId,dni,ConfirmedInboundEvents.M7DebtorIdType.DNI,new BigDecimal("1000")));
+        String payload=json.writeValueAsString(event);
+        CoreRabbitMqConsumer listener=new CoreRabbitMqConsumer(inbound,org.mockito.Mockito.mock(org.springframework.amqp.rabbit.core.RabbitTemplate.class),
+            "core-managed","rentas.retry","q.rentas.retry.1","q.rentas.retry.2","q.rentas.retry.3",1000);
+        com.rabbitmq.client.Channel channel=org.mockito.Mockito.mock(com.rabbitmq.client.Channel.class);
+
+        listener.receive(new org.springframework.amqp.core.Message(payload.getBytes(java.nio.charset.StandardCharsets.UTF_8),new org.springframework.amqp.core.MessageProperties()),channel,901);
+
+        org.mockito.Mockito.verify(channel).basicAck(901,false);
+        ExternalObligation obligation=externalObligations.findBySourceModuleAndExternalTypeAndExternalReferenceId(
+            "M7",ExternalObligationType.TRAFFIC_INFRACTION,infractionId.toString()).orElseThrow();
+        assertThat(obligation.status).isEqualTo(ExternalObligationStatus.ERROR);
+        assertThat(obligation.errorMessage).contains("TAXPAYER_REFERENCE_NOT_FOUND");
+        assertThat(debts.existsByExternalObligationId(obligation.id)).isFalse();
+        assertThat(integrationLogs.findFirstByExternalEventIdOrderByIdDesc(eventId.toString()).orElseThrow().status)
+            .isEqualTo(IntegrationEventStatus.FAILED);
+        assertThat(processedEvents.existsByExternalEventId(eventId.toString())).isFalse();
     }
 
     @Test void paymentsOverpaymentsCreditAndLocksRunOnPostgreSql() throws Exception {

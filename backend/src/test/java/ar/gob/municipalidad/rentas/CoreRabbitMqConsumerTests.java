@@ -106,6 +106,21 @@ class CoreRabbitMqConsumerTests {
         verify(channel,never()).basicNack(eq(40),anyBoolean(),anyBoolean());
     }
 
+    @Test void coreManagedTransientFailureNacksWithoutPublishingToLocalRetryQueues() throws Exception {
+        String payload="{\"eventId\":\""+UUID.randomUUID()+"\",\"eventType\":\"ticketUpdated\",\"data\":{}}";
+        CoreInboundEventDispatcher dispatcher=mock(CoreInboundEventDispatcher.class);
+        doThrow(new IllegalStateException("CORE_INBOUND_RETRY")).when(dispatcher).dispatch(payload);
+        RabbitTemplate rabbit=mock(RabbitTemplate.class);
+        Channel channel=mock(Channel.class);
+
+        listener(dispatcher,rabbit,"core-managed").receive(
+            new Message(payload.getBytes(StandardCharsets.UTF_8),new MessageProperties()),channel,45);
+
+        verify(channel).basicNack(45,false,false);
+        verify(channel,never()).basicAck(45,false);
+        verifyNoInteractions(rabbit);
+    }
+
     @Test void threeTransientRetriesUseThreeRetryQueuesThenDeadLetter() throws Exception {
         String payload="{\"eventId\":\""+UUID.randomUUID()+"\",\"eventType\":\"ticketUpdated\",\"data\":{}}";
         CoreInboundEventDispatcher dispatcher=mock(CoreInboundEventDispatcher.class);
@@ -150,9 +165,9 @@ class CoreRabbitMqConsumerTests {
     @Test void rejectedInboundLogsOnlyUuidIdentifiersAndSanitizedStackTrace() throws Exception {
         UUID eventId=UUID.randomUUID(),correlationId=UUID.randomUUID();
         String payload="{\"eventId\":\""+eventId+"\",\"correlationId\":\""+correlationId
-            +"\",\"eventType\":\"ticketUpdated\",\"data\":{\"dni\":\"40111222\",\"cuit\":\"20-40111222-3\",\"token\":\"secret-token\"}}";
+            +"\",\"eventType\":\"ticketUpdated\",\"eventVersion\":\"1.0\",\"data\":{\"dni\":\"40111222\",\"cuit\":\"20-40111222-3\",\"token\":\"secret-token\"}}";
         CoreInboundEventDispatcher dispatcher=mock(CoreInboundEventDispatcher.class);
-        doThrow(new IllegalArgumentException("40111222 20-40111222-3 secret-token "+payload)).when(dispatcher).dispatch(payload);
+        doThrow(new BusinessException("TAXPAYER_REFERENCE_NOT_FOUND","40111222 20-40111222-3 secret-token "+payload,422)).when(dispatcher).dispatch(payload);
         CoreRabbitMqConsumer listener=listener(dispatcher);
         Channel channel=mock(Channel.class);
         Logger logger=(Logger)LoggerFactory.getLogger(CoreRabbitMqConsumer.class);
@@ -163,9 +178,11 @@ class CoreRabbitMqConsumerTests {
             verify(channel,never()).basicNack(31,false,true);
             String output=logs.list.stream().map(event->event.getFormattedMessage()+" "+event.getThrowableProxy().getMessage())
                 .reduce("",(left,right)->left+"\n"+right);
-            assertThat(output).contains("eventId="+eventId,"correlationId="+correlationId,"eventType=ticketUpdated","exceptionType=IllegalArgumentException")
+            assertThat(output).contains("eventId="+eventId,"correlationId="+correlationId,"eventType=ticketUpdated","eventVersion=1.0",
+                    "reason=TAXPAYER_REFERENCE_NOT_FOUND","exceptionType=BusinessException")
                 .doesNotContain("40111222","20-40111222-3","secret-token",payload);
             assertThat(logs.list).anySatisfy(event->assertThat(event.getThrowableProxy().getStackTraceElementProxyArray()).isNotEmpty());
+            assertThat(logs.list).anySatisfy(event->assertThat(event.getTimeStamp()).isPositive());
         } finally {
             logger.detachAppender(logs);
         }
@@ -187,8 +204,9 @@ class CoreRabbitMqConsumerTests {
         }
     }
 
-    private CoreRabbitMqConsumer listener(CoreInboundEventDispatcher dispatcher){return new CoreRabbitMqConsumer(dispatcher,mock(RabbitTemplate.class),"rentas.retry","q.rentas.retry.1","q.rentas.retry.2","q.rentas.retry.3",1000);}
-    private CoreRabbitMqConsumer listener(CoreInboundEventDispatcher dispatcher,RabbitTemplate rabbit){return new CoreRabbitMqConsumer(dispatcher,rabbit,"rentas.retry","q.rentas.retry.1","q.rentas.retry.2","q.rentas.retry.3",1000);}
+    private CoreRabbitMqConsumer listener(CoreInboundEventDispatcher dispatcher){return listener(dispatcher,mock(RabbitTemplate.class),"local");}
+    private CoreRabbitMqConsumer listener(CoreInboundEventDispatcher dispatcher,RabbitTemplate rabbit){return listener(dispatcher,rabbit,"local");}
+    private CoreRabbitMqConsumer listener(CoreInboundEventDispatcher dispatcher,RabbitTemplate rabbit,String retryMode){return new CoreRabbitMqConsumer(dispatcher,rabbit,retryMode,"rentas.retry","q.rentas.retry.1","q.rentas.retry.2","q.rentas.retry.3",1000);}
     private RabbitTemplate confirmedPublisher(){RabbitTemplate rabbit=mock(RabbitTemplate.class);doAnswer(invocation->{CorrelationData correlation=invocation.getArgument(3);correlation.getFuture().complete(new CorrelationData.Confirm(true,null));return null;}).when(rabbit).send(any(String.class),any(String.class),any(Message.class),any(CorrelationData.class));return rabbit;}
     private Message message(long tag){MessageProperties properties=new MessageProperties();properties.setDeliveryTag(tag);return new Message(ticketUpdated().getBytes(StandardCharsets.UTF_8),properties);}
     private String envelope(String type,String source,String data){return """
@@ -198,6 +216,18 @@ class CoreRabbitMqConsumerTests {
         Channel channel=mock(Channel.class);
         listener(dispatcher).receive(new Message(payload.getBytes(StandardCharsets.UTF_8),new MessageProperties()),channel,tag);
         verify(channel).basicAck(tag,false);verify(channel,never()).basicNack(eq(tag),anyBoolean(),anyBoolean());
+    }
+
+    @Test void durableM7ErrorIsAcknowledgedForManualReconciliation() throws Exception {
+        ConfirmedM7Consumer m7=mock(ConfirmedM7Consumer.class);
+        ExternalObligation obligation=new ExternalObligation();obligation.status=ExternalObligationStatus.ERROR;
+        when(m7.consume(any())).thenReturn(obligation);
+        CoreInboundEventDispatcher dispatcher=new CoreInboundEventDispatcher(new ObjectMapper().findAndRegisterModules(),
+            mock(ConfirmedM1Consumer.class),mock(ConfirmedM2Consumer.class),mock(CoreM4Consumer.class),m7,mock(ConfirmedM8Consumer.class));
+
+        acknowledge(dispatcher,envelope("infractionConfirmed","transito","""
+            {"infractionId":"%s","debtorId":"30111222","debtorIdType":"DNI","licensePlate":"AA123BB","infractionType":"SPEEDING","infractionDateTime":"2026-10-30T10:00:00-03:00","baseAmount":100,"aggravatingFactors":[],"finalAmount":100,"inspectorId":"INSPECTOR","location":{"street":"Principal","crossStreet":"Otra","latitude":-34.6,"longitude":-58.4}}
+            """.formatted(UUID.randomUUID())),46);
     }
     private String ticketUpdated(){return """
         {"eventId":"%s","eventType":"ticketUpdated","eventVersion":"1.0","occurredAt":"%s","sourceModule":"atencion-ciudadana","correlationId":null,"causationId":null,"data":{"ticketId":"%s","publicId":"M2-100","citizenId":null,"isAnonymous":false,"responsibleAreaId":"M5","updateType":"STATUS_CHANGED","currentStatus":"IN_PROGRESS","currentPriority":"MEDIUM","progress":10,"updatedAt":"%s"}}
