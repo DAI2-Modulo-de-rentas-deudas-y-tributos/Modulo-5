@@ -48,8 +48,8 @@ class DashboardSummaryServiceTests {
     @Test void rentasSummaryReturnsOperationalCountsAndSanitizedRecentOperations() {
         BigDecimal zero=BigDecimal.ZERO.setScale(2);
         when(tickets.countByStatusIn(List.of(TicketCaseStatus.OPEN,TicketCaseStatus.IN_PROGRESS,TicketCaseStatus.WAITING_FOR_INFORMATION))).thenReturn(3L);
-        when(payments.countByStatusAndUnallocatedAmountGreaterThan(PaymentStatus.CONFIRMED,zero)).thenReturn(2L);
-        when(payments.sumUnallocatedAmount(PaymentStatus.CONFIRMED,zero)).thenReturn(new BigDecimal("125.00"));
+        when(payments.countManuallyUnallocated(PaymentStatus.CONFIRMED,zero)).thenReturn(2L);
+        when(payments.sumManuallyUnallocated(PaymentStatus.CONFIRMED,zero)).thenReturn(new BigDecimal("125.00"));
         when(exemptions.countByStatusIn(List.of(ExemptionRequestStatus.PENDING,ExemptionRequestStatus.UNDER_REVIEW,ExemptionRequestStatus.DOCUMENTATION_REQUIRED))).thenReturn(4L);
         when(planRequests.countByStatus(PaymentPlanRequestStatus.PENDING)).thenReturn(5L);
         AuditEntry entry=new AuditEntry();entry.entityType="Payment";entry.entityId="91";entry.action="PAYMENT_REGISTERED";entry.occurredAt=OffsetDateTime.now();entry.previousData="sensible";entry.newData="sensible";

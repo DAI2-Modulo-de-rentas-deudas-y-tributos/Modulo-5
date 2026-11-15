@@ -71,8 +71,8 @@ export default function InicioPage() {
       key: "billId",
       header: "Boleta",
       render: (row) =>
-        row.billId ? (
-          <span className="tabular-nums text-neutral-600">#{row.billId}</span>
+        row.billIds?.length ? (
+          <span className="tabular-nums text-neutral-600">{row.billIds.map((id) => `#${id}`).join(", ")}</span>
         ) : (
           <span className="text-neutral-500">Sin emitir</span>
         ),

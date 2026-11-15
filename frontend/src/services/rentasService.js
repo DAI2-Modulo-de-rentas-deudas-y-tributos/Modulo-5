@@ -1498,15 +1498,32 @@ export const portalService = {
       complete
         ? allPages(`/api/v1/portal/${taxpayerId}/debts?${params}`)
         : request(`/api/v1/portal/${taxpayerId}/debts?${params}`),
-      complete ? allPages(`/api/v1/taxpayers/${taxpayerId}/bills`) : request(`/api/v1/portal/${taxpayerId}/bills`),
+      allPages(`/api/v1/taxpayers/${taxpayerId}/bills`),
       allPages("/api/v1/tax-concepts"),
     ]);
     const conceptById = new Map(concepts.map((concept) => [concept.id, concept]));
-    return debts.map((debt) => ({
-      ...debt,
-      conceptName: conceptById.get(debt.conceptId)?.name ?? debt.conceptName,
-      billId: bills.find((bill) => bill.debtId === debt.id)?.id ?? null,
-    }));
+    const billIdsByDebt = new Map();
+    for (const bill of bills) {
+      if (bill?.id == null) continue;
+      for (const debtId of bill.debtIds ?? []) {
+        if (debtId == null) continue;
+        const key = String(debtId);
+        const billIds = billIdsByDebt.get(key) ?? [];
+        billIds.push(bill.id);
+        billIdsByDebt.set(key, billIds);
+      }
+    }
+    const result = debts.map((debt) => {
+      const billIds = billIdsByDebt.get(String(debt.id)) ?? [];
+      return {
+        ...debt,
+        conceptName: conceptById.get(debt.conceptId)?.name ?? debt.conceptName,
+        billIds,
+        billId: billIds[0] ?? null,
+      };
+    });
+    if (debts.page) Object.defineProperty(result, "page", { enumerable: false, value: debts.page });
+    return result;
   },
 
   async bills({ taxpayerId, status = "" }) {

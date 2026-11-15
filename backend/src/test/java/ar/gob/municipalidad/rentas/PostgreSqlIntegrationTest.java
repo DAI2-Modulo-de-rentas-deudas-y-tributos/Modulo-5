@@ -1419,6 +1419,68 @@ class PostgreSqlIntegrationTest {
         assertThat(installments.findById(schedule.get(1).id).orElseThrow().paidAmount).isEqualByComparingTo("0.00");
     }
 
+    @Test void creditSourcePaymentsAreExcludedFromManualUnallocatedViewsOnPostgreSql() throws Exception {
+        authenticate();
+        Long taxpayerId=taxpayer(TaxpayerType.CITIZEN,"PG-CREDIT-QUERY-"+UUID.randomUUID(),uniqueDigits(8),null).id;
+        Debt firstSource=debt("PG-CREDIT-QUERY-A",taxpayerId),usedTarget=debt("PG-CREDIT-QUERY-T",taxpayerId);
+        setDebtAmount(firstSource,"12000.00");setDebtAmount(usedTarget,"2000.00");
+        var rentas=new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("credit-query-test",null),null,
+            List.of(new SimpleGrantedAuthority("ROLE_RENTAS")));
+        var dashboardBefore=json.readTree(mvc.perform(get("/api/v1/dashboards/rentas").with(authentication(rentas)))
+            .andReturn().getResponse().getContentAsString());
+        BigDecimal indicatorBefore=indicators.collection(null,null).unallocatedAmount();
+
+        authenticate();Payment availableSource=payments.register(new ApiDtos.RegisterPaymentRequest(taxpayerId,PaymentMethod.CASH,
+            new BigDecimal("13000.00"),List.of(new ApiDtos.AllocationRequest(firstSource.id,new BigDecimal("12000.00")))));
+        CreditBalance available=creditRepository.findBySourcePaymentId(availableSource.id).orElseThrow();
+        assertThat(available.status).isEqualTo(CreditBalanceStatus.AVAILABLE);
+        assertUnallocatedPage(rentas,taxpayerId,0,null);
+
+        authenticate();credits.apply(available.id,new ApiDtos.ApplyCreditBalanceRequest(usedTarget.id,new BigDecimal("1000.00")));
+        assertThat(creditRepository.findById(available.id).orElseThrow().status).isEqualTo(CreditBalanceStatus.USED);
+        assertUnallocatedPage(rentas,taxpayerId,0,null);
+        authenticate();
+        Debt secondSourceDebt=debt("PG-CREDIT-QUERY-B",taxpayerId);setDebtAmount(secondSourceDebt,"12000.00");
+        authenticate();Payment secondSource=payments.register(new ApiDtos.RegisterPaymentRequest(taxpayerId,PaymentMethod.CASH,
+            new BigDecimal("13000.00"),List.of(new ApiDtos.AllocationRequest(secondSourceDebt.id,new BigDecimal("12000.00")))));
+        CreditBalance secondCredit=creditRepository.findBySourcePaymentId(secondSource.id).orElseThrow();
+        assertThat(secondCredit.status).isEqualTo(CreditBalanceStatus.AVAILABLE);
+
+        mvc.perform(post("/api/v1/payments/"+availableSource.id+"/allocations").with(authentication(rentas))
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsBytes(new ApiDtos.AllocationRequest(firstSource.id,new BigDecimal("1.00")))))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isConflict())
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.code").value("PAYMENT_BALANCE_CONVERTED_TO_CREDIT"));
+
+        authenticate();Payment genuinelyUnallocated=payments.register(new ApiDtos.RegisterPaymentRequest(taxpayerId,PaymentMethod.CASH,
+            new BigDecimal("3000.00"),List.of()));
+        authenticate();
+        Payment reversed=payments.register(new ApiDtos.RegisterPaymentRequest(taxpayerId,PaymentMethod.CASH,
+            new BigDecimal("900.00"),List.of()));
+        authenticate();
+        PaymentReversalRequest reversal=reversals.request(reversed.id,"Prueba de filtro de pagos revertidos");
+        TestActorSupport.asApprover(()->reversals.approve(reversal.id));authenticate();reversals.execute(reversal.id);
+
+        assertUnallocatedPage(rentas,taxpayerId,1,genuinelyUnallocated.id);
+        var dashboardAfter=json.readTree(mvc.perform(get("/api/v1/dashboards/rentas").with(authentication(rentas)))
+            .andReturn().getResponse().getContentAsString());
+        assertThat(dashboardAfter.path("unallocatedPayments").asLong()-dashboardBefore.path("unallocatedPayments").asLong()).isEqualTo(1);
+        assertThat(new BigDecimal(dashboardAfter.path("unallocatedPaymentAmount").asText())
+            .subtract(new BigDecimal(dashboardBefore.path("unallocatedPaymentAmount").asText()))).isEqualByComparingTo("3000.00");
+        assertThat(indicators.collection(null,null).unallocatedAmount().subtract(indicatorBefore)).isEqualByComparingTo("3000.00");
+    }
+
+    private void assertUnallocatedPage(UsernamePasswordAuthenticationToken rentas,Long taxpayerId,long total,Long expectedPaymentId)throws Exception{
+        JsonNode page=json.readTree(mvc.perform(get("/api/v1/payments/unallocated").with(authentication(rentas))
+                .param("taxpayerId",taxpayerId.toString()).param("page","0").param("size","1"))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+            .andReturn().getResponse().getContentAsString());
+        assertThat(page.path("page").path("totalElements").asLong()).isEqualTo(total);
+        if(expectedPaymentId==null)assertThat(page.path("content")).isEmpty();
+        else assertThat(page.path("content").get(0).path("id").asLong()).isEqualTo(expectedPaymentId);
+    }
+
+    private void setDebtAmount(Debt debt,String amount){BigDecimal value=new BigDecimal(amount);debt.originalAmount=value;debt.currentAmount=value;debt.outstandingBalance=value;debts.saveAndFlush(debt);}
+
     @Test void planReversalAndCreditSingleExecutionLocksRunOnPostgreSql() throws Exception {
         authenticate();Debt planDebt=debt("PG-PLAN",null);List<Throwable> planFailures=runTogether(()->plans.grant(new ApiDtos.GrantPlanRequest(planDebt.id,3,BigDecimal.ZERO)),()->plans.grant(new ApiDtos.GrantPlanRequest(planDebt.id,3,BigDecimal.ZERO)));
         assertThat(planRepository.findAll().stream().filter(x->planDebt.id.equals(x.debtId)&&x.status==PaymentPlanStatus.ACTIVE)).hasSize(1);assertThat(planFailures.stream().filter(Objects::nonNull)).hasSize(1);
