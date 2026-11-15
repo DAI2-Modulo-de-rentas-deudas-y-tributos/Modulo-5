@@ -1,7 +1,7 @@
 {
   "_type": "export",
   "__export_format": 4,
-  "__export_date": "2026-09-08T00:00:00.000Z",
+  "__export_date": "2026-11-15T21:00:00.000Z",
   "__export_source": "insomnia.desktop.app:v8.6.1",
   "resources": [
     {
@@ -34,7 +34,14 @@
         "taxpayerUsername": "",
         "taxpayerPassword": "",
         "taxpayerSession": "",
-        "paymentIdempotencyKey": "qa-payment-retry-001"
+        "paymentIdempotencyKey": "qa-payment-retry-001",
+        "paidDebtId": "",
+        "paidDebtTaxpayerId": "",
+        "cancelledDebtId": "",
+        "cancelledDebtTaxpayerId": "",
+        "pendingDebtId": "",
+        "pendingDebtTaxpayerId": "",
+        "pendingDebtBalance": ""
       },
       "dataPropertyOrder": {
         "&": [
@@ -54,7 +61,14 @@
           "taxpayerUsername",
           "taxpayerPassword",
           "taxpayerSession",
-          "paymentIdempotencyKey"
+          "paymentIdempotencyKey",
+          "paidDebtId",
+          "paidDebtTaxpayerId",
+          "cancelledDebtId",
+          "cancelledDebtTaxpayerId",
+          "pendingDebtId",
+          "pendingDebtTaxpayerId",
+          "pendingDebtBalance"
         ]
       },
       "color": null,
@@ -1096,7 +1110,7 @@
       "_type": "request",
       "parentId": "fld_9dcdf71d1ee04f0a",
       "name": "2. Reintentar ejecutar la misma reversion (debe rechazar)",
-      "description": "Caso 2: debe responder 422 REVERSAL_NOT_APPROVED.",
+      "description": "Caso 2: debe responder 409 REVERSAL_NOT_APPROVED. (Conflicto de estado: 409 desde el patrón State, SCRUM-624.)",
       "method": "POST",
       "url": "{{ _.baseUrl }}/payment-reversals/1/execute",
       "body": {},
@@ -1507,7 +1521,7 @@
       "_type": "request",
       "parentId": "fld_1aacb1bc68b64a0d",
       "name": "5a. Simular refinanciacion (plan debe estar ACTIVE)",
-      "description": "OJO: el plan debe estar ACTIVE. Un plan ya EXPIRED responde 422 PLAN_NOT_ACTIVE (ver defecto de secuencia registrado).",
+      "description": "OJO: el plan debe estar ACTIVE. Un plan ya EXPIRED responde 409 PLAN_NOT_ACTIVE (ver defecto de secuencia registrado). (Conflicto de estado: 409 desde el patrón State, SCRUM-624.)",
       "method": "POST",
       "url": "{{ _.baseUrl }}/payment-plans/2/refinancing/simulations",
       "body": {
@@ -2001,7 +2015,7 @@
       "_type": "request",
       "parentId": "fld_ba283db5a82e4d3e",
       "name": "3. Reintentar resolver lo ya conciliado (debe rechazar)",
-      "description": "Debe responder 422 RECONCILIATION_ALREADY_RESOLVED.",
+      "description": "Debe responder 409 RECONCILIATION_ALREADY_RESOLVED. (Conflicto de estado: 409 desde el patrón State, SCRUM-624.)",
       "method": "POST",
       "url": "{{ _.baseUrl }}/payment-reconciliations/items/2/resolve",
       "body": {
@@ -2606,7 +2620,7 @@
       "_type": "request",
       "parentId": "fld_43da8f12ddff46a2",
       "name": "8. Reversiones simultaneas",
-      "description": "Con una reversion ya aprobada: disparar este mismo request 2 veces en simultaneo. Solo una debe tener exito (200), la otra 422 REVERSAL_NOT_APPROVED.",
+      "description": "Con una reversion ya aprobada: disparar este mismo request 2 veces en simultaneo. Solo una debe tener exito (200), la otra 409 REVERSAL_NOT_APPROVED. (Conflicto de estado: 409 desde el patrón State, SCRUM-624.)",
       "method": "POST",
       "url": "{{ _.baseUrl }}/payment-reversals/1/execute",
       "body": {},
@@ -2704,6 +2718,342 @@
       "settingEncodeUrl": true,
       "settingRebuildPath": true,
       "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "fld_b8af72ef1d5314a01e583c3053df5dd2",
+      "_type": "request_group",
+      "parentId": "wrk_1bac9345323e4389",
+      "name": "10. Transiciones de deuda · 409 (SCRUM-629)",
+      "description": "CP-67 a CP-75 (HU-11 CA-11.5, HU-26 CA-26.6, HU-28 CA-28.1 a 28.5). Patrón State de la deuda (SCRUM-624): una transición inválida responde 409 con un código estable, ya no 422.\n\nVariables del entorno a completar antes de correr: paidDebtId / paidDebtTaxpayerId (deuda PAGADA), cancelledDebtId / cancelledDebtTaxpayerId (deuda CANCELADA), pendingDebtId / pendingDebtTaxpayerId / pendingDebtBalance (deuda PENDIENTE sin pagos).\n\nCada request trae su verificación en la pestaña de scripts posteriores a la respuesta (Insomnia 9 o superior).\n\nCP-73 (el frontend muestra el 409 con el Alert estándar) y CP-74 (sin asignaciones directas de Debt.status) se verifican en la UI y en el código; no son requests.",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": 90
+    },
+    {
+      "_id": "req_730e0c7954870a34b40efb0819aa3fd4",
+      "_type": "request",
+      "parentId": "fld_b8af72ef1d5314a01e583c3053df5dd2",
+      "name": "CP-67 · Pagar una deuda PAGADA → 409 DEBT_NOT_PAYABLE",
+      "description": "HU-11 CA-11.5. No debe registrarse el pago ni devolver id de pago.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/payments",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"taxpayerId\": {{ _.paidDebtTaxpayerId }},\n  \"paymentMethod\": \"CASH\",\n  \"amount\": 1,\n  \"allocations\": [\n    {\n      \"debtId\": {{ _.paidDebtId }},\n      \"amount\": 1\n    }\n  ]\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Demo-Session",
+          "value": "{{ _.cashierSession }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 1,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "afterResponseScript": "insomnia.test('HTTP 409', () => {\n  insomnia.expect(insomnia.response.code).to.equal(409);\n});\ninsomnia.test('código DEBT_NOT_PAYABLE', () => {\n  insomnia.expect(insomnia.response.json().code).to.equal('DEBT_NOT_PAYABLE');\n});\ninsomnia.test('no devuelve id de pago', () => {\n  insomnia.expect(insomnia.response.json().id).to.equal(undefined);\n});\n"
+    },
+    {
+      "_id": "req_fc270139380cbcd106ba5a0f01bc5342",
+      "_type": "request",
+      "parentId": "fld_b8af72ef1d5314a01e583c3053df5dd2",
+      "name": "CP-68 · Pagar una deuda CANCELADA → 409 DEBT_NOT_PAYABLE",
+      "description": "Precondición: una deuda CANCELADA. Hoy ningún endpoint ni pantalla anula una deuda (Debt.anular() no se usa desde un servicio), así que en local se prepara por base de datos y se revierte al terminar:\n  UPDATE debt SET status='CANCELLED', updated_at=now() WHERE id=<id>;\n  -- al terminar: UPDATE debt SET status='PENDING', updated_at=now() WHERE id=<id>;",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/payments",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"taxpayerId\": {{ _.cancelledDebtTaxpayerId }},\n  \"paymentMethod\": \"CASH\",\n  \"amount\": 1,\n  \"allocations\": [\n    {\n      \"debtId\": {{ _.cancelledDebtId }},\n      \"amount\": 1\n    }\n  ]\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Demo-Session",
+          "value": "{{ _.cashierSession }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 2,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "afterResponseScript": "insomnia.test('HTTP 409', () => {\n  insomnia.expect(insomnia.response.code).to.equal(409);\n});\ninsomnia.test('código DEBT_NOT_PAYABLE', () => {\n  insomnia.expect(insomnia.response.json().code).to.equal('DEBT_NOT_PAYABLE');\n});\n"
+    },
+    {
+      "_id": "req_8ad7ee0748f15f97f01dc9fb6262aa2d",
+      "_type": "request",
+      "parentId": "fld_b8af72ef1d5314a01e583c3053df5dd2",
+      "name": "CP-69 · Ajustar una deuda PAGADA → 409 DEBT_NOT_ADJUSTABLE",
+      "description": "HU-26 CA-26.6. Vale para recargo y para descuento.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/adjustments",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"debtId\": {{ _.paidDebtId }},\n  \"type\": \"SURCHARGE\",\n  \"amount\": 10,\n  \"reason\": \"QA CP-69 ajuste sobre deuda pagada\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 3,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "afterResponseScript": "insomnia.test('HTTP 409', () => {\n  insomnia.expect(insomnia.response.code).to.equal(409);\n});\ninsomnia.test('código DEBT_NOT_ADJUSTABLE', () => {\n  insomnia.expect(insomnia.response.json().code).to.equal('DEBT_NOT_ADJUSTABLE');\n});\n"
+    },
+    {
+      "_id": "req_0d2c4ba42eb268f0addb27b5faa69da1",
+      "_type": "request",
+      "parentId": "fld_b8af72ef1d5314a01e583c3053df5dd2",
+      "name": "CP-70a · Simular recargo de una deuda PAGADA → 409 DEBT_NOT_CHARGEABLE",
+      "description": "HU-28. Requiere una regla de recargo vigente (si no hay, responde 422 antes de evaluar el estado).",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/debts/{{ _.paidDebtId }}/late-charge-preview",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 4,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "afterResponseScript": "insomnia.test('HTTP 409', () => {\n  insomnia.expect(insomnia.response.code).to.equal(409);\n});\ninsomnia.test('código DEBT_NOT_CHARGEABLE', () => {\n  insomnia.expect(insomnia.response.json().code).to.equal('DEBT_NOT_CHARGEABLE');\n});\n"
+    },
+    {
+      "_id": "req_36818828c3a3a62404798e4d01962e04",
+      "_type": "request",
+      "parentId": "fld_b8af72ef1d5314a01e583c3053df5dd2",
+      "name": "CP-70b · Aplicar recargo a una deuda PAGADA → 409 DEBT_NOT_CHARGEABLE",
+      "description": "HU-28. No debe crear ajustes.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/debts/{{ _.paidDebtId }}/late-charges",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 5,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "afterResponseScript": "insomnia.test('HTTP 409', () => {\n  insomnia.expect(insomnia.response.code).to.equal(409);\n});\ninsomnia.test('código DEBT_NOT_CHARGEABLE', () => {\n  insomnia.expect(insomnia.response.json().code).to.equal('DEBT_NOT_CHARGEABLE');\n});\n"
+    },
+    {
+      "_id": "req_20b1c0a7b02a3dc2affa92449daa43e1",
+      "_type": "request",
+      "parentId": "fld_b8af72ef1d5314a01e583c3053df5dd2",
+      "name": "CP-71a · Pago total de una deuda PENDIENTE → 201",
+      "description": "HU-28 CA-28.1. Imputa el saldo completo; la deuda debe pasar a PAID y encolarse debtSettled (ver CP-71b y 09/Outbox).",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/payments",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"taxpayerId\": {{ _.pendingDebtTaxpayerId }},\n  \"paymentMethod\": \"CASH\",\n  \"amount\": {{ _.pendingDebtBalance }},\n  \"allocations\": [\n    {\n      \"debtId\": {{ _.pendingDebtId }},\n      \"amount\": {{ _.pendingDebtBalance }}\n    }\n  ]\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Demo-Session",
+          "value": "{{ _.cashierSession }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 6,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "afterResponseScript": "insomnia.test('HTTP 201', () => {\n  insomnia.expect(insomnia.response.code).to.equal(201);\n});\n"
+    },
+    {
+      "_id": "req_3ca21ad8ae5caeb2f46a5c78d1e88e51",
+      "_type": "request",
+      "parentId": "fld_b8af72ef1d5314a01e583c3053df5dd2",
+      "name": "CP-71b · La deuda quedó PAID con saldo 0",
+      "description": "HU-28 CA-28.1. Correr después de CP-71a.",
+      "method": "GET",
+      "url": "{{ _.baseUrl }}/debts/{{ _.pendingDebtId }}",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 7,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "afterResponseScript": "insomnia.test('HTTP 200', () => {\n  insomnia.expect(insomnia.response.code).to.equal(200);\n});\ninsomnia.test('estado PAID y saldo 0', () => {\n  const d = insomnia.response.json();\n  insomnia.expect(d.status).to.equal('PAID');\n  insomnia.expect(Number(d.outstandingBalance)).to.equal(0);\n});\n"
+    },
+    {
+      "_id": "req_81ba7791da56da77be347ff631008842",
+      "_type": "request",
+      "parentId": "fld_b8af72ef1d5314a01e583c3053df5dd2",
+      "name": "CP-72 · Tras la reversión total, la deuda vuelve a PENDING",
+      "description": "HU-28 CA-28.2. Ejecutar antes la carpeta 04 (pedir, aprobar y ejecutar la reversión del pago de CP-71a) y después este GET.",
+      "method": "GET",
+      "url": "{{ _.baseUrl }}/debts/{{ _.pendingDebtId }}",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 8,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "afterResponseScript": "insomnia.test('HTTP 200', () => {\n  insomnia.expect(insomnia.response.code).to.equal(200);\n});\ninsomnia.test('estado PENDING con el saldo restaurado', () => {\n  const d = insomnia.response.json();\n  insomnia.expect(d.status).to.equal('PENDING');\n  insomnia.expect(Number(d.outstandingBalance)).to.be.above(0);\n});\n"
+    },
+    {
+      "_id": "req_ea72ebd4175442757997d23ec2b98087",
+      "_type": "request",
+      "parentId": "fld_b8af72ef1d5314a01e583c3053df5dd2",
+      "name": "CP-75a · Ajustar una deuda CANCELADA → 409 DEBT_NOT_ADJUSTABLE",
+      "description": "Precondición: una deuda CANCELADA. Hoy ningún endpoint ni pantalla anula una deuda (Debt.anular() no se usa desde un servicio), así que en local se prepara por base de datos y se revierte al terminar:\n  UPDATE debt SET status='CANCELLED', updated_at=now() WHERE id=<id>;\n  -- al terminar: UPDATE debt SET status='PENDING', updated_at=now() WHERE id=<id>;",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/adjustments",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"debtId\": {{ _.cancelledDebtId }},\n  \"type\": \"DISCOUNT\",\n  \"amount\": 1,\n  \"reason\": \"QA CP-75 ajuste sobre deuda cancelada\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 9,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "afterResponseScript": "insomnia.test('HTTP 409', () => {\n  insomnia.expect(insomnia.response.code).to.equal(409);\n});\ninsomnia.test('código DEBT_NOT_ADJUSTABLE', () => {\n  insomnia.expect(insomnia.response.json().code).to.equal('DEBT_NOT_ADJUSTABLE');\n});\n"
+    },
+    {
+      "_id": "req_8cb6e20beb20d7785772a33b42bf8990",
+      "_type": "request",
+      "parentId": "fld_b8af72ef1d5314a01e583c3053df5dd2",
+      "name": "CP-75b · Simular recargo de una deuda CANCELADA → 409 DEBT_NOT_CHARGEABLE",
+      "description": "Precondición: una deuda CANCELADA. Hoy ningún endpoint ni pantalla anula una deuda (Debt.anular() no se usa desde un servicio), así que en local se prepara por base de datos y se revierte al terminar:\n  UPDATE debt SET status='CANCELLED', updated_at=now() WHERE id=<id>;\n  -- al terminar: UPDATE debt SET status='PENDING', updated_at=now() WHERE id=<id>;\nRequiere una regla de recargo vigente.",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/debts/{{ _.cancelledDebtId }}/late-charge-preview",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Demo-Session",
+          "value": "{{ _.rentasSession }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 10,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "afterResponseScript": "insomnia.test('HTTP 409', () => {\n  insomnia.expect(insomnia.response.code).to.equal(409);\n});\ninsomnia.test('código DEBT_NOT_CHARGEABLE', () => {\n  insomnia.expect(insomnia.response.json().code).to.equal('DEBT_NOT_CHARGEABLE');\n});\n"
     }
   ]
 }
