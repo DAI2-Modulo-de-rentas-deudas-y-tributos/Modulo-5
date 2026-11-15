@@ -34,11 +34,11 @@ resource "aws_security_group" "database" {
 
 resource "aws_vpc_security_group_ingress_rule" "alb_from_cloudfront" {
   security_group_id = aws_security_group.alb.id
-  description       = "HTTP desde los servidores de origen de CloudFront"
+  description       = var.alb_ingress_port == 443 ? "HTTPS desde los servidores de origen de CloudFront" : "HTTP desde los servidores de origen de CloudFront"
   prefix_list_id    = data.aws_ec2_managed_prefix_list.cloudfront_origin_facing.id
   ip_protocol       = "tcp"
-  from_port         = 80
-  to_port           = 80
+  from_port         = var.alb_ingress_port
+  to_port           = var.alb_ingress_port
 }
 
 resource "aws_vpc_security_group_egress_rule" "alb_to_backend" {

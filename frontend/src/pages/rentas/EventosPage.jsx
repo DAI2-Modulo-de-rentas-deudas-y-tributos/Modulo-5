@@ -120,12 +120,12 @@ export default function EventosPage() {
       )}
       {error && <Alert variant="error" title="No pudimos cargar la bitácora">{error}</Alert>}
 
-      <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <section className="workspace-metrics workspace-metrics-three" aria-label="Resumen de eventos">
         <StatTile label="Eventos listados" value={rows.length} iconName="Activity" />
         <StatTile
           label="Reintentando"
           value={retryingCount}
-          hint="Hasta 3 intentos antes de la DLQ"
+          hint="Core informa cuatro entregas totales: original y reintentos a los 5 s, 30 s y 2 min. Esta bitácora muestra estado local; no confirma la DLQ externa."
           iconName="RefreshCw"
         />
         <StatTile
@@ -158,6 +158,7 @@ export default function EventosPage() {
               name: "status",
               label: "Estado",
               options: [
+                { value: "PENDING", label: "Pendiente" },
                 { value: "PUBLISHED", label: "Publicado" },
                 { value: "PROCESSED", label: "Procesado" },
                 { value: "RETRYING", label: "Reintentando" },
@@ -170,6 +171,7 @@ export default function EventosPage() {
         />
 
         <DataTable
+          ariaLabel="Tabla de eventos de integración"
           columns={columns}
           rows={rows}
           rowKey={(row) => row.eventId}

@@ -1,74 +1,232 @@
 package ar.gob.municipalidad.rentas;
 
-import jakarta.servlet.*;
-import jakarta.servlet.http.*;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.aopalliance.intercept.MethodInvocation;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.MDC;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.*;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.ApplicationContext;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.authorization.method.PreAuthorizeAuthorizationManager;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter;
 import org.springframework.stereotype.Component;
+import org.springframework.web.method.HandlerMethod;
+import org.springframework.web.servlet.HandlerInterceptor;
+import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
+import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
+import java.lang.reflect.AccessibleObject;
+import java.lang.reflect.Method;
 import java.util.Arrays;
+import java.util.List;
+import java.util.UUID;
 
 @Configuration
 @EnableMethodSecurity
 class SecurityConfig {
-    @Bean SecurityFilterChain securityFilterChain(HttpSecurity http, DevIdentityFilter filter) throws Exception {
+    @Bean PasswordEncoder passwordEncoder() { return new BCryptPasswordEncoder(); }
+
+    @Bean WebMvcConfigurer authorizeControllerBeforeBodyBinding(ApplicationContext context,
+            SecurityErrorResponseWriter errors) {
+        var authorization=new PreAuthorizeAuthorizationManager();
+        authorization.setApplicationContext(context);
+        HandlerInterceptor interceptor=new HandlerInterceptor() {
+            @Override public boolean preHandle(HttpServletRequest request,HttpServletResponse response,Object handler) throws Exception {
+            if (!(handler instanceof HandlerMethod mapped)) return true;
+            HandlerMethod resolved=mapped.createWithResolvedBean();
+            Method method=resolved.getMethod();
+            // shortcut: current @PreAuthorize rules are role-only; argument-based rules need a different pre-binding strategy.
+            MethodInvocation invocation=new MethodInvocation() {
+                @Override public Method getMethod() { return method; }
+                @Override public Object[] getArguments() { return new Object[method.getParameterCount()]; }
+                @Override public Object getThis() { return resolved.getBean(); }
+                @Override public AccessibleObject getStaticPart() { return method; }
+                @Override public Object proceed() { throw new UnsupportedOperationException(); }
+            };
+            var decision=authorization.check(() -> SecurityContextHolder.getContext().getAuthentication(),invocation);
+            if (decision==null||decision.isGranted()) return true;
+            errors.write(request,response,403,"ACCESS_DENIED","No tiene permisos para realizar esta operación");
+            return false;
+            }
+        };
+        return new WebMvcConfigurer() {
+            @Override public void addInterceptors(InterceptorRegistry registry) {
+                registry.addInterceptor(interceptor).addPathPatterns("/api/v1/**");
+            }
+        };
+    }
+
+    @Bean CorsConfigurationSource corsConfigurationSource(@Value("${rentas.cors.allowed-origins:}") String origins) {
+        UrlBasedCorsConfigurationSource source=new UrlBasedCorsConfigurationSource();
+        List<String> allowed=Arrays.stream(origins.split(",")).map(String::trim).filter(s->!s.isBlank()).distinct().toList();
+        if(allowed.stream().anyMatch(origin->origin.contains("*")||origin.equals("null"))) throw new IllegalArgumentException("CORS_ALLOWED_ORIGINS debe contener orígenes explícitos, sin comodines ni null");
+        if(allowed.isEmpty()) return source;
+        CorsConfiguration config=new CorsConfiguration();
+        config.setAllowedOrigins(allowed);
+        config.setAllowedMethods(List.of("GET","POST","PUT","PATCH","DELETE","OPTIONS"));
+        config.setAllowedHeaders(List.of("Content-Type","Accept","Authorization","X-Demo-Session","Idempotency-Key","If-Match","X-Correlation-Id"));
+        config.setExposedHeaders(List.of("X-Correlation-Id","Content-Disposition","Allow","ETag"));
+        config.setAllowCredentials(false);
+        config.setMaxAge(3600L);
+        source.registerCorsConfiguration("/api/**",config);
+        return source;
+    }
+
+    @Bean SecurityFilterChain securityFilterChain(HttpSecurity http, DevIdentityFilter filter,
+            SecurityErrorResponseWriter errors, Environment environment) throws Exception {
+        boolean publicDocs=!environment.acceptsProfiles(Profiles.of("prod", "staging"));
         return http.csrf(csrf -> csrf.disable())
-            .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/actuator/health", "/api/v1/health", "/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll()
+            .sessionManagement(session -> session.sessionCreationPolicy(org.springframework.security.config.http.SessionCreationPolicy.STATELESS))
+            .exceptionHandling(securityErrors -> securityErrors
+                .authenticationEntryPoint((request,response,error) -> errors.write(request,response,401,
+                    "UNAUTHENTICATED","Se requiere autenticación"))
+                .accessDeniedHandler((request,response,error) -> errors.write(request,response,403,
+                    "ACCESS_DENIED","No tiene permisos para realizar esta operación")))
+            .headers(headers -> headers
+                .contentTypeOptions(Customizer.withDefaults())
+                .frameOptions(frame -> frame.deny())
+                .referrerPolicy(referrer -> referrer.policy(ReferrerPolicyHeaderWriter.ReferrerPolicy.NO_REFERRER)))
+            .cors(Customizer.withDefaults())
+            .authorizeHttpRequests(auth -> {
+                auth.requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                    .requestMatchers("/actuator/health", "/api/v1/health").permitAll();
+                if (publicDocs) auth.requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll();
+                auth
+                .requestMatchers(HttpMethod.POST, "/api/v1/dev-auth/login", "/api/v1/dev-auth/bootstrap").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/v1/**").authenticated()
-                .anyRequest().authenticated())
+                .anyRequest().authenticated();
+            })
             .addFilterBefore(filter, UsernamePasswordAuthenticationFilter.class)
             .build();
     }
 }
 
-record AuthenticatedIdentity(String userId, Long taxpayerId) {
+@Component
+class SecurityErrorResponseWriter {
+    private final ObjectMapper json;
+    private final AuditService audit;
+
+    SecurityErrorResponseWriter(ObjectMapper json,AuditService audit) { this.json=json;this.audit=audit; }
+
+    void write(HttpServletRequest request,HttpServletResponse response,int status,String code,String message)
+            throws IOException {
+        String traceId=MDC.get("traceId");
+        if(traceId==null||traceId.isBlank()) {
+            String supplied=request.getHeader(CorrelationIdFilter.HEADER);
+            traceId=supplied!=null&&supplied.matches("[A-Za-z0-9._:-]{1,100}")?supplied:UUID.randomUUID().toString();
+        }
+        response.setStatus(status);
+        response.setCharacterEncoding("UTF-8");
+        response.setContentType(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
+        response.setHeader(CorrelationIdFilter.HEADER,traceId);
+        if(status==403) audit.recordAccessDenied(request,code);
+        json.writeValue(response.getOutputStream(),new ApiDtos.ErrorResponse(
+            "about:blank",HttpStatus.valueOf(status).getReasonPhrase(),java.time.OffsetDateTime.now(),status,
+            message,request.getRequestURI(),code,message,request.getRequestURI(),traceId,null));
+    }
+}
+
+record AuthenticatedIdentity(String userId, Long taxpayerId, UUID integrationActorId) {
+    AuthenticatedIdentity(String userId, Long taxpayerId) { this(userId,taxpayerId,null); }
     @Override public String toString() { return userId; }
+}
+
+@Component
+@Order(Ordered.HIGHEST_PRECEDENCE)
+class CorrelationIdFilter extends OncePerRequestFilter {
+    static final String HEADER="X-Correlation-Id";
+    @Override protected void doFilterInternal(HttpServletRequest request,HttpServletResponse response,FilterChain chain)
+            throws ServletException,IOException {
+        String supplied=request.getHeader(HEADER);
+        String correlationId=supplied!=null&&supplied.matches("[A-Za-z0-9._:-]{1,100}")?supplied:UUID.randomUUID().toString();
+        MDC.put("traceId",correlationId);response.setHeader(HEADER,correlationId);
+        try { chain.doFilter(request,response); } finally { MDC.remove("traceId"); }
+    }
 }
 
 @Component
 class DevIdentityFilter extends OncePerRequestFilter {
     private final boolean enabled;
-    DevIdentityFilter(@Value("${rentas.security.dev-mode:false}") boolean enabled) { this.enabled = enabled; }
+    private final ObjectProvider<DemoAuthService> demoAuth;
+    private final SecurityErrorResponseWriter errors;
+    DevIdentityFilter(@Value("${rentas.security.dev-mode:false}") boolean enabled,ObjectProvider<DemoAuthService> demoAuth,
+            SecurityErrorResponseWriter errors) {
+        this.enabled=enabled;this.demoAuth=demoAuth;this.errors=errors;
+    }
 
     @Override protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
-        if (enabled && SecurityContextHolder.getContext().getAuthentication() == null) {
-            String user = value(request, "X-Dev-User", "dev-rentas");
-            String roles = value(request, "X-Dev-Roles", "RENTAS,SUPERVISOR,CASHIER");
-            String taxpayer = request.getHeader("X-Dev-Taxpayer-Id");
-            Long taxpayerId = taxpayer == null || taxpayer.isBlank() ? null : Long.valueOf(taxpayer);
-            var authorities = Arrays.stream(roles.split(","))
-                .map(String::trim).filter(s -> !s.isBlank()).map(s -> new SimpleGrantedAuthority("ROLE_" + s)).toList();
-            var auth = new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity(user, taxpayerId), null, authorities);
-            SecurityContextHolder.getContext().setAuthentication(auth);
+        if(enabled && !publicPath(request) && SecurityContextHolder.getContext().getAuthentication()==null) {
+            String token=request.getHeader(DemoAuthService.SESSION_HEADER);
+            if(token==null||token.isBlank()) {
+                chain.doFilter(request,response);
+                return;
+            }
+            DemoAuthService auth=demoAuth.getIfAvailable();
+            if(auth==null) { chain.doFilter(request,response); return; }
+            try {
+                DemoAuthService.ResolvedSession session=auth.resolve(token);
+                var authentication=new UsernamePasswordAuthenticationToken(session.identity(),null,session.authorities());
+                SecurityContextHolder.getContext().setAuthentication(authentication);
+            } catch(BusinessException ignored) {
+                errors.write(request,response,HttpServletResponse.SC_UNAUTHORIZED,"UNAUTHENTICATED","Sesión DEMO inválida");
+                return;
+            }
         }
-        chain.doFilter(request, response);
+        chain.doFilter(request,response);
     }
-    private String value(HttpServletRequest request, String name, String fallback) {
-        String value = request.getHeader(name); return value == null || value.isBlank() ? fallback : value;
+
+    private boolean publicPath(HttpServletRequest request) {
+        String path=request.getRequestURI();
+        String method=request.getMethod();
+        if("OPTIONS".equalsIgnoreCase(method)) return true;
+        if(path.startsWith("/actuator/")||path.equals("/api/v1/health")||path.startsWith("/swagger-ui")||path.startsWith("/v3/api-docs")) return true;
+        return "POST".equalsIgnoreCase(method)&&(path.equals("/api/v1/dev-auth/login")||path.equals("/api/v1/dev-auth/bootstrap"));
     }
+
 }
 
 @Component
 class CurrentIdentity {
     AuthenticatedIdentity get() {
-        Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        var authentication=SecurityContextHolder.getContext().getAuthentication();
+        if(authentication==null)throw new BusinessException("UNAUTHENTICATED","Se requiere autenticación",401);
+        Object principal = authentication.getPrincipal();
         if (principal instanceof AuthenticatedIdentity identity) return identity;
         return new AuthenticatedIdentity(String.valueOf(principal), null);
     }
     String role() {
         return SecurityContextHolder.getContext().getAuthentication().getAuthorities().stream()
             .findFirst().map(Object::toString).orElse("ROLE_UNKNOWN");
+    }
+    boolean hasRole(String role) {
+        return SecurityContextHolder.getContext().getAuthentication().getAuthorities().stream()
+            .anyMatch(a -> a.getAuthority().equals("ROLE_" + role));
     }
     void requireOwnership(Long taxpayerId) {
         boolean taxpayer = SecurityContextHolder.getContext().getAuthentication().getAuthorities().stream()

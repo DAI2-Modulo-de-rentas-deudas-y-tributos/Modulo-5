@@ -48,3 +48,12 @@ output "github_test_runtime_infrastructure_policy_arn" {
   value       = aws_iam_policy.github_test_runtime_infrastructure.arn
 }
 
+output "github_prod_role_arn" {
+  description = "Rol que utilizara el GitHub Environment prod."
+  value       = aws_iam_role.github_prod.arn
+}
+
+output "prod_state_key" {
+  description = "Clave S3 del estado PROD."
+  value       = local.prod_state_key
+}

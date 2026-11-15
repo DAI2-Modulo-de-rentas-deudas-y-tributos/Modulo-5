@@ -8,14 +8,28 @@
  */
 export const MODULES = [
   {
+    id: "eventos-salientes", path: "/rentas/eventos-salientes", label: "Eventos salientes",
+    iconName: "Send", description: "Consultá el estado y los intentos de envío a otros módulos.", roles: ["SUPERVISOR"],
+  },
+  {
     id: "contribuyentes",
     path: "/rentas/contribuyentes",
     label: "Contribuyentes",
     iconName: "Users",
     description:
-      "Padrón local de ciudadanos y organizaciones replicado desde M1. Sólo lectura.",
+      "Consultá el padrón local de ciudadanos y organizaciones y su situación fiscal.",
     roles: ["PERSONAL", "SUPERVISOR"],
     countLabel: "registrados",
+  },
+  {
+    id: "tributos",
+    path: "/rentas/tributos",
+    label: "Configuración de tributos",
+    iconName: "Tags",
+    description:
+      "Consultá las reglas vigentes y proponé cambios para su aprobación.",
+    roles: ["PERSONAL", "SUPERVISOR"],
+    countLabel: "conceptos",
   },
   {
     id: "liquidaciones",
@@ -43,7 +57,7 @@ export const MODULES = [
     label: "Boletas",
     iconName: "FileText",
     description:
-      "Emisión y descarga de boletas y comprobantes almacenados en S3.",
+      "Emití, consultá y descargá las boletas de los contribuyentes.",
     roles: ["PERSONAL", "SUPERVISOR"],
     countLabel: "emitidas",
   },
@@ -53,9 +67,19 @@ export const MODULES = [
     label: "Pagos",
     iconName: "Banknote",
     description:
-      "Registrar, imputar y reversar pagos. Publica paymentRegistered / paymentReversed.",
+      "Registrá, imputá y reversá pagos, y consultá la trazabilidad de cada movimiento.",
     roles: ["PERSONAL", "SUPERVISOR"],
     countLabel: "del día",
+  },
+  {
+    id: "ajustes",
+    path: "/rentas/ajustes",
+    label: "Ajustes y saldos",
+    iconName: "SlidersHorizontal",
+    description:
+      "Corregir una deuda con autorización del Supervisor, o aplicarle un saldo a favor.",
+    roles: ["PERSONAL", "SUPERVISOR"],
+    countLabel: "pendientes",
   },
   {
     id: "planes",
@@ -63,9 +87,66 @@ export const MODULES = [
     label: "Planes de pago",
     iconName: "CalendarClock",
     description:
-      "Solicitudes de plan, simulación de cuotas y resolución (GRANTED / REJECTED).",
+      "Simulá cuotas y gestioná las solicitudes de financiación de deuda.",
     roles: ["PERSONAL", "SUPERVISOR"],
     countLabel: "pendientes",
+  },
+  {
+    id: "parametros-financiacion",
+    path: "/rentas/parametros-financiacion",
+    label: "Parámetros de financiación",
+    iconName: "SlidersHorizontal",
+    description:
+      "Cuotas, anticipo, tasa, vencimientos y tolerancias con historial de versiones.",
+    roles: ["PERSONAL", "SUPERVISOR"],
+    countLabel: "versiones",
+  },
+  {
+    id: "refinanciacion",
+    path: "/rentas/refinanciacion",
+    label: "Refinanciación",
+    iconName: "RefreshCw",
+    description:
+      "Rearmar planes incumplidos sobre su saldo vivo, conservando el original como antecedente.",
+    roles: ["PERSONAL", "SUPERVISOR"],
+    countLabel: "refinanciables",
+  },
+  {
+    id: "reversiones",
+    path: "/rentas/reversiones",
+    label: "Reversiones de pago",
+    iconName: "Undo2",
+    description:
+      "Aprobación del Supervisor y ejecución posterior por Personal de Rentas.",
+    roles: ["PERSONAL", "SUPERVISOR"],
+    countLabel: "pendientes",
+  },
+  {
+    id: "caducidades",
+    path: "/rentas/caducidades",
+    label: "Caducidad de planes",
+    iconName: "CalendarX",
+    description: "Planes incumplidos y solicitudes de caducidad pendientes de resolución.",
+    roles: ["PERSONAL", "SUPERVISOR"],
+    countLabel: "pendientes",
+  },
+  {
+    id: "corridas",
+    path: "/rentas/corridas-masivas",
+    label: "Corridas masivas",
+    iconName: "Layers",
+    description: "Aprobación y ejecución de lotes masivos de liquidaciones.",
+    roles: ["PERSONAL", "SUPERVISOR"],
+    countLabel: "pendientes",
+  },
+  {
+    id: "obligaciones-externas",
+    path: "/rentas/obligaciones-externas",
+    label: "Obligaciones externas",
+    iconName: "Webhook",
+    description: "Errores de obligaciones recibidas desde otros módulos y reintentos.",
+    roles: ["PERSONAL", "SUPERVISOR"],
+    countLabel: "con errores",
   },
   {
     id: "exenciones",
@@ -73,7 +154,7 @@ export const MODULES = [
     label: "Exenciones",
     iconName: "ShieldCheck",
     description:
-      "Solicitudes de exención, documentación respaldatoria y resolución hacia M8.",
+      "Revisá solicitudes, documentación respaldatoria y resoluciones de exención.",
     roles: ["PERSONAL", "SUPERVISOR"],
     countLabel: "pendientes",
   },
@@ -83,7 +164,7 @@ export const MODULES = [
     label: "Tickets",
     iconName: "MessageSquare",
     description:
-      "Reclamos derivados por M2. Cambio de estado vía updateTicketStatus.",
+      "Consultá los reclamos recibidos desde Atención Ciudadana y seguí su resolución.",
     roles: ["PERSONAL", "SUPERVISOR"],
     countLabel: "abiertos",
   },
@@ -93,7 +174,7 @@ export const MODULES = [
     label: "Bitácora de eventos",
     iconName: "Activity",
     description:
-      "Auditoría de eventos publicados y procesados, reintentos y DLQ.",
+      "Seguí el intercambio con otras áreas y revisá los eventos pendientes.",
     roles: ["SUPERVISOR"],
     countLabel: "en DLQ",
   },

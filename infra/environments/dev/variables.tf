@@ -12,13 +12,13 @@ variable "project_name" {
 variable "aws_region" {
   description = "Region AWS donde se desplegara el ambiente."
   type        = string
-  default     = "sa-east-1"
+  default     = "us-east-2"
 }
 
 variable "aws_account_id" {
   description = "Cuenta AWS autorizada para recibir el despliegue."
   type        = string
-  default     = "060712744495"
+  default     = "756663253996"
 
   validation {
     condition     = can(regex("^[0-9]{12}$", var.aws_account_id))
@@ -84,6 +84,37 @@ variable "backend_task_memory" {
   description = "Memoria MiB de la tarea Fargate DEV."
   type        = number
   default     = 512
+}
+
+variable "backend_spring_profiles_active" {
+  description = "Perfiles activos del backend en DEV."
+  type        = string
+  default     = "dev"
+}
+
+variable "backend_environment_variables" {
+  description = "Variables no sensibles del backend en DEV."
+  type        = map(string)
+  default = {
+    BROKER_ADAPTER           = "local-log"
+    OUTBOX_DELAY_MS          = "5000"
+    RENTAS_SECURITY_DEV_MODE = "true"
+  }
+}
+
+variable "backend_secret_variables" {
+  description = "Variables sensibles del backend referenciadas por ARN de Secrets Manager en DEV."
+  type        = map(string)
+  default     = {}
+}
+
+variable "frontend_environment_variables" {
+  description = "Variables publicas incorporadas al build del frontend en DEV."
+  type        = map(string)
+  default = {
+    VITE_AUTH_MODE = "mock"
+    VITE_USE_MOCKS = "false"
+  }
 }
 
 variable "database_name" {

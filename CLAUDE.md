@@ -16,20 +16,24 @@ commits y comentarios.
 ## Comandos
 
 ```shell
-docker compose up -d postgres     # PostgreSQL 17 local (copiar antes .env.example a .env)
+docker compose up -d --build      # sistema completo: base, RabbitMQ, backend, usuarios DEMO y frontend (G1)
+docker compose up -d postgres     # sólo PostgreSQL 17 (copiar antes .env.example a .env)
 
 # Frontend (React + Vite) — desde frontend/
 npm install
 npm run dev                       # http://localhost:5173
-npm test                          # vitest run, lo que corre el CI
+npm test                          # vitest run
+npm run test:coverage             # vitest con cobertura (lcov para Sonar), lo que corre el CI
 npm test -- src/services/rentasService.test.js   # un archivo
 npm test -- -t "cancela la deuda"                # un test puntual
 npm run build                     # dist/ — lo que publica Amplify
+sh scripts/compose/e2e-test.sh    # (desde la raíz) E2E con Playwright contra el stack de Compose
 
 # Terraform — lo que valida el CI; ejecutar desde la raíz / cada ambiente
 terraform fmt -check -recursive infra
 cd infra/environments/dev  && terraform init -backend=false && terraform validate
 cd infra/environments/test && terraform init -backend=false && terraform validate
+cd infra/environments/prod && terraform init -backend=false && terraform validate
 ```
 
 `backend/` todavía no tiene aplicación: agregar aquí sus comandos al scaffoldearlo.
@@ -53,19 +57,29 @@ cd infra/environments/test && terraform init -backend=false && terraform validat
   antes de generar código: un cambio de contrato no es una decisión local.
 - **Infra**: `infra/` es AWS solo por Terraform. `bootstrap/` (estado remoto S3 con
   `use_lockfile = true`, OIDC de GitHub, roles plan/deploy) se aplica una vez; `modules/` por
-  capacidad (network, database, ecs, edge, messaging, storage); `environments/dev` y
-  `environments/test` son composiciones con **estado remoto independiente** — no usar Terraform
-  workspaces para representar ambientes. Región por defecto `sa-east-1`, `project_name`
+  capacidad (network, security, database, ecs, edge, hosting); `environments/dev`,
+  `environments/test` y `environments/prod` son composiciones con **estado remoto independiente** — no usar Terraform
+  workspaces para representar ambientes. Región por defecto `us-east-2`, `project_name`
   `modulo-5-rentas`. No ejecutar `terraform apply` antes del bootstrap y la revisión del plan.
 
 ## Flujo de trabajo
 
 - Ramas: desarrollo en `feature/*` → PR a `develop` (ambiente `dev`) → promoción del **mismo
   artefacto inmutable** a `test`. `main` es la versión estable.
-- CI (`.github/workflows/ci.yml`): job `repository-structure` verifica que existan
-  `frontend`, `backend`, `contracts`, `infra/environments/{dev,test}` y `docs/adr`; job
-  `terraform` corre fmt/validate; `ci-required` es el check final obligatorio — si se agregan
-  jobs con filtros por carpeta, deben seguir colgando de `ci-required`.
+- `dev` es **efímero**: cada merge a `develop` lo levanta, corre un smoke test y lo destruye
+  (`cd-dev.yml`); solo se conserva su repositorio ECR, desde donde se promueve a `test`.
+- `prod` es **persistente** y sigue a `main`: cada merge o commit corre el CI y despliega
+  (`cd-prod.yml`, ADR 0003). Un deploy en curso no se cancela; de los commits que llegan
+  mientras tanto solo se despliega el último. Perfil `prod`, sin modo demo.
+- CI (`.github/workflows/ci.yml`): jobs `frontend`, `backend`, `terraform` (fmt/validate),
+  `compose` (G1), `dependency-scan` (OSV-Scanner; excepciones con vencimiento en
+  `backend/osv-scanner.toml`) y `secret-scan` (G6); `ci-required` es el check final obligatorio y falla si
+  alguno de sus `needs` no termina en `success` — un job nuevo debe agregarse a esa lista. El job `sonar` (SonarQube
+  Cloud, configurado en `sonar-project.properties`) usa la cobertura de JaCoCo y Vitest, no cuelga de
+  `ci-required` y se omite si falta el secret `SONAR_TOKEN`. El job `compose` además corre, sobre el
+  stack levantado, las E2E de Playwright, la resiliencia del broker y Schemathesis (`scripts/compose/`).
+  PIT (`mutation.yml`), k6 y ZAP (`no-funcionales.yml`) y la suite 3 veces (`estabilidad.yml`) no
+  entran en los 15 minutos del pipeline: corren semanalmente, con tags `v*` y a pedido.
 - Las decisiones arquitectónicas relevantes se documentan como ADR numerados en `docs/adr/`
   con contexto, decisión, alternativas y consecuencias.
 - Configuración por ambiente siempre por variables de entorno; nada de URLs ni credenciales
@@ -119,7 +133,7 @@ body {
 **Resumen** (JSX, `export default`, iconos de `lucide-react` con `strokeWidth`
 1.5 decorativo / 2 en UI): `Alert` (`variant` success|error|info, `title`, `onDismiss`),
 `Breadcrumb` (`items`, `onNavigate`; índice `-1` = home), `FormField` (text/textarea/select con
-`error` y `required`), `Spinner` (sm|md|lg), `FeatureCard` (`iconName` de lucide, `badge`,
+`error`, `required` y, opcionalmente, `prefix`/`suffix` dentro del campo), `Spinner` (sm|md|lg), `FeatureCard` (`iconName` de lucide, `badge`,
 `colors`), `StepIndicatorGeneric` (`steps`, `currentStep`), `PageHeader` (`label`, `title`,
 `highlight`, `description`) y `Footer` (`areaName`, `areaEmail`; usa `assets/logo.png`).
 Convenciones visuales del kit: tamaños de texto en px arbitrarios (`text-[13px]`, `text-[15px]`),
@@ -241,6 +255,9 @@ export default function FormField({
   required = false,
   options = [],
   disabled = false,
+  prefix,
+  suffix,
+  autoComplete,
 }) {
   const baseClasses =
     "w-full rounded-lg border bg-neutral-50 px-3.5 py-2.5 text-[14px] text-neutral-900 placeholder-neutral-400 outline-none transition-colors " +
@@ -300,6 +317,39 @@ export default function FormField({
     );
   }
 
+  if (prefix || suffix) {
+    return (
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor={name} className="text-[13px] font-medium text-neutral-700">
+          {label}
+          {required && <span className="text-[#D63031] ml-0.5">*</span>}
+        </label>
+        <div
+          className={`flex items-center gap-2.5 rounded-lg border bg-neutral-50 px-3.5 py-2.5 transition-colors
+                      focus-within:border-[#D63031]/40 focus-within:bg-white focus-within:ring-2 focus-within:ring-[#D63031]/10
+                      ${borderClass} ${disabled ? "opacity-50" : ""}`}
+        >
+          {prefix}
+          <input
+            id={name}
+            name={name}
+            type={type}
+            placeholder={placeholder}
+            value={value}
+            onChange={onChange}
+            required={required}
+            disabled={disabled}
+            autoComplete={autoComplete}
+            className="min-w-0 flex-1 bg-transparent text-[14px] text-neutral-900 placeholder-neutral-400
+                       outline-none disabled:cursor-not-allowed"
+          />
+          {suffix}
+        </div>
+        {error && <p className="text-[12px] text-red-500">{error}</p>}
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-1.5">
       <label htmlFor={name} className="text-[13px] font-medium text-neutral-700">
@@ -315,6 +365,7 @@ export default function FormField({
         onChange={onChange}
         required={required}
         disabled={disabled}
+        autoComplete={autoComplete}
         className={`${baseClasses} ${borderClass}`}
       />
       {error && <p className="text-[12px] text-red-500">{error}</p>}
@@ -498,11 +549,7 @@ export default function StepIndicatorGeneric({
                   className={`text-[12px] transition-colors ${
                     hideLabelsOnMobile ? "hidden sm:inline" : "inline"
                   } ${
-                    isCurrent
-                      ? "font-semibold"
-                      : isCompleted
-                        ? "font-normal"
-                        : "font-normal"
+                    isCurrent ? "font-semibold" : "font-normal"
                   }`}
                   style={{
                     color: isCompleted
@@ -543,35 +590,25 @@ export default function PageHeader({ label, title, highlight, description }) {
       <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-[#0F2C59] to-[#D63031]" />
 
       <div className="relative mx-auto max-w-6xl px-5 py-10 sm:py-14">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6">
-          <div>
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-8 h-[2px] bg-[#D63031]" />
-              <span className="text-[#D63031] text-[12px] font-bold tracking-[0.2em] uppercase">
-                {label}
-              </span>
-            </div>
-            <h1 className="text-[2.5rem] sm:text-[3rem] font-extrabold text-[#0F2C59] tracking-[-0.02em] leading-tight mb-3">
-              {title}{" "}
-              {highlight && (
-                <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#D63031] to-[#e74c3c]">
-                  {highlight}
-                </span>
-              )}
-            </h1>
-            {description && (
-              <p className="text-[16px] text-neutral-500 max-w-md font-medium leading-relaxed">
-                {description}
-              </p>
-            )}
-          </div>
-
-          {/* Decorative subtle background element */}
-          <div className="hidden sm:flex shrink-0 relative items-center justify-center w-32 h-32 opacity-10">
-            <div className="absolute w-full h-full border-4 border-[#0F2C59] rounded-full" />
-            <div className="absolute w-24 h-24 border-4 border-[#D63031] rounded-full translate-x-4 -translate-y-4" />
-          </div>
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-8 h-[2px] bg-[#D63031]" />
+          <span className="text-[#D63031] text-[12px] font-bold tracking-[0.2em] uppercase">
+            {label}
+          </span>
         </div>
+        <h1 className="text-[2.5rem] sm:text-[3rem] font-extrabold text-[#0F2C59] tracking-[-0.02em] leading-tight mb-3">
+          {title}{" "}
+          {highlight && (
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#D63031] to-[#e74c3c]">
+              {highlight}
+            </span>
+          )}
+        </h1>
+        {description && (
+          <p className="text-[16px] text-neutral-500 max-w-xl font-medium leading-relaxed">
+            {description}
+          </p>
+        )}
       </div>
     </section>
   );

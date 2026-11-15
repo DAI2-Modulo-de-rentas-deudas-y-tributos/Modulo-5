@@ -1,0 +1,462 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createElement } from "react";
+import { cleanup, render, screen } from "@testing-library/react";
+import { adaptApiRequest, adaptApiResponse, enumMappings, pageItems } from "./apiAdapters.js";
+import { formatCurrency } from "../lib/format.js";
+
+describe("API adapters", () => {
+  it("unwraps Spring Page and retains pagination metadata", () => {
+    const rows = pageItems({ content: [{ id: 1 }], number: 2, size: 20, totalElements: 52, totalPages: 3, last: true });
+    expect(rows).toEqual([{ id: 1 }]);
+    expect(rows.page).toEqual({ number: 2, size: 20, totalElements: 52, totalPages: 3, last: true });
+  });
+
+  it("retains the nested Spring PagedModel metadata after mapping rows", () => {
+    const rows = adaptApiResponse("/api/v1/debts", "/api/v1/debts", {
+      content: [{ id: 1, status: "PAID", outstandingBalance: 0 }],
+      page: { number: 0, size: 20, totalElements: 21, totalPages: 2 },
+    });
+
+    expect(rows[0].status).toBe("SETTLED");
+    expect(rows.page).toEqual({ number: 0, size: 20, totalElements: 21, totalPages: 2, last: false });
+  });
+
+  it("preserves every debt linked to a bill, including incomplete and empty relations", () => {
+    const bills = adaptApiResponse("/api/v1/taxpayers/7/bills", "/api/v1/taxpayers/7/bills", {
+      content: [
+        { id: 1, debts: [{ debtId: 2 }, { debtId: 3 }, {}] },
+        { id: 2, debts: [] },
+        { id: 3 },
+      ],
+      page: { number: 0, size: 20, totalElements: 3, totalPages: 1 },
+    });
+
+    expect(bills[0]).toMatchObject({ debtIds: [2, 3], debtId: 2, debts: [{ debtId: 2 }, { debtId: 3 }, {}] });
+    expect(bills.slice(1).map((bill) => bill.debtIds)).toEqual([[], []]);
+    expect(bills.page).toMatchObject({ number: 0, totalElements: 3 });
+  });
+
+  it("maps taxpayer DTO without inventing missing data", () => {
+    const value = adaptApiResponse("/api/v1/taxpayers/1", "/api/v1/taxpayers/1", { id: 1, taxpayerType: "CITIZEN", dni: "123", cuit: null, displayName: "Ana", status: "ACTIVE" });
+    expect(value).toMatchObject({ id: 1, type: "CITIZEN", documentType: "DNI", document: "123", name: "Ana" });
+  });
+
+  it("maps configuration enums bidirectionally", () => {
+    expect(enumMappings.CALC_TO_API.PORCENTAJE).toBe("PERCENTAGE");
+    const value = adaptApiResponse("/api/v1/tax-config", "/api/v1/tax-configurations", { calculationType: "FIXED", taxConceptId: 4 });
+    expect(value).toMatchObject({ calculationType: "FIJO", conceptId: 4 });
+  });
+
+  it("derives legacy overdue and settled states from backend debt", () => {
+    expect(adaptApiResponse("x", "/api/v1/debts/1", { status: "PAID", overdue: false, outstandingBalance: 0 }).status).toBe("SETTLED");
+    expect(adaptApiResponse("x", "/api/v1/debts/2", { status: "PENDING", overdue: true, outstandingBalance: 10 }).status).toBe("OVERDUE");
+  });
+
+  it("maps confirmed and unallocated payments", () => {
+    const allocated = adaptApiResponse("x", "/api/v1/payments/1", { status: "CONFIRMED", paymentMethod: "CASH", origin: "CASHIER", amount: 100, unallocatedAmount: 0 });
+    const credit = adaptApiResponse("x", "/api/v1/payments/2", { status: "CONFIRMED", paymentMethod: "CARD", origin: "CASHIER", amount: 120, unallocatedAmount: 20 });
+    expect(allocated).toMatchObject({ status: "REGISTERED", amountPaid: 100, method: "CASH", channel: "VENTANILLA" });
+    expect(credit).toMatchObject({ status: "UNALLOCATED", remainingBalance: 20, method: "CARD" });
+  });
+
+  it("maps real debt, plan, installment and exemption workflow enums", () => {
+    expect(adaptApiResponse("x", "/api/v1/debts/1", { originType: "LIQUIDATION", status: "PAID", outstandingBalance: 0 })).toMatchObject({ originType: "LIQUIDATION", status: "SETTLED" });
+    expect(adaptApiResponse("x", "/api/v1/payment-plans/1", { id: 1, status: "ACTIVE" }).lifecycle).toBe("CURRENT");
+    expect(adaptApiResponse("x", "/api/v1/payment-plans/1/installments", { id: 1, status: "PARTIALLY_PAID" }).status).toBe("PARTIAL");
+    expect(adaptApiResponse("x", "/api/v1/exemption-requests/1", { id: 1, taxConceptId: 2, status: "PENDING" })).toMatchObject({ status: "REQUESTED", internalStatus: "PENDING", attachments: [] });
+  });
+
+  it("preserves an unknown exemption status instead of silently presenting it as requested", () => {
+    expect(adaptApiResponse("x", "/api/v1/exemption-requests/1", {
+      id: 1,
+      taxConceptId: 2,
+      status: "UNKNOWN_STAGE",
+    }).status).toBe("UNKNOWN_STAGE");
+  });
+
+  it("adapts nested taxpayer resources by their resource type", () => {
+    const debts = adaptApiResponse("/api/v1/portal/7/debts", "/api/v1/taxpayers/7/debts?size=100", {
+      content: [{ id: 1, taxpayerId: 7, taxConceptId: 2, dueDate: "2026-09-30", status: "PAID", outstandingBalance: 0 }],
+      page: { number: 0, size: 100, totalElements: 1, totalPages: 1 },
+    });
+    const payments = adaptApiResponse("/api/v1/portal/7/payments", "/api/v1/taxpayers/7/payments?size=100", {
+      content: [{ id: 2, taxpayerId: 7, status: "CONFIRMED", paymentMethod: "CASH", amount: 50, unallocatedAmount: 0 }],
+      page: { number: 0, size: 100, totalElements: 1, totalPages: 1 },
+    });
+
+    expect(debts[0]).toMatchObject({ status: "SETTLED", outstandingAmount: 0, conceptName: "Concepto #2" });
+    expect(Number.isInteger(debts[0].daysLeft)).toBe(true);
+    expect(payments[0]).toMatchObject({ status: "REGISTERED", amountPaid: 50, method: "CASH" });
+  });
+
+  it("supplies safe collections for real payment plan request DTOs", () => {
+    const request = adaptApiResponse("x", "/api/v1/payment-plan-requests/1", {
+      id: 1,
+      totalDebtAtRequest: 100,
+      requestedInstallments: 2,
+      estimatedDownPayment: 0,
+    });
+
+    expect(request).toMatchObject({ requestId: 1, debtIds: [], debts: [], totalDebt: 100, installments: 2, downPayment: 0 });
+  });
+
+  it("builds the cashier dashboard from real payment rows", () => {
+    const summary = adaptApiResponse(
+      "/api/v1/cashier/daily-summary?registeredBy=pcabrera",
+      "/api/v1/payments?size=100",
+      { content: [
+        { id: 1, registeredBy: "pcabrera", status: "CONFIRMED", paymentMethod: "CASH", amount: 100, unallocatedAmount: 0 },
+        { id: 2, registeredBy: "pcabrera", status: "CONFIRMED", paymentMethod: "CARD", amount: 120, unallocatedAmount: 20 },
+      ], page: { number: 0, size: 100, totalElements: 2, totalPages: 1 } },
+    );
+
+    expect(summary).toMatchObject({ registeredCount: 2, totalCollected: 220, pendingCount: 1, reversedCount: 0 });
+    expect(summary.latest).toHaveLength(2);
+    expect(summary.activity).toHaveLength(2);
+  });
+
+  it("returns complete numeric auditor dashboard and indicator shapes", () => {
+    const payload = {
+      collection: { paymentCount: 3, confirmedAmount: 260 },
+      debt: { openCount: 2, outstandingAmount: 160 },
+      delinquency: { overdueDebtCount: 0, overdueAmount: 0, overduePercentage: 0 },
+    };
+    const dashboard = adaptApiResponse("/api/v1/audit/dashboard", "/api/v1/indicators/summary", payload);
+    const indicators = adaptApiResponse("/api/v1/audit/indicators?", "/api/v1/indicators/summary", payload);
+
+    expect(dashboard).toMatchObject({ paymentsRegistered: 3, exemptionsApproved: 0, exemptionsRejected: 0, recentActivity: [] });
+    expect(indicators).toMatchObject({ totalCollected: 260, pendingDebt: 160, overdueDebt: 0, delinquencyRate: 0, byPeriod: [], byConcept: [] });
+  });
+
+  it("names the unallocated dashboard value as an amount, not a payment count", () => {
+    const indicators = adaptApiResponse("/api/v1/dashboard/metrics", "/api/v1/indicators/summary", {
+      collection: { paymentCount: 3, unallocatedAmount: 1250.5 },
+    });
+    expect(indicators.unallocatedPaymentAmount).toBe(1250.5);
+    expect(indicators).not.toHaveProperty("unallocatedPayments");
+  });
+
+  it("adapts audit rows and safe concept/liquidation presentation fields", () => {
+    const audit = adaptApiResponse("/api/v1/audit/trail", "/api/v1/audit?size=100", {
+      content: [{ id: 1, userId: "agent", userRole: "ROLE_RENTAS", entityType: "Debt", entityId: "2", occurredAt: "2026-09-01T10:00:00Z" }],
+      page: { number: 0, size: 100, totalElements: 1, totalPages: 1 },
+    });
+    const concept = adaptApiResponse("x", "/api/v1/tax-concepts/1", { id: 1, type: "FEE", active: true });
+    const liquidation = adaptApiResponse("x", "/api/v1/liquidations/1", { id: 1, taxpayerId: 7, taxConceptId: 2, finalAmount: 10 });
+
+    expect(audit[0]).toMatchObject({ username: "agent", entity: { type: "Debt", id: "2" }, result: "SUCCESS" });
+    expect(concept.versions).toEqual([]);
+    expect(liquidation.origin).toEqual({ module: "M5" });
+  });
+
+  it("maps settlement and payment requests to real DTOs", () => {
+    const liquidation = adaptApiRequest("/api/v1/settlements", { method: "POST", body: { taxpayerId: 1, conceptId: 2, period: "2026-09", amount: 50, dueDate: "2026-09-30" } });
+    expect(liquidation).toMatchObject({ path: "/api/v1/liquidations", options: { body: { taxpayerId: 1, taxConceptId: 2, taxableBase: 50 } } });
+    const payment = adaptApiRequest("/api/v1/payments", { method: "POST", body: { taxpayerId: 1, debtId: 3, amountPaid: 100, method: "CASH" } });
+    expect(payment.options.body).toMatchObject({ paymentMethod: "CASH", amount: 100, allocations: [{ debtId: 3, amount: 100 }] });
+  });
+
+  it("reads the selected liquidation instead of the API version when issuing a legacy settlement", () => {
+    expect(adaptApiRequest("/api/v1/settlements/42/issue", { method: "POST" }))
+      .toMatchObject({ path: "/api/v1/liquidations/42", options: { method: "GET" } });
+  });
+
+  it("keeps actual payment plans separate from plan requests", () => {
+    expect(adaptApiRequest("/api/v1/payment-plans?taxpayerId=7&status=ACTIVE&size=100").path)
+      .toBe("/api/v1/payment-plans?taxpayerId=7&status=ACTIVE&size=100");
+    expect(adaptApiResponse("x", "/api/v1/payment-plans?status=ACTIVE", [{ id: 8, status: "ACTIVE", outstandingPlanAmount: 120 }])[0])
+      .toMatchObject({ id: 8, status: "ACTIVE", lifecycle: "CURRENT", outstandingAmount: 120 });
+  });
+
+  it("uses the real refinancing simulations route", () => {
+    expect(adaptApiRequest("/api/v1/payment-plans/8/refinancing/simulate", { method: "POST", body: { installments: 6 } }))
+      .toMatchObject({ path: "/api/v1/payment-plans/8/refinancing/simulations", options: { body: { installments: 6 } } });
+  });
+
+  it.each(["payment-plan-requests", "refinancing-requests"])("maps %s pending stages without changing their backend meaning", (resource) => {
+    for (const [backendStatus, internalStatus] of [["PENDING", "PENDING_REVIEW"], ["PENDING_EXCEPTION_APPROVAL", "PENDING_SUPERVISOR"]]) {
+      expect(adaptApiResponse("x", `/api/v1/${resource}/8`, { id: 8, status: backendStatus }))
+        .toMatchObject({ requestId: 8, backendStatus, status: "REQUESTED", internalStatus });
+    }
+    expect(adaptApiResponse("x", `/api/v1/${resource}/8`, { id: 8, status: "GRANTED" }).status).toBe("GRANTED");
+  });
+
+  it("translates the supervisor filter to the exact backend stage", () => {
+    const original = "/api/v1/payment-plan-requests?status=REQUESTED&internalStatus=PENDING_SUPERVISOR";
+    const actual = new URL(adaptApiRequest(original).path, "http://test");
+    expect(actual.searchParams.get("status")).toBe("PENDING_EXCEPTION_APPROVAL");
+    expect(actual.searchParams.has("internalStatus")).toBe(false);
+  });
+
+  it.each(["payment-plan-requests", "refinancing-requests", "exemption-requests"])("includes all pending %s stages when filtering requested", (resource) => {
+    const original = `/api/v1/${resource}?status=REQUESTED`;
+    const actual = adaptApiRequest(original).path;
+    expect(new URL(actual, "http://test").searchParams.has("status")).toBe(false);
+    const pending = resource === "exemption-requests" ? "DOCUMENTATION_REQUIRED" : "PENDING_EXCEPTION_APPROVAL";
+    const rows = adaptApiResponse(original, actual, { content: [
+      { id: 1, status: "PENDING" }, { id: 2, status: pending }, { id: 3, status: "REJECTED" },
+    ], page: { number: 0, size: 100, totalElements: 3, totalPages: 1 } });
+    expect(rows.map((row) => row.id)).toEqual([1, 2]);
+    // Keep server paging so callers can load the following page after filtering.
+    expect(rows.page.totalElements).toBe(3);
+  });
+
+  it.each(["/api/v1/debts?status=SETTLED", "/api/v1/audit/debts?status=SETTLED", "/api/v1/portal/7/debts?status=SETTLED"])("translates settled debt filters: %s", (path) => {
+    expect(new URL(adaptApiRequest(path).path, "http://test").searchParams.get("status")).toBe("PAID");
+  });
+
+  it("queries unallocated payments with the cashier/auditor-accessible route and preserves filters and paging", () => {
+    const original = "/api/v1/payments?status=UNALLOCATED&taxpayerId=7&date=2026-09-07&registeredBy=cajero&page=2&size=25";
+    const actual = adaptApiRequest(original).path;
+    const url = new URL(actual, "http://test");
+    expect(url.pathname).toBe("/api/v1/payments");
+    expect(Object.fromEntries(url.searchParams)).toMatchObject({ status: "CONFIRMED", taxpayerId: "7", from: "2026-09-07", to: "2026-09-07", page: "2", size: "25" });
+    expect(url.searchParams.has("registeredBy")).toBe(false);
+    expect(adaptApiResponse(original, actual, [
+      { id: 1, status: "CONFIRMED", registeredBy: "cajero", unallocatedAmount: 10 },
+      { id: 2, status: "CONFIRMED", registeredBy: "cajero", unallocatedAmount: 0 },
+      { id: 3, status: "CONFIRMED", registeredBy: "otro", unallocatedAmount: 10 },
+    ]).map((row) => row.id)).toEqual([1]);
+  });
+
+  it("limits the cashier daily summary to one day", () => {
+    const actual = new URL(adaptApiRequest("/api/v1/cashier/daily-summary?date=2026-09-07").path, "http://test");
+    expect(actual.searchParams.get("from")).toBe("2026-09-07");
+    expect(actual.searchParams.get("to")).toBe("2026-09-07");
+  });
+
+  it("preserves canonical search filters and subsequent pages", () => {
+    const actual = new URL(adaptApiRequest("/api/v1/taxpayers?q=Ana&status=ACTIVE&page=3&size=20&sort=createdAt,desc").path, "http://test");
+    expect(Object.fromEntries(actual.searchParams)).toMatchObject({ q: "Ana", status: "ACTIVE", page: "3", size: "20", sort: "createdAt,desc" });
+    const debts = new URL(adaptApiRequest("/api/v1/debts?conceptId=4&page=2").path, "http://test");
+    expect(Object.fromEntries(debts.searchParams)).toMatchObject({ conceptId: "4", page: "2" });
+  });
+
+  it("preserves the receipt DTO for composition with payment details", () => {
+    const receipt = { paymentId: 42, taxpayerId: 7, amount: 125, paidAt: "2026-09-07T10:00:00Z", status: "CONFIRMED" };
+    expect(adaptApiResponse("/api/v1/cashier/receipts/42", "/api/v1/payments/42/receipt", receipt)).toEqual(receipt);
+  });
+
+  it.each([
+    ["/api/v1/tax-config/pending", "/api/v1/tax-configurations"],
+    ["/api/v1/settlements?period=2026-09", "/api/v1/liquidations"],
+    ["/api/v1/debt-adjustments?status=APPROVED", "/api/v1/adjustments"],
+    ["/api/v1/bills/search?query=10", "/api/v1/bills"],
+    ["/api/v1/payments/7/reversal", "/api/v1/payments/7/reversal-requests"],
+    ["/api/v1/credit-balances/2/applications", "/api/v1/credit-balances/2/apply"],
+    ["/api/v1/payment-plan-requests?status=PENDING", "/api/v1/payment-plan-requests"],
+    ["/api/v1/events?status=FAILED", "/api/v1/integrations/events"],
+    ["/api/v1/cashier/receipts/5", "/api/v1/payments/5/receipt"],
+    ["/api/v1/audit/debts?status=OVERDUE", "/api/v1/debts"],
+    ["/api/v1/portal/4/bills", "/api/v1/taxpayers/4/bills"],
+    ["/api/v1/dashboard/metrics", "/api/v1/indicators/summary"],
+  ])("routes legacy %s only to a real controller path", (legacy, realPrefix) => {
+    expect(adaptApiRequest(legacy).path).toMatch(new RegExp(`^${realPrefix.replaceAll("/", "\\/")}`));
+  });
+});
+
+describe("API client modes", () => {
+  beforeEach(() => { vi.resetModules(); vi.unstubAllEnvs(); sessionStorage.clear(); vi.restoreAllMocks(); });
+
+  it("sends the opaque demo session instead of client-chosen roles", async () => {
+    vi.stubEnv("VITE_AUTH_MODE", "mock");
+    sessionStorage.setItem("rentas.token", "opaque-demo-token");
+    sessionStorage.setItem("rentas.user", JSON.stringify({ username: "jlopez", role: "SUPERVISOR", devAuthorities: ["SUPERVISOR"] }));
+    const { authHeaders } = await import("./apiClient.js");
+    expect(authHeaders()).toEqual({ "X-Demo-Session": "opaque-demo-token" });
+    expect(authHeaders()["X-Dev-Roles"]).toBeUndefined();
+  });
+
+  it("does not send demo session headers in Core mode", async () => {
+    vi.stubEnv("VITE_AUTH_MODE", "core");
+    sessionStorage.setItem("rentas.user", JSON.stringify({ username: "x", role: "SUPERVISOR" }));
+    sessionStorage.setItem("rentas.token", "opaque-demo-token");
+    const { authHeaders } = await import("./apiClient.js");
+    expect(authHeaders()).toEqual({});
+  });
+
+  it("does not authenticate a persisted mock user in Core mode", async () => {
+    vi.stubEnv("VITE_AUTH_MODE", "core");
+    sessionStorage.setItem("rentas.user", JSON.stringify({ username: "jlopez", role: "SUPERVISOR" }));
+    sessionStorage.setItem("rentas.token", "mock.eA==.token");
+    const { AuthProvider, useAuth } = await import("../context/AuthContext.jsx");
+    function AuthState() {
+      return createElement("span", null, useAuth().isAuthenticated ? "authenticated" : "anonymous");
+    }
+
+    render(createElement(AuthProvider, null, createElement(AuthState)));
+    expect(screen.getByText("anonymous")).toBeDefined();
+    expect(sessionStorage.getItem("rentas.user")).not.toBeNull();
+    cleanup();
+  });
+
+  it("does not send a session header when there is no token, even if the UI profile was tampered", async () => {
+    vi.stubEnv("VITE_AUTH_MODE", "mock");
+    sessionStorage.setItem("rentas.user", JSON.stringify({ username: "jlopez", role: "SUPERVISOR" }));
+    const { authHeaders } = await import("./apiClient.js");
+    expect(authHeaders()).toEqual({});
+  });
+
+  it("preserves backend error code, trace id and structured details", async () => {
+    const payload = { code: "INVALID", message: "Dato inválido", traceId: "trace-1", details: { fieldErrors: [{ field: "code", messages: ["no debe estar vacío"] }] } };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), { status: 400, headers: { "content-type": "application/json" } })));
+    const { request } = await import("./apiClient.js");
+    await expect(request("/api/v1/health")).rejects.toMatchObject({ status: 400, code: "INVALID", traceId: "trace-1", details: payload });
+  });
+
+  it("uses fetch, not mockDb, for business data in API mode", async () => {
+    vi.stubEnv("VITE_AUTH_MODE", "mock");
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 999, taxpayerType: "CITIZEN", dni: "1", displayName: "Dato API" }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { taxpayerService } = await import("./rentasService.js");
+    const taxpayer = await taxpayerService.getById(999);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(taxpayer.name).toBe("Dato API");
+  });
+
+  it("does not fall back to mockDb when an API-mode request has a network error", async () => {
+    vi.stubEnv("VITE_AUTH_MODE", "mock");
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+    const { taxpayerService } = await import("./rentasService.js");
+    await expect(taxpayerService.getById(1)).rejects.toThrow("Failed to fetch");
+  });
+
+  it("authenticates against the backend when business API mode is active", async () => {
+    vi.stubEnv("VITE_AUTH_MODE", "mock");
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ token: "dev-session", user: { id: 9, username: "integration.user", displayName: "Integración", role: "RENTAS", authorities: ["RENTAS"], active: true } }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { authService } = await import("./rentasService.js");
+    await expect(authService.login({ username: "integration.user", password: "clave-segura" }))
+      .resolves.toMatchObject({ user: { fullName: "Integración", roleLabel: "Personal de Rentas", role: "PERSONAL", backendRole: "RENTAS", devAuthorities: ["RENTAS"] } });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0][0]).toContain("/api/v1/dev-auth/login");
+  });
+
+  it("fails explicitly instead of using mock users in Core mode", async () => {
+    vi.stubEnv("VITE_AUTH_MODE", "core");
+    const { authService } = await import("./rentasService.js");
+    await expect(authService.login({ username: "mrivas", password: "rentas123" }))
+      .rejects.toMatchObject({ code: "CORE_AUTH_PENDING", status: 503 });
+  });
+
+  it("usa el conteo de mora y deja indisponibles las métricas ausentes", () => {
+    const result = adaptApiResponse("/api/v1/dashboard/metrics", "/api/v1/indicators/summary", {
+      debt: { openCount: 2 },
+      delinquency: { overdueDebtCount: 1, overdueAmount: 1250 },
+      collection: { paymentCount: 3 },
+    });
+
+    expect(result.deudas).toBe(1);
+    expect(result.totalOverdueAmount).toBe(1250);
+    expect(result.planes).toBeNull();
+    expect(result.exenciones).toBeNull();
+    expect(result.contribuyentes).toBeNull();
+  });
+
+  it("formatea avisos vencidos y excluye obligaciones pagadas", () => {
+    const notices = adaptApiResponse("/api/v1/portal/123/notices", "/api/v1/portal/123/debts", [
+      { id: 1, overdue: true, status: "PENDING", outstandingBalance: 1234.5 },
+      { id: 2, overdue: true, status: "PAID", outstandingBalance: 0 },
+    ]);
+
+    expect(notices).toHaveLength(1);
+    expect(notices[0].detail).toBe(`Saldo pendiente: ${formatCurrency(1234.5)}`);
+  });
+
+  it("restores the backend profile from GET /me and clears storage when the session is invalid", async () => {
+    vi.stubEnv("VITE_AUTH_MODE", "mock");
+    sessionStorage.setItem("rentas.token", "live-token");
+    sessionStorage.setItem("rentas.user", JSON.stringify({ username: "forged", role: "SUPERVISOR" }));
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      id: 9, username: "qa.rentas", displayName: "QA Rentas", role: "RENTAS", authorities: ["RENTAS"], taxpayerId: null, active: true,
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { AuthProvider, useAuth } = await import("../context/AuthContext.jsx");
+    function AuthState() {
+      const auth = useAuth();
+      return createElement("span", null, auth.initializing ? "loading" : `${auth.user?.username}:${auth.user?.role}`);
+    }
+    render(createElement(AuthProvider, null, createElement(AuthState)));
+    expect(await screen.findByText("qa.rentas:PERSONAL")).toBeDefined();
+    expect(fetchMock.mock.calls[0][0]).toContain("/api/v1/dev-auth/me");
+    cleanup();
+
+    vi.resetModules();
+    sessionStorage.setItem("rentas.token", "dead-token");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: "UNAUTHENTICATED" }), { status: 401, headers: { "content-type": "application/json" } })));
+    const restored = await import("../context/AuthContext.jsx");
+    function Cleared() {
+      const auth = restored.useAuth();
+      return createElement("span", null, auth.initializing ? "loading" : auth.isAuthenticated ? "in" : "out");
+    }
+    render(createElement(restored.AuthProvider, null, createElement(Cleared)));
+    expect(await screen.findByText("out")).toBeDefined();
+    expect(sessionStorage.getItem("rentas.token")).toBeNull();
+    cleanup();
+  });
+
+  it("sends Idempotency-Key on payment retries and keeps the same key", async () => {
+    vi.stubEnv("VITE_AUTH_MODE", "mock");
+    sessionStorage.setItem("rentas.token", "opaque-demo-token");
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ id: 1, taxpayerId: 9, amount: 10, unallocatedAmount: 10, status: "CONFIRMED", paymentMethod: "CASH", origin: "CASHIER" }), { status: 201, headers: { "content-type": "application/json" } })));
+    vi.stubGlobal("fetch", fetchMock);
+    const { paymentService } = await import("./rentasService.js");
+    const key = "11111111-1111-1111-1111-111111111111";
+    await paymentService.register({ taxpayerId: 9, amountPaid: 10, method: "CASH", idempotencyKey: key });
+    await paymentService.register({ taxpayerId: 9, amountPaid: 10, method: "CASH", idempotencyKey: key });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][1].headers["Idempotency-Key"]).toBe(key);
+    expect(fetchMock.mock.calls[1][1].headers["Idempotency-Key"]).toBe(key);
+    expect(fetchMock.mock.calls[0][1].headers["X-Demo-Session"]).toBe("opaque-demo-token");
+  });
+
+  it("clears storage on logout even if the backend is unavailable", async () => {
+    vi.stubEnv("VITE_AUTH_MODE", "mock");
+    sessionStorage.setItem("rentas.token", "opaque-demo-token");
+    sessionStorage.setItem("rentas.user", JSON.stringify({ username: "qa.rentas", role: "PERSONAL" }));
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+    const { AuthProvider, useAuth } = await import("../context/AuthContext.jsx");
+    let api;
+    function Probe() {
+      api = useAuth();
+      return createElement("span", null, api.isAuthenticated ? "in" : "out");
+    }
+    render(createElement(AuthProvider, null, createElement(Probe)));
+    await expect(api.logout()).rejects.toThrow("Failed to fetch");
+    expect(sessionStorage.getItem("rentas.token")).toBeNull();
+    expect(screen.getByText("out")).toBeDefined();
+    cleanup();
+  });
+});
+
+describe("enums del backend", () => {
+  it("no traduce los medios de pago ni el origen de la deuda", async () => {
+    const { enumMappings } = await import("./apiAdapters.js");
+    expect(enumMappings.METHOD_TO_API).toBeUndefined();
+    expect(enumMappings.METHOD_FROM_API).toBeUndefined();
+    expect(enumMappings.ORIGIN_FROM_API).toBeUndefined();
+  });
+
+  it("manda el medio de pago tal cual lo define el backend", () => {
+    const body = adaptApiRequest("/api/v1/payments", {
+      method: "POST",
+      body: { taxpayerId: 1, amount: 100, paymentMethod: "CARD", debtId: 5 },
+    });
+
+    expect(body.options.body.paymentMethod).toBe("CARD");
+  });
+
+  it("devuelve el medio de pago y el origen sin reetiquetar", () => {
+    const row = adaptApiResponse("/api/v1/payments", "/api/v1/payments", {
+      id: 1, taxpayerId: 2, amount: 100, paymentMethod: "CARD", unallocatedAmount: 0, status: "CONFIRMED",
+    });
+
+    expect(row.method).toBe("CARD");
+  });
+
+  it("no reescribe el filtro de origen de las deudas", () => {
+    const adapted = adaptApiRequest("/api/v1/debts?originType=LIQUIDATION", { method: "GET" });
+    expect(adapted.path).toContain("originType=LIQUIDATION");
+    expect(adapted.path).not.toContain("SETTLEMENT");
+  });
+});

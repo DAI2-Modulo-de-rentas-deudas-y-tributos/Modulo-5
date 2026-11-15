@@ -2,12 +2,15 @@ package ar.gob.municipalidad.rentas;
 
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -15,9 +18,16 @@ import java.time.*;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @ActiveProfiles("test")
 @SpringBootTest
+@AutoConfigureMockMvc
 @Transactional
 class BillingFlowTests {
     @Autowired CatalogService catalog;
@@ -27,8 +37,24 @@ class BillingFlowTests {
     @Autowired PaymentService payments;
     @Autowired ElectronicPaymentService electronicPayments;
     @Autowired CreditBalanceService creditService;
+    @Autowired ApiController api;
     @Autowired DebtRepository debts;
     @Autowired CreditBalanceRepository credits;
+    @Autowired CreditBalanceApplicationRepository creditApplications;
+    @Autowired AuditRepository audits;
+    @Autowired PaymentRepository paymentRepository;
+    @Autowired PaymentAllocationRepository paymentAllocations;
+    @Autowired OutboxRepository outbox;
+    @Autowired IntegrationEventLogRepository integrationLogs;
+    @Autowired com.fasterxml.jackson.databind.ObjectMapper json;
+    @Autowired ElectronicPaymentRepository electronicPaymentAttempts;
+    @Autowired AdjustmentRepository adjustmentRepository;
+    @Autowired MockMvc mvc;
+    @Autowired DemoUserRepository demoUsers;
+    @Autowired TaxpayerRepository taxpayers;
+    @Autowired TaxpayerRepresentationRepository representations;
+    @Autowired org.springframework.security.crypto.password.PasswordEncoder passwordEncoder;
+    @Autowired DemoAuthService demoAuth;
 
     @BeforeEach void authenticateEmployee() {
         authenticate(new AuthenticatedIdentity("tester", null), "RENTAS", "CASHIER");
@@ -46,6 +72,23 @@ class BillingFlowTests {
         assertThat(new String(documents.bill(billing.detail(bill.id)), StandardCharsets.ISO_8859_1)).startsWith("%PDF-1.4");
     }
 
+    @Test void paymentEndpointAcceptsFiftyValidAllocations() throws Exception {
+        Debt debt=debt("PAYMENT-50-ALLOCATIONS","PAYMENT-50-ALLOCATIONS-CONCEPT");
+        String allocations=java.util.stream.IntStream.range(0,50)
+            .mapToObj(i->"{\"debtId\":"+debt.id+",\"amount\":\"1.00\"}")
+            .collect(java.util.stream.Collectors.joining(","));
+        String session=new DemoAuthSessions(demoUsers,taxpayers,passwordEncoder,demoAuth).token(DemoRole.RENTAS);
+        long previousPayments=paymentRepository.count();
+
+        mvc.perform(post("/api/v1/payments").header("X-Demo-Session",session).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"taxpayerId\":"+debt.taxpayerId+",\"paymentMethod\":\"CASH\",\"amount\":\"50.00\",\"allocations\":["+allocations+"]}"))
+            .andExpect(status().isCreated());
+
+        assertThat(paymentRepository.count()).isEqualTo(previousPayments+1);
+        assertThat(paymentAllocations.findAll()).filteredOn(allocation->allocation.debtId.equals(debt.id)).hasSize(50);
+        assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("50.00");
+    }
+
     @Test void billRejectsDebtsFromAnotherTaxpayer() {
         Debt one = debt("BILL-2", "BILL-ONE");
         Debt two = debt("BILL-3", "BILL-TWO");
@@ -54,9 +97,89 @@ class BillingFlowTests {
             .isInstanceOf(BusinessException.class).hasMessageContaining("contribuyente");
     }
 
-    @Test void unallocatedPaymentCanBeAllocatedLater() {
+    @Test void organizationMayIssueBillOnlyWhenM1StatusIsActive() {
+        Debt debt=debt("BILL-ORG-STATUS","BILL-ORG-STATUS-CONCEPT");
+        TaxpayerReference organization=catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(
+            TaxpayerType.ORGANIZATION,"M1-ORG-BILL-STATUS-"+java.util.UUID.randomUUID(),null,"30712345678","Organización de prueba"));
+        debt.taxpayerId=organization.id;debts.saveAndFlush(debt);
+        organization.externalStatus=TaxpayerStatus.PENDIENTE;taxpayers.saveAndFlush(organization);
+        TaxpayerRepresentationReference unverified=new TaxpayerRepresentationReference();
+        unverified.externalRepresentationId="M1-REP-UNVERIFIED-"+java.util.UUID.randomUUID();
+        unverified.externalPersonId="8452";unverified.externalOrganizationId=organization.externalId;
+        unverified.scope="LEGAL_REPRESENTATIVE";unverified.status="PENDING";
+        unverified.sourceEventId="M1-EVT-UNVERIFIED-"+java.util.UUID.randomUUID();unverified.updatedAt=OffsetDateTime.now();
+        representations.saveAndFlush(unverified);
+        var request=new ApiDtos.CreateBillRequest(organization.id,List.of(debt.id),LocalDate.now().plusDays(5));
+        assertThatThrownBy(()->billing.create(request)).isInstanceOf(BusinessException.class)
+            .extracting(ex->((BusinessException)ex).code).isEqualTo("ORGANIZATION_NOT_ACTIVE");
+        organization.externalStatus=TaxpayerStatus.RECHAZADA;taxpayers.saveAndFlush(organization);
+        assertThatThrownBy(()->billing.create(request)).isInstanceOf(BusinessException.class)
+            .extracting(ex->((BusinessException)ex).code).isEqualTo("ORGANIZATION_NOT_ACTIVE");
+        organization.externalStatus=TaxpayerStatus.ACTIVA;taxpayers.saveAndFlush(organization);
+        assertThat(billing.create(request).taxpayerId).isEqualTo(organization.id);
+    }
+
+    @Test void electronicPaymentPreviewIsLimitedToTheOwningTaxpayer() throws Exception {
+        Debt ownedDebt = debt("BILL-PREVIEW-OWNED-11111111", "BILL-PREVIEW-OWNED-CONCEPT");
+        Debt anotherDebt = debt("BILL-PREVIEW-OTHER-22222222", "BILL-PREVIEW-OTHER-CONCEPT");
+        var request = new ApiDtos.ElectronicPaymentRequest(ownedDebt.id, PaymentMethod.CARD, new BigDecimal("25"));
+        var owner = new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("owner", ownedDebt.taxpayerId), null,
+            List.of(new SimpleGrantedAuthority("ROLE_TAXPAYER")));
+        var other = new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("other", anotherDebt.taxpayerId), null,
+            List.of(new SimpleGrantedAuthority("ROLE_TAXPAYER")));
+
+        mvc.perform(post("/api/v1/electronic-payments/preview")
+                .with(authentication(owner))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsBytes(request)))
+            .andExpect(status().isOk());
+        mvc.perform(post("/api/v1/electronic-payments/preview")
+                .with(authentication(other))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsBytes(request)))
+            .andExpect(status().isForbidden())
+            .andExpect(jsonPath("$.code").value("FORBIDDEN_OWNERSHIP"));
+    }
+
+    @Test void electronicPaymentCannotBeCreatedForAnotherTaxpayerDebt() throws Exception {
+        Debt debt = debt("BILL-ELECTRONIC-CREATE-OWNER", "BILL-ELECTRONIC-CREATE-CONCEPT");
+        TaxpayerReference foreign = catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(
+            TaxpayerType.CITIZEN, "BILL-ELECTRONIC-CREATE-FOREIGN", "30777888", null, "Contribuyente ajeno"));
+        var request = new ApiDtos.ElectronicPaymentRequest(debt.id, PaymentMethod.CARD, new BigDecimal("25"));
+        var other = new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("other", foreign.id), null,
+            List.of(new SimpleGrantedAuthority("ROLE_TAXPAYER")));
+        long paymentsBefore = paymentRepository.count();
+        long attemptsBefore = electronicPaymentAttempts.count();
+
+        mvc.perform(post("/api/v1/electronic-payments").with(authentication(other))
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsBytes(request)))
+            .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("FORBIDDEN_OWNERSHIP"));
+
+        assertThat(paymentRepository.count()).isEqualTo(paymentsBefore);
+        assertThat(electronicPaymentAttempts.count()).isEqualTo(attemptsBefore);
+    }
+
+    @Test void electronicPaymentAttemptCannotBeReadByAnotherTaxpayer() throws Exception {
+        Debt debt = debt("BILL-ELECTRONIC-READ-OWNER", "BILL-ELECTRONIC-READ-CONCEPT");
+        authenticate(new AuthenticatedIdentity("owner", debt.taxpayerId), "TAXPAYER");
+        ElectronicPaymentAttempt attempt = electronicPayments.create(new ApiDtos.ElectronicPaymentRequest(
+            debt.id, PaymentMethod.CARD, new BigDecimal("25")), "electronic-read-owner");
+        TaxpayerReference foreign = catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(
+            TaxpayerType.CITIZEN, "BILL-ELECTRONIC-READ-FOREIGN", "30777889", null, "Contribuyente ajeno"));
+        var other = new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("other", foreign.id), null,
+            List.of(new SimpleGrantedAuthority("ROLE_TAXPAYER")));
+
+        mvc.perform(get("/api/v1/electronic-payments/{paymentId}", attempt.paymentId).with(authentication(other)))
+            .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("FORBIDDEN_OWNERSHIP"));
+    }
+
+    @Test void unallocatedPaymentCanBeAllocatedLater() throws Exception {
         Debt debt = debt("BILL-4", "ALLOCATE-LATER");
         Payment payment = payments.register(new ApiDtos.RegisterPaymentRequest(debt.taxpayerId, PaymentMethod.CASH, new BigDecimal("100"), List.of()));
+
+        OutboxEvent registered=outbox.findAll().stream().filter(event->event.eventType.equals("paymentRegistered")&&event.aggregateId.equals(payment.id.toString())).findFirst().orElseThrow();
+        assertThat(registered.targetModule).isEqualTo("PLATFORM");assertThat(registered.aggregateType).isEqualTo("Payment");
+        var payload=json.readTree(registered.payload);assertThat(payload.path("paymentId").longValue()).isEqualTo(payment.id);assertThat(payload.path("taxpayerId").longValue()).isEqualTo(payment.taxpayerId);assertThat(payload.path("amount").decimalValue()).isEqualByComparingTo("100.00");
 
         payments.allocateExisting(payment.id, new ApiDtos.AllocationRequest(debt.id, new BigDecimal("100")));
 
@@ -65,14 +188,23 @@ class BillingFlowTests {
         assertThat(debts.findById(debt.id).orElseThrow().status).isEqualTo(DebtStatus.PAID);
     }
 
-    @Test void overpaymentBecomesCreditAndIsNotCountedAsUnallocated() {
+    @Test void overpaymentPreservesAllocationBreakdownAndCannotBeSpentTwice() {
         Debt debt = debt("BILL-5", "OVERPAY-CREDIT");
 
         Payment payment = payments.register(new ApiDtos.RegisterPaymentRequest(debt.taxpayerId, PaymentMethod.CASH, new BigDecimal("120"), List.of(new ApiDtos.AllocationRequest(debt.id, new BigDecimal("120")))));
 
-        assertThat(payment.unallocatedAmount).isEqualByComparingTo("0.00");
-        assertThat(payment.allocationStatus).isEqualTo(PaymentAllocationStatus.FULLY_ALLOCATED);
-        assertThat(credits.findBySourcePaymentId(payment.id).orElseThrow().availableAmount).isEqualByComparingTo("20.00");
+        assertThat(payment.allocatedAmount).isEqualByComparingTo("100.00");
+        assertThat(payment.unallocatedAmount).isEqualByComparingTo("20.00");
+        assertThat(payment.allocationStatus).isEqualTo(PaymentAllocationStatus.PARTIALLY_ALLOCATED);
+        CreditBalance credit = credits.findBySourcePaymentId(payment.id).orElseThrow();
+        assertThat(credit.availableAmount).isEqualByComparingTo("20.00");
+        AuditEntry creation = audits.findByEntityTypeAndEntityIdOrderByOccurredAt("CreditBalance", credit.id.toString()).stream()
+            .filter(entry -> entry.action.equals("CREDIT_BALANCE_CREATED")).findFirst().orElseThrow();
+        assertThat(creation.newData)
+            .contains("\"id\":" + credit.id, "\"taxpayerId\":" + credit.taxpayerId,
+                "\"sourcePaymentId\":" + payment.id, "\"originalAmount\":20.00");
+        assertThatThrownBy(() -> payments.allocateExisting(payment.id, new ApiDtos.AllocationRequest(debt.id, new BigDecimal("20"))))
+            .isInstanceOf(BusinessException.class).hasMessageContaining("saldo a favor");
     }
 
     @Test void creditCanBeAppliedToAnotherDebtOfSameTaxpayer() {
@@ -87,6 +219,167 @@ class BillingFlowTests {
 
         assertThat(debts.findById(second.id).orElseThrow().outstandingBalance).isEqualByComparingTo("80.00");
         assertThat(credits.findBySourcePaymentId(payment.id).orElseThrow().status).isEqualTo(CreditBalanceStatus.USED);
+        assertThat(outbox.findAll()).noneMatch(event->event.eventType.equals("debtSettled")&&event.aggregateId.equals(second.id.toString()));
+    }
+
+    @Test void fullyAppliedCreditPreservesSettlementWhileMunicipalEventAwaitsSharedContract() {
+        Debt source=debt("CREDIT-SETTLED-SOURCE","CREDIT-SETTLED-SOURCE-CONCEPT");Debt target=anotherDebt(source,"CREDIT-SETTLED-TARGET");
+        Payment payment=payments.register(new ApiDtos.RegisterPaymentRequest(source.taxpayerId,PaymentMethod.CASH,new BigDecimal("200"),List.of(new ApiDtos.AllocationRequest(source.id,new BigDecimal("200")))));
+        CreditBalance credit=credits.findBySourcePaymentId(payment.id).orElseThrow();creditService.apply(credit.id,new ApiDtos.ApplyCreditBalanceRequest(target.id,new BigDecimal("100")));
+        assertThat(debts.findById(target.id).orElseThrow().status).isEqualTo(DebtStatus.PAID);
+        assertThat(outbox.findAll()).noneMatch(event->event.eventType.equals("debtSettled")&&event.aggregateId.equals(target.id.toString()));
+        IntegrationEventLog deferred=integrationLogs.findFirstByBusinessKeyOrderByIdDesc("outbound-deferred:debtSettled:Debt:"+target.id).orElseThrow();
+        assertThat(deferred.status).isEqualTo(IntegrationEventStatus.PENDING);
+        assertThat(deferred.errorMessage).isEqualTo("CANONICAL_CITIZEN_ID_PENDING");
+    }
+
+    @Test void creditApplicationsRemainTraceableAfterPartialAndFullUse() {
+        Debt source = debt("BILL-CREDIT-TRACE-SOURCE", "CREDIT-TRACE-SOURCE");
+        Debt firstTarget = anotherDebt(source, "CREDIT-TRACE-TARGET-1");
+        TaxConcept secondTargetConcept = concept("CREDIT-TRACE-TARGET-2");
+        activate(secondTargetConcept.id);
+        liquidations.create(liquidation(source.taxpayerId, secondTargetConcept.id));
+        Debt secondTarget = debts.findByTaxpayerId(source.taxpayerId).stream()
+            .filter(debt -> !debt.id.equals(source.id) && !debt.id.equals(firstTarget.id)).findFirst().orElseThrow();
+        Payment payment = payments.register(new ApiDtos.RegisterPaymentRequest(source.taxpayerId, PaymentMethod.CASH,
+            new BigDecimal("140"), List.of(new ApiDtos.AllocationRequest(source.id, new BigDecimal("140")))));
+        CreditBalance credit = credits.findBySourcePaymentId(payment.id).orElseThrow();
+
+        CreditBalanceApplication first = creditService.apply(credit.id,
+            new ApiDtos.ApplyCreditBalanceRequest(firstTarget.id, new BigDecimal("10")));
+        assertThat(credits.findById(credit.id).orElseThrow().status).isEqualTo(CreditBalanceStatus.PARTIALLY_USED);
+        assertThat(api.creditBalanceApplications(credit.id)).singleElement().satisfies(application -> {
+            assertThat(application.id()).isEqualTo(first.id);
+            assertThat(application.debtId()).isEqualTo(firstTarget.id);
+            assertThat(application.amount()).isEqualByComparingTo("10.00");
+            assertThat(application.appliedBy()).isEqualTo("tester");
+            assertThat(application.appliedAt()).isNotNull();
+        });
+
+        CreditBalanceApplication second = creditService.apply(credit.id,
+            new ApiDtos.ApplyCreditBalanceRequest(secondTarget.id, new BigDecimal("30")));
+        List<CreditBalanceApplication> history = creditService.applications(credit.id);
+
+        assertThat(credits.findById(credit.id).orElseThrow().status).isEqualTo(CreditBalanceStatus.USED);
+        assertThat(history).extracting(application -> application.id).containsExactly(first.id, second.id);
+        assertThat(history).extracting(application -> application.debtId).containsExactly(firstTarget.id, secondTarget.id);
+        assertThat(history).extracting(application -> application.amount)
+            .usingComparatorForType(BigDecimal::compareTo, BigDecimal.class)
+            .containsExactly(new BigDecimal("10.00"), new BigDecimal("30.00"));
+        assertThat(history).allSatisfy(application -> {
+            assertThat(application.status).isEqualTo("ACTIVE");
+            assertThat(application.appliedBy).isEqualTo("tester");
+            assertThat(application.appliedAt).isNotNull();
+        });
+    }
+
+    @Test void creditApplicationHistoryEnforcesOwnershipAndAllowsAuditor() {
+        Debt source = debt("BILL-CREDIT-TRACE-OWNER", "CREDIT-TRACE-OWNER");
+        Debt target = anotherDebt(source, "CREDIT-TRACE-OWNER-TARGET");
+        Payment payment = payments.register(new ApiDtos.RegisterPaymentRequest(source.taxpayerId, PaymentMethod.CASH,
+            new BigDecimal("120"), List.of(new ApiDtos.AllocationRequest(source.id, new BigDecimal("120")))));
+        CreditBalance credit = credits.findBySourcePaymentId(payment.id).orElseThrow();
+        creditService.apply(credit.id, new ApiDtos.ApplyCreditBalanceRequest(target.id, new BigDecimal("10")));
+        Debt foreign = debt("BILL-CREDIT-TRACE-FOREIGN", "CREDIT-TRACE-FOREIGN");
+
+        authenticate(new AuthenticatedIdentity("owner", source.taxpayerId), "TAXPAYER");
+        assertThat(api.creditBalanceApplications(credit.id)).hasSize(1);
+
+        authenticate(new AuthenticatedIdentity("foreign", foreign.taxpayerId), "TAXPAYER");
+        assertThatThrownBy(() -> api.creditBalanceApplications(credit.id))
+            .isInstanceOfSatisfying(BusinessException.class, exception -> assertThat(exception.code).isEqualTo("FORBIDDEN_OWNERSHIP"));
+
+        authenticate(new AuthenticatedIdentity("auditor", null), "AUDITOR");
+        assertThat(api.creditBalanceApplications(credit.id)).hasSize(1);
+        assertThatThrownBy(() -> api.creditBalanceApplications(Long.MAX_VALUE))
+            .isInstanceOfSatisfying(BusinessException.class, exception -> assertThat(exception.code).isEqualTo("NOT_FOUND"));
+    }
+
+    @Test void creditCannotBeAppliedToCancelledDebtAndLeavesBalancesUnchanged() {
+        Debt source = debt("BILL-CREDIT-CANCELLED-SOURCE", "CREDIT-CANCELLED-SOURCE");
+        Debt target = anotherDebt(source, "CREDIT-CANCELLED-TARGET");
+        Payment payment = payments.register(new ApiDtos.RegisterPaymentRequest(source.taxpayerId, PaymentMethod.CASH, new BigDecimal("120"), List.of(new ApiDtos.AllocationRequest(source.id, new BigDecimal("120")))));
+        CreditBalance credit = credits.findBySourcePaymentId(payment.id).orElseThrow();
+        target.status = DebtStatus.CANCELLED;
+        debts.save(target);
+        long outboxCount = outbox.count();
+
+        assertThatThrownBy(() -> creditService.apply(credit.id, new ApiDtos.ApplyCreditBalanceRequest(target.id, new BigDecimal("20"))))
+            .isInstanceOfSatisfying(BusinessException.class, exception -> {assertThat(exception.code).isEqualTo("DEBT_NOT_PAYABLE");assertThat(exception.status).isEqualTo(409);});
+
+        CreditBalance storedCredit = credits.findById(credit.id).orElseThrow();
+        Debt storedTarget = debts.findById(target.id).orElseThrow();
+        assertThat(storedCredit.availableAmount).isEqualByComparingTo("20.00");
+        assertThat(storedCredit.status).isEqualTo(CreditBalanceStatus.AVAILABLE);
+        assertThat(storedTarget.outstandingBalance).isEqualByComparingTo("100.00");
+        assertThat(storedTarget.status).isEqualTo(DebtStatus.CANCELLED);
+        assertThat(creditApplications.findAll()).noneMatch(application -> credit.id.equals(application.creditBalanceId));
+        assertThat(outbox.count()).isEqualTo(outboxCount);
+    }
+
+    @Test void creditCannotBeAppliedToPaidDebtAndLeavesBalancesUnchanged() {
+        Debt source = debt("BILL-CREDIT-PAID-SOURCE", "CREDIT-PAID-SOURCE");
+        Debt target = anotherDebt(source, "CREDIT-PAID-TARGET");
+        Payment payment = payments.register(new ApiDtos.RegisterPaymentRequest(source.taxpayerId, PaymentMethod.CASH, new BigDecimal("120"), List.of(new ApiDtos.AllocationRequest(source.id, new BigDecimal("120")))));
+        CreditBalance credit = credits.findBySourcePaymentId(payment.id).orElseThrow();
+        target.status = DebtStatus.PAID;
+        target.outstandingBalance = BigDecimal.ZERO.setScale(2);
+        debts.save(target);
+        long outboxCount = outbox.count();
+
+        assertThatThrownBy(() -> creditService.apply(credit.id, new ApiDtos.ApplyCreditBalanceRequest(target.id, new BigDecimal("20"))))
+            .isInstanceOfSatisfying(BusinessException.class, exception -> {assertThat(exception.code).isEqualTo("DEBT_NOT_PAYABLE");assertThat(exception.status).isEqualTo(409);});
+
+        CreditBalance storedCredit = credits.findById(credit.id).orElseThrow();
+        Debt storedTarget = debts.findById(target.id).orElseThrow();
+        assertThat(storedCredit.availableAmount).isEqualByComparingTo("20.00");
+        assertThat(storedCredit.status).isEqualTo(CreditBalanceStatus.AVAILABLE);
+        assertThat(storedTarget.outstandingBalance).isZero();
+        assertThat(storedTarget.status).isEqualTo(DebtStatus.PAID);
+        assertThat(creditApplications.findAll()).noneMatch(application -> credit.id.equals(application.creditBalanceId));
+        assertThat(outbox.count()).isEqualTo(outboxCount);
+    }
+
+    @Test void apiRejectsCreditApplicationToCancelledDebtWith409AndNoEconomicChanges() throws Exception {
+        Debt source = debt("BILL-CREDIT-CANCELLED-API-SOURCE", "CREDIT-CANCELLED-API-SOURCE");
+        Debt target = anotherDebt(source, "CREDIT-CANCELLED-API-TARGET");
+        Payment payment = payments.register(new ApiDtos.RegisterPaymentRequest(source.taxpayerId, PaymentMethod.CASH,
+            new BigDecimal("120"), List.of(new ApiDtos.AllocationRequest(source.id, new BigDecimal("120")))));
+        CreditBalance credit = credits.findBySourcePaymentId(payment.id).orElseThrow();
+        target.status = DebtStatus.CANCELLED;
+        debts.save(target);
+        String token = new DemoAuthSessions(demoUsers, taxpayers, passwordEncoder, demoAuth).token(DemoRole.RENTAS);
+        long outboxBefore = outbox.count();
+
+        mvc.perform(post("/api/v1/credit-balances/{id}/apply", credit.id)
+                .header("X-Demo-Session", token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(new ApiDtos.ApplyCreditBalanceRequest(target.id, new BigDecimal("20")))))
+            .andExpect(status().isConflict())
+            .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+            .andExpect(jsonPath("$.code").value("DEBT_NOT_PAYABLE"));
+
+        assertThat(credits.findById(credit.id).orElseThrow().availableAmount).isEqualByComparingTo("20.00");
+        assertThat(debts.findById(target.id).orElseThrow().status).isEqualTo(DebtStatus.CANCELLED);
+        assertThat(creditApplications.findAll()).noneMatch(application -> credit.id.equals(application.creditBalanceId));
+        assertThat(outbox.count()).isEqualTo(outboxBefore);
+    }
+
+    @Test void apiRejectsAdjustmentToPaidDebtWith409WithoutPersistingRequest() throws Exception {
+        Debt target=debt("DEBT-STATE-PAID-ADJUSTMENT","DEBT-STATE-PAID-ADJUSTMENT");
+        target.status=DebtStatus.PAID;target.outstandingBalance=BigDecimal.ZERO.setScale(2);debts.saveAndFlush(target);
+        String token=new DemoAuthSessions(demoUsers,taxpayers,passwordEncoder,demoAuth).token(DemoRole.RENTAS);
+        long before=adjustmentRepository.count();
+
+        mvc.perform(post("/api/v1/adjustments").header("X-Demo-Session",token).contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(new ApiDtos.CreateAdjustmentRequest(target.id,AdjustmentType.DISCOUNT,new BigDecimal("10"),"Ajuste inválido"))))
+            .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("DEBT_NOT_ADJUSTABLE"));
+
+        assertThat(adjustmentRepository.count()).isEqualTo(before);
+        assertThat(debts.findById(target.id).orElseThrow()).satisfies(stored->{
+            assertThat(stored.status).isEqualTo(DebtStatus.PAID);
+            assertThat(stored.outstandingBalance).isZero();
+        });
     }
 
     @Test void electronicPaymentUsesTaxpayerIdentityAndElectronicOrigin() {
@@ -100,17 +393,48 @@ class BillingFlowTests {
         assertThat(debts.findById(debt.id).orElseThrow().status).isEqualTo(DebtStatus.PAID);
     }
 
+    @Test void rejectedElectronicAttemptIsPersistedWithoutEconomicEffectsAndRemainsIdempotent() {
+        Debt debt=debt("BILL-ELECTRONIC-REJECTED","ELECTRONIC-REJECTED");
+        debt.status=DebtStatus.CANCELLED;debts.saveAndFlush(debt);
+        authenticate(new AuthenticatedIdentity("taxpayer-user",debt.taxpayerId),"TAXPAYER");
+        long paymentCount=paymentRepository.count(),allocationCount=paymentAllocations.count();
+        ApiDtos.ElectronicPaymentRequest request=new ApiDtos.ElectronicPaymentRequest(debt.id,PaymentMethod.CARD,new BigDecimal("100"));
+
+        ElectronicPaymentAttempt first=electronicPayments.create(request,"rejected-attempt-1");
+        ElectronicPaymentAttempt repeated=electronicPayments.create(request,"rejected-attempt-1");
+
+        assertThat(first.status).isEqualTo(ElectronicPaymentStatus.REJECTED);
+        assertThat(first.paymentId).isNull();
+        assertThat(first.rejectionReason).isNotBlank();
+        assertThat(repeated.id).isEqualTo(first.id);
+        assertThat(paymentRepository.count()).isEqualTo(paymentCount);
+        assertThat(paymentAllocations.count()).isEqualTo(allocationCount);
+        assertThat(debts.findById(debt.id).orElseThrow()).satisfies(stored->{
+            assertThat(stored.status).isEqualTo(DebtStatus.CANCELLED);
+            assertThat(stored.outstandingBalance).isEqualByComparingTo("100.00");
+        });
+        assertThat(electronicPaymentAttempts.findAll()).filteredOn(attempt->debt.id.equals(attempt.debtId)).hasSize(1);
+    }
+
     private void authenticate(AuthenticatedIdentity identity, String... roles) {
         var authorities = List.of(roles).stream().map(x -> new SimpleGrantedAuthority("ROLE_" + x)).toList();
         SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(identity, null, authorities));
     }
 
     private Debt debt(String externalId, String conceptCode) {
-        TaxpayerReference taxpayer = catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(TaxpayerType.CITIZEN, externalId, "123", null, "Persona " + externalId));
+        String uniqueDni = externalId.substring(externalId.lastIndexOf('-') + 1);
+        TaxpayerReference taxpayer = catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(TaxpayerType.CITIZEN, externalId, uniqueDni, null, "Persona " + externalId));
         TaxConcept concept = concept(conceptCode);
         activate(concept.id);
         liquidations.create(liquidation(taxpayer.id, concept.id));
         return debts.findByTaxpayerId(taxpayer.id).get(0);
+    }
+
+    private Debt anotherDebt(Debt source, String conceptCode) {
+        TaxConcept concept = concept(conceptCode);
+        activate(concept.id);
+        liquidations.create(liquidation(source.taxpayerId, concept.id));
+        return debts.findByTaxpayerId(source.taxpayerId).stream().filter(debt -> !debt.id.equals(source.id)).findFirst().orElseThrow();
     }
 
     private TaxConcept concept(String code) {
@@ -120,7 +444,7 @@ class BillingFlowTests {
     private void activate(Long conceptId) {
         TaxConfiguration configuration = catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(conceptId, CalculationType.FIXED, null, new BigDecimal("100"), null, null, true, true, LocalDate.now().minusDays(1), null));
         catalog.submit(configuration.id);
-        catalog.approve(configuration.id);
+        TestActorSupport.asApprover(() -> catalog.approve(configuration.id));
     }
 
     private ApiDtos.LiquidationRequest liquidation(Long taxpayerId, Long conceptId) {

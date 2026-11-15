@@ -1,8 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "../App.jsx";
+import { ingresarComoAgente } from "./helpers/ingresar.js";
 import { MODULES } from "../config/modules.js";
+import { instalarBackendFalso } from "./fixtures/backendFalso.js";
 
 /**
  * Recorre la navegación como lo haría un supervisor: cada módulo funcional debe
@@ -10,9 +12,7 @@ import { MODULES } from "../config/modules.js";
  */
 async function loginAs(user, username) {
   render(<App />);
-  await user.type(screen.getByLabelText(/usuario/i), username);
-  await user.type(screen.getByLabelText(/contraseña/i), "rentas123");
-  await user.click(screen.getByRole("button", { name: /ingresar/i }));
+  await ingresarComoAgente(user, username, "rentas123");
   await waitFor(() => expect(screen.getByRole("heading", { name: /hola,/i })).toBeDefined());
 }
 
@@ -21,12 +21,14 @@ describe("navegación por los módulos funcionales", () => {
 
   beforeEach(() => {
     user = userEvent.setup();
+    instalarBackendFalso();
   });
 
   afterEach(() => {
     cleanup();
     sessionStorage.clear();
     window.history.pushState({}, "", "/");
+    vi.unstubAllGlobals();
   });
 
   it.each(MODULES.map((module) => [module.label, module]))(
@@ -44,6 +46,19 @@ describe("navegación por los módulos funcionales", () => {
       await waitFor(() => expect(screen.queryByText(/cargando información/i)).toBeNull());
     },
   );
+
+  it("muestra nombres de origen y conceptos comprensibles en Deudas", async () => {
+    await loginAs(user, "jlopez");
+    await user.click(screen.getByRole("link", { name: /^deudas$/i }));
+
+    const rows = await screen.findAllByRole("row");
+    const debtRow = rows.find((row) =>
+      row.textContent.includes("Tasa de servicios generales") &&
+      row.textContent.includes("Obligación externa"),
+    );
+    expect(debtRow).toBeDefined();
+    expect(debtRow.textContent).not.toContain("EXTERNAL_OBLIGATION:1");
+  });
 
   it("registra un pago y lo imputa a la deuda seleccionada", async () => {
     await loginAs(user, "mrivas");
@@ -63,7 +78,7 @@ describe("navegación por los módulos funcionales", () => {
     await user.selectOptions(debtSelect, firstDebt);
 
     await user.type(within(dialog).getByLabelText(/importe/i), "1000");
-    await user.selectOptions(within(dialog).getByLabelText(/canal/i), "VENTANILLA");
+    await user.selectOptions(within(dialog).getByLabelText(/medio de pago/i), "CASH");
     await user.click(within(dialog).getByRole("button", { name: /^registrar$/i }));
 
     expect(await screen.findByText(/pago registrado/i)).toBeDefined();

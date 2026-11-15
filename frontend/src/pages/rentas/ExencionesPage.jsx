@@ -9,16 +9,16 @@ import Modal from "../../components/common/Modal.jsx";
 import Button from "../../components/common/Button.jsx";
 import Alert from "../../components/ui/Alert.jsx";
 import FormField from "../../components/ui/FormField.jsx";
+import Spinner from "../../components/ui/Spinner.jsx";
+import FileUpload from "../../components/common/FileUpload.jsx";
+import FieldGrid from "../../components/auditoria/FieldGrid.jsx";
+import HistoryTimeline from "../../components/auditoria/HistoryTimeline.jsx";
 import useResource from "../../hooks/useResource.js";
 import useTaxpayerIndex from "../../hooks/useTaxpayerIndex.js";
+import useTaxConcepts from "../../hooks/useTaxConcepts.js";
 import { exemptionService } from "../../services/rentasService.js";
-import { CONCEPTS } from "../../services/mockDb.js";
 import { useAuth } from "../../context/AuthContext.jsx";
-import { formatDate, formatDateTime, formatPercentage } from "../../lib/format.js";
-
-const CONCEPT_OPTIONS = CONCEPTS.filter((c) =>
-  ["TASA_SERVICIOS", "ABL", "PATENTE"].includes(c.code),
-).map((c) => ({ value: c.code, label: c.label }));
+import { formatDate, formatDateTime, formatPercentage, labelFor } from "../../lib/format.js";
 
 /**
  * Exenciones: `exemptionRequested` abre el flujo hacia M8 y la resolución viaja
@@ -27,13 +27,16 @@ const CONCEPT_OPTIONS = CONCEPTS.filter((c) =>
  */
 export default function ExencionesPage() {
   const [status, setStatus] = useState("");
+  const { user } = useAuth();
   const [creating, setCreating] = useState(false);
   const [selected, setSelected] = useState(null);
   const [feedback, setFeedback] = useState(null);
+  const [workflow, setWorkflow] = useState(null);
 
   const loader = useCallback(() => exemptionService.list({ status }), [status]);
   const { data: exemptions, loading, error, reload } = useResource(loader, []);
   const { nameOf, options: taxpayerOptions } = useTaxpayerIndex();
+  const { options: conceptOptions } = useTaxConcepts();
 
   const columns = [
     {
@@ -56,12 +59,12 @@ export default function ExencionesPage() {
     },
     {
       key: "hasSocialBenefit",
-      header: "Beneficio M8",
+      header: "Beneficio social",
       render: (row) =>
         row.hasSocialBenefit ? (
           <StatusBadge tone="success" label="Activo" />
         ) : (
-          <span className="text-neutral-300">—</span>
+          <span className="text-neutral-500">—</span>
         ),
     },
     {
@@ -74,24 +77,53 @@ export default function ExencionesPage() {
             {row.attachments.length}
           </span>
         ) : (
-          <span className="text-neutral-300">—</span>
+          <span className="text-neutral-500">—</span>
         ),
     },
     { key: "status", header: "Estado", render: (row) => <StatusBadge status={row.status} /> },
     {
+      key: "internalStatus",
+      header: "Trámite",
+      render: (row) =>
+        row.status === "REQUESTED" ? (
+          <StatusBadge status={row.internalStatus} />
+        ) : (
+          <span className="text-neutral-500">—</span>
+        ),
+    },
+    {
       key: "actions",
       header: "",
       align: "right",
-      render: (row) =>
-        row.status === "REQUESTED" ? (
-          <Button size="sm" variant="primary" onClick={() => setSelected(row)}>
-            Resolver
-          </Button>
-        ) : (
-          <span className="text-[12px] text-neutral-400">
-            {row.resolvedBy ? `Por ${row.resolvedBy}` : "—"}
-          </span>
-        ),
+      render: (row) => {
+        if (row.status !== "REQUESTED") {
+          return (
+            <span className="text-[12px] text-neutral-400">
+              {row.resolvedBy ? `Por ${row.resolvedBy}` : "—"}
+            </span>
+          );
+        }
+        return (
+          <div className="flex justify-end gap-2">
+            {user.role === "PERSONAL" && row.backendStatus !== "DOCUMENTATION_REQUIRED" && (
+              <Button size="sm" variant="secondary" onClick={() => setWorkflow(row)}>
+                Trámite
+              </Button>
+            )}
+            {user.role === "PERSONAL" && row.backendStatus === "DOCUMENTATION_REQUIRED" && (
+              <span className="text-[12px] text-neutral-400">Espera documentación del ciudadano</span>
+            )}
+            {user.role === "SUPERVISOR" && row.internalStatus === "PENDING_RESOLUTION" && (
+              <Button size="sm" variant="primary" onClick={() => setSelected(row)}>
+                Resolver
+              </Button>
+            )}
+            {user.role === "SUPERVISOR" && row.internalStatus !== "PENDING_RESOLUTION" && (
+              <span className="text-[12px] text-neutral-400">En trámite</span>
+            )}
+          </div>
+        );
+      },
     },
   ];
 
@@ -112,12 +144,8 @@ export default function ExencionesPage() {
 
       <Card
         title="Solicitudes de exención"
-        description="Un beneficio social activo en M8 respalda la solicitud, pero no la aprueba automáticamente."
-        actions={
-          <Button size="sm" variant="primary" onClick={() => setCreating(true)}>
-            Nueva solicitud
-          </Button>
-        }
+        description="Un beneficio social activo puede respaldar la solicitud, pero no la aprueba automáticamente."
+        actions={null}
       >
         <FilterBar
           filters={[
@@ -136,6 +164,7 @@ export default function ExencionesPage() {
         />
 
         <DataTable
+          ariaLabel="Tabla de exenciones"
           columns={columns}
           rows={exemptions ?? []}
           rowKey={(row) => row.requestId}
@@ -149,6 +178,7 @@ export default function ExencionesPage() {
       {creating && (
         <NewExemptionModal
           taxpayerOptions={taxpayerOptions}
+          conceptOptions={conceptOptions}
           onClose={() => setCreating(false)}
           onDone={(exemption) => {
             setCreating(false);
@@ -157,6 +187,19 @@ export default function ExencionesPage() {
               title: "Solicitud registrada",
               message: `Se publicó exemptionRequested para la solicitud #${exemption.requestId}.`,
             });
+            reload();
+          }}
+        />
+      )}
+
+      {workflow && (
+        <WorkflowModal
+          exemption={workflow}
+          actor={user.username}
+          onClose={() => setWorkflow(null)}
+          onDone={(exemption, mensaje) => {
+            setWorkflow(null);
+            setFeedback({ variant: "success", title: "Trámite actualizado", message: mensaje });
             reload();
           }}
         />
@@ -191,7 +234,7 @@ export default function ExencionesPage() {
 }
 
 /** Alta por mesa de entradas → publica exemptionRequested hacia M8. */
-function NewExemptionModal({ taxpayerOptions, onClose, onDone }) {
+function NewExemptionModal({ taxpayerOptions, conceptOptions, onClose, onDone }) {
   const [form, setForm] = useState({
     citizenId: "",
     conceptCode: "",
@@ -282,7 +325,7 @@ function NewExemptionModal({ taxpayerOptions, onClose, onDone }) {
           type="select"
           value={form.conceptCode}
           onChange={onChange}
-          options={CONCEPT_OPTIONS}
+          options={conceptOptions}
           error={errors.conceptCode}
           required
         />
@@ -332,8 +375,129 @@ function NewExemptionModal({ taxpayerOptions, onClose, onDone }) {
 }
 
 /** Resolución → publica updateExemptionStatus (APPROVED | REJECTED). */
+/**
+ * Pasos internos del trámite. Ninguno viaja a M8: el contrato sólo contempla la
+ * resolución final. Pedir documentación, registrarla y enviar a resolución son
+ * estados de gestión de Rentas.
+ */
+function WorkflowModal({ exemption, actor, onClose, onDone }) {
+  const [accion, setAccion] = useState(
+    exemption.backendStatus === "PENDING" ? "START" : "RESOLUTION",
+  );
+  const [note, setNote] = useState("");
+  const [error, setError] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const onSubmit = async (event) => {
+    event.preventDefault();
+    setError(null);
+    setSubmitting(true);
+    try {
+      if (accion === "REQUIRE" && !note?.trim()) {
+        // Pedir documentación sin decir cuál deja al ciudadano sin saber qué presentar.
+        setError("Indicá qué documentación falta.");
+        setSubmitting(false);
+        return;
+      }
+      const internalStatus = accion === "START" ? "PENDING_REVIEW" : accion === "REQUIRE" ? "DOCUMENTATION_REQUIRED" : "PENDING_RESOLUTION";
+      const resultado = await exemptionService.advanceWorkflow({
+        requestId: exemption.requestId,
+        internalStatus,
+        note,
+        actor,
+      });
+      onDone(
+        resultado,
+        accion === "START"
+          ? `La solicitud #${exemption.requestId} está en revisión.`
+          : internalStatus === "DOCUMENTATION_REQUIRED"
+            ? `Se le pidió documentación al ciudadano por la solicitud #${exemption.requestId}.`
+            : `La solicitud #${exemption.requestId} quedó lista para resolver.`,
+      );
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Modal
+      open
+      title={`Trámite de la solicitud #${exemption.requestId}`}
+      description={`Estado interno: ${labelFor(exemption.internalStatus)}`}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancelar
+          </Button>
+          <Button variant="primary" loading={submitting} onClick={onSubmit}>
+            Confirmar
+          </Button>
+        </>
+      }
+    >
+      {error && (
+        <Alert variant="error" title="No se pudo actualizar">
+          {error}
+        </Alert>
+      )}
+
+      <Alert variant="info" title="Estos pasos no salen de Rentas">
+        Desarrollo Social sólo recibe la resolución final, aprobada o rechazada. La
+        gestión de documentación es interna del módulo.
+      </Alert>
+
+      <form onSubmit={onSubmit} noValidate className="flex flex-col gap-4">
+        <FormField
+          label="Acción"
+          name="accion"
+          type="select"
+          value={accion}
+          onChange={(event) => setAccion(event.target.value)}
+          options={exemption.backendStatus === "PENDING"
+            ? [{ value: "START", label: "Iniciar revisión" }]
+            : [
+                { value: "RESOLUTION", label: "Enviar a resolución" },
+                { value: "REQUIRE", label: "Solicitar documentación" },
+              ]}
+          required
+        />
+
+        {accion !== "START" && (
+          <FormField
+            label={accion === "REQUIRE" ? "Qué documentación falta" : "Observaciones"}
+            name="note"
+            type="textarea"
+            placeholder={
+              accion === "REQUIRE"
+                ? "Por ejemplo: certificado de ingresos de los últimos tres meses."
+                : "Contexto para quien resuelva."
+            }
+            value={note}
+            onChange={(event) => setNote(event.target.value)}
+            required={accion === "REQUIRE"}
+          />
+        )}
+
+        {exemption.attachments.length > 0 && (
+          <p className="text-[12px] text-neutral-400">
+            Ya tiene {exemption.attachments.length} archivo(s) presentados.
+          </p>
+        )}
+      </form>
+    </Modal>
+  );
+}
+
 function ResolveExemptionModal({ exemption, citizenName, onClose, onDone }) {
   const { user } = useAuth();
+  const loader = useCallback(
+    () => exemptionService.detail(exemption.requestId),
+    [exemption.requestId],
+  );
+  const { data: detail, loading, error: detailError } = useResource(loader);
   const [form, setForm] = useState({
     status: "APPROVED",
     percentage: String(exemption.requestedPercentage),
@@ -380,8 +544,9 @@ function ResolveExemptionModal({ exemption, citizenName, onClose, onDone }) {
   return (
     <Modal
       open
+      size="xl"
       title={`Solicitud #${exemption.requestId}`}
-      description={`${citizenName} · ${exemption.conceptCode} · pedida el ${formatDateTime(exemption.requestedAt)}`}
+      description={`${detail?.taxpayerName ?? citizenName} · ${detail?.conceptCode ?? exemption.conceptCode} · pedida el ${formatDateTime(exemption.requestedAt)}`}
       onClose={onClose}
       footer={
         <>
@@ -391,6 +556,7 @@ function ResolveExemptionModal({ exemption, citizenName, onClose, onDone }) {
           <Button
             variant={form.status === "APPROVED" ? "primary" : "accent"}
             loading={submitting}
+            disabled={loading || Boolean(detailError)}
             onClick={onSubmit}
           >
             {form.status === "APPROVED" ? "Aprobar exención" : "Rechazar solicitud"}
@@ -398,22 +564,80 @@ function ResolveExemptionModal({ exemption, citizenName, onClose, onDone }) {
         </>
       }
     >
+      {detailError && (
+        <Alert variant="error" title="No se pudo cargar la evaluación">{detailError}</Alert>
+      )}
       {error && <Alert variant="error" title="No se pudo resolver">{error}</Alert>}
 
-      <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-4 text-[13px] text-neutral-600">
-        <p>
-          Motivo declarado:{" "}
-          <span className="font-medium text-neutral-800">{exemption.reason}</span>
-        </p>
-        <p className="mt-1">
-          Solicitado: {formatPercentage(exemption.requestedPercentage)} entre{" "}
-          {formatDate(exemption.requestedFrom)} y {formatDate(exemption.requestedUntil)}
-        </p>
-      </div>
+      {loading && (
+        <div className="flex items-center justify-center gap-3 py-8">
+          <Spinner />
+          <span className="text-[13px] text-neutral-400">Cargando solicitud, documentación e historial…</span>
+        </div>
+      )}
 
-      {exemption.hasSocialBenefit && (
+      {detail && (
+        <>
+          <section className="rounded-lg border border-neutral-200 bg-neutral-50 p-4">
+            <h3 className="mb-3 text-[13px] font-bold text-[#0F2C59]">Solicitud</h3>
+            <FieldGrid
+              columns={3}
+              items={[
+                { label: "Contribuyente", value: detail.taxpayerName ?? citizenName },
+                { label: "Concepto", value: `${detail.conceptCode} · ${detail.conceptName}` },
+                { label: "Presentada", value: formatDateTime(detail.requestedAt) },
+                { label: "Porcentaje solicitado", value: formatPercentage(detail.requestedPercentage) },
+                { label: "Vigencia solicitada", value: `${formatDate(detail.requestedFrom)} — ${formatDate(detail.requestedUntil)}`, span: 2 },
+                { label: "Motivo declarado", value: detail.reason, span: 2 },
+                { label: "Solicitó", value: detail.requestedBy },
+              ]}
+            />
+          </section>
+
+          <section>
+            <h3 className="mb-2 text-[13px] font-bold text-[#0F2C59]">Documentación presentada</h3>
+            <div className="overflow-hidden rounded-lg border border-neutral-200">
+              <DataTable
+                ariaLabel="Tabla de documentación de exenciones"
+                columns={[
+                  { key: "fileName", header: "Archivo" },
+                  { key: "documentType", header: "Tipo", render: (row) => labelFor(row.documentType) },
+                  { key: "uploadedBy", header: "Presentó" },
+                  { key: "uploadedAt", header: "Fecha", render: (row) => formatDateTime(row.uploadedAt) },
+                ]}
+                rows={detail.documents}
+                rowKey={(row) => row.id}
+                emptyIconName="FileWarning"
+                emptyTitle="Sin documentación"
+                emptyDescription="La solicitud no tiene archivos presentados."
+              />
+            </div>
+          </section>
+
+          <section className="rounded-lg border border-neutral-200 px-4 py-3">
+            <h3 className="mb-3 text-[13px] font-bold text-[#0F2C59]">Evaluación previa</h3>
+            <FieldGrid
+              columns={3}
+              items={[
+                { label: "Revisó", value: detail.reviewedBy },
+                { label: "Inicio de revisión", value: detail.reviewStartedAt ? formatDateTime(detail.reviewStartedAt) : null },
+                { label: "Envió a resolución", value: detail.resolutionSubmittedBy },
+                { label: "Fecha de envío", value: detail.resolutionSubmittedAt ? formatDateTime(detail.resolutionSubmittedAt) : null },
+                { label: "Observación previa", value: detail.resolutionReason, span: 2 },
+              ]}
+            />
+          </section>
+
+          <section>
+            <h3 className="mb-3 text-[13px] font-bold text-[#0F2C59]">Historial de la solicitud</h3>
+            <HistoryTimeline entries={detail.history} />
+          </section>
+        </>
+      )}
+
+      {(detail?.hasSocialBenefit ?? exemption.hasSocialBenefit) && (
         <Alert variant="info" title="El ciudadano tiene un beneficio social activo">
-          M8 informó un beneficio vigente mediante socialBenefitUpdated. Verificá que el
+          El padrón de beneficios sociales informa una vigencia. Verificá que el
           porcentaje aprobado no se superponga con el descuento ya aplicado en la liquidación.
         </Alert>
       )}

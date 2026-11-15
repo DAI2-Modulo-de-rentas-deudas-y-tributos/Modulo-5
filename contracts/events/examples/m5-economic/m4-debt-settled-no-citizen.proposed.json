@@ -1,0 +1,18 @@
+{
+  "eventId": "2d8880e8-2403-4559-8392-73b4bbb40ef8",
+  "eventType": "debtSettled",
+  "eventVersion": "1.0",
+  "occurredAt": "2026-10-26T10:30:00-03:00",
+  "sourceModule": "rentas",
+  "correlationId": "57eed108-717d-4b3c-ae4a-0c8804ef2446",
+  "causationId": null,
+  "data": {
+    "debtId": "1eb43cff-1c1a-4791-ae75-bb58ab14a901",
+    "conceptCode": "MULTA_COMERCIAL",
+    "originType": "COMMERCIAL_FINE",
+    "originId": "FINE-001",
+    "settledAt": "2026-10-26T10:30:00-03:00",
+    "remainingBalance": 0.00,
+    "outstandingBalance": 0.00
+  }
+}

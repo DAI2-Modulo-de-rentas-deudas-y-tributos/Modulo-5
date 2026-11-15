@@ -1,0 +1,22 @@
+{
+  "debtAId": 1,
+  "testData": "sintética, creada en PostgreSQL efímero",
+  "taxpayerBId": 2,
+  "frontendPort": 55220,
+  "taxpayerAId": 1,
+  "branch": "feature/m5-core-integracion-consolidada",
+  "containerNames": [
+    "m5-postmerge-pg-c6020078fb36",
+    "m5-postmerge-mq-c6020078fb36"
+  ],
+  "backendPort": 55219,
+  "infractionBId": "83d15ea5-b8e7-43e6-a904-f02694ecb081",
+  "result": "PASS",
+  "postgresPort": 55221,
+  "infractionAId": "5857b0fe-f3a9-405a-9d60-5fc9f0c90e61",
+  "debtBId": 2,
+  "rabbitPort": 55223,
+  "postgresImage": "postgres:17.11-alpine",
+  "rabbitImage": "rabbitmq:4.3-management",
+  "commit": "d80cd1967d9398bd725d3cba06ea8f2994613a4c"
+}

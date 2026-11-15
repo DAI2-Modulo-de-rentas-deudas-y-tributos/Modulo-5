@@ -10,48 +10,25 @@ import Alert from "../../components/ui/Alert.jsx";
 import FormField from "../../components/ui/FormField.jsx";
 import useResource from "../../hooks/useResource.js";
 import useTaxpayerIndex from "../../hooks/useTaxpayerIndex.js";
+import useTaxConcepts from "../../hooks/useTaxConcepts.js";
 import { settlementService } from "../../services/rentasService.js";
-import { CONCEPTS } from "../../services/mockDb.js";
+import GeneracionMasivaModal from "./GeneracionMasivaModal.jsx";
 import { formatCurrency, formatDate, formatPercentage } from "../../lib/format.js";
 
-const CONCEPT_OPTIONS = CONCEPTS.filter((c) =>
-  ["TASA_SERVICIOS", "ABL", "PATENTE"].includes(c.code),
-).map((c) => ({ value: c.code, label: c.label }));
-
-/**
- * Liquidaciones: primer paso del flujo. Se genera en borrador, se revisa el
- * descuento aplicado por beneficio social y recién al emitirla nace la deuda.
- */
+/** La liquidación individual se emite y crea la deuda en una sola operación. */
 export default function LiquidacionesPage() {
   const [filters, setFilters] = useState({ period: "", conceptCode: "", status: "" });
   const [creating, setCreating] = useState(false);
+  const [batchOpen, setBatchOpen] = useState(false);
   const [feedback, setFeedback] = useState(null);
-  const [issuing, setIssuing] = useState(null);
 
   const loader = useCallback(() => settlementService.list(filters), [filters]);
   const { data: settlements, loading, error, reload } = useResource(loader, []);
   const { nameOf, options: taxpayerOptions } = useTaxpayerIndex();
+  const { options: conceptOptions, labelOf: conceptLabelOf } = useTaxConcepts();
 
   const onFilterChange = (name, value) =>
     setFilters((previous) => ({ ...previous, [name]: value }));
-
-  const onIssue = async (settlement) => {
-    setIssuing(settlement.id);
-    setFeedback(null);
-    try {
-      await settlementService.issue(settlement.id);
-      setFeedback({
-        variant: "success",
-        title: "Liquidación emitida",
-        message: `Se generó la deuda asociada a la liquidación #${settlement.id}.`,
-      });
-      reload();
-    } catch (caught) {
-      setFeedback({ variant: "error", title: "No se pudo emitir", message: caught.message });
-    } finally {
-      setIssuing(null);
-    }
-  };
 
   const columns = [
     { key: "id", header: "N°", render: (row) => <span className="tabular-nums">#{row.id}</span> },
@@ -63,7 +40,7 @@ export default function LiquidacionesPage() {
     {
       key: "conceptCode",
       header: "Concepto",
-      render: (row) => CONCEPTS.find((c) => c.code === row.conceptCode)?.label ?? row.conceptCode,
+      render: (row) => conceptLabelOf(row.conceptCode),
     },
     { key: "period", header: "Período" },
     {
@@ -74,7 +51,7 @@ export default function LiquidacionesPage() {
         row.discountPercentage > 0 ? (
           <StatusBadge tone="success" label={formatPercentage(row.discountPercentage)} />
         ) : (
-          <span className="text-neutral-300">—</span>
+          <span className="text-neutral-500">—</span>
         ),
     },
     {
@@ -85,22 +62,6 @@ export default function LiquidacionesPage() {
     },
     { key: "dueDate", header: "Vencimiento", render: (row) => formatDate(row.dueDate) },
     { key: "status", header: "Estado", render: (row) => <StatusBadge status={row.status} /> },
-    {
-      key: "actions",
-      header: "",
-      align: "right",
-      render: (row) =>
-        row.status === "DRAFT" ? (
-          <Button
-            size="sm"
-            variant="accent"
-            loading={issuing === row.id}
-            onClick={() => onIssue(row)}
-          >
-            Emitir
-          </Button>
-        ) : null,
-    },
   ];
 
   return (
@@ -108,7 +69,7 @@ export default function LiquidacionesPage() {
       label="Operación"
       title="Liquidaciones"
       highlight="del período"
-      description="Generá la liquidación de un concepto, revisá el descuento aplicado y emitila para que genere deuda."
+      description="Al generar una liquidación individual, se emite y crea su deuda inmediatamente."
       breadcrumb={[{ id: "liquidaciones", label: "Liquidaciones" }]}
     >
       {feedback && (
@@ -124,11 +85,16 @@ export default function LiquidacionesPage() {
 
       <Card
         title="Liquidaciones registradas"
-        description="Las liquidaciones en borrador no generan deuda hasta ser emitidas."
+        description="Cada liquidación individual registrada ya tiene una deuda asociada."
         actions={
-          <Button size="sm" variant="primary" onClick={() => setCreating(true)}>
-            Nueva liquidación
-          </Button>
+          <>
+            <Button size="sm" variant="secondary" onClick={() => setBatchOpen(true)}>
+              Generación masiva
+            </Button>
+            <Button size="sm" variant="primary" onClick={() => setCreating(true)}>
+              Nueva liquidación
+            </Button>
+          </>
         }
       >
         <FilterBar
@@ -136,16 +102,12 @@ export default function LiquidacionesPage() {
             {
               name: "conceptCode",
               label: "Concepto",
-              options: CONCEPT_OPTIONS,
+              options: conceptOptions,
             },
             {
               name: "status",
               label: "Estado",
-              options: [
-                { value: "DRAFT", label: "Borrador" },
-                { value: "ISSUED", label: "Emitida" },
-                { value: "SETTLED", label: "Cancelada" },
-              ],
+              options: [{ value: "ISSUED", label: "Emitida" }],
             },
             {
               name: "period",
@@ -175,23 +137,40 @@ export default function LiquidacionesPage() {
       <NewSettlementModal
         open={creating}
         taxpayerOptions={taxpayerOptions}
+        conceptOptions={conceptOptions}
         onClose={() => setCreating(false)}
         onCreated={(settlement) => {
           setCreating(false);
           setFeedback({
             variant: "success",
-            title: "Liquidación generada en borrador",
-            message: `#${settlement.id} por ${formatCurrency(settlement.amount)}. Revisala y emitila para generar la deuda.`,
+            title: "Liquidación emitida",
+            message: `#${settlement.id} por ${formatCurrency(settlement.amount)}. La deuda ya está disponible en el estado de cuenta.`,
           });
           reload();
         }}
       />
+
+      {batchOpen && (
+        <GeneracionMasivaModal
+          conceptOptions={conceptOptions}
+          onClose={() => setBatchOpen(false)}
+          onGenerated={(result) => {
+            setBatchOpen(false);
+            setFeedback({
+              variant: "success",
+              title: "Corrida enviada a aprobación",
+              message: `Corrida #${result.run.id} con ${result.submitted} liquidaciones previstas. El Supervisor debe aprobarla y luego Rentas ejecutarla para crear las deudas.`,
+            });
+            reload();
+          }}
+        />
+      )}
     </ModuleShell>
   );
 }
 
 /** GenerateSettlementRequest: contribuyente + concepto + período + base imponible. */
-function NewSettlementModal({ open, taxpayerOptions, onClose, onCreated }) {
+function NewSettlementModal({ open, taxpayerOptions, conceptOptions, onClose, onCreated }) {
   const empty = {
     taxpayerId: "",
     conceptCode: "",
@@ -249,7 +228,7 @@ function NewSettlementModal({ open, taxpayerOptions, onClose, onCreated }) {
             Cancelar
           </Button>
           <Button variant="primary" loading={submitting} onClick={onSubmit}>
-            Generar borrador
+          Generar liquidación y deuda
           </Button>
         </>
       }
@@ -273,7 +252,7 @@ function NewSettlementModal({ open, taxpayerOptions, onClose, onCreated }) {
           type="select"
           value={form.conceptCode}
           onChange={onChange}
-          options={CONCEPT_OPTIONS}
+          options={conceptOptions}
           error={errors.conceptCode}
           required
         />

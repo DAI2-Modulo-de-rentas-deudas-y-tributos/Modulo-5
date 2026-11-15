@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
 import Card from "../../components/common/Card.jsx";
 import DataTable from "../../components/common/DataTable.jsx";
@@ -11,14 +11,9 @@ import FormField from "../../components/ui/FormField.jsx";
 import StepIndicatorGeneric from "../../components/ui/StepIndicatorGeneric.jsx";
 import useResource from "../../hooks/useResource.js";
 import useTaxpayerIndex from "../../hooks/useTaxpayerIndex.js";
-import { paymentPlanService } from "../../services/rentasService.js";
+import { paymentPlanConfigurationService, paymentPlanService } from "../../services/rentasService.js";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { formatCurrency, formatDateTime } from "../../lib/format.js";
-
-const INSTALLMENT_OPTIONS = [3, 6, 9, 12, 18].map((n) => ({
-  value: String(n),
-  label: `${n} cuotas`,
-}));
 
 const STEPS = [
   { label: "Solicitud" },
@@ -31,11 +26,13 @@ const STEPS = [
  * cuotas y la resolución publica updatePaymentPlanStatus (GRANTED | REJECTED).
  */
 export default function PlanesPage() {
-  const [status, setStatus] = useState("");
+  const { user } = useAuth();
+  const [filters, setFilters] = useState({ status: "", internalStatus: "" });
   const [selected, setSelected] = useState(null);
+  const [escalating, setEscalating] = useState(null);
   const [feedback, setFeedback] = useState(null);
 
-  const loader = useCallback(() => paymentPlanService.list({ status }), [status]);
+  const loader = useCallback(() => paymentPlanService.list(filters), [filters]);
   const { data: plans, loading, error, reload } = useResource(loader, []);
   const { nameOf } = useTaxpayerIndex();
 
@@ -51,7 +48,7 @@ export default function PlanesPage() {
       header: "Deudas",
       render: (row) => (
         <span className="text-[12px] text-neutral-500 tabular-nums">
-          {row.debtIds.map((id) => `#${id}`).join(", ")}
+          {row.debtIds.length ? row.debtIds.map((id) => `#${id}`).join(", ") : "No informado por la API"}
         </span>
       ),
     },
@@ -74,19 +71,51 @@ export default function PlanesPage() {
     },
     { key: "status", header: "Estado", render: (row) => <StatusBadge status={row.status} /> },
     {
+      key: "internalStatus",
+      header: "Gestión interna",
+      render: (row) =>
+        row.status === "REQUESTED" ? (
+          <StatusBadge status={row.internalStatus} />
+        ) : (
+          <span className="text-neutral-500">—</span>
+        ),
+    },
+    {
       key: "actions",
       header: "",
       align: "right",
-      render: (row) =>
-        row.status === "REQUESTED" ? (
-          <Button size="sm" variant="primary" onClick={() => setSelected(row)}>
-            Resolver
-          </Button>
-        ) : (
-          <span className="text-[12px] text-neutral-400">
-            {row.resolvedBy ? `Por ${row.resolvedBy}` : "—"}
-          </span>
-        ),
+      render: (row) => {
+        if (row.status !== "REQUESTED") {
+          return (
+            <span className="text-[12px] text-neutral-400">
+              {row.resolvedBy ? `Por ${row.resolvedBy}` : "—"}
+            </span>
+          );
+        }
+
+        const derivada = row.internalStatus === "PENDING_SUPERVISOR";
+        // Derivada sólo la resuelve el Supervisor: el resto ve por qué no puede.
+        if (derivada && user.role !== "SUPERVISOR") {
+          return (
+            <span className="text-[12px] text-neutral-400">
+              Esperando al Supervisor
+            </span>
+          );
+        }
+
+        return (
+          <div className="flex justify-end gap-2">
+            {!derivada && user.role !== "SUPERVISOR" && (
+              <Button size="sm" variant="secondary" onClick={() => setEscalating(row)}>
+                Derivar
+              </Button>
+            )}
+            <Button size="sm" variant="primary" onClick={() => setSelected(row)}>
+              Resolver
+            </Button>
+          </div>
+        );
+      },
     },
   ];
 
@@ -95,7 +124,7 @@ export default function PlanesPage() {
       label="Resoluciones"
       title="Planes de pago"
       highlight="solicitados"
-      description="Consolidación de deudas en cuotas. La resolución se comunica con updatePaymentPlanStatus."
+      description="Consolidación de deudas en cuotas. La resolución final informa si el plan fue otorgado o rechazado."
       breadcrumb={[{ id: "planes", label: "Planes de pago" }]}
     >
       {feedback && (
@@ -104,6 +133,10 @@ export default function PlanesPage() {
         </Alert>
       )}
       {error && <Alert variant="error" title="No pudimos cargar las solicitudes">{error}</Alert>}
+
+      <Alert variant="info" title="La derivación es interna">
+        Derivar al Supervisor es un estado interno de Rentas. La decisión final se registra como otorgada o rechazada.
+      </Alert>
 
       <Card
         title="Solicitudes"
@@ -120,9 +153,19 @@ export default function PlanesPage() {
                 { value: "REJECTED", label: "Rechazados" },
               ],
             },
+            {
+              name: "internalStatus",
+              label: "Gestión interna",
+              options: [
+                { value: "PENDING_REVIEW", label: "En revisión" },
+                { value: "PENDING_SUPERVISOR", label: "Derivado a Supervisor" },
+              ],
+            },
           ]}
-          values={{ status }}
-          onFilterChange={(_, value) => setStatus(value)}
+          values={filters}
+          onFilterChange={(name, value) =>
+            setFilters((previous) => ({ ...previous, [name]: value }))
+          }
         />
 
         <DataTable
@@ -135,6 +178,24 @@ export default function PlanesPage() {
           emptyDescription="No hay planes de pago que coincidan con el filtro."
         />
       </Card>
+
+      {escalating && (
+        <EscalatePlanModal
+          plan={escalating}
+          taxpayerName={nameOf(escalating.taxpayerId)}
+          escalatedBy={user.username}
+          onClose={() => setEscalating(null)}
+          onDone={(plan) => {
+            setEscalating(null);
+            setFeedback({
+              variant: "success",
+              title: "Solicitud derivada",
+              message: `La solicitud #${plan.requestId} quedó a resolución del Supervisor. No se publicó ningún evento: la derivación es interna.`,
+            });
+            reload();
+          }}
+        />
+      )}
 
       {selected && (
         <ResolvePlanModal
@@ -165,20 +226,96 @@ export default function PlanesPage() {
 }
 
 /** Simulación de cuotas + resolución en un mismo flujo de tres pasos. */
+/**
+ * EscalatePaymentPlanRequest: el analista que no puede decidir manda la solicitud
+ * al Supervisor con el motivo. No publica nada: el estado es interno de M5.
+ */
+function EscalatePlanModal({ plan, taxpayerName, escalatedBy, onClose, onDone }) {
+  const [note, setNote] = useState("");
+  const [error, setError] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const onSubmit = async (event) => {
+    event.preventDefault();
+    setError(null);
+    if (!note.trim()) {
+      setError("Indicá por qué la derivás: el Supervisor necesita el contexto.");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      onDone(
+        await paymentPlanService.escalate({
+          requestId: plan.requestId,
+          escalatedBy,
+          note,
+        }),
+      );
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Modal
+      open
+      title={`Derivar la solicitud #${plan.requestId}`}
+      description={`${taxpayerName} · ${formatCurrency(plan.totalDebt)} en ${plan.installments} cuotas`}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancelar
+          </Button>
+          <Button variant="primary" loading={submitting} onClick={onSubmit}>
+            Derivar al Supervisor
+          </Button>
+        </>
+      }
+    >
+      {error && (
+        <Alert variant="error" title="No se pudo derivar">
+          {error}
+        </Alert>
+      )}
+
+      <Alert variant="info" title="La solicitud sigue pendiente para el exterior">
+        Derivar no resuelve nada ni publica ningún evento. Para los demás módulos la
+        solicitud sigue en el mismo estado hasta que el Supervisor la otorgue o la rechace.
+      </Alert>
+
+      <form onSubmit={onSubmit} noValidate>
+        <FormField
+          label="Motivo de la derivación"
+          name="note"
+          type="textarea"
+          placeholder="Por ejemplo: el contribuyente pide más cuotas de las habituales."
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+          required
+        />
+      </form>
+    </Modal>
+  );
+}
+
 function ResolvePlanModal({ plan, taxpayerName, onClose, onDone }) {
   const { user } = useAuth();
-  const [installments, setInstallments] = useState(String(plan.installments));
   const [decision, setDecision] = useState("GRANTED");
   const [reason, setReason] = useState("");
   const [error, setError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  const configurationLoader = useCallback(() => paymentPlanConfigurationService.list(), []);
+  const { data: configurations } = useResource(configurationLoader, []);
+  const standard = (configurations ?? []).find((item) => item.active) ?? configurations?.[0];
+  const exceptional = user.role === "SUPERVISOR" && plan.internalStatus === "PENDING_SUPERVISOR";
 
-  const simulation = useMemo(
-    () => paymentPlanService.simulate({ totalDebt: plan.totalDebt, installments }),
-    [plan.totalDebt, installments],
-  );
-
-  const currentStep = decision === "REJECTED" ? 2 : installments ? 1 : 0;
+  const financedAmount = Number(plan.estimatedFinancedAmount ?? plan.totalDebt - plan.downPayment);
+  const interestAmount = Number(plan.estimatedInterest ?? 0);
+  const installmentAmount = (financedAmount + interestAmount) / plan.installments;
+  const currentStep = decision === "REJECTED" ? 2 : 1;
 
   const onSubmit = async (event) => {
     event.preventDefault();
@@ -193,9 +330,11 @@ function ResolvePlanModal({ plan, taxpayerName, onClose, onDone }) {
         await paymentPlanService.resolve({
           requestId: plan.requestId,
           status: decision,
-          installments: Number(installments),
+          installments: plan.installments,
           reason,
           resolvedBy: user.username,
+          // El servicio rechaza que un analista resuelva una solicitud ya derivada.
+          resolverRole: user.role,
         }),
       );
     } catch (caught) {
@@ -209,7 +348,7 @@ function ResolvePlanModal({ plan, taxpayerName, onClose, onDone }) {
     <Modal
       open
       title={`Solicitud #${plan.requestId}`}
-      description={`${taxpayerName} · ${formatCurrency(plan.totalDebt)} en ${plan.debtIds.length} deudas`}
+      description={`${taxpayerName} · ${formatCurrency(plan.totalDebt)} · ${plan.installments} cuotas solicitadas`}
       onClose={onClose}
       footer={
         <>
@@ -230,6 +369,24 @@ function ResolvePlanModal({ plan, taxpayerName, onClose, onDone }) {
 
       {error && <Alert variant="error" title="No se pudo resolver">{error}</Alert>}
 
+      {exceptional && (
+        <div className="grid grid-cols-1 gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 sm:grid-cols-2">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-amber-700">Condiciones estándar</p>
+            <p className="mt-2 text-[13px] text-amber-900">
+              {standard ? `${standard.minimumInstallments} a ${standard.maximumInstallments} cuotas · anticipo mínimo ${standard.minimumDownPaymentPercentage}% · tasa ${standard.interestRate}%` : "Consultando configuración vigente…"}
+            </p>
+          </div>
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-amber-700">Excepción solicitada</p>
+            <p className="mt-2 text-[13px] text-amber-900">
+              {plan.installments} cuotas · anticipo mínimo estimado {formatCurrency(plan.downPayment)}
+              {plan.exceptionReason ? ` · ${plan.exceptionReason}` : ""}
+            </p>
+          </div>
+        </div>
+      )}
+
       <FormField
         label="Resolución"
         name="decision"
@@ -245,15 +402,9 @@ function ResolvePlanModal({ plan, taxpayerName, onClose, onDone }) {
 
       {decision === "GRANTED" ? (
         <>
-          <FormField
-            label="Cantidad de cuotas"
-            name="installments"
-            type="select"
-            value={installments}
-            onChange={(event) => setInstallments(event.target.value)}
-            options={INSTALLMENT_OPTIONS}
-            required
-          />
+          <p className="text-[13px] text-neutral-600">
+            La solicitud es por {plan.installments} cuotas. Su cantidad no cambia al otorgarla.
+          </p>
 
           <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-4">
             <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-neutral-400">
@@ -263,25 +414,35 @@ function ResolvePlanModal({ plan, taxpayerName, onClose, onDone }) {
               <div>
                 <p className="text-[12px] text-neutral-400">Cuotas</p>
                 <p className="text-[18px] font-bold tabular-nums text-[#0F2C59]">
-                  {simulation.installments}
+                  {plan.installments}
                 </p>
               </div>
               <div>
                 <p className="text-[12px] text-neutral-400">Valor cuota</p>
                 <p className="text-[18px] font-bold tabular-nums text-[#0F2C59]">
-                  {formatCurrency(simulation.installmentAmount)}
+                  {formatCurrency(installmentAmount)}
                 </p>
               </div>
               <div>
                 <p className="text-[12px] text-neutral-400">Total con interés</p>
                 <p className="text-[18px] font-bold tabular-nums text-[#D63031]">
-                  {formatCurrency(simulation.totalAmount)}
+                  {formatCurrency(plan.totalAmount)}
                 </p>
               </div>
             </div>
+            {plan.downPayment > 0 && (
+              <div className="mt-3 flex items-center justify-between border-t border-neutral-200 pt-3 text-[13px]">
+                <span className="text-neutral-500">
+                  Anticipo mínimo estimado
+                </span>
+                <span className="font-semibold tabular-nums text-neutral-800">
+                  {formatCurrency(plan.downPayment)}
+                </span>
+              </div>
+            )}
             <p className="mt-3 text-[12px] text-neutral-400">
-              Interés aplicado: {(simulation.interestRate * 100).toFixed(0)}% sobre la deuda
-              consolidada.
+              Interés estimado: {formatCurrency(interestAmount)} sobre{" "}
+              {formatCurrency(financedAmount)} financiados. El monto definitivo se confirma al otorgar.
             </p>
           </div>
         </>

@@ -2,8 +2,8 @@ import { useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import FeatureCard from "../components/ui/FeatureCard.jsx";
 import Alert from "../components/ui/Alert.jsx";
-import Spinner from "../components/ui/Spinner.jsx";
-import PageHeader from "../components/ui/PageHeader.jsx";
+import DashboardLoading from "../components/common/DashboardLoading.jsx";
+import PageHeader from "../components/layout/WorkspaceHeader.jsx";
 import StatTile from "../components/common/StatTile.jsx";
 import { modulesForRole } from "../config/modules.js";
 import { dashboardService } from "../services/rentasService.js";
@@ -15,11 +15,23 @@ import { formatCurrency } from "../lib/format.js";
 export default function DashboardPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const loader = useCallback(() => dashboardService.metrics(), []);
+  const loader = useCallback(() => dashboardService.metrics(user.role), [user.role]);
   const { data: metrics, loading, error } = useResource(loader);
 
   const modules = modulesForRole(user.role);
   const firstName = user.fullName.split(" ")[0];
+  const pendingRequests = metrics?.planes == null || metrics?.exenciones == null
+    ? null
+    : metrics.planes + metrics.exenciones;
+  const supervisionQueues = metrics ? [
+    { id: "planes", label: "Planes excepcionales", path: "/rentas/planes", iconName: "CalendarClock", count: metrics.planes },
+    { id: "exenciones", label: "Exenciones", path: "/rentas/exenciones", iconName: "ShieldCheck", count: metrics.exenciones },
+    { id: "ajustes", label: "Ajustes", path: "/rentas/ajustes", iconName: "SlidersHorizontal", count: metrics.ajustes },
+    { id: "refinanciacion", label: "Refinanciaciones", path: "/rentas/refinanciacion", iconName: "RefreshCw", count: metrics.refinanciacion },
+    { id: "reversiones", label: "Reversiones", path: "/rentas/reversiones", iconName: "Undo2", count: metrics.reversiones },
+    { id: "corridas", label: "Corridas masivas", path: "/rentas/corridas-masivas", iconName: "Layers", count: metrics.corridas },
+    { id: "caducidades", label: "Caducidades", path: "/rentas/caducidades", iconName: "CalendarX", count: metrics.caducidades },
+  ] : [];
 
   return (
     <>
@@ -30,45 +42,65 @@ export default function DashboardPage() {
         description="Prioridades de la jornada y acceso directo a cada módulo del área."
       />
 
-      <div className="mx-auto flex max-w-6xl flex-col gap-8 px-5 py-8">
+      <div className="workspace-container workspace-content workspace-dashboard">
         {error && <Alert variant="error" title="No pudimos cargar el panel">{error}</Alert>}
 
         {loading ? (
-          <div className="flex items-center justify-center gap-3 py-10">
-            <Spinner />
-            <span className="text-[13px] text-neutral-400">Calculando métricas…</span>
-          </div>
+          <DashboardLoading label="Calculando métricas…" />
         ) : (
           metrics && (
             <>
-              <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <section className="workspace-metrics" aria-label="Resumen de Rentas">
                 <StatTile
                   label="Deuda vencida"
                   value={formatCurrency(metrics.totalOverdueAmount)}
-                  hint={`${metrics.deudas} deudas en mora`}
+                  hint={metrics.deudas == null ? "Cantidad no disponible" : `${metrics.deudas} ${metrics.deudas === 1 ? "deuda" : "deudas"} en mora`}
                   iconName="TrendingDown"
                   tone="danger"
                 />
                 <StatTile
-                  label="Pagos sin imputar"
-                  value={metrics.unallocatedPayments}
+                  label="Monto pendiente de imputación"
+                  value={formatCurrency(metrics.unallocatedPaymentAmount)}
                   hint="Requieren imputación manual"
                   iconName="Banknote"
-                  tone={metrics.unallocatedPayments > 0 ? "danger" : "success"}
+                  tone={metrics.unallocatedPaymentAmount == null ? "neutral" : metrics.unallocatedPaymentAmount > 0 ? "danger" : "success"}
                 />
                 <StatTile
                   label="Solicitudes pendientes"
-                  value={metrics.planes + metrics.exenciones}
-                  hint={`${metrics.planes} planes · ${metrics.exenciones} exenciones`}
+                  value={pendingRequests ?? "No disponible"}
+                  hint={pendingRequests == null ? "Datos no disponibles" : `${metrics.planes} planes · ${metrics.exenciones} exenciones`}
                   iconName="ClipboardList"
                 />
                 <StatTile
                   label="Tickets abiertos"
-                  value={metrics.tickets}
+                  value={metrics.tickets ?? "No disponible"}
                   hint="Derivados por Atención Ciudadana"
                   iconName="MessageSquare"
                 />
               </section>
+
+              {user.role === "SUPERVISOR" && (
+                <section className="flex flex-col gap-4">
+                  <div>
+                    <h2 className="text-[15px] font-semibold text-[#0F2C59]">Pendientes de supervisión</h2>
+                    <p className="text-[13px] text-neutral-400">Abrí cada indicador para ir directamente a su bandeja.</p>
+                  </div>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                    {supervisionQueues.map((queue) => (
+                      <FeatureCard
+                        key={queue.id}
+                        title={queue.label}
+                        description="Solicitudes que requieren una decisión."
+                        iconName={queue.iconName}
+                        itemCount={queue.count ?? "No disponible"}
+                        itemCountLabel={queue.count == null ? "" : "pendientes"}
+                        badge={queue.count > 0 ? { text: "Requiere atención", className: "bg-red-50 text-red-800" } : undefined}
+                        onClick={() => navigate(queue.path)}
+                      />
+                    ))}
+                  </div>
+                </section>
+              )}
 
               <section className="flex flex-col gap-4">
                 <div>
@@ -76,19 +108,20 @@ export default function DashboardPage() {
                     Módulos del área
                   </h2>
                   <p className="text-[13px] text-neutral-400">
-                    El orden sigue el flujo operativo: liquidación → deuda → boleta → pago.
+                    Tus herramientas para gestionar los tributos del municipio.
                   </p>
                 </div>
 
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                <div className="workspace-directory">
                   {modules.map((module) => (
                     <FeatureCard
                       key={module.id}
+                      className="workspace-module-link"
                       title={module.label}
                       description={module.description}
                       iconName={module.iconName}
-                      itemCount={metrics[module.id]}
-                      itemCountLabel={module.countLabel}
+                      itemCount={metrics[module.id] ?? "No disponible"}
+                      itemCountLabel={metrics[module.id] == null ? "" : module.countLabel}
                       badge={
                         module.roles.length === 1
                           ? { text: "Supervisor", className: "bg-[#0F2C59]/5 text-[#0F2C59]" }

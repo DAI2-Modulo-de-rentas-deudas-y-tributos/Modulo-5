@@ -1,91 +1,82 @@
+import { useEffect, useRef } from "react";
 import { NavLink } from "react-router-dom";
-import { icons, X } from "lucide-react";
+import { icons, LayoutDashboard, X } from "lucide-react";
 import logo from "../../assets/logo.png";
-import { modulesForRole } from "../../config/modules.js";
-import { useAuth } from "../../context/AuthContext.jsx";
 
-/** Navegación lateral del área de trabajo: un ítem por módulo funcional. */
-export default function Sidebar({ open, onClose }) {
-  const { user } = useAuth();
-  const modules = modulesForRole(user.role);
+export default function Sidebar({
+  open, onClose, modules = [], homePath, homeLabel = "Panel de inicio",
+  areaTag, sectionLabel = "Operación", footerLines = [],
+}) {
+  const sidebarRef = useRef(null);
 
-  const linkClasses = ({ isActive }) =>
-    `flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium transition-colors ${
-      isActive
-        ? "bg-white/10 text-white"
-        : "text-white/60 hover:bg-white/5 hover:text-white"
-    }`;
+  useEffect(() => {
+    if (!open) return undefined;
+    const previousFocus = document.activeElement;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    sidebarRef.current?.querySelector("button")?.focus();
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") onClose();
+      if (event.key !== "Tab") return;
+      const items = sidebarRef.current?.querySelectorAll("a, button");
+      const first = items?.[0];
+      const last = items?.[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
+      }
+    };
+    const onResize = () => { if (window.innerWidth >= 1024) onClose(); };
+    document.addEventListener("keydown", onKeyDown);
+    window.addEventListener("resize", onResize);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("resize", onResize);
+      previousFocus?.focus();
+    };
+  }, [open, onClose]);
+
+  const linkClasses = ({ isActive }) => `workspace-nav-link${isActive ? " is-active" : ""}`;
 
   return (
     <>
-      {open && (
-        <div
-          className="fixed inset-0 z-30 bg-[#0F2C59]/40 lg:hidden"
-          onClick={onClose}
-          aria-hidden="true"
-        />
-      )}
-
-      <aside
-        className={`fixed inset-y-0 left-0 z-40 flex w-64 shrink-0 flex-col bg-[#0F2C59] transition-transform duration-300 lg:sticky lg:top-0 lg:h-screen lg:translate-x-0 ${
-          open ? "translate-x-0" : "-translate-x-full"
-        }`}
-      >
-        <div className="flex items-center justify-between gap-2 px-5 py-5">
-          <div className="flex items-center gap-2">
-            <img src={logo} alt="Ciudad UADE" className="h-6 w-auto object-contain" />
-            <div className="leading-tight">
-              <p className="text-[13px] font-bold text-white">Ciudad UADE</p>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-white/40">
-                Rentas
-              </p>
-            </div>
+      {open && <div className="workspace-nav-backdrop" onClick={onClose} aria-hidden="true" />}
+      <aside ref={sidebarRef} id="workspace-navigation" className={`workspace-sidebar${open ? " is-open" : ""}`}
+        role={open ? "dialog" : undefined} aria-modal={open || undefined} aria-label={open ? `Menú de ${areaTag}` : undefined}>
+        <div className="workspace-brand">
+          <img src={logo} alt="" width="38" height="38" />
+          <div>
+            <p>Ciudad UADE</p>
+            <span>Dirección General de Rentas</span>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded p-1 text-white/60 hover:bg-white/10 lg:hidden"
-            aria-label="Cerrar menú"
-          >
-            <X className="h-4 w-4" strokeWidth={2} />
+          <button type="button" onClick={onClose} className="workspace-menu-close" aria-label="Cerrar menú">
+            <X size={19} aria-hidden="true" />
           </button>
         </div>
-
-        <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 pb-6">
-          <NavLink to="/rentas" end className={linkClasses} onClick={onClose}>
-            {(() => {
-              const Icon = icons.LayoutDashboard;
-              return <Icon className="h-4 w-4 shrink-0" strokeWidth={1.5} />;
-            })()}
-            Panel de inicio
+        <div className="workspace-area-tag"><span />{areaTag}</div>
+        <nav aria-label={`Navegación de ${areaTag}`} className="workspace-navigation sidebar-nav">
+          <NavLink to={homePath} end className={linkClasses} onClick={onClose}>
+            <LayoutDashboard size={18} strokeWidth={1.6} aria-hidden="true" />
+            <span>{homeLabel}</span>
           </NavLink>
-
-          <p className="mt-4 px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.15em] text-white/30">
-            Operación
-          </p>
-
+          <p className="workspace-nav-label">{sectionLabel}</p>
           {modules.map((module) => {
             const Icon = icons[module.iconName];
             return (
-              <NavLink
-                key={module.id}
-                to={module.path}
-                className={linkClasses}
-                onClick={onClose}
-              >
-                {Icon && <Icon className="h-4 w-4 shrink-0" strokeWidth={1.5} />}
-                {module.label}
+              <NavLink key={module.id} to={module.path} className={linkClasses} onClick={onClose}>
+                {Icon && <Icon size={18} strokeWidth={1.6} aria-hidden="true" />}
+                <span>{module.label}</span>
               </NavLink>
             );
           })}
         </nav>
-
-        <div className="border-t border-white/10 px-5 py-4">
-          <p className="text-[11px] text-white/40 leading-relaxed">
-            Módulo 5 — Rentas
-            <br />
-            Gestión 2026
-          </p>
+        <div className="workspace-sidebar-footer">
+          {footerLines.map((line) => <p key={line}>{line}</p>)}
+          <span>Cerca tuyo. También en línea.</span>
         </div>
       </aside>
     </>

@@ -64,7 +64,7 @@ Publicar al broker dentro de la transacción sería frágil: la base podría con
 
 ## 9. Seguridad local y real
 
-El perfil `dev` acepta headers `X-Dev-User`, `X-Dev-Roles` y `X-Dev-Taxpayer-Id`. Es un adapter visible y aislado para aprender/probar. El perfil normal tiene `dev-mode: false`; allí debe integrarse el JWT del Core. Nunca hay contraseñas propias de M5.
+Con `RENTAS_SECURITY_DEV_MODE=true`, el modo DEMO autentica contra `demo_user` en PostgreSQL y usa sesiones opacas en `X-Demo-Session`. Los roles y el contribuyente asociado salen del servidor; el navegador no puede elegirlos. El perfil normal mantiene `dev-mode: false`; allí queda pendiente integrar el JWT del Core. Las contraseñas y el secreto de bootstrap se configuran fuera de Git.
 
 El rol `AUDITOR` sólo aparece en endpoints de lectura. El rol `TAXPAYER` además pasa por `requireOwnership`: no alcanza con mandar otro `taxpayerId` en la URL.
 

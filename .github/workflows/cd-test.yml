@@ -4,15 +4,20 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: "Accion de Terraform; plan no crea recursos"
+        description: "Accion de Terraform; plan no crea recursos y destroy elimina TEST"
         required: true
         default: plan
         type: choice
         options:
           - plan
           - apply
+          - destroy
       confirmation:
-        description: "Para apply escribir exactamente DEPLOY_TEST"
+        description: "Para apply: DEPLOY_TEST. Para destroy: DESTROY_TEST"
+        required: false
+        type: string
+      destroy_data_confirmation:
+        description: "Para destroy confirmar la perdida de datos con DELETE_TEST_DATA"
         required: false
         type: string
 
@@ -44,25 +49,28 @@ jobs:
       AWS_REGION: ${{ vars.AWS_REGION }}
       REQUESTED_OPERATION: ${{ inputs.operation }}
       APPLY_CONFIRMATION: ${{ inputs.confirmation }}
+      DESTROY_DATA_CONFIRMATION: ${{ inputs.destroy_data_confirmation }}
+      TF_VAR_budget_alert_email: ${{ vars.BUDGET_ALERT_EMAIL }}
+      TF_VAR_backend_secret_variables: ${{ vars.TEST_BACKEND_SECRET_ARNS || '{}' }}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v4
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_version: "1.15.8"
           terraform_wrapper: false
 
       - name: Configure temporary AWS credentials
-        uses: aws-actions/configure-aws-credentials@v6.2.3
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
-          allowed-account-ids: "060712744495"
+          allowed-account-ids: "756663253996"
           mask-aws-account-id: true
           role-session-name: terraform-test-${{ github.run_id }}
 
@@ -71,15 +79,42 @@ jobs:
           set -euo pipefail
           : "${TF_STATE_BUCKET:?Missing TF_STATE_BUCKET in the test environment}"
           : "${TF_STATE_KEY:?Missing TF_STATE_KEY in the test environment}"
+          if [[ "${REQUESTED_OPERATION}" != "destroy" ]]; then
+            jq -e 'has("RENTAS_DEMO_BOOTSTRAP_PASSWORD") and has("CORE_MODULE_SECRET")' \
+              <<< "${TF_VAR_backend_secret_variables}" > /dev/null || {
+                echo "TEST_BACKEND_SECRET_ARNS must include DEMO and Core secret references."
+                exit 1
+              }
+          fi
           : "${AWS_REGION:?Missing AWS_REGION in the test environment}"
 
       - name: Validate requested operation
         run: |
           set -euo pipefail
-          if [[ "${REQUESTED_OPERATION}" == "apply" && "${APPLY_CONFIRMATION}" != "DEPLOY_TEST" ]]; then
-            echo "Apply requires confirmation DEPLOY_TEST."
-            exit 1
-          fi
+          case "${REQUESTED_OPERATION}" in
+            plan)
+              ;;
+            apply)
+              if [[ "${APPLY_CONFIRMATION}" != "DEPLOY_TEST" ]]; then
+                echo "Apply requires confirmation DEPLOY_TEST."
+                exit 1
+              fi
+              ;;
+            destroy)
+              if [[ "${APPLY_CONFIRMATION}" != "DESTROY_TEST" ]]; then
+                echo "Destroy requires confirmation DESTROY_TEST."
+                exit 1
+              fi
+              if [[ "${DESTROY_DATA_CONFIRMATION}" != "DELETE_TEST_DATA" ]]; then
+                echo "Destroy requires data confirmation DELETE_TEST_DATA."
+                exit 1
+              fi
+              ;;
+            *)
+              echo "Unsupported operation: ${REQUESTED_OPERATION}"
+              exit 1
+              ;;
+          esac
 
       - name: Initialize remote state
         run: |
@@ -94,11 +129,20 @@ jobs:
         run: terraform validate -no-color
 
       - name: Plan
+        if: inputs.operation != 'destroy'
         run: terraform plan -input=false -lock-timeout=5m -no-color -out=test.tfplan
+
+      - name: Plan complete TEST destruction
+        if: inputs.operation == 'destroy'
+        run: terraform plan -destroy -input=false -lock-timeout=5m -no-color -out=test-destroy.tfplan
 
       - name: Apply
         if: inputs.operation == 'apply'
         run: terraform apply -input=false -lock-timeout=5m -auto-approve test.tfplan
+
+      - name: Destroy TEST
+        if: inputs.operation == 'destroy'
+        run: terraform apply -input=false -lock-timeout=5m -auto-approve test-destroy.tfplan
 
       - name: Publish plan summary
         if: inputs.operation == 'plan'
@@ -121,4 +165,13 @@ jobs:
             echo '```'
           } >> "${GITHUB_STEP_SUMMARY}"
 
+      - name: Publish destruction summary
+        if: inputs.operation == 'destroy'
+        run: |
+          {
+            echo "### AWS TEST eliminado"
+            echo
+            echo "La infraestructura y los datos descartables de TEST fueron eliminados."
+            echo "El estado remoto de Terraform y el bootstrap de IAM se conservaron."
+          } >> "${GITHUB_STEP_SUMMARY}"
 

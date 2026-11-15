@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { Download } from "lucide-react";
+import BillPdfDownload from "../../components/documentos/BillPdfDownload.jsx";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
 import Card from "../../components/common/Card.jsx";
 import DataTable from "../../components/common/DataTable.jsx";
@@ -14,10 +14,7 @@ import useTaxpayerIndex from "../../hooks/useTaxpayerIndex.js";
 import { billService, debtService } from "../../services/rentasService.js";
 import { formatCurrency, formatDate, formatDateTime } from "../../lib/format.js";
 
-/**
- * Boletas: el PDF se almacena en S3 y la base sólo guarda la referencia
- * (`documentUrl`), nunca el binario.
- */
+/** Boletas emitidas y descarga del documento generado por el backend. */
 export default function BoletasPage() {
   const [status, setStatus] = useState("");
   const [issuing, setIssuing] = useState(false);
@@ -54,14 +51,7 @@ export default function BoletasPage() {
       header: "",
       align: "right",
       render: (row) => (
-        <a
-          href={row.documentUrl}
-          title={row.documentUrl}
-          className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#0F2C59] hover:text-[#D63031] transition-colors"
-        >
-          <Download className="h-3.5 w-3.5" strokeWidth={2} />
-          PDF
-        </a>
+        <BillPdfDownload billId={row.id} />
       ),
     },
   ];
@@ -83,7 +73,7 @@ export default function BoletasPage() {
 
       <Card
         title="Boletas emitidas"
-        description="Los documentos viven en S3; la base guarda sólo la referencia."
+        description="Consultá y descargá las boletas emitidas."
         actions={
           <Button size="sm" variant="primary" onClick={() => setIssuing(true)}>
             Emitir boleta

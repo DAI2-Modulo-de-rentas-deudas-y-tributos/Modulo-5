@@ -1,0 +1,83 @@
+name: Estabilidad de la suite
+
+# Eje B, tests inestables: la suite de backend y frontend corre 3 veces sobre el mismo commit y las
+# tres tienen que dar el mismo resultado (todas en verde). Semanal, al crear un tag y a pedido.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 8 * * 1" # lunes 05:00 (Argentina)
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  suite:
+    name: corrida ${{ matrix.corrida }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        corrida: [1, 2, 3]
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: rentas
+          POSTGRES_USER: rentas
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rentas -d rentas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/rentas
+      SPRING_DATASOURCE_USERNAME: rentas
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Java
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+          cache-dependency-path: backend/pom.xml
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Backend
+        run: mvn -B -ntp verify --file backend/pom.xml
+
+      - name: Frontend
+        working-directory: frontend
+        run: |
+          npm ci --ignore-scripts
+          npm test
+
+  resultado:
+    name: resultado idéntico en las 3 corridas
+    needs: suite
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Las tres corridas terminaron en verde
+        env:
+          RESULT: ${{ needs.suite.result }}
+        run: |
+          echo "Resultado de la matriz: $RESULT"
+          [ "$RESULT" = success ]

@@ -7,6 +7,7 @@ locals {
 
   dev_state_key  = "environments/dev/terraform.tfstate"
   test_state_key = "environments/test/terraform.tfstate"
+  prod_state_key = "environments/prod/terraform.tfstate"
 }
 
 resource "aws_iam_openid_connect_provider" "github" {
@@ -77,6 +78,34 @@ data "aws_iam_policy_document" "github_test_trust" {
   }
 }
 
+data "aws_iam_policy_document" "github_prod_trust" {
+  statement {
+    sid     = "GitHubActionsProd"
+    effect  = "Allow"
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+
+    principals {
+      type        = "Federated"
+      identifiers = [aws_iam_openid_connect_provider.github.arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringLike"
+      variable = "token.actions.githubusercontent.com:sub"
+      values = [
+        "${local.github_legacy_subject_prefix}:environment:${var.github_prod_environment}",
+        "${local.github_immutable_subject_prefix}:environment:${var.github_prod_environment}"
+      ]
+    }
+  }
+}
+
 resource "aws_iam_role" "github_dev" {
   name                 = "${var.project_name}-github-dev-deploy"
   description          = "Rol de GitHub Actions para desplegar el ambiente DEV."
@@ -96,6 +125,17 @@ resource "aws_iam_role" "github_test" {
 
   tags = {
     GitHubEnvironment = var.github_test_environment
+  }
+}
+
+resource "aws_iam_role" "github_prod" {
+  name                 = "${var.project_name}-github-prod-deploy"
+  description          = "Rol de GitHub Actions para desplegar el ambiente PROD."
+  assume_role_policy   = data.aws_iam_policy_document.github_prod_trust.json
+  max_session_duration = 3600
+
+  tags = {
+    GitHubEnvironment = var.github_prod_environment
   }
 }
 
@@ -177,6 +217,45 @@ data "aws_iam_policy_document" "github_test_state" {
   }
 }
 
+data "aws_iam_policy_document" "github_prod_state" {
+  statement {
+    sid       = "GetBucketLocation"
+    actions   = ["s3:GetBucketLocation"]
+    resources = [aws_s3_bucket.terraform_state.arn]
+  }
+
+  statement {
+    sid       = "ListProdState"
+    actions   = ["s3:ListBucket"]
+    resources = [aws_s3_bucket.terraform_state.arn]
+
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values   = ["environments/prod/*"]
+    }
+  }
+
+  statement {
+    sid = "ReadWriteProdState"
+    actions = [
+      "s3:GetObject",
+      "s3:PutObject"
+    ]
+    resources = ["${aws_s3_bucket.terraform_state.arn}/${local.prod_state_key}"]
+  }
+
+  statement {
+    sid = "ManageProdStateLock"
+    actions = [
+      "s3:GetObject",
+      "s3:PutObject",
+      "s3:DeleteObject"
+    ]
+    resources = ["${aws_s3_bucket.terraform_state.arn}/${local.prod_state_key}.tflock"]
+  }
+}
+
 resource "aws_iam_role_policy" "github_dev_state" {
   name   = "terraform-state-dev"
   role   = aws_iam_role.github_dev.id
@@ -189,3 +268,38 @@ resource "aws_iam_role_policy" "github_test_state" {
   policy = data.aws_iam_policy_document.github_test_state.json
 }
 
+resource "aws_iam_role_policy" "github_prod_state" {
+  name   = "terraform-state-prod"
+  role   = aws_iam_role.github_prod.id
+  policy = data.aws_iam_policy_document.github_prod_state.json
+}
+
+# DEV y TEST administran RDS, ALB, VPC y CloudFront sobre "*". Esta denegación
+# explícita impide que esos roles modifiquen o borren recursos de PROD, que
+# comparten la cuenta y llevan la etiqueta Environment=prod.
+data "aws_iam_policy_document" "deny_prod_resources" {
+  statement {
+    sid       = "DenyProdTaggedResources"
+    effect    = "Deny"
+    actions   = ["*"]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Environment"
+      values   = ["prod"]
+    }
+  }
+}
+
+resource "aws_iam_role_policy" "github_dev_deny_prod" {
+  name   = "deny-prod-resources"
+  role   = aws_iam_role.github_dev.id
+  policy = data.aws_iam_policy_document.deny_prod_resources.json
+}
+
+resource "aws_iam_role_policy" "github_test_deny_prod" {
+  name   = "deny-prod-resources"
+  role   = aws_iam_role.github_test.id
+  policy = data.aws_iam_policy_document.deny_prod_resources.json
+}

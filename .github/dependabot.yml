@@ -1,0 +1,13 @@
+# Las acciones se fijan por SHA (SCRUM-800); Dependabot abre un único PR semanal que
+# actualiza los SHA y su comentario de versión.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    target-branch: develop
+    groups:
+      github-actions:
+        patterns:
+          - "*"

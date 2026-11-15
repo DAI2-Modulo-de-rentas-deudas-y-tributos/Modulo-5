@@ -1,0 +1,241 @@
+name: Deploy backend AWS
+
+# Etapa reutilizable de cd-dev.yml (DEV efímero) y cd-prod.yml (PROD persistente).
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "Ambiente destino: dev o prod"
+        required: true
+        type: string
+      amplify_branch:
+        description: "Rama de Amplify del ambiente: develop o main"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    name: deploy-backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment: ${{ inputs.environment }}
+
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ACCOUNT_ID: "756663253996"
+      ECR_REPOSITORY: "modulo-5-rentas-${{ inputs.environment }}-backend"
+      ECS_CLUSTER: "modulo-5-rentas-${{ inputs.environment }}-cluster"
+      ECS_SERVICE: "modulo-5-rentas-${{ inputs.environment }}-backend"
+      ECS_TASK_FAMILY: "modulo-5-rentas-${{ inputs.environment }}-backend"
+      ECS_CONTAINER_NAME: "backend"
+      AMPLIFY_APP_NAME: "modulo-5-rentas-${{ inputs.environment }}-frontend"
+      AMPLIFY_BRANCH: ${{ inputs.amplify_branch }}
+      TARGET_ENVIRONMENT: ${{ inputs.environment }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Configure temporary AWS credentials
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: "756663253996"
+          mask-aws-account-id: true
+          role-session-name: backend-${{ inputs.environment }}-${{ github.run_id }}
+
+      - name: Check environment variables
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${AWS_REGION:?Missing AWS_REGION in the ${TARGET_ENVIRONMENT} environment}"
+
+      - name: Resolve frontend origin
+        id: frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_id=$(aws amplify list-apps \
+            --query "apps[?name=='${AMPLIFY_APP_NAME}'].appId | [0]" \
+            --output text)
+          if [[ -z "${app_id}" || "${app_id}" == "None" ]]; then
+            echo "Amplify app ${AMPLIFY_APP_NAME} was not found."
+            exit 1
+          fi
+          default_domain=$(aws amplify get-app \
+            --app-id "${app_id}" \
+            --query 'app.defaultDomain' \
+            --output text)
+          if [[ -z "${default_domain}" || "${default_domain}" == "None" ]]; then
+            echo "Amplify app does not expose a default domain."
+            exit 1
+          fi
+          echo "origin=https://${AMPLIFY_BRANCH}.${default_domain}" >> "${GITHUB_OUTPUT}"
+
+      - name: Login to Amazon ECR
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws ecr get-login-password --region "${AWS_REGION}" \
+            | docker login \
+                --username AWS \
+                --password-stdin \
+                "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+      - name: Build and publish immutable image
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          image_uri="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${GITHUB_SHA}"
+
+          if aws ecr describe-images \
+            --repository-name "${ECR_REPOSITORY}" \
+            --image-ids imageTag="${GITHUB_SHA}" > /dev/null 2>&1; then
+            echo "Image already exists; reusing ${image_uri}."
+          else
+            docker build --pull --tag "${image_uri}" backend
+            docker push "${image_uri}"
+          fi
+
+          echo "uri=${image_uri}" >> "${GITHUB_OUTPUT}"
+
+      - name: Register task definition revision
+        id: task
+        shell: bash
+        env:
+          IMAGE_URI: ${{ steps.image.outputs.uri }}
+          FRONTEND_ORIGIN: ${{ steps.frontend.outputs.origin }}
+        run: |
+          set -euo pipefail
+
+          aws ecs describe-task-definition \
+            --task-definition "${ECS_TASK_FAMILY}" \
+            --query taskDefinition \
+            > "${RUNNER_TEMP}/task-definition.json"
+
+          jq \
+            --arg image "${IMAGE_URI}" \
+            --arg container "${ECS_CONTAINER_NAME}" \
+            --arg frontend_origin "${FRONTEND_ORIGIN}" \
+            'del(
+              .taskDefinitionArn,
+              .revision,
+              .status,
+              .requiresAttributes,
+              .compatibilities,
+              .registeredAt,
+              .registeredBy
+            )
+            | (.containerDefinitions[] | select(.name == $container)) |= (
+                .image = $image
+                | .environment = (
+                    ((.environment // []) | map(select(.name != "CORS_ALLOWED_ORIGINS")))
+                    + [{name: "CORS_ALLOWED_ORIGINS", value: $frontend_origin}]
+                  )
+              )' \
+            "${RUNNER_TEMP}/task-definition.json" \
+            > "${RUNNER_TEMP}/task-definition-rendered.json"
+
+          demo_mode=$(jq -r \
+            --arg container "${ECS_CONTAINER_NAME}" \
+            '.containerDefinitions[] | select(.name == $container)
+             | (.environment // []) | map(select(.name == "RENTAS_SECURITY_DEV_MODE"))
+             | first | .value // empty' \
+            "${RUNNER_TEMP}/task-definition-rendered.json")
+
+          if [[ -z "${demo_mode}" ]]; then
+            echo "La definicion de tarea no declara RENTAS_SECURITY_DEV_MODE."
+            echo "Terraform es la unica fuente de esa variable: aplicar infra/environments/${TARGET_ENVIRONMENT} antes de desplegar."
+            echo "Sin ella el backend arranca saludable pero no expone /api/v1/dev-auth/*."
+            exit 1
+          fi
+          echo "RENTAS_SECURITY_DEV_MODE=${demo_mode} heredado de la definicion administrada por Terraform."
+
+          task_definition_arn=$(aws ecs register-task-definition \
+            --cli-input-json "file://${RUNNER_TEMP}/task-definition-rendered.json" \
+            --query taskDefinition.taskDefinitionArn \
+            --output text)
+
+          echo "arn=${task_definition_arn}" >> "${GITHUB_OUTPUT}"
+
+      - name: Deploy service and wait until stable
+        shell: bash
+        env:
+          TASK_DEFINITION_ARN: ${{ steps.task.outputs.arn }}
+        run: |
+          set -euo pipefail
+
+          aws ecs update-service \
+            --cluster "${ECS_CLUSTER}" \
+            --service "${ECS_SERVICE}" \
+            --task-definition "${TASK_DEFINITION_ARN}" \
+            --desired-count 1 \
+            --force-new-deployment \
+            > /dev/null
+
+          aws ecs wait services-stable \
+            --cluster "${ECS_CLUSTER}" \
+            --services "${ECS_SERVICE}"
+
+          # El waiter valida las tareas, pero no espera rolloutState=COMPLETED.
+          # IN_PROGRESS requiere otra consulta; la revision anterior indica rollback.
+          for attempt in {1..60}; do
+            deployment=$(aws ecs describe-services \
+              --cluster "${ECS_CLUSTER}" \
+              --services "${ECS_SERVICE}" \
+              --query 'services[0].deployments[?status==`PRIMARY`] | [0].[taskDefinition, rolloutState]' \
+              --output text)
+            read -r primary_task_definition rollout_state <<< "${deployment}"
+            if [[ "${primary_task_definition}" != "${TASK_DEFINITION_ARN}" || "${rollout_state}" == "FAILED" ]]; then
+              echo "El despliegue ECS fallo o fue revertido: ${primary_task_definition} (${rollout_state}); esperada ${TASK_DEFINITION_ARN}."
+              exit 1
+            fi
+            case "${rollout_state}" in
+              COMPLETED)
+                echo "ECS completo el despliegue de ${TASK_DEFINITION_ARN}."
+                exit 0
+                ;;
+              IN_PROGRESS)
+                echo "ECS sigue desplegando ${TASK_DEFINITION_ARN} (consulta ${attempt}/60)."
+                ;;
+              *)
+                echo "ECS devolvio un estado de despliegue inesperado: ${rollout_state}."
+                exit 1
+                ;;
+            esac
+            if (( attempt < 60 )); then sleep 10; fi
+          done
+          echo "Tiempo agotado esperando COMPLETED para ${TASK_DEFINITION_ARN}."
+          exit 1
+
+      - name: Publish deployment summary
+        shell: bash
+        env:
+          IMAGE_URI: ${{ steps.image.outputs.uri }}
+          TASK_DEFINITION_ARN: ${{ steps.task.outputs.arn }}
+        run: |
+          {
+            echo "### Backend ${TARGET_ENVIRONMENT^^} desplegado"
+            echo
+            echo "- Image: \`${IMAGE_URI}\`"
+            echo "- Task definition: \`${TASK_DEFINITION_ARN}\`"
+            echo "- Service: \`${ECS_SERVICE}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Show ECS diagnostics on failure
+        if: failure()
+        shell: bash
+        run: |
+          aws ecs describe-services \
+            --cluster "${ECS_CLUSTER}" \
+            --services "${ECS_SERVICE}" \
+            --query 'services[0].events[:10]' \
+            --output table || true

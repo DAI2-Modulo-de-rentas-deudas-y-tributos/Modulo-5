@@ -1,2 +1,2 @@
 logging.level.ar.gob.municipalidad.rentas: INFO
-rentas.security.dev-mode: true
+rentas.security.dev-mode: ${RENTAS_SECURITY_DEV_MODE:false}

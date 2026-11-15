@@ -6,6 +6,18 @@ data "aws_cloudfront_origin_request_policy" "all_viewer_except_host_header" {
   name = "Managed-AllViewerExceptHostHeader"
 }
 
+# HSTS, nosniff, X-Frame-Options y Referrer-Policy en las respuestas de la API (SCRUM-798).
+data "aws_cloudfront_response_headers_policy" "security_headers" {
+  name = "Managed-SecurityHeadersPolicy"
+}
+
+# El security group admite a cualquier distribución de CloudFront; el ALB sólo reenvía los
+# requests que traen este header, que únicamente nuestra distribución conoce (SCRUM-791).
+resource "random_password" "origin_verify" {
+  length  = 48
+  special = false
+}
+
 resource "aws_lb" "api" {
   name                       = "${var.name_prefix}-api"
   internal                   = false
@@ -14,6 +26,14 @@ resource "aws_lb" "api" {
   subnets                    = var.public_subnet_ids
   drop_invalid_header_fields = true
   enable_deletion_protection = var.deletion_protection
+  xff_header_processing_mode = "append"
+  enable_xff_client_port     = false
+
+  access_logs {
+    bucket  = var.access_logs_bucket == null ? "" : var.access_logs_bucket
+    prefix  = var.access_logs_bucket == null ? null : "alb"
+    enabled = var.access_logs_bucket != null
+  }
 
   tags = {
     Name    = "${var.name_prefix}-api"
@@ -49,13 +69,95 @@ resource "aws_lb_target_group" "backend" {
 }
 
 resource "aws_lb_listener" "http" {
+  count = var.https_origin == null ? 1 : 0
+
   load_balancer_arn = aws_lb.api.arn
   port              = 80
   protocol          = "HTTP"
 
   default_action {
+    type = "fixed-response"
+
+    fixed_response {
+      content_type = "text/plain"
+      message_body = "Forbidden"
+      status_code  = "403"
+    }
+  }
+}
+
+moved {
+  from = aws_lb_listener.http
+  to   = aws_lb_listener.http[0]
+}
+
+data "aws_route53_zone" "origin" {
+  count = var.https_origin == null ? 0 : 1
+  name  = var.https_origin.zone
+}
+
+data "aws_acm_certificate" "origin" {
+  count    = var.https_origin == null ? 0 : 1
+  domain   = var.https_origin.domain
+  statuses = ["ISSUED"]
+}
+
+resource "aws_lb_listener" "https" {
+  count = var.https_origin == null ? 0 : 1
+
+  load_balancer_arn = aws_lb.api.arn
+  port              = 443
+  protocol          = "HTTPS"
+  ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+  certificate_arn   = data.aws_acm_certificate.origin[0].arn
+
+  default_action {
+    type = "fixed-response"
+    fixed_response {
+      content_type = "text/plain"
+      message_body = "Forbidden"
+      status_code  = "403"
+    }
+  }
+}
+
+moved {
+  from = aws_lb_listener.https
+  to   = aws_lb_listener.https[0]
+}
+
+resource "aws_route53_record" "origin" {
+  count   = var.https_origin == null ? 0 : 1
+  zone_id = data.aws_route53_zone.origin[0].zone_id
+  name    = var.https_origin.domain
+  type    = "A"
+
+  alias {
+    name                   = aws_lb.api.dns_name
+    zone_id                = aws_lb.api.zone_id
+    evaluate_target_health = false
+  }
+}
+
+moved {
+  from = aws_route53_record.origin
+  to   = aws_route53_record.origin[0]
+}
+
+resource "aws_lb_listener_rule" "from_cloudfront" {
+  listener_arn = var.https_origin == null ? aws_lb_listener.http[0].arn : aws_lb_listener.https[0].arn
+  priority     = 1
+
+  action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.backend.arn
+  }
+
+  condition {
+    http_header {
+      http_header_name = "X-Origin-Verify"
+      values           = [random_password.origin_verify.result]
+    }
   }
 }
 
@@ -67,15 +169,29 @@ resource "aws_cloudfront_distribution" "api" {
   http_version        = "http2and3"
   wait_for_deployment = false
 
+  dynamic "logging_config" {
+    for_each = var.access_logs_bucket[*]
+    content {
+      bucket          = "${logging_config.value}.s3.amazonaws.com"
+      include_cookies = false
+      prefix          = "cloudfront/"
+    }
+  }
+
   origin {
-    domain_name = aws_lb.api.dns_name
+    domain_name = var.https_origin == null ? aws_lb.api.dns_name : aws_route53_record.origin[0].fqdn
     origin_id   = "${var.name_prefix}-alb"
 
     custom_origin_config {
       http_port              = 80
       https_port             = 443
-      origin_protocol_policy = "http-only"
+      origin_protocol_policy = var.https_origin == null ? "http-only" : "https-only"
       origin_ssl_protocols   = ["TLSv1.2"]
+    }
+
+    custom_header {
+      name  = "X-Origin-Verify"
+      value = random_password.origin_verify.result
     }
   }
 
@@ -87,8 +203,9 @@ resource "aws_cloudfront_distribution" "api" {
     allowed_methods = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
     cached_methods  = ["GET", "HEAD", "OPTIONS"]
 
-    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
-    origin_request_policy_id = data.aws_cloudfront_origin_request_policy.all_viewer_except_host_header.id
+    cache_policy_id            = data.aws_cloudfront_cache_policy.caching_disabled.id
+    origin_request_policy_id   = data.aws_cloudfront_origin_request_policy.all_viewer_except_host_header.id
+    response_headers_policy_id = data.aws_cloudfront_response_headers_policy.security_headers.id
   }
 
   restrictions {

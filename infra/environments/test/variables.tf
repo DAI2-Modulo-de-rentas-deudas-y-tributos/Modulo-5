@@ -12,13 +12,13 @@ variable "project_name" {
 variable "aws_region" {
   description = "Region AWS donde se desplegara el ambiente."
   type        = string
-  default     = "sa-east-1"
+  default     = "us-east-2"
 }
 
 variable "aws_account_id" {
   description = "Cuenta AWS autorizada para recibir el despliegue."
   type        = string
-  default     = "060712744495"
+  default     = "756663253996"
 
   validation {
     condition     = can(regex("^[0-9]{12}$", var.aws_account_id))
@@ -47,7 +47,7 @@ variable "database_subnet_cidrs" {
 variable "ecr_images_to_keep" {
   description = "Cantidad de imagenes del backend conservadas en ECR."
   type        = number
-  default     = 20
+  default     = 5
 }
 
 variable "enable_container_insights" {
@@ -59,7 +59,49 @@ variable "enable_container_insights" {
 variable "log_retention_days" {
   description = "Dias de retencion de logs del backend."
   type        = number
-  default     = 14
+  default     = 7
+}
+
+variable "enable_nightly_shutdown" {
+  description = "Habilita el apagado automatico nocturno de ECS y RDS en TEST."
+  type        = bool
+  default     = true
+}
+
+variable "nightly_shutdown_timezone" {
+  description = "Zona horaria IANA utilizada por EventBridge Scheduler."
+  type        = string
+  default     = "America/Argentina/Buenos_Aires"
+
+  validation {
+    condition     = length(trimspace(var.nightly_shutdown_timezone)) > 0
+    error_message = "nightly_shutdown_timezone no puede estar vacia."
+  }
+}
+
+variable "test_monthly_budget_limit_usd" {
+  description = "Limite mensual en USD para el presupuesto de TEST."
+  type        = number
+  default     = 25
+
+  validation {
+    condition     = var.test_monthly_budget_limit_usd > 0
+    error_message = "test_monthly_budget_limit_usd debe ser mayor que cero."
+  }
+}
+
+variable "budget_alert_email" {
+  description = "Email opcional para alertas del presupuesto; se inyecta desde GitHub Environment."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = (
+      trimspace(var.budget_alert_email) == "" ||
+      can(regex("^[^@ ]+@[^@ ]+\\.[^@ ]+$", trimspace(var.budget_alert_email)))
+    )
+    error_message = "budget_alert_email debe estar vacio o contener un email valido."
+  }
 }
 
 variable "backend_container_port" {
@@ -84,6 +126,38 @@ variable "backend_task_memory" {
   description = "Memoria MiB de la tarea Fargate TEST."
   type        = number
   default     = 512
+}
+
+variable "backend_spring_profiles_active" {
+  description = "Perfil del backend en AWS TEST con autenticación DEMO."
+  type        = string
+  default     = "staging"
+}
+
+variable "backend_environment_variables" {
+  description = "Variables no sensibles del backend en TEST."
+  type        = map(string)
+  default = {
+    BROKER_ADAPTER           = "local-log"
+    CORE_HTTP_BASE_URL       = "https://core-uade-2026.duckdns.org"
+    OUTBOX_DELAY_MS          = "5000"
+    RENTAS_SECURITY_DEV_MODE = "true"
+  }
+}
+
+variable "backend_secret_variables" {
+  description = "Variables sensibles del backend referenciadas por ARN de Secrets Manager en TEST."
+  type        = map(string)
+  default     = {}
+}
+
+variable "frontend_environment_variables" {
+  description = "Variables publicas incorporadas al build del frontend en TEST."
+  type        = map(string)
+  default = {
+    VITE_AUTH_MODE = "mock"
+    VITE_USE_MOCKS = "false"
+  }
 }
 
 variable "database_name" {
@@ -151,5 +225,3 @@ variable "alb_deletion_protection" {
   type        = bool
   default     = false
 }
-
-

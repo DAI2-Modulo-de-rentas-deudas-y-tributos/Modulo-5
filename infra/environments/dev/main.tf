@@ -72,10 +72,14 @@ module "ecs" {
   container_port            = var.backend_container_port
   task_cpu                  = var.backend_task_cpu
   task_memory               = var.backend_task_memory
+  spring_profiles_active    = var.backend_spring_profiles_active
+  environment_variables     = var.backend_environment_variables
+  secret_variables          = var.backend_secret_variables
   database_address          = module.database.address
   database_port             = module.database.port
   database_name             = module.database.database_name
   database_secret_arn       = module.database.master_secret_arn
+  cors_allowed_origins      = [module.hosting.frontend_url]
 
   depends_on = [module.edge]
 }
@@ -83,7 +87,8 @@ module "ecs" {
 module "hosting" {
   source = "../../modules/hosting"
 
-  name_prefix  = local.name_prefix
-  branch_name  = "develop"
-  api_base_url = module.edge.api_base_url
+  name_prefix           = local.name_prefix
+  branch_name           = "develop"
+  api_base_url          = module.edge.api_base_url
+  environment_variables = var.frontend_environment_variables
 }

@@ -1,0 +1,45 @@
+project_name   = "modulo-5-rentas"
+aws_region     = "us-east-2"
+aws_account_id = "756663253996"
+
+vpc_cidr             = "10.70.0.0/16"
+public_subnet_cidrs   = ["10.70.0.0/24", "10.70.1.0/24"]
+database_subnet_cidrs = ["10.70.10.0/24", "10.70.11.0/24"]
+
+ecr_images_to_keep        = 20
+enable_container_insights = false
+log_retention_days        = 30
+
+backend_container_port    = 8080
+backend_health_check_path = "/actuator/health"
+backend_task_cpu          = 256
+backend_task_memory       = 512
+backend_spring_profiles_active = "prod"
+
+backend_environment_variables = {
+  BROKER_ADAPTER           = "local-log"
+  OUTBOX_DELAY_MS          = "5000"
+  RENTAS_SECURITY_DEV_MODE = "false"
+}
+
+# Los valores son ARNs de Secrets Manager, nunca secretos en texto plano.
+# El perfil prod rechaza secretos RENTAS_DEMO_*.
+backend_secret_variables = {}
+
+frontend_environment_variables = {
+  VITE_AUTH_MODE = "core"
+  VITE_USE_MOCKS = "false"
+}
+
+database_name                  = "rentas"
+database_master_username       = "rentas_admin"
+database_port                  = 5432
+postgres_engine_version        = "16"
+database_instance_class        = "db.t4g.micro"
+database_allocated_storage     = 20
+database_max_allocated_storage = 50
+database_backup_retention_days = 7
+database_deletion_protection   = true
+database_skip_final_snapshot   = false
+
+alb_deletion_protection = true

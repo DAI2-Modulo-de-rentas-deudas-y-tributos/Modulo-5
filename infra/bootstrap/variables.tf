@@ -12,7 +12,7 @@ variable "project_name" {
 variable "aws_region" {
   description = "Región AWS principal."
   type        = string
-  default     = "sa-east-1"
+  default     = "us-east-2"
 }
 
 variable "github_owner" {
@@ -39,3 +39,8 @@ variable "github_test_environment" {
   default     = "test"
 }
 
+variable "github_prod_environment" {
+  description = "Nombre exacto del GitHub Environment de PROD; debe aceptar solo la rama main."
+  type        = string
+  default     = "prod"
+}

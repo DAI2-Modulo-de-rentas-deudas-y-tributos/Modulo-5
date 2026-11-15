@@ -17,8 +17,9 @@ import static org.assertj.core.api.Assertions.*;
 class DomainFlowTests {
     @Autowired CatalogService catalog; @Autowired LiquidationService liquidationService; @Autowired PaymentService paymentService;
     @Autowired ReversalService reversalService; @Autowired PaymentPlanService planService; @Autowired ExemptionService exemptionService;
-    @Autowired ExternalObligationService externalService; @Autowired DebtRepository debts; @Autowired PaymentAllocationRepository allocations;
-    @Autowired CreditBalanceRepository credits; @Autowired ProcessedEventRepository processed; @Autowired ExternalObligationRepository obligations; @Autowired LiquidationComponentRepository components;
+    @Autowired ConfirmedM7Consumer m7; @Autowired DebtRepository debts; @Autowired PaymentAllocationRepository allocations;
+    @Autowired CreditBalanceRepository credits; @Autowired PaymentRepository payments; @Autowired ProcessedEventRepository processed; @Autowired ExternalObligationRepository obligations; @Autowired LiquidationComponentRepository components;
+    @Autowired TaxConceptRepository concepts;
 
     @BeforeEach void authenticate() {
         var authorities=List.of("RENTAS","SUPERVISOR","CASHIER").stream().map(x->new SimpleGrantedAuthority("ROLE_"+x)).toList();
@@ -57,36 +58,48 @@ class DomainFlowTests {
         Debt debt=debt("CIT-5","OVERPAY",true);
         Payment payment=paymentService.register(new ApiDtos.RegisterPaymentRequest(debt.taxpayerId,PaymentMethod.TRANSFER,new BigDecimal("120"),List.of(new ApiDtos.AllocationRequest(debt.id,new BigDecimal("120")))));
         assertThat(credits.findBySourcePaymentId(payment.id).orElseThrow().availableAmount).isEqualByComparingTo("20.00");
-        PaymentReversalRequest request=reversalService.request(payment.id,"Carga duplicada"); reversalService.approve(request.id); reversalService.execute(request.id);
+        assertThat(payment.allocatedAmount.add(payment.unallocatedAmount)).isEqualByComparingTo(payment.amount);
+        assertThat(payment.allocatedAmount).isEqualByComparingTo("100.00");
+        assertThat(payment.unallocatedAmount).isEqualByComparingTo("20.00");
+        assertThat(allocations.findByPaymentId(payment.id)).singleElement().satisfies(a->{
+            assertThat(a.principalApplied.add(a.interestApplied)).isEqualByComparingTo(a.amount);
+            assertThat(a.principalApplied).isEqualByComparingTo("100.00");
+        });
+        PaymentReversalRequest request=reversalService.request(payment.id,"Carga duplicada"); TestActorSupport.asApprover(() -> reversalService.approve(request.id)); reversalService.execute(request.id);
         assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("100.00");
+        assertThatThrownBy(()->reversalService.execute(request.id)).isInstanceOf(BusinessException.class).hasMessageContaining("aprobada");
+        assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("100.00");
+        assertThat(credits.findBySourcePaymentId(payment.id).orElseThrow().availableAmount).isZero();
+        assertThat(credits.findBySourcePaymentId(payment.id).orElseThrow().status).isEqualTo(CreditBalanceStatus.CANCELLED);
+        assertThat(payments.findById(payment.id).orElseThrow().status).isEqualTo(PaymentStatus.REVERSED);
     }
 
-    @Test void duplicateEventAndBusinessDuplicateCreateSingleDebt() {
-        TaxpayerReference taxpayer=taxpayer("EXT-7"); concept("TRAFFIC_INFRACTION",TaxConceptType.FINE,"M7");
-        UUID id=UUID.randomUUID(); var data=new ApiDtos.InfractionData("INF-2026-1",TaxpayerType.CITIZEN,"EXT-7",new BigDecimal("75"),LocalDate.now().plusDays(10));
-        var first=new ApiDtos.EventEnvelope<>(id,"infractionConfirmed",OffsetDateTime.now(),"M7",data);
-        ExternalObligation one=externalService.consumeInfraction(first); ExternalObligation same=externalService.consumeInfraction(first);
-        var businessDuplicate=new ApiDtos.EventEnvelope<>(UUID.randomUUID(),"infractionConfirmed",OffsetDateTime.now(),"M7",data);
-        ExternalObligation alsoSame=externalService.consumeInfraction(businessDuplicate);
-        assertThat(one.id).isEqualTo(same.id).isEqualTo(alsoSame.id); assertThat(debts.findByTaxpayerId(taxpayer.id)).hasSize(1); assertThat(processed.count()).isEqualTo(2);
+    @Test void confirmedM7DuplicateEventAndInfractionCreateSingleDebt() {
+        TaxpayerReference taxpayer=taxpayer("EXT-7");taxpayer.dni="40100007";concepts.findByCode("TRAFFIC_INFRACTION").orElseGet(()->concept("TRAFFIC_INFRACTION",TaxConceptType.FINE,"M7"));
+        UUID id=UUID.randomUUID(),infractionId=UUID.randomUUID();var data=new ConfirmedInboundEvents.M7InfractionData(infractionId,"40100007",ConfirmedInboundEvents.M7DebtorIdType.DNI,"AB123CD","ILLEGAL_PARKING",OffsetDateTime.now(),new BigDecimal("50.00"),List.of(),new BigDecimal("75.00"),"INSPECTOR-TEST",new ConfirmedInboundEvents.M7Location("Calle Test","Esquina Test",new BigDecimal("-34.60"),new BigDecimal("-58.40")));
+        var first=new ConfirmedInboundEvents.M7InfractionConfirmedEvent(id,"infractionConfirmed","1.0",OffsetDateTime.now(),"transito",UUID.randomUUID(),null,data);
+        ExternalObligation one=m7.consume(first);ExternalObligation same=m7.consume(first);
+        var businessDuplicate=new ConfirmedInboundEvents.M7InfractionConfirmedEvent(UUID.randomUUID(),first.eventType(),first.eventVersion(),OffsetDateTime.now(),first.sourceModule(),first.correlationId(),null,data);
+        ExternalObligation alsoSame=m7.consume(businessDuplicate);
+        assertThat(one.id).isEqualTo(same.id).isEqualTo(alsoSame.id);assertThat(debts.findByTaxpayerId(taxpayer.id)).hasSize(1);assertThat(processed.count()).isEqualTo(2);
     }
 
     @Test void debtCannotBelongToTwoActivePlans() {
         Debt debt=debt("CIT-6","PLAN",true); var request=new ApiDtos.GrantPlanRequest(debt.id,3,new BigDecimal("12"));
-        PaymentPlan plan=planService.grant(request); assertThat(plan.installmentCount).isEqualTo(3);
-        assertThatThrownBy(()->planService.grant(request)).isInstanceOf(BusinessException.class).hasMessageContaining("plan activo");
+        PaymentPlan plan=TestActorSupport.asApprover(() -> planService.grant(request)); assertThat(plan.installmentCount).isEqualTo(3);
+        assertThatThrownBy(()->TestActorSupport.asApprover(() -> planService.grant(request))).isInstanceOf(BusinessException.class).hasMessageContaining("plan activo");
     }
 
     @Test void approvedCurrentExemptionReducesLiquidation() {
         TaxpayerReference taxpayer=taxpayer("CIT-7"); TaxConcept concept=concept("EXEMPT",TaxConceptType.FEE,"M5"); activateFixed(concept.id,"100",true);
-        ExemptionRequest request=exemptionService.create(new ApiDtos.CreateExemptionRequest(taxpayer.id,concept.id,"Vulnerabilidad",new BigDecimal("50"),LocalDate.now(),LocalDate.now().plusYears(1)));
-        exemptionService.start(request.id); exemptionService.submit(request.id); exemptionService.approve(request.id);
+        ExemptionRequest request=exemptionService.create(new ApiDtos.CreateExemptionRequest(taxpayer.id,concept.id,"Vulnerabilidad",new BigDecimal("50"),YearMonth.now().atDay(1),LocalDate.now().plusYears(1)));
+        exemptionService.start(request.id); exemptionService.submit(request.id); TestActorSupport.asApprover(() -> exemptionService.approve(request.id));
         assertThat(liquidationService.preview(liquidation(taxpayer.id,concept.id)).finalAmount()).isEqualByComparingTo("50.00");
     }
 
     private TaxpayerReference taxpayer(String externalId){return catalog.createTaxpayer(new ApiDtos.CreateTaxpayerRequest(TaxpayerType.CITIZEN,externalId,"123",null,"Persona "+externalId));}
     private TaxConcept concept(String code,TaxConceptType type,String module){return catalog.createConcept(new ApiDtos.CreateTaxConceptRequest(code,code,null,type,module));}
-    private TaxConfiguration activateFixed(Long conceptId,String amount,boolean partial){TaxConfiguration c=catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(conceptId,CalculationType.FIXED,null,new BigDecimal(amount),null,null,partial,true,LocalDate.now().minusDays(1),null));catalog.submit(c.id);return catalog.approve(c.id);}
+    private TaxConfiguration activateFixed(Long conceptId,String amount,boolean partial){TaxConfiguration c=catalog.createConfiguration(new ApiDtos.CreateTaxConfigurationRequest(conceptId,CalculationType.FIXED,null,new BigDecimal(amount),null,null,partial,true,LocalDate.now().minusDays(1),null));catalog.submit(c.id);return TestActorSupport.asApprover(() -> catalog.approve(c.id));}
     private ApiDtos.LiquidationRequest liquidation(Long taxpayerId,Long conceptId){return new ApiDtos.LiquidationRequest(taxpayerId,conceptId,YearMonth.now().toString(),BigDecimal.ZERO,LocalDate.now().plusDays(30));}
     private Debt debt(String taxpayerExternal,String code,boolean partial){TaxpayerReference taxpayer=taxpayer(taxpayerExternal);TaxConcept concept=concept(code,TaxConceptType.FEE,"M5");activateFixed(concept.id,"100",partial);liquidationService.create(liquidation(taxpayer.id,concept.id));return debts.findByTaxpayerId(taxpayer.id).get(0);}
 }

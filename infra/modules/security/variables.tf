@@ -19,3 +19,8 @@ variable "database_port" {
   type        = number
   default     = 5432
 }
+variable "alb_ingress_port" {
+  description = "Puerto del listener del ALB al que se conecta CloudFront."
+  type        = number
+  default     = 80
+}

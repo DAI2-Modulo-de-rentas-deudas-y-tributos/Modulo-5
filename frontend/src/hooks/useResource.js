@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 /**
  * Carga asincrónica con estados de loading/error y recarga manual.
@@ -8,31 +8,30 @@ export default function useResource(loader, initialData = null) {
   const [data, setData] = useState(initialData);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const generation = useRef(0);
 
   const reload = useCallback(async () => {
+    const current = ++generation.current;
     setLoading(true);
     setError(null);
     try {
-      setData(await loader());
+      const result = await loader();
+      if (current === generation.current) setData(result);
+      return result;
     } catch (caught) {
-      setError(caught.message ?? "No se pudo cargar la información.");
+      if (current === generation.current && caught.name !== "AbortError") {
+        setError(caught.message ?? "No se pudo cargar la información.");
+      }
+      return null;
     } finally {
-      setLoading(false);
+      if (current === generation.current) setLoading(false);
     }
   }, [loader]);
 
   useEffect(() => {
-    let active = true;
-    setLoading(true);
-    setError(null);
-    loader()
-      .then((result) => active && setData(result))
-      .catch((caught) => active && setError(caught.message ?? "No se pudo cargar la información."))
-      .finally(() => active && setLoading(false));
-    return () => {
-      active = false;
-    };
-  }, [loader]);
+    reload();
+    return () => { ++generation.current; };
+  }, [reload]);
 
   return { data, loading, error, reload, setData };
 }

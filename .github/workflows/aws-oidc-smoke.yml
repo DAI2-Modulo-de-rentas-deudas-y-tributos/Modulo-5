@@ -30,11 +30,11 @@ jobs:
 
     steps:
       - name: Configure temporary AWS credentials
-        uses: aws-actions/configure-aws-credentials@v6.2.3
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
-          allowed-account-ids: "060712744495"
+          allowed-account-ids: "756663253996"
           mask-aws-account-id: true
           role-session-name: github-oidc-smoke-${{ github.run_id }}
 

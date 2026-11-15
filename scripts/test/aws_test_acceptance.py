@@ -1,0 +1,692 @@
+#!/usr/bin/env python3
+"""Aceptación HTTP de AWS TEST; pypdf valida la estructura y el texto del PDF."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import time
+import uuid
+import hashlib
+import secrets
+from decimal import Decimal
+from email.message import Message
+from io import BytesIO
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode, urlsplit, urlunsplit
+from urllib.request import Request, urlopen
+
+MAX_PAGE_SIZE = 100
+BUENOS_AIRES_TZ = timezone(timedelta(hours=-3))
+
+
+@dataclass
+class HttpResponse:
+    status: int
+    headers: Any
+    body: bytes
+
+
+class AcceptanceFailure(RuntimeError):
+    pass
+
+
+@dataclass
+class AcceptanceActors:
+    rentas: ApiClient
+    supervisor: ApiClient
+    demo_admin: ApiClient | None
+
+
+class ApiClient:
+    def __init__(self, api_base_url: str, bearer_token: str | None,
+                 demo_session: str | None = None) -> None:
+        self.api_base_url = api_base_url.rstrip("/")
+        # Amplify guarda el origen; también admitir el prefijo explícito del CLI.
+        if not urlsplit(self.api_base_url).path:
+            self.api_base_url += "/api/v1"
+        self.bearer_token = bearer_token.strip() if bearer_token else None
+        self.demo_session = demo_session
+
+    def _headers(self, has_body: bool) -> dict[str, str]:
+        headers = {"Accept": "application/json, application/pdf"}
+        if has_body:
+            headers["Content-Type"] = "application/json"
+        if self.bearer_token:
+            headers["Authorization"] = f"Bearer {self.bearer_token}"
+        elif self.demo_session:
+            headers["X-Demo-Session"] = self.demo_session
+        return headers
+
+    def request(
+        self,
+        method: str,
+        path: str,
+        payload: Any | None = None,
+        query: dict[str, Any] | None = None,
+        expected: tuple[int, ...] | None = (200,),
+        timeout: float = 60,
+        extra_headers: dict[str, str] | None = None,
+    ) -> HttpResponse:
+        url = f"{self.api_base_url}/{path.lstrip('/')}"
+        if query:
+            url = f"{url}?{urlencode(query, doseq=True)}"
+        encoded = None if payload is None else json.dumps(payload).encode("utf-8")
+        request = Request(url, data=encoded, method=method,
+                          headers={**self._headers(encoded is not None), **(extra_headers or {})})
+        try:
+            with urlopen(request, timeout=timeout) as response:
+                result = HttpResponse(response.status, response.headers, response.read())
+        except HTTPError as error:
+            result = HttpResponse(error.code, error.headers, error.read())
+        except URLError as error:
+            raise AcceptanceFailure(f"No se pudo conectar con {url}: {error.reason}") from error
+
+        if expected is not None and result.status not in expected:
+            body = result.body.decode("utf-8", errors="replace")[:1500]
+            raise AcceptanceFailure(
+                f"{method} {path} devolvió HTTP {result.status}; esperado {expected}. Respuesta: {body}"
+            )
+        return result
+
+    def json(
+        self,
+        method: str,
+        path: str,
+        payload: Any | None = None,
+        query: dict[str, Any] | None = None,
+        expected: tuple[int, ...] = (200,),
+    ) -> Any:
+        response = self.request(method, path, payload, query, expected)
+        if not response.body:
+            return None
+        try:
+            return json.loads(response.body)
+        except json.JSONDecodeError as error:
+            raise AcceptanceFailure(f"{method} {path} no devolvió JSON válido") from error
+
+
+def require(condition: bool, message: str) -> None:
+    if not condition:
+        raise AcceptanceFailure(message)
+
+
+def fiscal_today() -> date:
+    """Buenos Aires uses UTC-3 without daylight-saving changes."""
+    return datetime.now(BUENOS_AIRES_TZ).date()
+
+
+def authenticate_demo(client: ApiClient) -> None:
+    """Sólo para CI/local explícito; nunca inventa un contrato Core."""
+    if client.bearer_token:
+        return
+    username = os.getenv("TEST_DEMO_USERNAME")
+    password = os.getenv("TEST_DEMO_PASSWORD")
+    require(bool(username and password), "Definir TEST_DEMO_USERNAME y TEST_DEMO_PASSWORD o TEST_API_BEARER_TOKEN")
+    bootstrap = os.getenv("RENTAS_DEMO_BOOTSTRAP_PASSWORD")
+    if bootstrap:
+        client.request("POST", "/dev-auth/bootstrap",
+                       {"username": username, "password": password, "displayName": "QA Supervisor"},
+                       expected=(201, 409), extra_headers={"X-Demo-Bootstrap-Secret": bootstrap})
+    client.demo_session = client.json("POST", "/dev-auth/login",
+                                      {"username": username, "password": password})["token"]
+
+
+def demo_identity(client: ApiClient, role: str, taxpayer_id: int | None = None) -> ApiClient:
+    """Crea un usuario de prueba real mediante el supervisor y abre su sesión."""
+    username = "qa." + uuid.uuid4().hex
+    password = secrets.token_urlsafe(24)
+    client.json("POST", "/dev-auth/users", {"username": username, "password": password,
+                "displayName": "QA " + role, "role": role, "taxpayerId": taxpayer_id}, expected=(201,))
+    login = client.json("POST", "/dev-auth/login", {"username": username, "password": password})
+    require(login.get("user", {}).get("role") == role, f"La identidad DEMO no quedó en el rol {role}")
+    session = login["token"]
+    return ApiClient(client.api_base_url, None, session)
+
+
+def prepare_acceptance_actors(client: ApiClient) -> AcceptanceActors:
+    if client.bearer_token:
+        rentas_token = os.getenv("TEST_API_RENTAS_BEARER_TOKEN")
+        supervisor_token = os.getenv("TEST_API_SUPERVISOR_BEARER_TOKEN")
+        require(bool(rentas_token and supervisor_token),
+                "La aceptación con Bearer requiere TEST_API_RENTAS_BEARER_TOKEN y "
+                "TEST_API_SUPERVISOR_BEARER_TOKEN de dos identidades autorizadas distintas")
+        require(rentas_token != supervisor_token,
+                "RENTAS y SUPERVISOR deben usar tokens distintos; no se reutiliza un token para simular dos personas")
+        return AcceptanceActors(ApiClient(client.api_base_url, rentas_token),
+                                ApiClient(client.api_base_url, supervisor_token), None)
+
+    admin = client.json("GET", "/dev-auth/me")
+    require({"RENTAS", "SUPERVISOR"}.issubset(set(admin.get("authorities", []))),
+            "La sesión DEMO inicial debe tener autoridades RENTAS y SUPERVISOR para crear y verificar identidades")
+    return AcceptanceActors(demo_identity(client, "RENTAS"),
+                            demo_identity(client, "SUPERVISOR"), client)
+
+
+def page_total(page: dict[str, Any]) -> int:
+    metadata = page.get("page") or {}
+    return int(metadata.get("totalElements", len(page.get("content", []))))
+
+
+def get_all_pages(
+    client: ApiClient,
+    path: str,
+    query: dict[str, Any] | None = None,
+    page_size: int = MAX_PAGE_SIZE,
+) -> list[dict[str, Any]]:
+    """Lee una colección completa sin superar el límite de página de la API."""
+    require(0 < page_size <= MAX_PAGE_SIZE,
+            f"El tamaño de página debe estar entre 1 y {MAX_PAGE_SIZE}")
+    filters = dict(query or {})
+    results: list[dict[str, Any]] = []
+    expected_total: int | None = None
+    page_number = 0
+    while expected_total is None or len(results) < expected_total:
+        response = client.json(
+            "GET", path, query={**filters, "page": page_number, "size": page_size})
+        content = response.get("content")
+        metadata = response.get("page")
+        require(isinstance(content, list), f"{path} no devolvió una lista paginada")
+        require(isinstance(metadata, dict) and "totalElements" in metadata,
+                f"{path} no informó el total de elementos paginados")
+        total = int(metadata["totalElements"])
+        require(total >= 0, f"{path} informó un total negativo")
+        if expected_total is None:
+            expected_total = total
+        else:
+            require(total == expected_total, f"El total de {path} cambió durante la paginación")
+        require(len(content) <= page_size,
+                f"{path} devolvió más elementos que el tamaño de página solicitado")
+        if not content and len(results) < expected_total:
+            raise AcceptanceFailure(f"{path} devolvió una página vacía antes de completar {expected_total} elementos")
+        results.extend(content)
+        page_number += 1
+
+    require(len(results) == expected_total,
+            f"{path} devolvió {len(results)} elementos de {expected_total}")
+    ids = [item.get("id") for item in results if isinstance(item, dict) and item.get("id") is not None]
+    require(len(ids) == len(set(ids)), f"{path} duplicó elementos entre páginas")
+    return results
+
+
+def check_health(client: ApiClient) -> dict[str, Any]:
+    parsed = urlsplit(client.api_base_url)
+    health_url = urlunsplit((parsed.scheme, parsed.netloc, "/actuator/health", "", ""))
+    request = Request(health_url, headers={"Accept": "application/json"})
+    try:
+        with urlopen(request, timeout=30) as response:
+            payload = json.loads(response.read())
+    except (HTTPError, URLError, json.JSONDecodeError) as error:
+        raise AcceptanceFailure(f"El health check de TEST no respondió correctamente: {error}") from error
+    require(payload.get("status") == "UP", f"El backend no está UP: {payload}")
+    return payload
+
+
+def create_active_concept(client: ApiClient, supervisor: ApiClient, label: str, run_id: str,
+                          amount: str = "100.00", processing_date: date | None = None) -> dict[str, Any]:
+    processing_date = processing_date or fiscal_today()
+    suffix = run_id.replace("-", "")[-12:].upper()
+    concept = client.json(
+        "POST",
+        "/tax-concepts",
+        {
+            "code": f"QA_{label}_{suffix}",
+            "name": f"QA {label} {suffix}",
+            "description": "Dato efímero generado por la aceptación automatizada de AWS TEST",
+            "type": "FEE",
+            "originModule": "M5",
+        },
+        expected=(201,),
+    )
+    configuration = client.json(
+        "POST",
+        "/tax-configurations",
+        {
+            "taxConceptId": concept["id"],
+            "calculationType": "FIXED",
+            "rate": None,
+            "fixedAmount": amount,
+            "minimumAmount": None,
+            "maximumAmount": None,
+            "partialPaymentAllowed": True,
+            "paymentPlanAllowed": True,
+            "validFrom": (processing_date - timedelta(days=1)).isoformat(),
+            "validUntil": None,
+        },
+        expected=(201,),
+    )
+    client.json("POST", f"/tax-configurations/{configuration['id']}/submit")
+    approved = supervisor.json("POST", f"/tax-configurations/{configuration['id']}/approve")
+    require(approved.get("status") == "ACTIVE", "La configuración de QA no quedó activa")
+    return concept
+
+
+def load_taxpayers(client: ApiClient) -> list[dict[str, Any]]:
+    taxpayers = get_all_pages(client, "/taxpayers", query={"sort": "createdAt,asc"})
+    require(bool(taxpayers), "TEST no tiene contribuyentes. Debe cargarse al menos uno antes de ejecutar la aceptación.")
+    return taxpayers
+
+
+def validate_pdf(document: HttpResponse, bill: dict[str, Any], debts: list[dict[str, Any]]) -> dict[str, Any]:
+    from pypdf import PdfReader
+
+    require(document.status == 200, f"La descarga devolvió HTTP {document.status}")
+    content_type = document.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+    require(content_type == "application/pdf", f"Content-Type inesperado: {content_type}")
+    headers = Message()
+    headers["Content-Disposition"] = document.headers.get("Content-Disposition", "")
+    require(headers.get_content_disposition() == "attachment", "El PDF no se entrega como adjunto")
+    require(headers.get_filename() == f"{bill['number']}.pdf", "Nombre del adjunto incorrecto")
+    require(document.body.startswith(b"%PDF-"), "Firma PDF inválida")
+    require(document.body.rstrip().endswith(b"%%EOF"), "PDF truncado: falta EOF")
+    try:
+        reader = PdfReader(BytesIO(document.body), strict=True)
+        require(not reader.is_encrypted, "El PDF no debe requerir contraseña")
+        require(len(reader.pages) > 0, "El PDF no tiene páginas")
+        text = "\n".join(page.extract_text() for page in reader.pages)
+    except AcceptanceFailure:
+        raise
+    except Exception as error:
+        raise AcceptanceFailure(f"El PDF no se puede leer: {error}") from error
+    expected = [f"BOLETA {bill['number']}", f"Contribuyente: {bill['taxpayerId']}",
+                f"Emision: {bill['issueDate']}", f"Vencimiento: {bill['dueDate']}",
+                f"TOTAL: $ {Decimal(str(bill['totalAmount'])):.2f}"]
+    expected.extend(f"Deuda {debt['debtId']}: $ {Decimal(str(debt['amountAtIssue'])):.2f}" for debt in debts)
+    for value in expected:
+        require(value in text, f"El PDF no contiene el dato esperado: {value}")
+    require(sum(Decimal(str(debt['amountAtIssue'])) for debt in debts) == Decimal(str(bill['totalAmount'])),
+            "El total no coincide con las deudas emitidas")
+    for debt in debts:
+        require(text.count(f"Deuda {debt['debtId']}:") == 1, "El PDF duplica una deuda")
+    return {"pages": len(reader.pages), "pdfBytes": len(document.body),
+            "sha256": hashlib.sha256(document.body).hexdigest()}
+
+
+def run_pdf(
+    client: ApiClient,
+    supervisor: ApiClient,
+    demo_admin: ApiClient | None,
+    taxpayers: list[dict[str, Any]],
+    output_dir: Path,
+    run_id: str,
+) -> dict[str, Any]:
+    processing_date = fiscal_today()
+    taxpayer = taxpayers[0]
+    due_date = (processing_date + timedelta(days=30)).isoformat()
+    selected = []
+    for index, amount in enumerate(("100.25", "250.50")):
+        concept = create_active_concept(client, supervisor, f"PDF{index}", run_id, amount, processing_date)
+        liquidation = client.json("POST", "/liquidations", {
+            "taxpayerId": taxpayer["id"], "taxConceptId": concept["id"],
+            "period": processing_date.strftime("%Y-%m"), "taxableBase": "0.00", "dueDate": due_date,
+        }, expected=(201,))
+        debts = client.json("GET", "/debts", query={"taxpayerId": taxpayer["id"],
+            "taxConceptId": concept["id"], "page": 0, "size": 100}).get("content", [])
+        debt = next((item for item in debts if item.get("liquidationId") == liquidation["id"]), None)
+        require(debt is not None, "No se encontró la deuda creada por QA")
+        require(Decimal(str(debt["outstandingBalance"])) == Decimal(amount), "Importe de deuda incorrecto")
+        selected.append(debt)
+
+    evidence = []
+    for count in (1, 2):
+        bill = client.json("POST", "/bills", {
+            "taxpayerId": taxpayer["id"], "debtIds": [debt["id"] for debt in selected[:count]],
+            "dueDate": (processing_date + timedelta(days=10)).isoformat(),
+        }, expected=(201,))
+        expected_debts = [{"debtId": debt["id"], "amountAtIssue": debt["outstandingBalance"]}
+                          for debt in selected[:count]]
+        path = f"/bills/{bill['id']}/document"
+        document = client.request("GET", path)
+        # Conservar el archivo aun si el parser detecta un defecto.
+        pdf_path = output_dir / f"boleta-{bill['id']}.pdf"
+        pdf_path.write_bytes(document.body)
+        metadata = validate_pdf(document, bill, expected_debts)
+        repeated = client.request("GET", path)
+        validate_pdf(repeated, bill, expected_debts)
+        require(repeated.body == document.body, "La descarga repetida alteró el documento emitido")
+        evidence.append({"billId": bill["id"], "billNumber": bill["number"], "totalAmount": bill["totalAmount"],
+                         "debts": count, "artifact": str(pdf_path), "repeatDownload": "passed", **metadata})
+
+    for debt in selected:
+        after = client.json("GET", f"/debts/{debt['id']}")
+        require(after["outstandingBalance"] == debt["outstandingBalance"] and after["status"] == debt["status"],
+                "La emisión o descarga modificó una deuda")
+    missing = client.request("GET", "/bills/9223372036854775807/document", expected=(404,))
+    require(not missing.body.startswith(b"%PDF-"), "Una boleta inexistente devolvió un PDF")
+
+    authorization: dict[str, Any] = {"status": "skipped", "reason": "Bearer externo: este runner no crea sesiones DEMO para casos de ownership"}
+    if demo_admin is not None:
+        require(len(taxpayers) >= 2, "La validación de autorización requiere dos contribuyentes proyectados")
+        owner = demo_identity(demo_admin, "TAXPAYER", taxpayer["id"])
+        validate_pdf(owner.request("GET", path), bill, expected_debts)
+        stranger = taxpayers[1]
+        for identity, status in ((demo_identity(demo_admin, "AUDITOR"), 403),
+                                 (ApiClient(client.api_base_url, None), 401),
+                                 (demo_identity(demo_admin, "TAXPAYER", stranger["id"]), 403)):
+            denied = identity.request("GET", path, expected=(status,))
+            require(not denied.body.startswith(b"%PDF-"), "Una identidad sin permisos recibió el PDF")
+        authorization = {"status": "passed", "mode": "opaque-demo-session", "owner": "passed", "deniedCases": 3}
+    return {"status": "passed", "documents": evidence, "debtUnchanged": "passed",
+            "missingBill": "passed", "authorization": authorization, "visualReview": "pending"}
+
+
+def run_bulk(
+    client: ApiClient,
+    supervisor: ApiClient,
+    taxpayers: list[dict[str, Any]],
+    bulk_size: int,
+    max_duration_seconds: int,
+    run_id: str,
+) -> dict[str, Any]:
+    processing_date = fiscal_today()
+    require(bulk_size in (10, 50, 200), "bulk-size debe ser 10, 50 o 200 contribuyentes válidos")
+    require(len({taxpayer['id'] for taxpayer in taxpayers}) >= bulk_size,
+            f"Se necesitan {bulk_size} contribuyentes distintos; hay {len(taxpayers)}. No se sustituye volumen real por errores.")
+    concept = create_active_concept(client, supervisor, "BULK", run_id, processing_date=processing_date)
+    valid_taxpayers = list({taxpayer["id"]: taxpayer for taxpayer in taxpayers}.values())[:bulk_size]
+    items = [
+        {"taxpayerId": taxpayer["id"], "taxableBase": "0.00"}
+        for taxpayer in valid_taxpayers
+    ]
+    invalid_count = 1
+    for index in range(invalid_count):
+        items.append({"taxpayerId": 9_000_000_000_000_000_000 + index, "taxableBase": "0.00"})
+
+    before = client.json(
+        "GET",
+        "/liquidations",
+        query={"conceptId": concept["id"], "page": 0, "size": 1},
+    )
+    require(page_total(before) == 0, "El concepto nuevo ya tenía liquidaciones antes del preview")
+
+    started = time.monotonic()
+    run = client.json(
+        "POST",
+        "/liquidation-runs",
+        {
+            "taxConceptId": concept["id"],
+            "period": processing_date.strftime("%Y-%m"),
+            "dueDate": (processing_date + timedelta(days=30)).isoformat(),
+            "items": items,
+        },
+        expected=(201,),
+    )
+    preview = client.json("POST", f"/liquidation-runs/{run['id']}/preview")
+    elapsed_preview = time.monotonic() - started
+
+    require(preview["run"]["totalItems"] == bulk_size + invalid_count, "El preview no procesó todos los ítems")
+    require(preview["run"]["validItems"] == len(valid_taxpayers), "Cantidad de ítems válidos inesperada")
+    require(preview["run"]["errorItems"] == invalid_count, "Cantidad de errores inesperada")
+    expected_amounts = validate_bulk_items(preview, {taxpayer["id"] for taxpayer in valid_taxpayers}, executed=False)
+    repeat_preview = client.json("POST", f"/liquidation-runs/{run['id']}/preview")
+    require(validate_bulk_items(repeat_preview, set(expected_amounts), executed=False) == expected_amounts,
+            "Repetir el preview cambió los resultados")
+    still_empty = client.json(
+        "GET",
+        "/liquidations",
+        query={"conceptId": concept["id"], "page": 0, "size": 1},
+    )
+    require(page_total(still_empty) == 0, "El preview creó liquidaciones antes de la aprobación")
+    require(page_total(client.json("GET", "/debts", query={"taxConceptId": concept["id"], "size": 1})) == 0,
+            "El preview creó deudas")
+    expect_run_rejection(client.request("POST", f"/liquidation-runs/{run['id']}/execute", expected=None))
+
+    client.json("POST", f"/liquidation-runs/{run['id']}/submit")
+    approval = {"observation": "Aceptación automatizada AWS TEST"}
+    approved = supervisor.json("POST", f"/liquidation-runs/{run['id']}/approve", approval)
+    require(approved.get("status") == "APPROVED", "La aprobación del lote de QA no quedó APPROVED")
+    # Dos solicitudes del mismo lote salen juntas: sólo una puede confirmar.
+    gate = Barrier(2)
+    def execute_once():
+        gate.wait(timeout=10)
+        return client.request("POST", f"/liquidation-runs/{run['id']}/execute", expected=None,
+                              timeout=max_duration_seconds + 10)
+    execution_started = time.monotonic()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(execute_once) for _ in range(2)]
+        responses = [future.result(timeout=max_duration_seconds + 60) for future in futures]
+    execution_seconds = time.monotonic() - execution_started
+    require(sorted(response.status for response in responses) == [200, 409],
+            f"Ejecución concurrente inesperada: {[response.status for response in responses]}")
+    expect_run_rejection(next(response for response in responses if response.status != 200))
+    executed = json.loads(next(response for response in responses if response.status == 200).body)
+    elapsed_total = time.monotonic() - started
+
+    require(executed["status"] == "EXECUTED", "La corrida masiva no quedó EXECUTED")
+    require(elapsed_total <= max_duration_seconds, (
+        f"La corrida tardó {elapsed_total:.2f}s y superó el máximo de {max_duration_seconds}s"
+    ))
+    generated = get_all_pages(client, "/liquidations", query={"conceptId": concept["id"]})
+    require(len(generated) == len(valid_taxpayers), "No se generó exactamente una liquidación por ítem válido")
+    detail = client.json("GET", f"/liquidation-runs/{run['id']}")
+    require(detail["run"]["status"] == "EXECUTED", "La ejecución no quedó persistida")
+    require(validate_bulk_items(detail, set(expected_amounts), executed=True) == expected_amounts,
+            "La ejecución cambió los importes del preview")
+    generated_debts = get_all_pages(client, "/debts", query={"taxConceptId": concept["id"]})
+    validate_bulk_economics(generated, generated_debts, expected_amounts, detail["items"])
+
+    second_execution = client.request(
+        "POST",
+        f"/liquidation-runs/{run['id']}/execute",
+        expected=None,
+    )
+    expect_run_rejection(second_execution)
+    generated_after_retry = get_all_pages(client, "/liquidations", query={"conceptId": concept["id"]})
+    require(
+        len(generated_after_retry) == len(valid_taxpayers),
+        "La segunda ejecución alteró la cantidad de liquidaciones",
+    )
+    generated_debts_after_retry = get_all_pages(client, "/debts", query={"taxConceptId": concept["id"]})
+    validate_bulk_economics(generated_after_retry, generated_debts_after_retry, expected_amounts,
+        client.json("GET", f"/liquidation-runs/{run['id']}")["items"])
+
+    return {
+        "status": "passed",
+        "runId": run["id"],
+        "requestedValidItems": bulk_size,
+        "requestedItems": bulk_size + invalid_count,
+        "validItems": len(valid_taxpayers),
+        "controlledErrors": invalid_count,
+        "previewSeconds": round(elapsed_preview, 3),
+        "executionSeconds": round(execution_seconds, 3),
+        "totalSeconds": round(elapsed_total, 3),
+        "concurrentStatuses": sorted(response.status for response in responses),
+        "estimatedTotalAmount": str(sum(expected_amounts.values())),
+        "healthAfter": check_health(client)["status"],
+        "duplicateExecutionHttpStatus": second_execution.status,
+    }
+
+
+def expect_run_rejection(response: HttpResponse) -> None:
+    require(response.status == 409, f"Se esperaba conflicto HTTP 409, recibido {response.status}")
+    try:
+        code = json.loads(response.body).get("code")
+    except (ValueError, AttributeError) as error:
+        raise AcceptanceFailure("El rechazo no contiene un error JSON de negocio") from error
+    require(code == "RUN_NOT_APPROVED", f"Error de negocio inesperado: {code}")
+
+
+def expect_self_approval_rejection(response: HttpResponse) -> None:
+    require(response.status == 403, f"La autoaprobación debía devolver HTTP 403, recibió {response.status}")
+    try:
+        code = json.loads(response.body).get("code")
+    except (ValueError, AttributeError) as error:
+        raise AcceptanceFailure("El rechazo de autoaprobación no contiene un error JSON") from error
+    if code == "ACCESS_DENIED":
+        raise AcceptanceFailure(
+            "La identidad de prueba no tiene autoridad SUPERVISOR; el backend rechazó por permisos "
+            "antes de evaluar SELF_APPROVAL_FORBIDDEN")
+    require(code == "SELF_APPROVAL_FORBIDDEN", f"Código de autoaprobación inesperado: {code}")
+
+
+def approve_as_distinct_actor(requester: ApiClient, supervisor: ApiClient, path: str,
+                              payload: Any | None = None, expected_status: str | None = None) -> dict[str, Any]:
+    expect_self_approval_rejection(requester.request("POST", path, payload, expected=None))
+    approved = supervisor.json("POST", path, payload)
+    if expected_status is not None:
+        require(approved.get("status") == expected_status,
+                f"La aprobación de {path} quedó en {approved.get('status')}, se esperaba {expected_status}")
+    return approved
+
+
+def verify_self_approval_paths(actors: AcceptanceActors, taxpayer: dict[str, Any], run_id: str) -> dict[str, str]:
+    requester = actors.demo_admin
+    if requester is None:
+        self_approval_token = os.getenv("TEST_API_SELF_APPROVAL_BEARER_TOKEN")
+        if not self_approval_token:
+            return {"status": "skipped", "reason": "Bearer externo sin una identidad autorizada para crear y autoaprobar; "
+                    "configurar TEST_API_SELF_APPROVAL_BEARER_TOKEN para probar SELF_APPROVAL_FORBIDDEN"}
+        require(self_approval_token != actors.supervisor.bearer_token,
+                "La identidad de autoaprobación debe ser distinta del supervisor que resuelve")
+        requester = ApiClient(actors.rentas.api_base_url, self_approval_token)
+    processing_date = fiscal_today()
+    suffix = run_id.replace("-", "")[-12:].upper()
+    concept = requester.json("POST", "/tax-concepts", {
+        "code": f"QA_SOD_{suffix}", "name": f"QA segregación {suffix}",
+        "description": "Dato efímero para comprobar segregación de funciones",
+        "type": "FEE", "originModule": "M5",
+    }, expected=(201,))
+    configuration = requester.json("POST", "/tax-configurations", {
+        "taxConceptId": concept["id"], "calculationType": "FIXED", "rate": None,
+        "fixedAmount": "1.00", "minimumAmount": None, "maximumAmount": None,
+        "partialPaymentAllowed": True, "paymentPlanAllowed": True,
+        "validFrom": (processing_date - timedelta(days=1)).isoformat(), "validUntil": None,
+    }, expected=(201,))
+    requester.json("POST", f"/tax-configurations/{configuration['id']}/submit")
+    approve_as_distinct_actor(
+        requester, actors.supervisor,
+        f"/tax-configurations/{configuration['id']}/approve", expected_status="ACTIVE")
+
+    liquidation_run = requester.json("POST", "/liquidation-runs", {
+        "taxConceptId": concept["id"], "period": processing_date.strftime("%Y-%m"),
+        "dueDate": (processing_date + timedelta(days=30)).isoformat(),
+        "items": [{"taxpayerId": taxpayer["id"], "taxableBase": "0.00"}],
+    }, expected=(201,))
+    requester.json("POST", f"/liquidation-runs/{liquidation_run['id']}/preview")
+    requester.json("POST", f"/liquidation-runs/{liquidation_run['id']}/submit")
+    approve_as_distinct_actor(
+        requester, actors.supervisor,
+        f"/liquidation-runs/{liquidation_run['id']}/approve",
+        {"observation": "Prueba automatizada de segregación"}, expected_status="APPROVED")
+    executed = requester.json("POST", f"/liquidation-runs/{liquidation_run['id']}/execute")
+    require(executed.get("status") == "EXECUTED", "El lote de verificación SOD no se ejecutó")
+    return {"status": "passed", "taxConfiguration": "SELF_APPROVAL_FORBIDDEN then ACTIVE",
+            "liquidationRun": "SELF_APPROVAL_FORBIDDEN then APPROVED and EXECUTED"}
+
+
+def validate_bulk_items(detail: dict[str, Any], taxpayers: set[int], executed: bool) -> dict[int, Decimal]:
+    items = detail["items"]
+    require(detail["run"]["totalItems"] == len(taxpayers) + 1
+            and detail["run"]["validItems"] == len(taxpayers) and detail["run"]["errorItems"] == 1,
+            "Los contadores persistidos del lote son inconsistentes")
+    require(len(items) == len(taxpayers) + 1, "El detalle perdió o duplicó ítems")
+    valid = [item for item in items if item["taxpayerId"] in taxpayers]
+    errors = [item for item in items if item["taxpayerId"] not in taxpayers]
+    require(len(valid) == len(taxpayers) and {item["taxpayerId"] for item in valid} == taxpayers,
+            "La población válida cambió o tiene duplicados")
+    require(len(errors) == 1 and errors[0]["status"] == "ERROR" and bool(errors[0].get("errorCode"))
+            and bool(errors[0].get("errorMessage")) and errors[0].get("liquidationId") is None,
+            "No se conservó el error parcial sin liquidación")
+    for item in valid:
+        require(item["status"] == ("LIQUIDATED" if executed else "VALID"), "Estado de ítem inesperado")
+        require((item.get("liquidationId") is not None) == executed, "Referencia de liquidación incorrecta")
+    amounts = {item["taxpayerId"]: Decimal(str(item["previewAmount"])) for item in valid}
+    require(Decimal(str(detail["run"]["estimatedTotalAmount"])) == sum(amounts.values()), "Total del lote incorrecto")
+    return amounts
+
+
+def validate_bulk_economics(liquidations: list[dict[str, Any]], debts: list[dict[str, Any]],
+                            expected: dict[int, Decimal], items: list[dict[str, Any]]) -> None:
+    require(len(liquidations) == len(debts) == len(expected), "Cantidad de liquidaciones/deudas incorrecta")
+    require({row["taxpayerId"] for row in liquidations} == set(expected), "Liquidaciones de una población incorrecta")
+    require(len({row["id"] for row in liquidations}) == len(expected), "Liquidaciones duplicadas")
+    links = {item["taxpayerId"]: item["liquidationId"] for item in items if item["status"] == "LIQUIDATED"}
+    for liquidation in liquidations:
+        owner = liquidation["taxpayerId"]
+        require(links.get(owner) == liquidation["id"], "El ítem apunta a otra liquidación")
+        require(Decimal(str(liquidation["finalAmount"])) == expected[owner], "Importe liquidado diferente del preview")
+        matches = [debt for debt in debts if debt.get("liquidationId") == liquidation["id"]]
+        require(len(matches) == 1, "Una liquidación no tiene exactamente una deuda")
+        debt = matches[0]
+        require(debt["taxpayerId"] == owner and debt["status"] == "PENDING"
+                and Decimal(str(debt["outstandingBalance"])) == expected[owner], "Deuda o saldo inconsistentes")
+
+
+def write_evidence(output_dir: Path, results: dict[str, Any], failure: str | None) -> None:
+    payload = {"results": results, "failure": failure}
+    (output_dir / "results.json").write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    lines = ["# Aceptación AWS TEST", ""]
+    if failure:
+        lines.extend(["**Resultado:** FALLÓ", "", f"**Motivo:** {failure}", ""])
+    else:
+        lines.extend(["**Resultado:** EXITOSA", ""])
+    for scenario, result in results.items():
+        lines.extend([
+            f"## {scenario.upper()}",
+            "",
+            json.dumps(result, indent=2, ensure_ascii=False),
+            "",
+        ])
+    (output_dir / "summary.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--api-base-url", required=True)
+    parser.add_argument("--scenario", choices=("pdf", "bulk", "all"), default="all")
+    parser.add_argument("--bulk-size", type=int, default=50)
+    parser.add_argument("--max-duration-seconds", type=int, default=120)
+    parser.add_argument("--output-dir", default="artifacts/qa-test")
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    client = ApiClient(args.api_base_url, os.getenv("TEST_API_BEARER_TOKEN"))
+    run_id = uuid.uuid4().hex
+    results: dict[str, Any] = {}
+    failure: str | None = None
+
+    try:
+        results["health"] = check_health(client)
+        authenticate_demo(client)
+        actors = prepare_acceptance_actors(client)
+        taxpayers = load_taxpayers(actors.rentas)
+        results["dataset"] = {"availableTaxpayers": len(taxpayers)}
+        results["segregationOfDuties"] = verify_self_approval_paths(actors, taxpayers[0], run_id)
+        if args.scenario in ("pdf", "all"):
+            results["pdf"] = run_pdf(actors.rentas, actors.supervisor, actors.demo_admin,
+                                     taxpayers, output_dir, run_id)
+        if args.scenario in ("bulk", "all"):
+            results["bulk"] = run_bulk(
+                actors.rentas,
+                actors.supervisor,
+                taxpayers,
+                args.bulk_size,
+                args.max_duration_seconds,
+                run_id,
+            )
+    except Exception as error:
+        failure = str(error)
+        print(f"ERROR: {failure}", file=sys.stderr)
+    finally:
+        write_evidence(output_dir, results, failure)
+
+    return 1 if failure else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

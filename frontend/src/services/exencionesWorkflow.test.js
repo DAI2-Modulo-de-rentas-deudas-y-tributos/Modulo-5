@@ -1,0 +1,132 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { exemptionService } from "./rentasService.js";
+import { instalarBackendFalso, pagina } from "../__tests__/fixtures/backendFalso.js";
+
+/**
+ * Trámite de exención. El backend gobierna el estado; el cliente traduce cada paso
+ * del trámite a la operación que le corresponde y frena los pedidos que no puede
+ * expresar, en vez de mandar algo que el backend va a rechazar.
+ */
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe("pasos del trámite", () => {
+  it("cada paso llama a su propia operación", async () => {
+    const casos = [
+      ["PENDING_REVIEW", "start-review"],
+      ["DOCUMENTATION_REQUIRED", "request-documentation"],
+      ["PENDING_RESOLUTION", "submit-resolution"],
+    ];
+
+    for (const [internalStatus, accion] of casos) {
+      const backend = instalarBackendFalso({
+        [`POST /api/v1/exemption-requests/{id}/${accion}`]: { id: 600, status: "PENDING" },
+      });
+
+      await exemptionService.advanceWorkflow({ requestId: 600, internalStatus, note: "nota", actor: "mrivas" });
+
+      expect(backend.llamadas[0].ruta).toBe(`/api/v1/exemption-requests/600/${accion}`);
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("pedir documentación viaja con el detalle de lo que falta", async () => {
+    const backend = instalarBackendFalso({
+      "POST /api/v1/exemption-requests/{id}/request-documentation": { id: 600 },
+    });
+
+    await exemptionService.advanceWorkflow({
+      requestId: 600,
+      internalStatus: "DOCUMENTATION_REQUIRED",
+      note: "Falta el certificado de ingresos",
+      actor: "mrivas",
+    });
+
+    expect(backend.llamadas[0].cuerpo).toEqual({ message: "Falta el certificado de ingresos" });
+  });
+
+  it("un paso que no tiene operación propia se rechaza antes de salir", async () => {
+    const backend = instalarBackendFalso();
+
+    await expect(
+      exemptionService.advanceWorkflow({ requestId: 600, internalStatus: "DOCUMENTATION_RECEIVED", actor: "mrivas" }),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(backend).not.toHaveBeenCalled();
+  });
+});
+
+describe("documentación", () => {
+  it("registra referencias externas junto con la solicitud inicial", async () => {
+    const backend = instalarBackendFalso({
+      "GET /api/v1/tax-concepts": pagina([{ id: 2, code: "ABL", name: "ABL", type: "FEE", active: true }]),
+      "POST /api/v1/exemption-requests": { id: 600, status: "PENDING" },
+    });
+
+    await exemptionService.requestExemption({
+      citizenId: 123, conceptCode: "ABL", reason: "Situación económica",
+      requestedPercentage: 50, requestedFrom: "2027-03-01", requestedUntil: "2027-12-31",
+      attachments: [{ name: "certificado.pdf", type: "INCOME_PROOF", externalDocumentId: "docs/600/1" }],
+    });
+
+    const posts = backend.llamadas.filter((call) => call.metodo === "POST");
+    expect(posts).toHaveLength(1);
+    expect(posts[0].cuerpo.documents).toEqual([{
+      externalDocumentId: "docs/600/1", documentType: "INCOME_PROOF", fileName: "certificado.pdf",
+    }]);
+  });
+
+  it("exige al menos un archivo antes de llamar al backend", async () => {
+    const backend = instalarBackendFalso();
+
+    await expect(
+      exemptionService.attachDocumentation({ requestId: 600, attachments: [], actor: "mrivas" }),
+    ).rejects.toMatchObject({ status: 400 });
+    expect(backend).not.toHaveBeenCalled();
+  });
+
+  it("registra una referencia por archivo, nunca el binario", async () => {
+    const backend = instalarBackendFalso({
+      "POST /api/v1/exemption-requests/{id}/documentation": { id: 1 },
+    });
+
+    await exemptionService.attachDocumentation({
+      requestId: 600,
+      attachments: [
+        { name: "certificado.pdf", type: "INCOME_PROOF", externalDocumentId: "s3://docs/certificado.pdf" },
+        { name: "dni.jpg", type: "ID", externalDocumentId: "s3://docs/dni.jpg" },
+      ],
+      actor: "mrivas",
+    });
+
+    expect(backend.llamadas).toHaveLength(2);
+    expect(backend.llamadas[0].cuerpo).toEqual({
+      externalDocumentId: "s3://docs/certificado.pdf",
+      documentType: "INCOME_PROOF",
+      fileName: "certificado.pdf",
+    });
+    expect(backend.llamadas[1].cuerpo.externalDocumentId).toBe("s3://docs/dni.jpg");
+  });
+
+  it("no simula una carga de archivo usando sólo su nombre", async () => {
+    const backend = instalarBackendFalso();
+    await expect(exemptionService.attachDocumentation({
+      requestId: 600,
+      attachments: [{ name: "dni.jpg", type: "ID" }],
+    })).rejects.toMatchObject({ status: 400 });
+    expect(backend).not.toHaveBeenCalled();
+  });
+});
+
+describe("listado", () => {
+  it("filtra por paso del trámite", async () => {
+    const backend = instalarBackendFalso({
+      "GET /api/v1/exemption-requests": pagina([{ id: 600, taxConceptId: 1, status: "PENDING" }]),
+    });
+
+    await exemptionService.list({ internalStatus: "PENDING_REVIEW" });
+
+    expect(backend.llamadas[0].ruta).toContain("/api/v1/exemption-requests");
+  });
+});

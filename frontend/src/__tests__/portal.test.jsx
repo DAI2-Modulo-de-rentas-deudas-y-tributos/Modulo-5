@@ -1,0 +1,233 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import App from "../App.jsx";
+import { PORTAL_MODULES } from "../config/portalModules.js";
+import { portalService } from "../services/rentasService.js";
+import { instalarBackendFalso } from "./fixtures/backendFalso.js";
+import { formatCurrency } from "../lib/format.js";
+
+/**
+ * Portal del contribuyente: el ciudadano entra a su propio legajo, consulta y puede
+ * iniciar dos trámites. Las pruebas verifican el recorrido y, sobre todo, que no
+ * aparezcan acciones que no le corresponden.
+ */
+async function loginAsContribuyente(user) {
+  render(<App />);
+  await user.type(screen.getByLabelText(/usuario/i), "jperez");
+  await user.type(screen.getByLabelText(/contraseña/i), "ciudadano123");
+  await user.click(screen.getByRole("button", { name: /ingresar/i }));
+  await waitFor(() => expect(screen.getByRole("heading", { name: /hola, juan/i })).toBeDefined());
+}
+
+describe("portal del contribuyente", () => {
+  let user;
+
+  beforeEach(() => {
+    user = userEvent.setup();
+    instalarBackendFalso();
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    sessionStorage.clear();
+    window.history.pushState({}, "", "/");
+    vi.unstubAllGlobals();
+  });
+
+  it("abre la portada con el resumen de la cuenta", async () => {
+    await loginAsContribuyente(user);
+
+    expect(await screen.findByText(/deuda total/i)).toBeDefined();
+    expect(screen.getByText(/próximo vencimiento/i)).toBeDefined();
+    // "Saldo a favor" figura como métrica y también como aviso.
+    expect(screen.getAllByText(/saldo a favor/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/mis obligaciones/i)).toBeDefined();
+  });
+
+  it("muestra los avisos de lo que necesita atención", async () => {
+    await loginAsContribuyente(user);
+
+    expect(await screen.findByText(/^avisos$/i)).toBeDefined();
+    expect(screen.getAllByText(/tenés una deuda vencida|tenés \d+ deudas vencidas/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/saldo pendiente:/i).textContent).toBe(`Saldo pendiente: ${formatCurrency(40000)}`);
+    expect(screen.getByText(/podés aplicarlo a una deuda/i)).toBeDefined();
+  });
+
+  it.each(PORTAL_MODULES.map((module) => [module.label, module]))(
+    "abre %s desde el menú",
+    async (label, module) => {
+      await loginAsContribuyente(user);
+      await user.click(screen.getByRole("link", { name: new RegExp(`^${label}$`, "i") }));
+
+      const breadcrumb = await screen.findByRole("navigation", { name: /breadcrumb/i });
+      expect(within(breadcrumb).getByText(module.label)).toBeDefined();
+      await waitFor(() => expect(screen.queryByText(/cargando información/i)).toBeNull());
+    },
+  );
+
+  it("no ofrece registrar pagos ni emitir boletas", async () => {
+    await loginAsContribuyente(user);
+    await user.click(screen.getByRole("link", { name: /^mis pagos$/i }));
+    await screen.findByRole("navigation", { name: /breadcrumb/i });
+
+    expect(screen.queryByRole("button", { name: /registrar pago/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /emitir boleta/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /reversar/i })).toBeNull();
+  });
+
+  it("un doble clic rápido en pago electrónico envía una sola solicitud", async () => {
+    vi.spyOn(portalService, "debts").mockResolvedValue([{ id: 818, conceptName: "ABL", outstandingAmount: 100, status: "PENDING", inPaymentPlan: false }]);
+    vi.spyOn(portalService, "previewElectronicPayment").mockResolvedValue({ debtId: 818, requestedAmount: 100, payableAmount: 100, approved: true, message: "Pago disponible" });
+    let confirmar;
+    const registrar = vi.spyOn(portalService, "createElectronicPayment").mockImplementation(() => new Promise((resolve) => { confirmar = resolve; }));
+    vi.spyOn(portalService, "paymentReceipt").mockResolvedValue({ receiptNumber: "REC-QA", amount: 100 });
+    await loginAsContribuyente(user);
+    await user.click(screen.getByRole("link", { name: /^pago electrónico$/i }));
+    await user.click(await screen.findByRole("button", { name: /^elegir$/i }));
+    await user.click(screen.getByRole("button", { name: /revisar pago/i }));
+    await user.dblClick(await screen.findByRole("button", { name: /confirmar y pagar/i }));
+    expect(screen.getByRole("button", { name: /confirmar y pagar/i }).disabled).toBe(true);
+    expect(registrar).toHaveBeenCalledTimes(1);
+    await act(async () => { confirmar({ id: 92, paymentId: 92, amount: 100, status: "APPROVED", gatewayReference: "SIM-QA", createdAt: new Date().toISOString() }); });
+    expect(await screen.findByText(/pago aprobado/i)).toBeDefined();
+  });
+
+  it("no da acceso a las areas internas del municipio", async () => {
+    await loginAsContribuyente(user);
+
+    expect(screen.queryByRole("link", { name: /^liquidaciones$/i })).toBeNull();
+    expect(screen.queryByRole("link", { name: /^conceptos$/i })).toBeNull();
+    expect(screen.queryByRole("link", { name: /^auditoría$/i })).toBeNull();
+    expect(screen.queryByRole("link", { name: /^cobros$/i })).toBeNull();
+  });
+
+  it("compara las alternativas de cuotas antes de elegir", async () => {
+    await loginAsContribuyente(user);
+    await user.click(screen.getByRole("link", { name: /^planes de pago$/i }));
+    await user.click(await screen.findByRole("button", { name: /solicitar plan de pago/i }));
+
+    const dialog = await screen.findByRole("dialog");
+    await user.click((await within(dialog).findAllByRole("checkbox"))[0]);
+
+    // Las tres opciones se ven a la vez, no de a una.
+    const opciones = await within(dialog).findAllByRole("button", { name: /cuotas/i });
+    const etiquetas = opciones.map((b) => b.textContent);
+    expect(etiquetas.some((t) => t.includes("3 cuotas"))).toBe(true);
+    expect(etiquetas.some((t) => t.includes("6 cuotas"))).toBe(true);
+    expect(etiquetas.some((t) => t.includes("12 cuotas"))).toBe(true);
+
+    // La opción elegida queda marcada.
+    const seis = opciones.find((b) => b.textContent.includes("6 cuotas"));
+    expect(seis.getAttribute("aria-pressed")).toBe("true");
+    const doce = opciones.find((b) => b.textContent.includes("12 cuotas"));
+    await user.click(doce);
+    expect(doce.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("muestra el anticipo mínimo calculado por el backend", async () => {
+    await loginAsContribuyente(user);
+    await user.click(screen.getByRole("link", { name: /^planes de pago$/i }));
+    await user.click(await screen.findByRole("button", { name: /solicitar plan de pago/i }));
+
+    const dialog = await screen.findByRole("dialog");
+    await user.click((await within(dialog).findAllByRole("checkbox"))[0]);
+
+    expect(await within(dialog).findByText(/anticipo mínimo estimado/i)).toBeDefined();
+    expect(within(dialog).getByText(/importe financiado/i)).toBeDefined();
+  });
+
+  it("no ofrece editar un anticipo que el backend no admite al solicitar", async () => {
+    await loginAsContribuyente(user);
+    await user.click(screen.getByRole("link", { name: /^planes de pago$/i }));
+    await user.click(await screen.findByRole("button", { name: /solicitar plan de pago/i }));
+
+    const dialog = await screen.findByRole("dialog");
+    await user.click((await within(dialog).findAllByRole("checkbox"))[0]);
+    expect(await within(dialog).findByText(/anticipo mínimo estimado/i)).toBeDefined();
+    expect(within(dialog).queryByRole("spinbutton", { name: /anticipo/i })).toBeNull();
+  });
+
+  it("solicita un plan de pago viendo la cuota antes de enviarlo", async () => {
+    await loginAsContribuyente(user);
+    await user.click(screen.getByRole("link", { name: /^planes de pago$/i }));
+    await user.click(await screen.findByRole("button", { name: /solicitar plan de pago/i }));
+
+    const dialog = await screen.findByRole("dialog");
+    await user.click((await within(dialog).findAllByRole("checkbox"))[0]);
+
+    // La simulación aparece recién cuando hay una deuda elegida.
+    expect(await within(dialog).findByText(/así quedaría tu plan/i)).toBeDefined();
+
+    await user.click(within(dialog).getByRole("button", { name: /enviar solicitud/i }));
+
+    expect(await screen.findByText(/solicitud enviada/i)).toBeDefined();
+  });
+
+  it("aclara que la carga de archivos de exención no está integrada", async () => {
+    await loginAsContribuyente(user);
+    await user.click(screen.getByRole("link", { name: /^exenciones$/i }));
+    await user.click(await screen.findByRole("button", { name: /solicitar exención/i }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/la carga de archivos en línea todavía no está disponible/i)).toBeDefined();
+    expect(within(dialog).queryByLabelText(/subir archivo/i)).toBeNull();
+  });
+
+  it("abre la boleta imprimible con su código de barras", async () => {
+    await loginAsContribuyente(user);
+    await user.click(screen.getByRole("link", { name: /^mis boletas$/i }));
+
+    await user.click((await screen.findAllByRole("button", { name: /ver e imprimir/i }))[0]);
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/código de barras/i)).toBeDefined();
+    expect(within(dialog).getByText(/importe a pagar/i)).toBeDefined();
+    expect(within(dialog).getByRole("button", { name: /^imprimir$/i })).toBeDefined();
+  });
+
+  it("muestra la misma boleta en cada deuda asociada en Inicio y Mis Deudas", async () => {
+    instalarBackendFalso({
+    });
+    const debts = [
+      { id: 2, conceptName: "Tasa", outstandingAmount: 500, dueDate: "2026-11-20", daysLeft: 6, status: "PENDING", billIds: [1], billId: 1 },
+      { id: 3, conceptName: "Tasa", outstandingAmount: 700, dueDate: "2026-11-22", daysLeft: 8, status: "PENDING", billIds: [1], billId: 1 },
+    ];
+    vi.spyOn(portalService, "accountSummary").mockResolvedValue({ totalDebt: 1200, overdueDebt: 0, creditBalance: 0, obligations: debts, counts: { debts: 2, overdue: 0 }, nextDueDate: null });
+    vi.spyOn(portalService, "debts").mockResolvedValue(debts);
+    await loginAsContribuyente(user);
+    expect(await screen.findAllByText("#1")).toHaveLength(2);
+
+    await user.click(screen.getByRole("link", { name: /mis deudas/i }));
+    expect(await screen.findAllByText("#1")).toHaveLength(2);
+  });
+
+  it("solicita una exencion y valida el formulario", async () => {
+    await loginAsContribuyente(user);
+    await user.click(screen.getByRole("link", { name: /^exenciones$/i }));
+
+    await user.click(await screen.findByRole("button", { name: /solicitar exención/i }));
+
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: /enviar solicitud/i }));
+
+    // Sin concepto ni motivo la solicitud no sale.
+    expect(await within(dialog).findByText(/elegí el concepto/i)).toBeDefined();
+
+    await user.selectOptions(within(dialog).getByLabelText(/concepto/i), "PATENTE");
+    await user.type(within(dialog).getByLabelText(/motivo/i), "Situación socioeconómica");
+    await user.type(within(dialog).getByLabelText(/vigente desde/i), "2027-01-01");
+    await user.type(within(dialog).getByLabelText(/vigente hasta/i), "2027-12-31");
+    await user.click(within(dialog).getByRole("button", { name: /enviar solicitud/i }));
+
+    expect(await screen.findByText(/solicitud enviada/i)).toBeDefined();
+  });
+
+  it("aclara que los pagos no se hacen desde el portal", async () => {
+    await loginAsContribuyente(user);
+    await user.click(screen.getByRole("link", { name: /^mis deudas$/i }));
+
+    expect(await screen.findByText(/¿cómo pago\?/i)).toBeDefined();
+  });
+});

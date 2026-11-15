@@ -1,7 +1,21 @@
 # Frontend
 
-Aplicación web React del Módulo 5 — Rentas. Contiene el **área de trabajo de
-Personal de Rentas**: login y los módulos funcionales de la operación diaria.
+Aplicación web React del Módulo 5 — Rentas. Contiene las dos áreas de trabajo del
+módulo, con login común y navegación separada por rol:
+
+- **Personal de Rentas** (`/rentas`) — back-office: liquidaciones, deudas, boletas,
+  pagos, planes, exenciones, tickets y, para el supervisor, la bitácora de eventos.
+- **Caja** (`/caja`) — ventanilla del cajero: cobros, consulta del padrón, pagos del
+  día y búsqueda de boletas. El cajero cobra e imprime comprobantes; no liquida, no
+  resuelve planes ni exenciones y no reversa pagos.
+- **Auditoría** (`/auditor`) — control transversal de sólo lectura: contribuyentes,
+  conceptos, liquidaciones, deudas, pagos, planes, exenciones, tickets, integraciones,
+  registro de auditoría e indicadores. El auditor observa todo el circuito y no
+  modifica ninguna entidad: `auditService` no expone una sola operación de escritura.
+- **Portal del contribuyente** (`/portal`) — la única área de cara al ciudadano: su
+  resumen de cuenta con avisos, deudas, boletas, pagos, planes y exenciones. Consulta
+  su propio legajo y puede iniciar dos trámites —pedir un plan de pago, que es la vía
+  para conseguir más plazo, y pedir una exención—; no registra pagos ni resuelve nada.
 
 ## Comandos
 
@@ -25,29 +39,58 @@ npm test -- -t "cancela la deuda cuando el pago cubre el saldo"
 Copiar `.env.example` a `.env`:
 
 - `VITE_API_BASE_URL` — URL pública del backend. Ninguna variable `VITE_*` lleva secretos.
-- `VITE_USE_MOCKS` — `true` usa el dataset local de `src/services/mockDb.js`. Mientras el
-  backend no exista, la app funciona completa contra esos datos. Con el backend arriba,
-  poner `false`: las firmas de `src/services/rentasService.js` no cambian.
+- `VITE_AUTH_MODE=demo` — el login siempre va a `POST /api/v1/dev-auth/login`.
+  Las cuentas y las sesiones viven en PostgreSQL (`demo_user`, `demo_auth_session`).
+  El frontend envía `X-Demo-Session`; no elige roles en cabeceras. Core/JWT sigue
+  pendiente.
 
-Usuarios del dataset de demostración: `mrivas` / `rentas123` (Personal de Rentas) y
-`jlopez` / `rentas123` (Supervisor).
+El valor anterior `mock` se acepta como alias de `demo` para mantener la
+compatibilidad de despliegues existentes. Ambos autentican contra el backend real.
+`VITE_USE_MOCKS` no es una opción de runtime: no activa ni cambia datos simulados.
+Los modos desconocidos se rechazan; `core` sigue sin contrato de autenticación integrado.
+
+Para el stack local: `VITE_AUTH_MODE=demo` y backend con
+`RENTAS_SECURITY_DEV_MODE=true`. El primer supervisor se crea con
+`POST /api/v1/dev-auth/bootstrap` y el resto con `POST /api/v1/dev-auth/users`.
+No hay cuentas de prueba embebidas en la pantalla de ingreso ni datos de negocio mock.
 
 ## Estructura
 
 ```text
 src/
   components/ui/        Kit compartido del design system (no modificar; extender por props)
-  components/layout/    Sidebar, Topbar, Footer y shell de los módulos
+  components/layout/    Sidebar, Topbar, Footer y el shell de cada área de trabajo
   components/common/    Piezas del back-office: DataTable, Modal, FilterBar, Card…
-  config/modules.js     Módulos funcionales del área y su visibilidad por rol
+  components/caja/      Comprobante de ventanilla y su reimpresión
+  components/auditoria/ Fichas, historiales y gráficos del área de control
+  config/modules.js     Módulos de Rentas y su visibilidad por rol
+  config/cajaModules.js Módulos de la ventanilla de caja
+  config/auditoriaModules.js  Módulos del área de auditoría
+  config/portalModules.js     Módulos del portal del contribuyente
+  config/workspaces.js  A qué panel entra cada rol
   context/              Sesión del agente municipal
-  pages/                Login, panel de inicio y una página por módulo en pages/rentas/
-  services/             Cliente HTTP, dataset de demostración y servicios de negocio
+  pages/                Login, y una página por módulo en pages/{rentas,caja,auditoria,portal}/
+  services/             Cliente HTTP, adaptadores del contrato y servicios de negocio
 ```
+
+Los gráficos de Indicadores son de una sola serie y usan `#2563A8` como relleno de
+datos —un paso más claro del navy institucional, validado por contraste sobre blanco—
+mientras que `#0F2C59` queda para texto, que es su rol en el design system. Toda
+visualización ofrece además su vista de tabla.
+
+El comprobante de caja se imprime desde el navegador y las boletas PDF se descargan
+desde el endpoint protegido del backend.
 
 ## Design system
 
-Tipografía Inter, navy `#0F2C59` y coral `#D63031` como acento, fondo `#FAFAFA`.
-Los tokens viven en `src/index.css` (`@theme` de Tailwind v4). Los componentes de
-`src/components/ui/` son la fuente canónica del UI kit: reutilizarlos siempre en vez
-de escribir markup o colores nuevos.
+El login es la referencia visual: Geist, navy `#0F2C59`, superficies claras y el
+motivo de arcos institucional. Las áreas autenticadas extienden ese lenguaje en
+`src/components/layout/workspace.css`, bajo `.workspace-app`: navegación clara,
+encabezados `WorkspaceHeader`, métricas agrupadas, tablas y formularios legibles.
+El color se reserva para estados y acciones que necesitan atención.
+
+Los tokens base de Tailwind v4 siguen en `src/index.css`. El kit de
+`src/components/ui/` y los componentes usados por el login se conservan intactos.
+Las variantes autenticadas reutilizan el kit por props y clases, sin cambiar la
+pantalla de ingreso. La navegación móvil se cierra con Escape y mantiene el foco;
+las filas con detalle se pueden abrir con Enter o Espacio.

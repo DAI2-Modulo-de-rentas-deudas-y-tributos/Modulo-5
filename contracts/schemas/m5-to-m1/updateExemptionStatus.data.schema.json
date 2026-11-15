@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:m5-rentas:event:updateExemptionStatus:1.0:data",
+  "title": "updateExemptionStatus data (M5 proposal)",
+  "description": "Shape emitted by ConfirmedOutboundEvents.UpdateExemptionStatusPayload. Null values are omitted by Jackson; APPROVED and REJECTED are mutually exclusive variants.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["requestId", "citizenId", "status", "conceptCode"],
+  "properties": {
+    "requestId": { "$ref": "#/$defs/uuid" },
+    "citizenId": { "$ref": "#/$defs/uuid" },
+    "status": { "enum": ["APPROVED", "REJECTED"] },
+    "exemptionId": { "$ref": "#/$defs/uuid" },
+    "conceptCode": { "type": "string", "pattern": "\\S" },
+    "percentage": { "type": "number", "exclusiveMinimum": 0, "maximum": 100 },
+    "validFrom": { "$ref": "#/$defs/date" },
+    "validUntil": { "$ref": "#/$defs/date" },
+    "reason": { "type": "string", "pattern": "\\S" }
+  },
+  "oneOf": [
+    {
+      "properties": { "status": { "const": "APPROVED" } },
+      "required": ["exemptionId", "percentage", "validFrom"],
+      "not": { "required": ["reason"] }
+    },
+    {
+      "properties": { "status": { "const": "REJECTED" } },
+      "required": ["reason"],
+      "not": {
+        "anyOf": [
+          { "required": ["exemptionId"] },
+          { "required": ["percentage"] },
+          { "required": ["validFrom"] },
+          { "required": ["validUntil"] }
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "date": {
+      "type": "string",
+      "format": "date",
+      "pattern": "^(?:[0-9]{4}-(?:(?:01|03|05|07|08|10|12)-(?:0[1-9]|[12][0-9]|3[01])|(?:04|06|09|11)-(?:0[1-9]|[12][0-9]|30)|02-(?:0[1-9]|1[0-9]|2[0-8]))|(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:0[48]|[2468][048]|[13579][26])00)-02-29)$"
+    }
+  }
+}

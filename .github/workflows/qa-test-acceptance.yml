@@ -1,0 +1,184 @@
+name: Run acceptance tests on AWS TEST
+
+run-name: "QA TEST: ${{ inputs.scenario }} (${{ inputs.bulk_size }} contribuyentes válidos)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: "Escenario de aceptación"
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - pdf
+          - bulk
+      bulk_size:
+        description: "Contribuyentes válidos requeridos; se agrega un error controlado"
+        required: true
+        default: "50"
+        type: choice
+        options:
+          - "10"
+          - "50"
+          - "200"
+      max_duration_seconds:
+        description: "Tiempo máximo permitido para la corrida masiva"
+        required: true
+        default: "120"
+        type: choice
+        options:
+          - "60"
+          - "120"
+          - "300"
+      confirmation:
+        description: "Escriba RUN_QA_TESTS; las pruebas crean datos efímeros en TEST"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: qa-acceptance-test
+  cancel-in-progress: false
+
+jobs:
+  acceptance:
+    name: qa-test-acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: test
+
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      ECS_CLUSTER: modulo-5-rentas-test-cluster
+      ECS_SERVICE: modulo-5-rentas-test-backend
+      RDS_INSTANCE: modulo-5-rentas-test-postgres
+      AMPLIFY_APP_NAME: modulo-5-rentas-test-frontend
+      TEST_API_BEARER_TOKEN: ${{ secrets.TEST_API_BEARER_TOKEN }}
+      TEST_API_RENTAS_BEARER_TOKEN: ${{ secrets.TEST_API_RENTAS_BEARER_TOKEN }}
+      TEST_API_SUPERVISOR_BEARER_TOKEN: ${{ secrets.TEST_API_SUPERVISOR_BEARER_TOKEN }}
+      TEST_API_SELF_APPROVAL_BEARER_TOKEN: ${{ secrets.TEST_API_SELF_APPROVAL_BEARER_TOKEN }}
+      TEST_DEMO_USERNAME: ${{ secrets.TEST_DEMO_USERNAME }}
+      TEST_DEMO_PASSWORD: ${{ secrets.TEST_DEMO_PASSWORD }}
+      RENTAS_DEMO_BOOTSTRAP_PASSWORD: ${{ secrets.RENTAS_DEMO_BOOTSTRAP_PASSWORD }}
+
+    steps:
+      - name: Validate request
+        shell: bash
+        env:
+          QA_CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          [[ "${QA_CONFIRMATION}" == "RUN_QA_TESTS" ]] || {
+            echo "La ejecución requiere la confirmación RUN_QA_TESTS."
+            exit 1
+          }
+          : "${AWS_REGION:?Falta AWS_REGION en el environment test}"
+          if [[ -z "${TEST_API_BEARER_TOKEN}" ]]; then
+            : "${TEST_DEMO_USERNAME:?Falta TEST_DEMO_USERNAME o TEST_API_BEARER_TOKEN en el environment test}"
+            : "${TEST_DEMO_PASSWORD:?Falta TEST_DEMO_PASSWORD o TEST_API_BEARER_TOKEN en el environment test}"
+          else
+            : "${TEST_API_RENTAS_BEARER_TOKEN:?Falta TEST_API_RENTAS_BEARER_TOKEN en el environment test}"
+            : "${TEST_API_SUPERVISOR_BEARER_TOKEN:?Falta TEST_API_SUPERVISOR_BEARER_TOKEN en el environment test}"
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Configure temporary AWS credentials
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: "756663253996"
+          mask-aws-account-id: true
+          role-session-name: qa-test-${{ github.run_id }}
+
+      - name: Verify TEST is running
+        shell: bash
+        run: |
+          set -euo pipefail
+          read -r desired running status <<< "$(aws ecs describe-services             --cluster "${ECS_CLUSTER}"             --services "${ECS_SERVICE}"             --query 'services[0].[desiredCount,runningCount,status]'             --output text)"
+          db_status="$(aws rds describe-db-instances             --db-instance-identifier "${RDS_INSTANCE}"             --query 'DBInstances[0].DBInstanceStatus'             --output text)"
+
+          if [[ "${desired}" != "1" || "${running}" != "1" || "${status}" != "ACTIVE" || "${db_status}" != "available" ]]; then
+            echo "AWS TEST no está listo: ECS desired=${desired}, running=${running}, status=${status}; RDS=${db_status}."
+            echo "Ejecute primero el workflow 'Control AWS TEST runtime' con operation=start y START_TEST."
+            exit 1
+          fi
+
+      - name: Resolve TEST API URL
+        id: api
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_id="$(aws amplify list-apps             --query "apps[?name=='${AMPLIFY_APP_NAME}'].appId | [0]"             --output text)"
+          if [[ -z "${app_id}" || "${app_id}" == "None" ]]; then
+            echo "No se encontró la aplicación Amplify ${AMPLIFY_APP_NAME}."
+            exit 1
+          fi
+
+          api_base_url="$(aws amplify get-app             --app-id "${app_id}"             --query 'app.environmentVariables.VITE_API_BASE_URL'             --output text)"
+          if [[ -z "${api_base_url}" || "${api_base_url}" == "None" ]]; then
+            echo "Amplify no tiene configurada VITE_API_BASE_URL."
+            exit 1
+          fi
+
+          echo "api_base_url=${api_base_url}" >> "${GITHUB_OUTPUT}"
+          echo "API de TEST resuelta correctamente."
+
+      - name: Setup Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+
+      - name: Install PDF validation tools
+        run: |
+          python -m pip install --only-binary :all: --require-hashes -r scripts/test/requirements.txt
+          sudo apt-get update
+          sudo apt-get install -y poppler-utils
+
+      - name: Run acceptance scenarios
+        id: acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/test/aws_test_acceptance.py \
+            --api-base-url "${{ steps.api.outputs.api_base_url }}" \
+            --scenario "${{ inputs.scenario }}" \
+            --bulk-size "${{ inputs.bulk_size }}" \
+            --max-duration-seconds "${{ inputs.max_duration_seconds }}" \
+            --output-dir artifacts/qa-test
+
+      - name: Render downloaded PDFs for visual review
+        if: always()
+        shell: bash
+        run: |
+          shopt -s nullglob
+          for document in artifacts/qa-test/*.pdf; do
+            pdftoppm -r 90 -png "${document}" "${document%.pdf}"
+          done
+
+      - name: Publish acceptance summary
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f artifacts/qa-test/summary.md ]]; then
+            cat artifacts/qa-test/summary.md >> "${GITHUB_STEP_SUMMARY}"
+          else
+            echo "### Aceptación AWS TEST" >> "${GITHUB_STEP_SUMMARY}"
+            echo "No se pudo generar el resumen de evidencias." >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Upload acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: qa-test-${{ inputs.scenario }}-${{ github.run_id }}
+          path: artifacts/qa-test/**
+          if-no-files-found: warn
+          retention-days: 7

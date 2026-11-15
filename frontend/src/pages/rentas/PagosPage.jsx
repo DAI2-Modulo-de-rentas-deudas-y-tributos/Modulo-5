@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
 import Card from "../../components/common/Card.jsx";
 import DataTable from "../../components/common/DataTable.jsx";
@@ -10,22 +10,16 @@ import Alert from "../../components/ui/Alert.jsx";
 import FormField from "../../components/ui/FormField.jsx";
 import useResource from "../../hooks/useResource.js";
 import useTaxpayerIndex from "../../hooks/useTaxpayerIndex.js";
-import { debtService, paymentService } from "../../services/rentasService.js";
+import { debtService, paymentService, reconciliationService } from "../../services/rentasService.js";
+import { PAYMENT_METHODS } from "../../config/catalogosDominio.js";
 import { formatCurrency, formatDateTime } from "../../lib/format.js";
-
-const CHANNELS = [
-  { value: "VENTANILLA", label: "Ventanilla" },
-  { value: "TRANSFERENCIA", label: "Transferencia" },
-  { value: "HOMEBANKING", label: "Homebanking" },
-  { value: "DEBITO_AUTOMATICO", label: "Débito automático" },
-];
 
 /**
  * Pagos: el corazón operativo del área.
  *
- * Registrar imputa el pago a la deuda y publica paymentRegistered (y debtSettled si
- * el saldo llega a cero). Reversar publica paymentReversed y devuelve el saldo a la
- * deuda. Ambos eventos viajan a M4 o M7 según el origen lógico de la obligación.
+ * Registrar imputa el pago y reversar restituye el principal aplicado. El backend
+ * controla la evidencia y el outbox; los contratos outbound externos pendientes
+ * no se consideran integrados por mostrar estas operaciones en la interfaz.
  */
 export default function PagosPage() {
   const [status, setStatus] = useState("");
@@ -57,14 +51,15 @@ export default function PagosPage() {
     },
     { key: "taxpayer", header: "Contribuyente", render: (row) => nameOf(row.taxpayerId) },
     {
-      key: "debtId",
+      key: "allocationStatus",
       header: "Imputación",
-      render: (row) =>
-        row.debtId ? (
-          <span className="tabular-nums text-neutral-600">Deuda #{row.debtId}</span>
-        ) : (
-          <StatusBadge tone="warning" label="Sin imputar" />
-        ),
+      render: (row) => {
+        if (row.status === "REVERSED") return <StatusBadge label="Reversado" />;
+        if (Number(row.unallocatedAmount) > 0) {
+          return <StatusBadge tone="warning" label={Number(row.allocatedAmount) > 0 ? "Parcialmente imputado" : "Sin imputar"} />;
+        }
+        return <StatusBadge label="Imputado" />;
+      },
     },
     {
       key: "amountPaid",
@@ -85,7 +80,7 @@ export default function PagosPage() {
       align: "right",
       render: (row) => (
         <div className="flex justify-end gap-2">
-          {!row.allocated && row.status !== "REVERSED" && (
+          {Number(row.unallocatedAmount) > 0 && row.status !== "REVERSED" && (
             <Button
               size="sm"
               variant="secondary"
@@ -125,7 +120,7 @@ export default function PagosPage() {
 
       <Card
         title="Movimientos"
-        description="Cada pago imputado publica paymentRegistered hacia el módulo de origen."
+        description="Cada pago imputado queda registrado para informar al módulo de origen cuando la integración esté disponible."
         actions={
           <Button size="sm" variant="primary" onClick={() => setModal({ type: "register" })}>
             Registrar pago
@@ -159,6 +154,8 @@ export default function PagosPage() {
         />
       </Card>
 
+      <ReconciliationPanel />
+
       {modal?.type === "register" && (
         <RegisterPaymentModal
           taxpayerOptions={taxpayerOptions}
@@ -166,9 +163,9 @@ export default function PagosPage() {
           onDone={(payment) =>
             afterAction(
               "Pago registrado",
-              payment.allocated
-                ? `${payment.receiptNumber} imputado a la deuda #${payment.debtId}.`
-                : `${payment.receiptNumber} quedó sin imputar: asignalo a una deuda cuando se identifique.`,
+              Number(payment.unallocatedAmount) > 0
+                ? `${payment.receiptNumber} quedó sin imputar: asignalo a una deuda cuando se identifique.`
+                : `${payment.receiptNumber} quedó imputado.`,
             )
           }
         />
@@ -190,8 +187,8 @@ export default function PagosPage() {
           onClose={closeModal}
           onDone={(payment) =>
             afterAction(
-              "Pago reversado",
-              `Se publicó paymentReversed por ${formatCurrency(payment.amountPaid)}.`,
+              "Solicitud de reversión registrada",
+              "La solicitud quedó registrada. Un Supervisor debe aprobarla antes de ejecutar la reversión.",
             )
           }
         />
@@ -200,14 +197,49 @@ export default function PagosPage() {
   );
 }
 
+function ReconciliationPanel() {
+  const [modal,setModal]=useState(null);const [feedback,setFeedback]=useState(null);
+  const loader=useCallback(()=>reconciliationService.observed(),[]);const {data:observed,loading,reload}=useResource(loader,[]);
+  const columns=[
+    {key:"externalReference",header:"Referencia"},
+    {key:"taxpayerDocument",header:"Documento"},
+    {key:"amount",header:"Importe",align:"right",render:(row)=>formatCurrency(row.amount)},
+    {key:"status",header:"Estado",render:(row)=><StatusBadge status={row.status}/>},
+    {key:"actions",header:"",align:"right",render:(row)=><Button size="sm" variant="secondary" onClick={()=>setModal({type:"resolve",item:row})}>Resolver</Button>},
+  ];
+  return <Card title="Conciliación electrónica" description="Importá lotes del canal electrónico y resolvé movimientos observados." actions={<Button size="sm" variant="primary" onClick={()=>setModal({type:"import"})}>Importar lote</Button>}>
+    {feedback&&<Alert variant={feedback.variant} title={feedback.title} onDismiss={()=>setFeedback(null)}>{feedback.message}</Alert>}
+    <DataTable columns={columns} rows={observed??[]} rowKey={(row)=>row.id} loading={loading} emptyIconName="BadgeCheck" emptyTitle="Sin movimientos observados" emptyDescription="Los pagos importados conciliaron o todavía no se cargó un lote." />
+    {modal?.type==="import"&&<ImportReconciliationModal onClose={()=>setModal(null)} onDone={(batch)=>{setModal(null);setFeedback({variant:"success",title:"Lote importado",message:`${batch.reconciledItems} conciliados, ${batch.observedItems} observados y ${batch.notFoundItems} no encontrados.`});reload();}}/>}
+    {modal?.type==="resolve"&&<ResolveReconciliationModal item={modal.item} onClose={()=>setModal(null)} onDone={()=>{setModal(null);setFeedback({variant:"success",title:"Movimiento resuelto",message:"La conciliación manual quedó persistida y auditada."});reload();}}/>}
+  </Card>;
+}
+
+function ImportReconciliationModal({onClose,onDone}){
+  const [batchReference,setBatchReference]=useState("");const [payload,setPayload]=useState('[\n  {"externalReference":"TX-001","taxpayerDocument":"00000000","amount":1000,"paidAt":"2026-09-04T12:00:00-03:00"}\n]');const [error,setError]=useState(null);const [submitting,setSubmitting]=useState(false);
+  const submit=async(event)=>{event.preventDefault();setError(null);try{const items=JSON.parse(payload);if(!batchReference.trim()||!Array.isArray(items)||items.length===0)throw new Error("Indicá la referencia y al menos un movimiento válido.");setSubmitting(true);onDone(await reconciliationService.importBatch(batchReference,items));}catch(caught){setError(caught.message);}finally{setSubmitting(false);}};
+  return <Modal open title="Importar conciliación" description="El lote queda almacenado en PostgreSQL y no puede repetirse." onClose={onClose} footer={<><Button variant="secondary" onClick={onClose}>Cancelar</Button><Button variant="primary" loading={submitting} onClick={submit}>Importar</Button></>}>
+    {error&&<Alert variant="error" title="No se pudo importar">{error}</Alert>}<form onSubmit={submit} className="flex flex-col gap-4"><FormField label="Referencia del lote" name="batchReference" value={batchReference} onChange={(e)=>setBatchReference(e.target.value)} required/><FormField label="Movimientos (JSON)" name="items" type="textarea" value={payload} onChange={(e)=>setPayload(e.target.value)} required/></form>
+  </Modal>;
+}
+
+function ResolveReconciliationModal({item,onClose,onDone}){
+  const [paymentId,setPaymentId]=useState("");const [reason,setReason]=useState("");const [error,setError]=useState(null);const [submitting,setSubmitting]=useState(false);
+  const submit=async(event)=>{event.preventDefault();if(!paymentId||!reason.trim()){setError("Indicá el pago y el motivo de la resolución.");return;}setSubmitting(true);try{await reconciliationService.resolve(item.id,Number(paymentId),reason);onDone();}catch(caught){setError(caught.message);}finally{setSubmitting(false);}};
+  return <Modal open title={`Resolver ${item.externalReference}`} description={`${item.taxpayerDocument} · ${formatCurrency(item.amount)}`} onClose={onClose} footer={<><Button variant="secondary" onClick={onClose}>Cancelar</Button><Button variant="primary" loading={submitting} onClick={submit}>Conciliar</Button></>}>
+    {error&&<Alert variant="error" title="No se pudo resolver">{error}</Alert>}<form onSubmit={submit} className="flex flex-col gap-4"><FormField label="ID de pago" name="paymentId" type="number" value={paymentId} onChange={(e)=>setPaymentId(e.target.value)} required/><FormField label="Motivo" name="reason" type="textarea" value={reason} onChange={(e)=>setReason(e.target.value)} required/></form>
+  </Modal>;
+}
+
 /** RegisterPaymentRequest → PaymentResponse */
-function RegisterPaymentModal({ taxpayerOptions, onClose, onDone }) {
+export function RegisterPaymentModal({ taxpayerOptions, onClose, onDone }) {
+  const intentKey = useRef(null);
+  const requestInFlight = useRef(false);
   const [form, setForm] = useState({
     taxpayerId: "",
     debtId: "",
     amountPaid: "",
-    channel: "",
-    paidAt: "",
+    method: "",
   });
   const [errors, setErrors] = useState({});
   const [submitError, setSubmitError] = useState(null);
@@ -239,7 +271,7 @@ function RegisterPaymentModal({ taxpayerOptions, onClose, onDone }) {
     const found = {};
     if (!form.taxpayerId) found.taxpayerId = "Seleccioná el contribuyente.";
     if (!(Number(form.amountPaid) > 0)) found.amountPaid = "Ingresá un importe mayor a cero.";
-    if (!form.channel) found.channel = "Indicá el canal de cobro.";
+    if (!form.method) found.method = "Indicá el medio de pago.";
     if (selectedDebt && Number(form.amountPaid) > selectedDebt.outstandingAmount) {
       found.amountPaid = "El importe supera el saldo de la deuda.";
     }
@@ -249,14 +281,20 @@ function RegisterPaymentModal({ taxpayerOptions, onClose, onDone }) {
 
   const onSubmit = async (event) => {
     event.preventDefault();
+    if (requestInFlight.current) return;
     setSubmitError(null);
     if (!validate()) return;
+    requestInFlight.current = true;
+    intentKey.current ??= crypto.randomUUID();
     setSubmitting(true);
     try {
-      onDone(await paymentService.register(form));
+      const payment = await paymentService.register({ ...form, idempotencyKey: intentKey.current });
+      intentKey.current = null;
+      onDone(payment);
     } catch (caught) {
       setSubmitError(caught.message);
     } finally {
+      requestInFlight.current = false;
       setSubmitting(false);
     }
   };
@@ -315,23 +353,16 @@ function RegisterPaymentModal({ taxpayerOptions, onClose, onDone }) {
             required
           />
           <FormField
-            label="Canal"
-            name="channel"
+            label="Medio de pago"
+            name="method"
             type="select"
-            value={form.channel}
+            value={form.method}
             onChange={onChange}
-            options={CHANNELS}
-            error={errors.channel}
+            options={PAYMENT_METHODS}
+            error={errors.method}
             required
           />
         </div>
-        <FormField
-          label="Fecha de pago"
-          name="paidAt"
-          type="datetime-local"
-          value={form.paidAt}
-          onChange={onChange}
-        />
 
         {selectedDebt && (
           <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-4 text-[13px] text-neutral-600">
@@ -439,7 +470,7 @@ function ReversePaymentModal({ payment, onClose, onDone }) {
     event.preventDefault();
     setError(null);
     if (!reason.trim()) {
-      setError("El motivo de la reversión es obligatorio: viaja en el evento paymentReversed.");
+      setError("El motivo de la solicitud de reversión es obligatorio.");
       return;
     }
     setSubmitting(true);
@@ -469,12 +500,10 @@ function ReversePaymentModal({ payment, onClose, onDone }) {
         </>
       }
     >
-      {error && <Alert variant="error" title="No se pudo reversar">{error}</Alert>}
+      {error && <Alert variant="error" title="No se pudo registrar la solicitud">{error}</Alert>}
 
-      <Alert variant="info" title="La operación notifica al módulo de origen">
-        Se publicará <code className="font-semibold">paymentReversed</code> con originType{" "}
-        <code className="font-semibold">{payment.originType}</code>
-        {payment.originId ? ` y originId ${payment.originId}` : ""}.
+      <Alert variant="info" title="La reversión requiere aprobación">
+        El origen de la operación y el motivo quedarán registrados en la solicitud.
       </Alert>
 
       <form onSubmit={onSubmit} noValidate>

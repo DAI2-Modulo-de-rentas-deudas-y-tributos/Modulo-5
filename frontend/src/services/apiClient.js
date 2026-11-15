@@ -2,55 +2,102 @@
  * Cliente HTTP del frontend de Rentas.
  *
  * La URL del backend llega siempre por variable de entorno (`VITE_API_BASE_URL`),
- * nunca hardcodeada. Mientras el backend no exista, `VITE_USE_MOCKS` mantiene la
- * app navegable contra el dataset local de `mockDb.js`.
+ * nunca hardcodeada. Toda la información proviene del backend: no hay dataset local.
  */
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
+import { adaptApiRequest, adaptApiResponse } from "./apiAdapters.js";
+import { notifySessionExpired } from "./sessionEvents.js";
 
-export const USE_MOCKS =
-  import.meta.env.VITE_USE_MOCKS === "true" || API_BASE_URL === "";
+/** Quita las barras finales sin regex: `/\/+$/` tiene backtracking super-lineal. */
+function withoutTrailingSlashes(value) {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === "/") end -= 1;
+  return value.slice(0, end);
+}
+
+const API_BASE_URL = withoutTrailingSlashes((import.meta.env.VITE_API_BASE_URL ?? "").trim());
+
+// DEMO autentica con usuarios y sesiones reales del backend. "mock" es un alias heredado.
+const configuredAuthMode = (import.meta.env.VITE_AUTH_MODE ?? "demo").trim().toLowerCase();
+export const AUTH_MODE = configuredAuthMode === "mock" ? "demo" : configuredAuthMode;
 
 export class ApiError extends Error {
-  constructor(message, status, details) {
+  constructor(message, status, details, code, traceId) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.details = details;
+    this.code = code ?? details?.code ?? null;
+    this.traceId = traceId ?? details?.traceId ?? null;
   }
 }
 
-function authHeaders() {
+export function authHeaders() {
+  if (AUTH_MODE !== "demo") return {};
   const token = sessionStorage.getItem("rentas.token");
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  if (!token) return {};
+  return { "X-Demo-Session": token };
 }
 
-export async function request(path, { method = "GET", body, signal } = {}) {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    method,
-    signal,
-    headers: {
-      "Content-Type": "application/json",
-      ...authHeaders(),
-    },
-    body: body === undefined ? undefined : JSON.stringify(body),
+export async function request(path, { method = "GET", body, signal, responseType, headers, requiresAuth = true } = {}) {
+  const adapted = adaptApiRequest(path, { method, body, signal });
+  const requestHeaders = {
+    ...(responseType === "blob" ? { Accept: "application/pdf" } : {}),
+    ...(adapted.options.body === undefined ? {} : { "Content-Type": "application/json" }),
+    ...(requiresAuth ? authHeaders() : {}),
+    ...headers,
+  };
+  const sessionToken = new Headers(requestHeaders).get("X-Demo-Session");
+  const response = await fetch(`${API_BASE_URL}${adapted.path}`, {
+    method: adapted.options.method,
+    signal: adapted.options.signal,
+    headers: requestHeaders,
+    body: adapted.options.body === undefined ? undefined : JSON.stringify(adapted.options.body),
   });
 
-  const payload = response.status === 204 ? null : await response.json().catch(() => null);
+  if (response.status === 401 && requiresAuth && sessionToken) notifySessionExpired(sessionToken);
+
+  const contentType = response.headers.get("content-type") ?? "";
+  if (response.ok && responseType === "blob") {
+    if (contentType.split(";")[0].trim().toLowerCase() !== "application/pdf") {
+      throw new ApiError("El servidor no devolvió un PDF válido.", response.status);
+    }
+    const blob = await response.blob();
+    const signature = new Uint8Array(await blob.slice(0, 5).arrayBuffer());
+    if (String.fromCharCode(...signature) !== "%PDF-") {
+      throw new ApiError("El documento PDF está vacío o dañado.", response.status);
+    }
+    const disposition = response.headers.get("content-disposition") ?? "";
+    const filename = disposition.match(/filename="([^"\r\n]+)"/i)?.[1] ?? "boleta.pdf";
+    return { blob, filename: filename.replace(/[\\/]/g, "_") };
+  }
+  const isJson = /\bapplication\/(?:[\w.-]+\+)?json\b/i.test(contentType);
+  let payload = null;
+  if (response.status !== 204) {
+    if (response.ok && !isJson) {
+      throw new ApiError(
+        "La API devolvió una respuesta inesperada. Revisá la URL del backend y el proxy de conexión.",
+        response.status, null, "INVALID_API_RESPONSE", response.headers.get("x-correlation-id"),
+      );
+    }
+    try {
+      payload = isJson ? await response.json() : await response.text();
+    } catch {
+      if (response.ok) {
+        throw new ApiError("La API devolvió un JSON inválido.", response.status, null, "INVALID_API_RESPONSE",
+          response.headers.get("x-correlation-id"));
+      }
+    }
+  }
 
   if (!response.ok) {
     throw new ApiError(
-      payload?.message ?? "No se pudo completar la operación.",
+      payload?.message ?? payload?.detail ?? "No se pudo completar la operación.",
       response.status,
       payload,
+      payload?.code,
+      payload?.traceId ?? response.headers.get("x-correlation-id"),
     );
   }
 
-  return payload;
-}
-
-/** Simula la latencia de red para que los estados de carga se vean en modo mock. */
-export function delay(ms = 350) {
-  // En los tests la latencia simulada sólo agrega segundos al CI.
-  if (import.meta.env.MODE === "test") return Promise.resolve();
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return adaptApiResponse(path, adapted.path, payload);
 }

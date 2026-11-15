@@ -1,0 +1,13 @@
+# Excepciones del job `dependency-scan` (ci.yml). Cada una vence: al pasar `ignoreUntil` el CI
+# vuelve a fallar y hay que decidir de nuevo. Análisis completo en
+# docs/security/SCRUM-793_SCA_2026-10-28.md.
+
+[[IgnoredVulns]]
+id = "GHSA-j9f9-w8pj-32f8"
+ignoreUntil = 2026-12-15
+reason = "CVE-2026-47890, spring-webmvc 6.2.19. Fix OSS sólo en Spring 7 / Boot 4; precondiciones no presentes en M5. Decisión de versión pendiente (SCRUM-793)."
+
+[[IgnoredVulns]]
+id = "GHSA-pc63-qcmh-9cmg"
+ignoreUntil = 2026-12-15
+reason = "CVE-2026-47884, spring-webmvc 6.2.19. Fix OSS sólo en Spring 7 / Boot 4; precondiciones no presentes en M5. Decisión de versión pendiente (SCRUM-793)."

@@ -1,26 +1,26 @@
 import { useState } from "react";
+import { ArrowRight, Eye, EyeOff, LockKeyhole, Mail, UserRound } from "lucide-react";
+import "./LoginPage.css";
 import { useLocation, useNavigate, Navigate } from "react-router-dom";
-import { Building2, Lock } from "lucide-react";
 import FormField from "../components/ui/FormField.jsx";
 import Alert from "../components/ui/Alert.jsx";
 import Button from "../components/common/Button.jsx";
-import logo from "../assets/logo.png";
 import { useAuth } from "../context/AuthContext.jsx";
-import { USE_MOCKS } from "../services/apiClient.js";
+import { homePathForRole } from "../config/workspaces.js";
 
-/** Ingreso al área de trabajo. Sólo agentes municipales: no hay autorregistro. */
 export default function LoginPage() {
-  const { login, isAuthenticated } = useAuth();
+  const { login, isAuthenticated, user, sessionNotice, dismissSessionNotice } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
   const [form, setForm] = useState({ username: "", password: "" });
+  const [verContrasena, setVerContrasena] = useState(false);
   const [errors, setErrors] = useState({});
   const [submitError, setSubmitError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
   if (isAuthenticated) {
-    return <Navigate to={location.state?.from ?? "/rentas"} replace />;
+    return <Navigate to={location.state?.from ?? homePathForRole(user.role)} replace />;
   }
 
   const onChange = (event) => {
@@ -44,8 +44,8 @@ export default function LoginPage() {
 
     setSubmitting(true);
     try {
-      await login(form);
-      navigate(location.state?.from ?? "/rentas", { replace: true });
+      const { profile } = await login(form);
+      navigate(location.state?.from ?? homePathForRole(profile.role), { replace: true });
     } catch (caught) {
       setSubmitError(caught.message);
     } finally {
@@ -54,115 +54,114 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col lg:flex-row">
-      {/* Panel institucional */}
-      <section className="relative flex flex-col justify-between overflow-hidden bg-[#0F2C59] px-8 py-10 lg:w-[45%] lg:px-14 lg:py-14">
-        <div className="absolute -right-16 -top-16 h-64 w-64 rounded-full border-4 border-white/5" />
-        <div className="absolute -bottom-24 -left-10 h-72 w-72 rounded-full border-4 border-[#D63031]/20" />
+    <div className="login-page">
+      <a className="login-skip" href="#login-form">Ir al formulario de ingreso</a>
 
-        <div className="relative flex items-center gap-2">
-          <img src={logo} alt="Ciudad UADE" className="h-7 w-auto object-contain" />
-          <span className="text-[15px] font-bold text-white">Ciudad UADE</span>
-        </div>
-
-        <div className="relative mt-12 lg:mt-0">
-          <div className="mb-4 flex items-center gap-3">
-            <div className="h-[2px] w-8 bg-[#D63031]" />
-            <span className="text-[12px] font-bold uppercase tracking-[0.2em] text-[#D63031]">
-              Módulo 5
-            </span>
-          </div>
-          <h1 className="text-[2.25rem] font-extrabold leading-tight tracking-[-0.02em] text-white lg:text-[2.75rem]">
-            Área de trabajo de{" "}
-            <span className="bg-gradient-to-r from-[#D63031] to-[#e74c3c] bg-clip-text text-transparent">
-              Rentas
-            </span>
-          </h1>
-          <p className="mt-4 max-w-sm text-[15px] leading-relaxed text-white/60">
-            Liquidaciones, deudas, boletas, pagos, planes de pago y exenciones de la
-            Municipalidad de Ciudad UADE.
-          </p>
-        </div>
-
-        <p className="relative mt-12 flex items-center gap-2 text-[12px] text-white/40 lg:mt-0">
-          <Building2 className="h-3.5 w-3.5" strokeWidth={1.5} />
-          Uso exclusivo de agentes municipales — Gestión 2026
-        </p>
-      </section>
-
-      {/* Formulario */}
-      <section className="flex flex-1 items-center justify-center bg-[#FAFAFA] px-5 py-12">
-        <div className="w-full max-w-sm">
-          <div className="mb-7">
-            <span className="inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-neutral-500">
-              <Lock className="h-3 w-3 text-[#D63031]" strokeWidth={2} />
-              Acceso restringido
-            </span>
-            <h2 className="mt-4 text-[26px] font-extrabold tracking-[-0.02em] text-[#0F2C59]">
-              Iniciar sesión
-            </h2>
-            <p className="mt-1.5 text-[14px] text-neutral-500">
-              Ingresá con tu usuario del padrón de agentes.
+      <main className="login-main">
+        <section className="login-intro" aria-labelledby="login-intro-title">
+          <svg className="login-arches" viewBox="0 0 800 1000" fill="none" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+            {Array.from({ length: 9 }, (_, index) => (
+              <path
+                key={index}
+                d="M-220 1000V240C-220 65-75-80 100-80S420 65 420 240V1000Z"
+                transform={`translate(${index * 52} ${index * 58}) rotate(-26 180 440)`}
+              />
+            ))}
+          </svg>
+          <div className="login-intro-copy">
+            <h1 id="login-intro-title">Tu acceso a Rentas,<br />en un solo lugar.</h1>
+            <p className="login-description">
+              Ingresá con tu cuenta y accedé al espacio asignado a tu perfil.
             </p>
           </div>
+          <footer className="login-intro-footer">
+            <p>Cerca tuyo. También en línea.</p>
+            <p>Ciudad UADE · Dirección General de Rentas</p>
+          </footer>
+        </section>
 
-          <form onSubmit={onSubmit} noValidate className="flex flex-col gap-4">
-            {submitError && (
-              <Alert variant="error" title="No pudimos validar tus datos">
-                {submitError}
-              </Alert>
-            )}
-
-            <FormField
-              label="Usuario"
-              name="username"
-              placeholder="nombre.apellido"
-              value={form.username}
-              onChange={onChange}
-              error={errors.username}
-              required
-            />
-
-            <FormField
-              label="Contraseña"
-              name="password"
-              type="password"
-              placeholder="••••••••"
-              value={form.password}
-              onChange={onChange}
-              error={errors.password}
-              required
-            />
-
-            <Button type="submit" variant="primary" loading={submitting} className="mt-1 w-full">
-              {submitting ? "Verificando…" : "Ingresar"}
-            </Button>
-          </form>
-
-          {USE_MOCKS && (
-            <div className="mt-6 rounded-lg border border-neutral-200 bg-white p-4">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-neutral-400">
-                Datos de prueba
-              </p>
-              <ul className="mt-2 flex flex-col gap-1 text-[12px] text-neutral-500">
-                <li>
-                  <code className="font-semibold text-[#0F2C59]">mrivas</code> / rentas123 —
-                  Personal de Rentas
-                </li>
-                <li>
-                  <code className="font-semibold text-[#0F2C59]">jlopez</code> / rentas123 —
-                  Supervisor
-                </li>
-              </ul>
+        <section className="login-access" aria-labelledby="login-title">
+          <header className="login-access-header">
+            <p>Portal de Rentas</p>
+            <a className="login-help" href="mailto:soporte@ciudaduade.gob.ar" aria-label="¿Necesitás ayuda?">
+              <Mail size={17} aria-hidden="true" /><span>Ayuda</span>
+            </a>
+          </header>
+          <div className="login-card">
+            <div className="login-card-heading">
+              <span>Acceso unificado</span>
             </div>
-          )}
+            <h2 id="login-title">Iniciar sesión</h2>
+            <p className="login-card-description">
+              Usá tus credenciales. Te llevaremos automáticamente al portal o área de trabajo que te corresponde.
+            </p>
 
-          <p className="mt-6 text-center text-[12px] text-neutral-400">
-            ¿Problemas para ingresar? Escribí a{" "}
-            <span className="font-medium text-neutral-600">soporte@ciudaduade.gob.ar</span>
+            <form id="login-form" onSubmit={onSubmit} noValidate aria-labelledby="login-title" aria-busy={submitting} tabIndex={-1}>
+              <div className="login-fields">
+              {sessionNotice && (
+                <Alert variant="info" title="Sesión finalizada" onDismiss={dismissSessionNotice}>
+                  {sessionNotice}
+                </Alert>
+              )}
+                <div aria-live="polite" aria-atomic="true">
+                  {submitError && (
+                    <Alert variant="error" title="No pudimos validar tus datos">{submitError}</Alert>
+                  )}
+                </div>
+                <FormField
+                  label="Usuario"
+                  name="username"
+                  placeholder="Ingresá tu nombre de usuario"
+                  value={form.username}
+                  onChange={onChange}
+                  error={errors.username}
+                  required
+                  disabled={submitting}
+                  autoComplete="username"
+                  prefix={<UserRound size={17} className="text-neutral-400" aria-hidden="true" />}
+                />
+                <FormField
+                  label="Contraseña"
+                  name="password"
+                  type={verContrasena ? "text" : "password"}
+                  placeholder="Ingresá tu contraseña"
+                  value={form.password}
+                  onChange={onChange}
+                  error={errors.password}
+                  required
+                  disabled={submitting}
+                  autoComplete="current-password"
+                  prefix={<LockKeyhole size={17} className="text-neutral-400" aria-hidden="true" />}
+                  suffix={
+                    <button
+                      type="button"
+                      onClick={() => setVerContrasena((previous) => !previous)}
+                      className="login-password-toggle"
+                      aria-pressed={verContrasena}
+                      aria-controls="password"
+                      disabled={submitting}
+                    >
+                      {verContrasena ? <EyeOff size={16} aria-hidden="true" /> : <Eye size={16} aria-hidden="true" />}
+                      <span>{verContrasena ? "Ocultar" : "Mostrar"}</span>
+                    </button>
+                  }
+                />
+                <Button type="submit" loading={submitting} className="login-submit">
+                  {submitting ? "Verificando…" : "Ingresar"}
+                  {!submitting && <ArrowRight size={17} aria-hidden="true" />}
+                </Button>
+              </div>
+              <p className="login-account-note">
+                El acceso se define según tu perfil. Si todavía no tenés usuario, solicitá tu cuenta en la Dirección de Rentas.
+              </p>
+            </form>
+          </div>
+          <p className="login-access-note">
+            <LockKeyhole size={13} aria-hidden="true" />
+            Tu perfil determina los permisos y el espacio de trabajo
           </p>
-        </div>
-      </section>
+        </section>
+      </main>
     </div>
   );
 }

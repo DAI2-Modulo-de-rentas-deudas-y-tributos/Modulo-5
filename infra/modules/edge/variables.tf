@@ -35,3 +35,17 @@ variable "deletion_protection" {
   type        = bool
   default     = false
 }
+variable "https_origin" {
+  description = "Dominio de origen, con certificado ya emitido en la región del ALB."
+  type = object({
+    domain = string
+    zone   = string
+  })
+  default = null
+}
+
+variable "access_logs_bucket" {
+  description = "Nombre del bucket existente que recibe logs de ALB y CloudFront."
+  type        = string
+  default     = null
+}

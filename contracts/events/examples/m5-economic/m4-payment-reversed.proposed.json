@@ -1,0 +1,19 @@
+{
+  "eventId": "47cc4c97-cfb0-49cf-8a9f-d2bc4f56bb9d",
+  "eventType": "paymentReversed",
+  "eventVersion": "1.0",
+  "occurredAt": "2026-10-26T12:00:00-03:00",
+  "sourceModule": "rentas",
+  "correlationId": "ca16af37-771a-4912-8e6a-1919c341a113",
+  "causationId": null,
+  "data": {
+    "paymentId": "78168ad3-372b-49bc-a08e-fbf69a2bfd5a",
+    "debtId": "02c9affc-dcef-4d28-807b-fb530fd5f5f4",
+    "originType": "PERMIT_FEE",
+    "originId": "FEE-001",
+    "reversedAmount": 50000.00,
+    "reversedAt": "2026-10-26T12:00:00-03:00",
+    "remainingBalance": 75000.00,
+    "reason": "Anulación de comprobante"
+  }
+}

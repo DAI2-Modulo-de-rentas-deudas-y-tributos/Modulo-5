@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:m5-rentas:event:updatePaymentPlanStatus:1.0:data",
+  "title": "updatePaymentPlanStatus data (M5 proposal)",
+  "description": "Shape emitted by ConfirmedOutboundEvents.UpdatePaymentPlanStatusPayload. Null values are omitted by Jackson; GRANTED and REJECTED are mutually exclusive variants.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["requestId", "citizenId", "status"],
+  "properties": {
+    "requestId": { "$ref": "#/$defs/uuid" },
+    "citizenId": { "$ref": "#/$defs/uuid" },
+    "status": { "enum": ["GRANTED", "REJECTED"] },
+    "planId": { "$ref": "#/$defs/uuid" },
+    "installments": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+    "totalAmount": { "type": "number", "exclusiveMinimum": 0 },
+    "reason": { "type": "string", "pattern": "\\S" }
+  },
+  "oneOf": [
+    {
+      "properties": { "status": { "const": "GRANTED" } },
+      "required": ["planId", "installments", "totalAmount"],
+      "not": { "required": ["reason"] }
+    },
+    {
+      "properties": { "status": { "const": "REJECTED" } },
+      "required": ["reason"],
+      "not": {
+        "anyOf": [
+          { "required": ["planId"] },
+          { "required": ["installments"] },
+          { "required": ["totalAmount"] }
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    }
+  }
+}

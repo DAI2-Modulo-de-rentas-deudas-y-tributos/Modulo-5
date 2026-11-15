@@ -36,7 +36,7 @@ jobs:
 
     steps:
       - name: Checkout promoted source
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           ref: ${{ inputs.source_ref }}
@@ -64,11 +64,11 @@ jobs:
           echo "sha=${resolved_sha}" >> "${GITHUB_OUTPUT}"
 
       - name: Configure temporary AWS credentials
-        uses: aws-actions/configure-aws-credentials@v6.2.3
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
-          allowed-account-ids: "060712744495"
+          allowed-account-ids: "756663253996"
           mask-aws-account-id: true
           role-session-name: frontend-test-${{ github.run_id }}
 
@@ -88,17 +88,23 @@ jobs:
             exit 1
           fi
 
-          api_base_url=$(aws amplify get-app \
+          environment_variables=$(aws amplify get-app \
             --app-id "${app_id}" \
-            --query 'app.environmentVariables.VITE_API_BASE_URL' \
-            --output text)
+            --query 'app.environmentVariables' \
+            --output json)
+
+          api_base_url=$(jq -r '.VITE_API_BASE_URL // empty' <<< "${environment_variables}")
+          auth_mode=$(jq -r '.VITE_AUTH_MODE // "mock"' <<< "${environment_variables}")
+          use_mocks=$(jq -r '.VITE_USE_MOCKS // "false"' <<< "${environment_variables}")
 
           : "${api_base_url:?Amplify app does not expose VITE_API_BASE_URL}"
           echo "app-id=${app_id}" >> "${GITHUB_OUTPUT}"
           echo "api-base-url=${api_base_url}" >> "${GITHUB_OUTPUT}"
+          echo "auth-mode=${auth_mode}" >> "${GITHUB_OUTPUT}"
+          echo "use-mocks=${use_mocks}" >> "${GITHUB_OUTPUT}"
 
       - name: Setup Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
           cache: npm
@@ -108,8 +114,10 @@ jobs:
         working-directory: frontend
         env:
           VITE_API_BASE_URL: ${{ steps.amplify.outputs.api-base-url }}
+          VITE_AUTH_MODE: ${{ steps.amplify.outputs.auth-mode }}
+          VITE_USE_MOCKS: ${{ steps.amplify.outputs.use-mocks }}
         run: |
-          npm ci
+          npm ci --ignore-scripts
           npm run build
 
       - name: Package frontend artifact
@@ -190,4 +198,3 @@ jobs:
             echo "- Job: \`${{ steps.deployment.outputs.job-id }}\`"
             echo "- Source commit: \`${{ steps.source.outputs.sha }}\`"
           } >> "${GITHUB_STEP_SUMMARY}"
-

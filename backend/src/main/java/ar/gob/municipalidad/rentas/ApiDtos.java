@@ -1,7 +1,9 @@
 package ar.gob.municipalidad.rentas;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import jakarta.validation.constraints.*;
 import jakarta.validation.Valid;
+import io.swagger.v3.oas.annotations.media.Schema;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -12,19 +14,36 @@ public final class ApiDtos {
     private ApiDtos() {}
 
     public record TaxpayerResponse(Long id,TaxpayerType taxpayerType,String externalId,String dni,String cuit,String displayName,TaxpayerStatus status,OffsetDateTime createdAt,OffsetDateTime updatedAt) {}
+    public record LinkCanonicalCitizenRequest(@NotNull @Positive Long m1CitizenId,@NotNull UUID canonicalCitizenId,@NotBlank @Pattern(regexp="[A-Za-z0-9._:/-]{1,200}") String confirmationReference) {}
+    public record CanonicalCitizenLinkResponse(Long taxpayerId,Long m1CitizenId,UUID canonicalCitizenId) {}
     public record TaxConceptResponse(Long id,String code,String name,String description,TaxConceptType type,String originModule,boolean active,OffsetDateTime createdAt,OffsetDateTime updatedAt) {}
     public record TaxConfigurationResponse(Long id,Long taxConceptId,int version,CalculationType calculationType,BigDecimal rate,BigDecimal fixedAmount,BigDecimal minimumAmount,BigDecimal maximumAmount,boolean partialPaymentAllowed,boolean paymentPlanAllowed,LocalDate validFrom,LocalDate validUntil,TaxConfigurationStatus status,String createdBy,String approvedBy,OffsetDateTime createdAt,OffsetDateTime approvedAt) {}
     public record DebtResponse(Long id,Long taxpayerId,Long taxConceptId,DebtOriginType originType,Long liquidationId,Long externalObligationId,BigDecimal originalAmount,BigDecimal currentAmount,BigDecimal outstandingBalance,LocalDate dueDate,DebtStatus status,boolean overdue,boolean inPaymentPlan,OffsetDateTime createdAt,OffsetDateTime updatedAt) {}
+    public record DebtHistoryResponse(Long debtId,DebtOriginType origin,String originId,String order,List<DebtHistoryEntryResponse> entries) {}
+    public record DebtHistoryEntryResponse(String type,OffsetDateTime date,String referenceType,String referenceId,String relatedReferenceType,String relatedReferenceId,BigDecimal amount,String status,String action) {}
     public record PaymentResponse(Long id,Long taxpayerId,Long billId,PaymentMethod paymentMethod,BigDecimal amount,BigDecimal allocatedAmount,BigDecimal unallocatedAmount,PaymentStatus status,PaymentAllocationStatus allocationStatus,PaymentOrigin origin,String receiptNumber,String registeredBy,OffsetDateTime paidAt,OffsetDateTime createdAt) {}
-    public record PaymentAllocationResponse(Long id,Long paymentId,AllocationTargetType targetType,Long debtId,Long installmentId,BigDecimal amount,String status,String allocatedBy,OffsetDateTime allocatedAt,OffsetDateTime reversedAt) {}
+    public record PaymentAllocationResponse(Long id,Long paymentId,AllocationTargetType targetType,Long debtId,Long installmentId,BigDecimal amount,BigDecimal principalApplied,BigDecimal interestApplied,String status,String allocatedBy,OffsetDateTime allocatedAt,OffsetDateTime reversedAt) {}
     public record BillDebtResponse(Long debtId,BigDecimal amountAtIssue) {}
     public record BillResponse(Long id,String number,Long taxpayerId,BigDecimal totalAmount,LocalDate issueDate,LocalDate dueDate,BillStatus status,boolean expired,String createdBy,OffsetDateTime createdAt,List<BillDebtResponse> debts) {}
+    public record BillDebtPricingResponse(Long debtId,BigDecimal amountAtIssue,BigDecimal currentAmount,BigDecimal outstandingBalance,
+        BigDecimal issueDiscountAmount,BigDecimal issueExemptionAmount,BigDecimal issueSurchargeAmount,BigDecimal issueInterestAmount,
+        BigDecimal appliedDiscountAmount,BigDecimal appliedSurchargeAmount,BigDecimal appliedInterestAmount,BigDecimal appliedCorrectionAmount,
+        BigDecimal pendingSurchargeAmount,BigDecimal pendingInterestAmount,BigDecimal updatedPayableAmount) {}
+    public record BillDetailResponse(Long id,String number,Long taxpayerId,BigDecimal totalAmount,LocalDate issueDate,LocalDate dueDate,
+        BillStatus status,boolean expired,String createdBy,OffsetDateTime createdAt,List<BillDebtResponse> debts,
+        BigDecimal updatedPayableAmount,OffsetDateTime calculatedAt,List<BillDebtPricingResponse> pricingDetails) {}
     public record CreditBalanceResponse(Long id,Long taxpayerId,Long sourcePaymentId,BigDecimal originalAmount,BigDecimal availableAmount,CreditBalanceStatus status,OffsetDateTime createdAt,OffsetDateTime updatedAt) {}
     public record CreditBalanceApplicationResponse(Long id,Long creditBalanceId,Long debtId,BigDecimal amount,String status,String appliedBy,OffsetDateTime appliedAt,OffsetDateTime reversedAt) {}
-    public record PaymentReversalResponse(Long id,Long paymentId,String reason,PaymentReversalStatus status,String requestedBy,OffsetDateTime requestedAt,String resolvedBy,OffsetDateTime resolvedAt,String executedBy,OffsetDateTime executedAt) {}
+    public record PaymentReversalResponse(Long id,Long paymentId,String reason,PaymentReversalStatus status,String requestedBy,OffsetDateTime requestedAt,String resolvedBy,OffsetDateTime resolvedAt,String resolutionReason,String executedBy,OffsetDateTime executedAt) {}
     public record PaymentPlanConfigurationResponse(Long id,int version,int minimumInstallments,int maximumInstallments,BigDecimal minimumDownPaymentPercentage,BigDecimal interestRate,int graceDays,int maxOverdueInstallments,boolean partialInstallmentPaymentAllowed,boolean refinancingAllowed,int maxRefinancingCount,LocalDate validFrom,LocalDate validUntil,boolean active,String createdBy,OffsetDateTime createdAt) {}
     public record PaymentPlanRequestResponse(Long id,Long taxpayerId,int requestedInstallments,BigDecimal totalDebtAtRequest,BigDecimal estimatedDownPayment,BigDecimal estimatedFinancedAmount,BigDecimal estimatedInterest,BigDecimal estimatedTotalAmount,boolean exceptional,String exceptionReason,PaymentPlanRequestStatus status,String requestedBy,OffsetDateTime requestedAt,String resolvedBy,OffsetDateTime resolvedAt,String resolutionReason,Long paymentPlanId) {}
-    public record PaymentPlanResponse(Long id,Long taxpayerId,Long requestId,Long configurationId,Integer configurationVersion,BigDecimal originalPrincipalAmount,BigDecimal downPaymentAmount,BigDecimal financedPrincipalAmount,BigDecimal financingInterestAmount,BigDecimal totalPlanAmount,BigDecimal paidAmount,BigDecimal outstandingPlanAmount,int installmentCount,PaymentPlanStatus status,int refinancingCount,String grantedBy,OffsetDateTime grantedAt,OffsetDateTime completedAt,OffsetDateTime expiredAt,OffsetDateTime refinancedAt) {}
+    /**
+     * The legacy plan model keeps the first debt id as a denormalized reference while
+     * payment_plan_debt contains the complete relationship.  Exposing it here lets
+     * cashier clients resolve the plan installments for the debt selected at the
+     * counter without changing the payment allocation contract.
+     */
+    public record PaymentPlanResponse(Long id,Long taxpayerId,Long debtId,Long requestId,Long configurationId,Integer configurationVersion,BigDecimal originalPrincipalAmount,BigDecimal downPaymentAmount,BigDecimal financedPrincipalAmount,BigDecimal financingInterestAmount,BigDecimal totalPlanAmount,BigDecimal paidAmount,BigDecimal outstandingPlanAmount,int installmentCount,PaymentPlanStatus status,int refinancingCount,String grantedBy,OffsetDateTime grantedAt,OffsetDateTime completedAt,OffsetDateTime expiredAt,OffsetDateTime refinancedAt) {}
     public record InstallmentResponse(Long id,Long paymentPlanId,int number,InstallmentType type,BigDecimal principalAmount,BigDecimal interestAmount,BigDecimal totalAmount,BigDecimal paidAmount,BigDecimal outstandingAmount,LocalDate dueDate,InstallmentStatus status,boolean overdue,OffsetDateTime paidAt) {}
     public record PlanExpirationResponse(Long id,Long paymentPlanId,String reason,PlanExpirationStatus status,String requestedBy,OffsetDateTime requestedAt,String resolvedBy,OffsetDateTime resolvedAt,String resolutionObservation) {}
     public record RefinancingRequestResponse(Long id,Long originalPlanId,Long taxpayerId,int requestedInstallments,BigDecimal outstandingPrincipalAtRequest,BigDecimal estimatedInterest,BigDecimal estimatedTotalAmount,boolean exceptional,String exceptionReason,RefinancingRequestStatus status,String requestedBy,OffsetDateTime requestedAt,String resolvedBy,OffsetDateTime resolvedAt,Long newPaymentPlanId) {}
@@ -32,36 +51,55 @@ public final class ApiDtos {
     public record LiquidationRunResponse(Long id,Long taxConceptId,String period,LocalDate dueDate,Long configurationId,Integer configurationVersion,LiquidationRunStatus status,int totalItems,int validItems,int errorItems,BigDecimal estimatedTotalAmount,String createdBy,OffsetDateTime createdAt,OffsetDateTime submittedAt,String resolvedBy,OffsetDateTime resolvedAt) {}
     public record LiquidationRunItemResponse(Long id,Long liquidationRunId,Long taxpayerId,BigDecimal taxableBase,BigDecimal previewAmount,LiquidationRunItemStatus status,String errorCode,String errorMessage,Long liquidationId) {}
     public record LiquidationRunDetailResponse(LiquidationRunResponse run,List<LiquidationRunItemResponse> items) {}
+    public record IfMatchIdempotencyRequest(String ifMatch,Object request) {}
     public record ExemptionRequestResponse(Long id,Long taxpayerId,Long taxConceptId,String reason,BigDecimal requestedPercentage,LocalDate requestedFrom,LocalDate requestedUntil,ExemptionRequestStatus status,String requestedBy,OffsetDateTime requestedAt,String reviewedBy,OffsetDateTime reviewStartedAt,String resolutionSubmittedBy,OffsetDateTime resolutionSubmittedAt,String resolvedBy,OffsetDateTime resolvedAt,String resolutionReason) {}
+    public record ExemptionRequestDocumentResponse(Long id,Long exemptionRequestId,String externalDocumentId,String documentType,String fileName,String uploadedBy,OffsetDateTime uploadedAt) {}
+    public record ExemptionRequestHistoryEntry(String type,OffsetDateTime date,ExemptionRequestStatus status,String action,String message,ExemptionRequestDocumentResponse document) {}
+    public record ExemptionRequestResult(BigDecimal percentage,LocalDate validFrom,LocalDate validUntil,OffsetDateTime approvedAt,OffsetDateTime resolvedAt,String status,String message) {}
+    public record ExemptionRequestHistoryResponse(Long requestId,ExemptionRequestStatus currentStatus,String order,List<ExemptionRequestHistoryEntry> entries,ExemptionRequestResult result) {}
     public record ExemptionResponse(Long id,Long requestId,Long taxpayerId,Long taxConceptId,BigDecimal percentage,LocalDate validFrom,LocalDate validUntil,String status,boolean expired,String approvedBy,OffsetDateTime approvedAt,OffsetDateTime cancelledAt) {}
-    public record TicketResponse(Long id,String externalTicketId,Long taxpayerId,String externalCitizenId,String category,String description,TicketPriority priority,TicketCaseStatus status,String assignedTo,OffsetDateTime createdAt,OffsetDateTime updatedAt,OffsetDateTime completedAt) {}
-    public record SocialBenefitResponse(Long id,String externalBenefitId,Long taxpayerId,String externalCitizenId,String benefitType,SocialBenefitStatus status,BigDecimal discountPercentage,LocalDate validFrom,LocalDate validUntil,UUID sourceEventId,OffsetDateTime updatedAt) {}
+    public record TicketResponse(Long id,String externalTicketId,String publicId,Long taxpayerId,String externalCitizenId,String requestType,String category,String subcategory,String description,TicketPriority priority,TicketCaseStatus status,String assignedTo,OffsetDateTime createdAt,OffsetDateTime updatedAt,OffsetDateTime completedAt) {}
+    public record SocialBenefitResponse(Long id,String externalBenefitId,Long taxpayerId,String externalCitizenId,String benefitType,SocialBenefitStatus status,String externalStatus,BigDecimal discountPercentage,LocalDate validFrom,LocalDate validUntil,String sourceEventId,OffsetDateTime updatedAt,List<String> taxConceptCodes,String applicationId,String programId,String programName,String reason,String resolutionStatus,OffsetDateTime receivedAt) {}
+    public record SocialBenefitRuleResponse(Long id,UUID programId,Long taxConceptId,int version,BigDecimal percentage,LocalDate validFrom,LocalDate validUntil,boolean enabled,SocialBenefitRuleStatus status,String proposedBy,String submittedBy,String approvedBy,OffsetDateTime createdAt,OffsetDateTime approvedAt,OffsetDateTime disabledAt) {}
+    public record CreateSocialBenefitRuleRequest(@NotNull UUID programId,@NotBlank String conceptCode,
+        @NotNull @DecimalMin("0.00") @DecimalMax("100.00") BigDecimal percentage,
+        @NotNull LocalDate validFrom,LocalDate validUntil) {}
     public record ExternalObligationResponse(Long id,String sourceModule,ExternalObligationType externalType,String externalReferenceId,UUID sourceEventId,TaxpayerType externalTaxpayerType,String externalTaxpayerId,Long taxpayerId,Long taxConceptId,BigDecimal amount,LocalDate dueDate,ExternalObligationStatus status,String errorMessage,int retryCount,OffsetDateTime receivedAt,OffsetDateTime processedAt) {}
     public record AuditEntryResponse(Long id,String entityType,String entityId,String action,String userId,String userRole,String previousData,String newData,String correlationId,OffsetDateTime occurredAt) {}
-    public record IntegrationEventResponse(Long id,UUID eventId,String eventType,String sourceModule,String targetModule,EventDirection direction,IntegrationEventStatus status,String payload,int retryCount,String errorMessage,OffsetDateTime occurredAt,OffsetDateTime receivedAt,OffsetDateTime processedAt,OffsetDateTime lastRetryAt) {}
-    public record ElectronicPaymentResponse(Long id,Long paymentId,Long taxpayerId,Long debtId,BigDecimal amount,ElectronicPaymentStatus status,String gatewayReference,OffsetDateTime createdAt) {}
+    public record IntegrationEventResponse(@Schema(nullable=true) Long id,String eventId,String eventType,String sourceModule,String targetModule,EventDirection direction,@Schema(allowableValues={"RECEIVED","PENDING","PROCESSED","IGNORED","PUBLISHED","FAILED","DEAD_LETTER","LOCAL_ONLY","BROKER_CONFIRMED","CORE_ACCEPTED"}) String status,String payload,int retryCount,String errorMessage,OffsetDateTime occurredAt,OffsetDateTime receivedAt,OffsetDateTime processedAt,OffsetDateTime lastRetryAt,@Schema(nullable=true) OffsetDateTime publishedAt) {}
+    public record ElectronicPaymentResponse(Long id,Long paymentId,Long taxpayerId,Long debtId,BigDecimal amount,ElectronicPaymentStatus status,String gatewayReference,String rejectionReason,OffsetDateTime createdAt) {}
+    public record DashboardQueueResponse(String key,String label,long count,String path,String statusFilter) {}
+    public record SupervisorDashboardResponse(long adjustments,long reversals,long exemptions,long exceptionalPlans,
+        long exceptionalRefinancings,long liquidationRuns,long planExpirations,long totalPending,List<DashboardQueueResponse> queues) {}
+    public record RecentOperationResponse(String entityType,String entityId,String action,OffsetDateTime occurredAt) {}
+    public record RentasDashboardResponse(long openTickets,long unallocatedPayments,BigDecimal unallocatedPaymentAmount,
+        long pendingExemptions,long pendingPlanRequests,List<RecentOperationResponse> recentOperations) {}
     public record OutboxEventResponse(UUID id,String eventType,String targetModule,String aggregateType,String aggregateId,String payload,OutboxStatus status,int retryCount,OffsetDateTime createdAt,OffsetDateTime publishedAt,OffsetDateTime lastAttemptAt,String errorMessage) {}
 
     public record CreateTaxpayerRequest(@NotNull TaxpayerType taxpayerType, @NotBlank String externalId,
         String dni, String cuit, @NotBlank String displayName) {}
-    public record CreateTaxConceptRequest(@NotBlank String code, @NotBlank String name, String description,
+    public record CreateTaxConceptRequest(@NotBlank String code, @NotBlank String name, @Size(max=255) String description,
         @NotNull TaxConceptType type, @NotBlank String originModule) {}
-    public record UpdateTaxConceptRequest(@NotBlank String name, String description, @NotNull Boolean active) {}
-    public record CreateTaxConfigurationRequest(@NotNull Long taxConceptId, @NotNull CalculationType calculationType,
-        @PositiveOrZero BigDecimal rate, @PositiveOrZero BigDecimal fixedAmount,
-        @PositiveOrZero BigDecimal minimumAmount, @PositiveOrZero BigDecimal maximumAmount,
+    public record UpdateTaxConceptRequest(@NotBlank String name, @Size(max=255) String description, @NotNull Boolean active) {}
+    public record CreateTaxConfigurationRequest(@NotNull @Positive Long taxConceptId, @NotNull CalculationType calculationType,
+        @PositiveOrZero @DecimalMax("100") BigDecimal rate, @PositiveOrZero @CurrencyAmount BigDecimal fixedAmount,
+        @PositiveOrZero @CurrencyAmount BigDecimal minimumAmount, @PositiveOrZero @CurrencyAmount BigDecimal maximumAmount,
         boolean partialPaymentAllowed, boolean paymentPlanAllowed, @NotNull LocalDate validFrom, LocalDate validUntil) {}
-    public record UpdateTaxConfigurationRequest(CalculationType calculationType,BigDecimal rate,BigDecimal fixedAmount,
-        BigDecimal minimumAmount,BigDecimal maximumAmount,Boolean partialPaymentAllowed,Boolean paymentPlanAllowed,
+    public record UpdateTaxConfigurationRequest(CalculationType calculationType,@PositiveOrZero @DecimalMax("100") BigDecimal rate,@PositiveOrZero @CurrencyAmount BigDecimal fixedAmount,
+        @PositiveOrZero @CurrencyAmount BigDecimal minimumAmount,@PositiveOrZero @CurrencyAmount BigDecimal maximumAmount,Boolean partialPaymentAllowed,Boolean paymentPlanAllowed,
         LocalDate validFrom,LocalDate validUntil) {}
     public record ApprovalRequest(String observation) {}
     public record RejectionRequest(@NotBlank String reason) {}
     public record DeactivationRequest(@NotBlank String reason) {}
-    public record LiquidationRequest(@NotNull Long taxpayerId, @NotNull Long taxConceptId,
-        @NotBlank @Pattern(regexp="\\d{4}-\\d{2}") String period, @NotNull @PositiveOrZero BigDecimal taxableBase,
+    public record LiquidationRequest(@NotNull @Positive Long taxpayerId, @NotNull @Positive Long taxConceptId,
+        @NotBlank @Pattern(regexp="\\d{4}-\\d{2}") String period, @NotNull @PositiveOrZero @CurrencyAmount BigDecimal taxableBase,
         @NotNull LocalDate dueDate) {}
+    @JsonInclude(JsonInclude.Include.NON_NULL)
     public record LiquidationComponentResponse(Long id, LiquidationComponentType type, String sourceType,
-        String sourceId, String description, BigDecimal amount) {}
+        String sourceId, String description, BigDecimal amount,String sourceBenefitId,Long socialRuleId,Integer socialRuleVersion) {
+        public LiquidationComponentResponse(Long id,LiquidationComponentType type,String sourceType,String sourceId,
+                String description,BigDecimal amount){this(id,type,sourceType,sourceId,description,amount,null,null,null);}
+    }
     public record LiquidationPreview(Long taxConfigurationId, int configurationVersion, BigDecimal baseAmount,
         BigDecimal discountAmount, BigDecimal exemptionAmount, BigDecimal surchargeAmount,
         BigDecimal interestAmount, BigDecimal finalAmount, List<LiquidationComponentResponse> components) {}
@@ -70,37 +108,48 @@ public final class ApiDtos {
         BigDecimal discountAmount, BigDecimal exemptionAmount, BigDecimal surchargeAmount,
         BigDecimal interestAmount, BigDecimal finalAmount, LocalDate dueDate, String status,
         String createdBy, OffsetDateTime issuedAt, List<LiquidationComponentResponse> components) {}
-    public record RegisterPaymentRequest(@NotNull Long taxpayerId, Long billId, @NotNull PaymentMethod paymentMethod,
-        @NotNull @Positive BigDecimal amount, List<AllocationRequest> allocations) {
+    public record LiquidationOriginResponse(DebtOriginType type,String module,String event,String reference) {}
+    public record LiquidationHistoryEntryResponse(String type,OffsetDateTime at,String status,String action,
+        String actor,String note,String referenceType,String referenceId,BigDecimal amount) {}
+    public record LiquidationDetailResponse(Long id,Long taxpayerId,Long taxConceptId,Long taxConfigurationId,
+        int configurationVersion,String period,BigDecimal taxableBase,BigDecimal baseAmount,
+        BigDecimal discountAmount,BigDecimal exemptionAmount,BigDecimal surchargeAmount,
+        BigDecimal interestAmount,BigDecimal finalAmount,LocalDate dueDate,String status,
+        String createdBy,OffsetDateTime issuedAt,List<LiquidationComponentResponse> components,
+        LiquidationOriginResponse origin,DebtResponse debt,String historyOrder,
+        List<LiquidationHistoryEntryResponse> history,List<AdjustmentResponse> adjustments) {}
+    public record RegisterPaymentRequest(@NotNull @Positive Long taxpayerId, @Positive Long billId, @NotNull PaymentMethod paymentMethod,
+        @NotNull @Positive @CurrencyAmount BigDecimal amount, @Size(max=50) List<@NotNull @Valid AllocationRequest> allocations) {
         public RegisterPaymentRequest(Long taxpayerId, PaymentMethod method, BigDecimal amount, List<AllocationRequest> allocations) { this(taxpayerId,null,method,amount,allocations); }
     }
-    public record AllocationRequest(Long debtId, Long installmentId, @NotNull @Positive BigDecimal amount) {
+    public record AllocationRequest(@Positive Long debtId, @Positive Long installmentId, @NotNull @Positive @CurrencyAmount BigDecimal amount) {
         public AllocationRequest(Long debtId, BigDecimal amount) { this(debtId, null, amount); }
     }
-    public record CreateBillRequest(@NotNull Long taxpayerId, @NotEmpty List<Long> debtIds, @NotNull LocalDate dueDate) {}
+    public record CreateBillRequest(@NotNull @Positive Long taxpayerId, @NotEmpty @Size(max=500) List<@NotNull @Positive Long> debtIds, @NotNull LocalDate dueDate) {}
     public record BillDetail(Bill bill,List<BillDebt> debts) {}
     public record ReceiptResponse(String receiptNumber,Long paymentId,Long taxpayerId,BigDecimal amount,OffsetDateTime paidAt,String status) {}
-    public record ElectronicPaymentRequest(@NotNull Long debtId,@NotNull PaymentMethod paymentMethod,@NotNull @Positive BigDecimal amount) {}
+    public record ElectronicPaymentRequest(@NotNull @Positive Long debtId,@NotNull PaymentMethod paymentMethod,@NotNull @Positive @CurrencyAmount BigDecimal amount) {}
     public record ElectronicPaymentPreview(Long debtId,BigDecimal requestedAmount,BigDecimal payableAmount,boolean approved,String message) {}
-    public record ApplyCreditBalanceRequest(@NotNull Long debtId,@NotNull @Positive BigDecimal amount) {}
+    public record ApplyCreditBalanceRequest(@NotNull @Positive Long debtId,@NotNull @Positive @CurrencyAmount BigDecimal amount) {}
     public record CreateReversalRequest(@NotBlank String reason) {}
-    public record GrantPlanRequest(@NotNull Long debtId, @Min(1) @Max(60) int installments,
+    public record GrantPlanRequest(@NotNull @Positive Long debtId, @Min(1) @Max(60) int installments,
         @NotNull @PositiveOrZero BigDecimal annualInterestRate) {}
     public record CreatePaymentPlanConfigurationRequest(@Min(1) int minimumInstallments,@Min(1) int maximumInstallments,
         @NotNull @DecimalMin("0.00") @DecimalMax("100.00") BigDecimal minimumDownPaymentPercentage,
         @NotNull @PositiveOrZero BigDecimal interestRate,@PositiveOrZero int graceDays,@PositiveOrZero int maxOverdueInstallments,
         boolean partialInstallmentPaymentAllowed,boolean refinancingAllowed,@PositiveOrZero int maxRefinancingCount,
         @NotNull LocalDate validFrom,LocalDate validUntil,boolean active) {}
-    public record UpdatePaymentPlanConfigurationRequest(Integer minimumInstallments,Integer maximumInstallments,
-        BigDecimal minimumDownPaymentPercentage,BigDecimal interestRate,Integer graceDays,Integer maxOverdueInstallments,
-        Boolean partialInstallmentPaymentAllowed,Boolean refinancingAllowed,Integer maxRefinancingCount,
+    public record UpdatePaymentPlanConfigurationRequest(@Min(1) Integer minimumInstallments,@Min(1) Integer maximumInstallments,
+        @DecimalMin("0.00") @DecimalMax("100.00") BigDecimal minimumDownPaymentPercentage,
+        @PositiveOrZero BigDecimal interestRate,@PositiveOrZero Integer graceDays,@PositiveOrZero Integer maxOverdueInstallments,
+        Boolean partialInstallmentPaymentAllowed,Boolean refinancingAllowed,@PositiveOrZero Integer maxRefinancingCount,
         LocalDate validFrom,LocalDate validUntil,Boolean active) {}
-    public record PaymentPlanSimulationRequest(@NotNull Long taxpayerId,@NotEmpty List<Long> debtIds,@Min(1) @Max(60) int installments) {}
+    public record PaymentPlanSimulationRequest(@NotNull @Positive Long taxpayerId,@NotEmpty @Size(max=50) List<@NotNull @Positive Long> debtIds,@Min(1) @Max(60) int installments) {}
     public record PaymentPlanSimulationResponse(Long configurationId,int configurationVersion,BigDecimal principal,
         BigDecimal downPayment,BigDecimal financedPrincipal,BigDecimal interest,BigDecimal total,int installments,
         BigDecimal regularInstallmentAmount,boolean exceptional) {}
-    public record CreatePaymentPlanRequest(@NotNull Long taxpayerId,@NotEmpty List<Long> debtIds,@Min(1) @Max(60) int installments) {}
-    public record GrantPaymentPlanRequest(@PositiveOrZero BigDecimal downPaymentAmount) {}
+    public record CreatePaymentPlanRequest(@NotNull @Positive Long taxpayerId,@NotEmpty @Size(max=50) List<@NotNull @Positive Long> debtIds,@Min(1) @Max(60) int installments) {}
+    public record GrantPaymentPlanRequest(@PositiveOrZero @CurrencyAmount BigDecimal downPaymentAmount) {}
     public record SubmitPlanExceptionRequest(@NotBlank String reason) {}
     public record ApprovePlanExceptionRequest(String observation) {}
     public record CreatePlanExpirationRequest(@NotBlank String reason) {}
@@ -108,32 +157,39 @@ public final class ApiDtos {
     public record RefinancingSimulationResponse(Long originalPlanId,BigDecimal outstandingPrincipal,BigDecimal interest,
         BigDecimal total,int installments,boolean exceptional) {}
     public record CreateRefinancingRequest(@Min(1) @Max(60) int installments) {}
-    public record CreateAdjustmentRequest(@NotNull Long debtId,@NotNull AdjustmentType type,@NotNull @DecimalMin(value="0.01",inclusive=false) BigDecimal amount,@NotBlank String reason) {}
-    public record LiquidationRunItemRequest(@NotNull Long taxpayerId,@NotNull @PositiveOrZero BigDecimal taxableBase) {}
-    public record CreateLiquidationRunRequest(@NotNull Long taxConceptId,@NotBlank @Pattern(regexp="\\d{4}-\\d{2}") String period,
-        @NotNull LocalDate dueDate,@NotEmpty List<@Valid LiquidationRunItemRequest> items) {}
+    public record CreateAdjustmentRequest(@NotNull @Positive Long debtId,@NotNull AdjustmentType type,@NotNull @DecimalMin("0.01") @DecimalMax("100000000.00") @CurrencyAmount BigDecimal amount,@NotBlank @Size(max=1000) String reason) {}
+    public record LiquidationRunItemRequest(@NotNull @Positive Long taxpayerId,@NotNull @PositiveOrZero @CurrencyAmount BigDecimal taxableBase) {}
+    public record CreateLiquidationRunRequest(@NotNull @Positive Long taxConceptId,@NotBlank @Pattern(regexp="\\d{4}-\\d{2}") String period,
+        @NotNull LocalDate dueDate,@NotEmpty @Size(max=10000) List<@NotNull @Valid LiquidationRunItemRequest> items) {}
     public record LiquidationRunDetail(LiquidationRun run,List<LiquidationRunItem> items) {}
-    public record CreateExemptionRequest(@NotNull Long taxpayerId, @NotNull Long taxConceptId, @NotBlank String reason,
+    public record CreateExemptionRequest(@NotNull @Positive Long taxpayerId, @NotNull @Positive Long taxConceptId, @NotBlank @Size(max=255) String reason,
         @NotNull @DecimalMin("0.01") @DecimalMax("100.00") BigDecimal percentage,
-        @NotNull LocalDate validFrom, LocalDate validUntil) {}
-    public record RequestDocumentationRequest(@NotBlank String message) {}
-    public record SubmitDocumentationRequest(@NotBlank String externalDocumentId,@NotBlank String documentType,String fileName) {}
+        @NotNull LocalDate validFrom, @NotNull LocalDate validUntil,
+        List<@NotNull @Valid SubmitDocumentationRequest> documents) {
+        public CreateExemptionRequest(Long taxpayerId,Long taxConceptId,String reason,BigDecimal percentage,LocalDate validFrom,LocalDate validUntil) {
+            this(taxpayerId,taxConceptId,reason,percentage,validFrom,validUntil,null);
+        }
+    }
+    public record RequestDocumentationRequest(@NotBlank @Size(max=1000) String message) {}
+    public record SubmitDocumentationRequest(@NotBlank @Size(max=255) String externalDocumentId,@NotBlank @Size(max=255) String documentType,
+        @Size(max=255) @Pattern(regexp="[^\\x00-\\x1F<>/\\\\]*") String fileName) {}
     public record SubmitExemptionResolutionRequest(String observation) {}
     public record ApproveExemptionRequest(@DecimalMin("0.01") @DecimalMax("100.00") BigDecimal percentage,LocalDate validFrom,LocalDate validUntil,String observation) {}
     public record EventEnvelope<T>(@NotNull UUID eventId, @NotBlank String eventType,
-        @NotNull OffsetDateTime occurredAt, @NotBlank String sourceModule, @NotNull T data) {}
+        @NotNull OffsetDateTime occurredAt, @NotBlank String sourceModule, @NotNull @Valid T data) {}
     public record InfractionData(@NotBlank String externalReferenceId, @NotNull TaxpayerType taxpayerType,
-        @NotBlank String taxpayerExternalId, @NotNull @Positive BigDecimal amount, @NotNull LocalDate dueDate) {}
+        @NotBlank String taxpayerExternalId, @NotNull @Positive @CurrencyAmount BigDecimal amount, @NotNull LocalDate dueDate) {}
     public record ExternalObligationData(@NotBlank String externalReferenceId,@NotNull TaxpayerType taxpayerType,
-        @NotBlank String taxpayerExternalId,@NotNull @Positive BigDecimal amount,@NotNull LocalDate dueDate) {}
+        @NotBlank String taxpayerExternalId,@NotNull @Positive @CurrencyAmount BigDecimal amount,@NotNull LocalDate dueDate) {}
     public record TaxpayerEventData(@NotNull TaxpayerType taxpayerType,@NotBlank String externalId,String dni,String cuit,
         @NotBlank String displayName,@NotNull TaxpayerStatus status) {}
-    public record TicketEventData(@NotBlank String externalTicketId,String externalCitizenId,@NotBlank String category,
-        @NotBlank String description,@NotNull TicketPriority priority,@NotNull TicketCaseStatus status,OffsetDateTime createdAt) {}
+    public record TicketEventData(@NotNull @Positive Long ticketId,@Positive Long citizenId,String category,
+        String description,TicketPriority priority,String additionalInformation) {}
     public record SocialBenefitEventData(@NotBlank String externalBenefitId,@NotBlank String externalCitizenId,
         @NotBlank String benefitType,@NotNull SocialBenefitStatus status,@DecimalMin("0.00") @DecimalMax("100.00") BigDecimal discountPercentage,
         @NotNull LocalDate validFrom,LocalDate validUntil,List<String> taxConceptCodes) {}
     public record CreateTicketUpdateRequest(@NotBlank String message) {}
+    public record ReturnTicketRequest(@NotBlank String reasonCode,@NotBlank String internalMessage) {}
     public record TicketInformationRequest(@NotBlank String message) {}
     public record CompleteTicketRequest(@NotBlank String resolution) {}
     public record CollectionIndicatorResponse(long paymentCount,BigDecimal confirmedAmount,BigDecimal allocatedAmount,BigDecimal unallocatedAmount) {}
@@ -143,5 +199,19 @@ public final class ApiDtos {
     public record TaxpayerSummaryResponse(Long taxpayerId,BigDecimal outstandingDebt,BigDecimal paidAmount,long openDebts,long activePlans,long activeBenefits) {}
     public record DebtSummaryResponse(Long taxpayerId,long totalDebts,long openDebts,long paidDebts,long overdueDebts,BigDecimal outstandingAmount) {}
     public record ReprocessEventRequest(String reason) {}
-    public record ErrorResponse(OffsetDateTime timestamp, int status, String code, String message, String path, String traceId) {}
+    @Schema(name="ErrorResponse",description="Contrato estándar de errores de la API")
+    @JsonInclude(JsonInclude.Include.ALWAYS)
+    public record ErrorResponse(
+        @Schema(description="Tipo de problema según RFC 9457",example="about:blank") String type,
+        @Schema(description="Título HTTP del problema",example="Bad Request") String title,
+        @Schema(description="Fecha y hora del error") OffsetDateTime timestamp,
+        @Schema(description="Código HTTP",example="400") int status,
+        @Schema(description="Detalle funcional seguro del problema") String detail,
+        @Schema(description="URI de la petición que originó el problema",example="/api/v1/tax-concepts") String instance,
+        @Schema(description="Código estable de error",example="VALIDATION_ERROR") String code,
+        @Schema(description="Mensaje funcional seguro",example="code: no debe estar vacío") String message,
+        @Schema(description="Ruta solicitada",example="/api/v1/tax-concepts") String path,
+        @Schema(description="Identificador de correlación; también se devuelve en X-Correlation-Id",example="9e669771-3d87-49a1-bcd7-bf4ebfc164ec") String traceId,
+          @Schema(description="Información estructurada segura cuando corresponde; errores de validación contienen fieldErrors con field y messages",
+              example="{\"fieldErrors\":[{\"field\":\"code\",\"messages\":[\"no debe estar vacío\"]}]}") Object details) {}
 }

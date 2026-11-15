@@ -6,15 +6,18 @@ import DataTable from "../../components/common/DataTable.jsx";
 import FilterBar from "../../components/common/FilterBar.jsx";
 import StatusBadge from "../../components/common/StatusBadge.jsx";
 import Button from "../../components/common/Button.jsx";
+import Modal from "../../components/common/Modal.jsx";
+import DebtDetailModal from "../../components/common/DebtDetailModal.jsx";
 import StatTile from "../../components/common/StatTile.jsx";
 import Alert from "../../components/ui/Alert.jsx";
 import useResource from "../../hooks/useResource.js";
 import useTaxpayerIndex from "../../hooks/useTaxpayerIndex.js";
-import { debtService } from "../../services/rentasService.js";
-import { ORIGIN_TYPES } from "../../services/mockDb.js";
-import { formatCurrency, formatDate, labelFor } from "../../lib/format.js";
+import useTaxConcepts from "../../hooks/useTaxConcepts.js";
+import { administrationService, debtService } from "../../services/rentasService.js";
+import { DEBT_ORIGIN_TYPES } from "../../config/catalogosDominio.js";
+import { formatCurrency, formatDate, labelFor, todayFiscalDate } from "../../lib/format.js";
 
-const ORIGIN_LABELS = Object.fromEntries(ORIGIN_TYPES.map((o) => [o.value, o.label]));
+const ORIGIN_LABELS = Object.fromEntries(DEBT_ORIGIN_TYPES.map((o) => [o.value, o.label]));
 
 /**
  * Deudas: originadas en liquidaciones propias o en eventos de otros módulos
@@ -26,7 +29,9 @@ export default function DeudasPage() {
   const taxpayerId = searchParams.get("taxpayerId") ?? "";
   const [filters, setFilters] = useState({ status: "", originType: "" });
   const [feedback, setFeedback] = useState(null);
-  const [reporting, setReporting] = useState(null);
+  const [lateCharge, setLateCharge] = useState(null);
+  const [selectedDebt, setSelectedDebt] = useState(null);
+  const [processing, setProcessing] = useState(false);
 
   const loader = useCallback(
     () => debtService.list({ ...filters, taxpayerId }),
@@ -34,6 +39,7 @@ export default function DeudasPage() {
   );
   const { data: debts, loading, error, reload } = useResource(loader, []);
   const { nameOf, index } = useTaxpayerIndex();
+  const { concepts } = useTaxConcepts();
 
   const rows = debts ?? [];
   const totalOutstanding = rows.reduce((acc, d) => acc + d.outstandingAmount, 0);
@@ -44,40 +50,48 @@ export default function DeudasPage() {
   const onFilterChange = (name, value) =>
     setFilters((previous) => ({ ...previous, [name]: value }));
 
-  const onReportOverdue = async (debt) => {
-    setReporting(debt.id);
+  const onPreviewLateCharge = async (debt) => {
     setFeedback(null);
+    try { setLateCharge({ debt, preview: await debtService.previewLateCharge(debt.id, todayFiscalDate()), applying: false }); }
+    catch (caught) { setFeedback({ variant: "error", title: "No se pudo calcular", message: caught.message }); }
+  };
+
+  const onApplyLateCharge = async () => {
+    setLateCharge((value) => ({ ...value, applying: true }));
     try {
-      await debtService.reportOverdue(debt.id);
-      setFeedback({
-        variant: "success",
-        title: "Deuda informada a Desarrollo Social",
-        message: `Se publicó overdueDebt para la deuda #${debt.id}.`,
-      });
+      const result = await debtService.applyLateCharge(lateCharge.debt.id, lateCharge.preview.calculationDate);
+      setLateCharge(null);
+      setFeedback(result.applied
+        ? { variant: "success", title: "Recargo aplicado", message: `Se aplicaron ${formatCurrency(result.totalAdjustment)} a la deuda #${result.debtId}.` }
+        : { variant: "info", title: "Recargo ya aplicado", message: `La deuda #${result.debtId} ya incluye el recargo del ${formatDate(result.calculationDate)}. No se agregó otro cargo.` });
       reload();
-    } catch (caught) {
-      setFeedback({ variant: "error", title: "No se pudo informar", message: caught.message });
-    } finally {
-      setReporting(null);
     }
+    catch (caught) { setLateCharge((value) => ({ ...value, applying: false }));setFeedback({ variant: "error", title: "No se pudo aplicar", message: caught.message }); }
+  };
+
+  const onProcessDueDates = async () => {
+    setProcessing(true);setFeedback(null);
+    try { const result=await administrationService.processDueDates(todayFiscalDate());setFeedback({ variant:"success",title:"Vencimientos procesados",message:`${result.debtsOverdue} deudas vencidas, ${result.adjustmentsGenerated} ajustes y ${result.installmentsOverdue} cuotas actualizadas.`});reload(); }
+    catch(caught){setFeedback({variant:"error",title:"No se pudieron procesar",message:caught.message});}
+    finally{setProcessing(false);}
   };
 
   const columns = [
+    { key: "detail", header: "Detalle", render: (row) => <Button size="sm" variant="secondary" onClick={() => setSelectedDebt(row.id)}>Ver detalle</Button> },
     { key: "id", header: "N°", render: (row) => <span className="tabular-nums">#{row.id}</span> },
     { key: "taxpayer", header: "Contribuyente", render: (row) => nameOf(row.taxpayerId) },
     {
       key: "origin",
       header: "Origen",
       render: (row) => (
-        <div className="flex flex-col">
-          <span className="text-neutral-700">{ORIGIN_LABELS[row.originType] ?? row.originType}</span>
-          <span className="text-[12px] text-neutral-400 tabular-nums">
-            {row.originType}:{row.originId}
-          </span>
-        </div>
+        <span className="text-neutral-700">{ORIGIN_LABELS[row.originType] ?? "Origen registrado"}</span>
       ),
     },
-    { key: "conceptCode", header: "Concepto" },
+    {
+      key: "conceptCode",
+      header: "Concepto",
+      render: (row) => concepts.find((concept) => concept.id === row.taxConceptId)?.name ?? "Concepto tributario",
+    },
     {
       key: "outstandingAmount",
       header: "Saldo",
@@ -95,19 +109,15 @@ export default function DeudasPage() {
       header: "",
       align: "right",
       render: (row) =>
-        row.status === "OVERDUE" &&
-        (row.reportedToM8 ? (
-          <StatusBadge tone="info" label="Informada a M8" />
-        ) : (
-          <Button
-            size="sm"
-            variant="secondary"
-            loading={reporting === row.id}
-            onClick={() => onReportOverdue(row)}
-          >
-            Informar a M8
-          </Button>
-        )),
+        row.status === "OVERDUE" && (
+          <div className="flex justify-end gap-2">
+          <Button size="sm" variant="secondary" onClick={() => onPreviewLateCharge(row)}>Calcular recargo</Button>
+        <StatusBadge
+          tone="info"
+          label={row.reportedToM8 ? "Aviso registrado" : "Notificación externa no disponible"}
+        />
+          </div>
+        ),
     },
   ];
 
@@ -138,7 +148,7 @@ export default function DeudasPage() {
         </Alert>
       )}
 
-      <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <section className="workspace-metrics workspace-metrics-three" aria-label="Resumen de deudas">
         <StatTile label="Deudas listadas" value={rows.length} iconName="FileWarning" />
         <StatTile
           label="Saldo total"
@@ -155,7 +165,8 @@ export default function DeudasPage() {
 
       <Card
         title="Detalle de deudas"
-        description="La deuda vencida se informa a Desarrollo Social mediante el evento overdueDebt."
+        description="El aviso de vencimiento a Desarrollo Social depende de una integración externa todavía pendiente."
+        actions={<Button size="sm" variant="primary" loading={processing} onClick={onProcessDueDates}>Procesar vencimientos</Button>}
       >
         <FilterBar
           filters={[
@@ -166,9 +177,10 @@ export default function DeudasPage() {
                 { value: "PENDING", label: labelFor("PENDING") },
                 { value: "OVERDUE", label: labelFor("OVERDUE") },
                 { value: "SETTLED", label: labelFor("SETTLED") },
+                { value: "CANCELLED", label: labelFor("CANCELLED") },
               ],
             },
-            { name: "originType", label: "Origen", options: ORIGIN_TYPES },
+            { name: "originType", label: "Origen", options: DEBT_ORIGIN_TYPES },
           ]}
           values={filters}
           onFilterChange={onFilterChange}
@@ -184,6 +196,21 @@ export default function DeudasPage() {
           emptyDescription="No hay obligaciones que coincidan con los filtros aplicados."
         />
       </Card>
+
+      {lateCharge && <Modal open title={`Recargos de deuda #${lateCharge.debt.id}`} description={`Regla ${lateCharge.preview.ruleCode} al ${formatDate(lateCharge.preview.calculationDate)}`} onClose={() => setLateCharge(null)} footer={lateCharge.preview.applicationId != null
+        ? <Button variant="secondary" onClick={() => setLateCharge(null)}>Cerrar</Button>
+        : <><Button variant="secondary" onClick={() => setLateCharge(null)}>Cancelar</Button><Button variant="primary" loading={lateCharge.applying} onClick={onApplyLateCharge}>Confirmar aplicación</Button></>}>
+        {lateCharge.preview.applicationId != null && <p className="mb-4 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">El recargo de esta fecha ya fue aplicado. Los importes de abajo son los registrados; no se agregará otro cargo.</p>}
+        <dl className="grid grid-cols-2 gap-3 text-sm">
+          <div><dt>Días vencidos</dt><dd className="font-semibold">{lateCharge.preview.daysOverdue}</dd></div>
+          <div><dt>{lateCharge.preview.applicationId != null ? "Capital al aplicar" : "Capital"}</dt><dd className="font-semibold">{formatCurrency(lateCharge.preview.principal)}</dd></div>
+          <div><dt>Recargo ({lateCharge.preview.surchargeRate}%)</dt><dd>{formatCurrency(lateCharge.preview.surchargeAmount)}</dd></div>
+          <div><dt>Interés diario ({lateCharge.preview.interestRate}%)</dt><dd>{formatCurrency(lateCharge.preview.interestAmount)}</dd></div>
+          <div><dt>Ajuste total</dt><dd className="font-semibold">{formatCurrency(lateCharge.preview.totalAdjustment)}</dd></div>
+          <div><dt>{lateCharge.preview.applicationId != null ? "Total tras la aplicación" : "Total actualizado"}</dt><dd className="font-semibold">{formatCurrency(lateCharge.preview.updatedTotal)}</dd></div>
+        </dl>
+      </Modal>}
+      {selectedDebt && <DebtDetailModal debtId={selectedDebt} includeExternalOrigin onClose={() => setSelectedDebt(null)} />}
     </ModuleShell>
   );
 }

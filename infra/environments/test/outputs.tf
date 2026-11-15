@@ -78,4 +78,23 @@ output "frontend_url" {
   value       = module.hosting.frontend_url
 }
 
+output "nightly_ecs_stop_schedule" {
+  description = "Horario que lleva el servicio ECS TEST a cero tareas."
+  value       = aws_scheduler_schedule.stop_ecs.name
+}
+
+output "nightly_rds_stop_schedule" {
+  description = "Horario que detiene PostgreSQL TEST luego de ECS."
+  value       = aws_scheduler_schedule.stop_rds.name
+}
+
+output "test_monthly_budget_name" {
+  description = "Presupuesto mensual asociado a recursos Environment=test."
+  value       = aws_budgets_budget.test_monthly.name
+}
+
+output "budget_email_alerts_enabled" {
+  description = "Indica si el presupuesto envia alertas por email."
+  value       = local.budget_alert_email != ""
+}
 

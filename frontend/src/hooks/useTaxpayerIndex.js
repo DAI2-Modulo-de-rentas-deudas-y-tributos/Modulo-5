@@ -16,6 +16,8 @@ export default function useTaxpayerIndex() {
     taxpayerService.search().then((taxpayers) => {
       cache = Object.fromEntries(taxpayers.map((t) => [t.id, t]));
       if (active) setIndex(cache);
+    }).catch(() => {
+      // Sin padrón, nameOf muestra la referencia lógica del contribuyente.
     });
     return () => {
       active = false;

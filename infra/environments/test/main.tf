@@ -7,6 +7,8 @@ locals {
   environment        = "test"
   name_prefix        = "${local.project_name}-${local.environment}"
   availability_zones = slice(data.aws_availability_zones.available.names, 0, 2)
+  domain_zone        = "modulo-rentas.com.ar"
+  frontend_domain    = "test.${local.domain_zone}"
 }
 
 module "network" {
@@ -26,6 +28,7 @@ module "security" {
   vpc_id                 = module.network.vpc_id
   backend_container_port = var.backend_container_port
   database_port          = var.database_port
+  alb_ingress_port       = 443
 }
 
 module "database" {
@@ -56,6 +59,11 @@ module "edge" {
   backend_container_port = var.backend_container_port
   health_check_path      = var.backend_health_check_path
   deletion_protection    = var.alb_deletion_protection
+  https_origin = {
+    domain = "origin-test.${local.domain_zone}"
+    zone   = local.domain_zone
+  }
+  access_logs_bucket = "${local.name_prefix}-access-logs-${var.aws_account_id}-${var.aws_region}"
 }
 
 module "ecs" {
@@ -72,10 +80,17 @@ module "ecs" {
   container_port            = var.backend_container_port
   task_cpu                  = var.backend_task_cpu
   task_memory               = var.backend_task_memory
-  database_address          = module.database.address
-  database_port             = module.database.port
-  database_name             = module.database.database_name
-  database_secret_arn       = module.database.master_secret_arn
+  spring_profiles_active    = var.backend_spring_profiles_active
+  # El SG del backend sólo admite al ALB. Los nodos del ALB pueden cambiar de IP.
+  environment_variables = merge(var.backend_environment_variables, {
+    RENTAS_SECURITY_TRUSTED_PROXY_CIDRS = join(",", concat(var.public_subnet_cidrs, module.security.cloudfront_origin_cidrs))
+  })
+  secret_variables     = var.backend_secret_variables
+  database_address     = module.database.address
+  database_port        = module.database.port
+  database_name        = module.database.database_name
+  database_secret_arn  = module.database.master_secret_arn
+  cors_allowed_origins = [module.hosting.frontend_url, "https://${local.frontend_domain}"]
 
   depends_on = [module.edge]
 }
@@ -83,9 +98,10 @@ module "ecs" {
 module "hosting" {
   source = "../../modules/hosting"
 
-  name_prefix  = local.name_prefix
-  branch_name  = "test"
-  api_base_url = module.edge.api_base_url
+  name_prefix           = local.name_prefix
+  branch_name           = "test"
+  api_base_url          = module.edge.api_base_url
+  environment_variables = var.frontend_environment_variables
+  custom_domains        = { (local.frontend_domain) = local.domain_zone }
 }
-
 

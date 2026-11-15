@@ -1,0 +1,204 @@
+package ar.gob.municipalidad.rentas;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.rabbitmq.client.Channel;
+import org.junit.jupiter.api.Test;
+import org.springframework.amqp.core.Message;
+import org.springframework.amqp.core.MessageProperties;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.nio.charset.StandardCharsets;
+import java.time.OffsetDateTime;
+import java.util.Map;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.*;
+
+@SpringBootTest
+@ActiveProfiles("test")
+@Transactional
+class CoreM1InboundListenerTests {
+    @Autowired CoreInboundEventDispatcher dispatcher;
+    @Autowired RabbitTemplate rabbit;
+    @Autowired ObjectMapper json;
+    @Autowired TaxpayerRepository taxpayers;
+    @Autowired TaxpayerRepresentationRepository representations;
+    @Autowired IntegrationEventLogRepository logs;
+    @Autowired ProcessedEventRepository processed;
+
+    @Test void citizenVariantsArriveThroughCoreAndPreserveTheOriginalEnvelope() throws Exception {
+        UUID citizenId=UUID.randomUUID();
+        UUID id=UUID.randomUUID(), correlation=UUID.randomUUID(), causation=UUID.randomUUID();
+        String registered=citizen(citizenId,"REGISTERED","""
+            {"dni":"34567890","cuil":"20345678901","name":"Marcos","lastname":"Ferreyra","birthdate":"1990-04-12","state":"ACTIVE"}
+            """,id,correlation,causation);
+        send(registered,1);
+        TaxpayerReference citizen=taxpayers.findByTaxpayerTypeAndCanonicalCitizenId(TaxpayerType.CITIZEN,citizenId).orElseThrow();
+        assertThat(citizen.externalStatus).isEqualTo(TaxpayerStatus.ACTIVE);
+        assertThat(citizen.externalId).isEqualTo(citizenId.toString());
+        assertThat(citizen.canonicalCitizenId).isEqualTo(citizenId);
+        IntegrationEventLog recorded=logs.findFirstByExternalEventIdOrderByIdDesc(id.toString()).orElseThrow();
+        ObjectNode saved=(ObjectNode)json.readTree(recorded.payload);
+        assertThat(saved.path("correlationId").asText()).isEqualTo(correlation.toString());
+        assertThat(saved.path("causationId").asText()).isEqualTo(causation.toString());
+        assertThat(saved.path("data").path("citizenId").asText()).isEqualTo(citizenId.toString());
+        assertThat(saved.has("producer")).isFalse();
+        assertThat(recorded.sourceModule).isEqualTo("ciudadanos");
+
+        long before=taxpayers.count();
+        send(registered,2);
+        assertThat(taxpayers.count()).isEqualTo(before);
+        assertThat(processed.existsByExternalEventId(id.toString())).isTrue();
+
+        send(citizen(citizenId,"ADDRESS_UPDATED","""
+            {"previousAddress":{},"newAddress":{"street":"Nueva"}}
+            """,UUID.randomUUID(),correlation,id),3);
+        assertThat(taxpayers.findById(citizen.id).orElseThrow().externalStatus).isEqualTo(TaxpayerStatus.ACTIVE);
+        send(citizen(citizenId,"BLOCKED","""
+            {"reason":"DOCUMENTACION_APOCRIFA","reviewRequired":true}
+            """,UUID.randomUUID(),correlation,id),4);
+        assertThat(taxpayers.findById(citizen.id).orElseThrow().externalStatus).isEqualTo(TaxpayerStatus.BLOCKED);
+        send(citizen(citizenId,"DECEASED","""
+            {"deceasedAt":"2026-08-19","source":"REGISTRO_CIVIL"}
+            """,UUID.randomUUID(),correlation,id),5);
+        assertThat(taxpayers.findById(citizen.id).orElseThrow().externalStatus).isEqualTo(TaxpayerStatus.DECEASED);
+        assertThat(taxpayers.count()).isEqualTo(before);
+    }
+
+    @Test void citizenUpdatedRequiresExistingReferenceAndPreservesCoreCorrelationAndDeduplication() throws Exception {
+        UUID citizenId=UUID.randomUUID(),registrationId=UUID.randomUUID(),correlation=UUID.randomUUID();
+        send(citizen(citizenId,"REGISTERED","""
+            {"dni":"34567890","cuil":"20345678901","name":"Nombre","lastname":"Inicial","birthdate":"1990-04-12","state":"ACTIVE"}
+            """,registrationId,correlation,null),20);
+        TaxpayerReference registered=taxpayers.findByTaxpayerTypeAndCanonicalCitizenId(TaxpayerType.CITIZEN,citizenId).orElseThrow();
+        UUID updateId=UUID.randomUUID();String update=citizen(citizenId,"UPDATED","""
+            {"dni":"30123456","cuil":"20301234567","name":"Nombre","lastname":"Actualizado","birthdate":"1990-04-12","state":"ACTIVO"}
+            """,updateId,correlation,registrationId);
+        send(update,21);send(update,22);
+        TaxpayerReference updated=taxpayers.findById(registered.id).orElseThrow();
+        assertThat(updated.dni).isEqualTo("30123456");assertThat(updated.cuit).isEqualTo("20301234567");assertThat(updated.displayName).isEqualTo("Nombre Actualizado");
+        IntegrationEventLog log=logs.findFirstByExternalEventIdOrderByIdDesc(updateId.toString()).orElseThrow();
+        assertThat(log.status).isEqualTo(IntegrationEventStatus.PROCESSED);
+        var saved=json.readTree(log.payload);assertThat(saved.path("correlationId").asText()).isEqualTo(correlation.toString());assertThat(saved.path("causationId").asText()).isEqualTo(registrationId.toString());
+        assertThat(processed.existsByExternalEventId(updateId.toString())).isTrue();
+        UUID unknown=UUID.randomUUID();reject(citizen(unknown,"UPDATED","""
+            {"dni":"34567890","cuil":"20345678901","name":"Nombre","lastname":"No existente","birthdate":"1990-04-12","state":"ACTIVO"}
+            """,UUID.randomUUID(),correlation,null),23);
+        assertThat(taxpayers.findByTaxpayerTypeAndCanonicalCitizenId(TaxpayerType.CITIZEN,unknown)).isEmpty();
+    }
+
+    @Test void updatedPersonalDataNeverChangesCitizenStatusAndAcceptsConfirmedSelfServiceEnvelope() throws Exception {
+        Map<TaxpayerStatus,String> snapshots = java.util.Map.of(
+            TaxpayerStatus.ACTIVE, "FALLECIDO",
+            TaxpayerStatus.INACTIVE, "ACTIVO",
+            TaxpayerStatus.BLOCKED, "ACTIVO",
+            TaxpayerStatus.DECEASED, "ACTIVO");
+        for (var entry : snapshots.entrySet()) {
+            UUID citizenId=UUID.randomUUID(),eventId=UUID.randomUUID(),correlationId=UUID.randomUUID();
+            TaxpayerReference reference=new TaxpayerReference();reference.taxpayerType=TaxpayerType.CITIZEN;
+            reference.externalId=citizenId.toString();reference.canonicalCitizenId=citizenId;
+            reference.dni="30000000";reference.cuit="20300000001";reference.displayName="Nombre anterior";
+            reference.externalStatus=entry.getKey();reference.createdAt=reference.updatedAt=OffsetDateTime.now();
+            taxpayers.saveAndFlush(reference);
+            String update="""
+                {"eventId":"%s","eventType":"citizenUpdated","eventVersion":"1.0",
+                 "occurredAt":"2026-11-08T10:00:00-03:00","sourceModule":"ciudadanos",
+                 "correlationId":"%s","data":{"citizenId":"%s","updateType":"UPDATED",
+                 "details":{"dni":"30123456","cuil":"20301234567","name":"Nombre",
+                 "lastname":"Actualizado","birthdate":"1990-04-12","state":"%s"},
+                 "updatedBy":{"type":"SELF_SERVICE"}}}
+                """.formatted(eventId,correlationId,citizenId,entry.getValue());
+
+            send(update,30);
+            TaxpayerReference updated=taxpayers.findById(reference.id).orElseThrow();
+            assertThat(updated.externalStatus).isEqualTo(entry.getKey());
+            assertThat(updated.canonicalCitizenId).isEqualTo(citizenId);
+            assertThat(updated.dni).isEqualTo("30123456");assertThat(updated.cuit).isEqualTo("20301234567");
+            assertThat(updated.displayName).isEqualTo("Nombre Actualizado");
+            IntegrationEventLog log=logs.findFirstByExternalEventIdOrderByIdDesc(eventId.toString()).orElseThrow();
+            assertThat(log.status).isEqualTo(IntegrationEventStatus.PROCESSED);
+            var saved=json.readTree(log.payload);
+            assertThat(saved.path("correlationId").asText()).isEqualTo(correlationId.toString());
+            assertThat(saved.path("causationId").isNull()).isTrue();
+            assertThat(saved.path("data").path("updatedBy").path("type").asText()).isEqualTo("SELF_SERVICE");
+            assertThat(saved.path("data").path("updatedBy").path("id").isNull()).isTrue();
+            send(update,31);
+            assertThat(logs.findAll().stream().filter(x->eventId.toString().equals(x.externalEventId))).hasSize(1);
+            assertThat(taxpayers.findById(reference.id).orElseThrow().externalStatus).isEqualTo(entry.getKey());
+        }
+    }
+
+    @Test void organizationAndSupportedRepresentationEventsUseNestedData() throws Exception {
+        long organizationId=100000L+Math.floorMod(UUID.randomUUID().getLeastSignificantBits(),100000L);
+        long representationId=100000L+Math.floorMod(UUID.randomUUID().getMostSignificantBits(),100000L);
+        UUID thread=UUID.randomUUID();
+        send(envelope("organizationRegistered","ciudadanos",UUID.randomUUID(),thread,null,"""
+            {"cuit":%d,"taxId":"30712345678","legalName":"Comercio de prueba","tradeName":"Local","type":"COMPANY","status":"ACTIVA","holder":{"personId":8452,"personType":"CITIZEN"}}
+            """.formatted(organizationId)),6);
+        assertThat(taxpayers.findByTaxpayerTypeAndExternalId(TaxpayerType.ORGANIZATION,Long.toString(organizationId))).isPresent();
+        send(envelope("representationGranted","ciudadanos",UUID.randomUUID(),thread,null,"""
+            {"representationId":%d,"personId":8452,"cuit":%d,"scope":"LEGAL_REPRESENTATIVE","from":"2026-08-21","status":"VALID"}
+            """.formatted(representationId,organizationId)),7);
+        assertThat(representations.findByExternalRepresentationId(Long.toString(representationId)).orElseThrow().status).isEqualTo("VALID");
+        send(envelope("representationExpired","ciudadanos",UUID.randomUUID(),thread,null,"""
+            {"representationId":%d,"personId":8452,"cuit":%d,"until":"2026-09-14","status":"EXPIRED"}
+            """.formatted(representationId,organizationId)),8);
+        assertThat(representations.findByExternalRepresentationId(Long.toString(representationId)).orElseThrow().status).isEqualTo("EXPIRED");
+        assertThat(representations.count()).isEqualTo(1);
+    }
+
+    @Test void invalidSourceMalformedEnvelopeAndUnconfirmedVariantNackWithoutRequeue() throws Exception {
+        UUID citizenId=UUID.randomUUID();
+        UUID id=UUID.randomUUID();
+        String valid=citizen(citizenId,"REGISTERED","""
+            {"dni":"34567890","cuil":"20345678901","name":"Marcos","lastname":"Ferreyra","birthdate":"1990-04-12","state":"ACTIVE"}
+            """,id,UUID.randomUUID(),null);
+        reject(valid.replace("\"sourceModule\":\"ciudadanos\"","\"sourceModule\":\"habilitaciones\""),9);
+        reject(valid.replace("\"occurredAt\":","\"occuredAt\":"),10);
+        reject(valid.replace("\"eventVersion\":\"1.0\"","\"eventVersion\":\"2.0\""),11);
+        reject(valid.replace("\"eventType\":\"citizenUpdated\"","\"eventType\":\"representationRevoked\""),12);
+        reject(valid.replace("\"data\":","\"producer\":{},\"data\":"),13);
+        assertThat(processed.existsByExternalEventId(id.toString())).isFalse();
+        assertThat(taxpayers.findByTaxpayerTypeAndCanonicalCitizenId(TaxpayerType.CITIZEN,citizenId)).isEmpty();
+    }
+
+    @Test void uuidEventDoesNotGuessThatLegacyNumericExternalIdBelongsToCitizen() throws Exception {
+        TaxpayerReference legacy=new TaxpayerReference();legacy.taxpayerType=TaxpayerType.CITIZEN;legacy.externalId="4";
+        legacy.displayName="Legacy reference";legacy.externalStatus=TaxpayerStatus.ACTIVE;legacy.createdAt=legacy.updatedAt=OffsetDateTime.now();
+        taxpayers.saveAndFlush(legacy);
+        UUID canonicalId=UUID.randomUUID();
+        reject(citizen(canonicalId,"BLOCKED","{\"reason\":\"REVIEW\",\"reviewRequired\":true}",UUID.randomUUID(),UUID.randomUUID(),null),14);
+        assertThat(taxpayers.findById(legacy.id).orElseThrow().canonicalCitizenId).isNull();
+    }
+
+    private String citizen(UUID citizenId,String updateType,String details,UUID id,UUID correlation,UUID causation) throws Exception {
+        return envelope("citizenUpdated","ciudadanos",id,correlation,causation,"""
+            {"citizenId":"%s","updateType":"%s","details":%s,"updatedBy":{"type":"AREA_USER","id":"USR-M1-14"}}
+            """.formatted(citizenId,updateType,details));
+    }
+    private String envelope(String type,String source,UUID id,UUID correlation,UUID causation,String data) throws Exception {
+        ObjectNode root=json.createObjectNode();
+        root.put("eventId",id.toString());root.put("eventType",type);root.put("eventVersion","1.0");
+        root.put("occurredAt",OffsetDateTime.parse("2026-10-30T10:00:00-03:00").toString());
+        root.put("sourceModule",source);
+        if(correlation==null)root.putNull("correlationId");else root.put("correlationId",correlation.toString());
+        if(causation==null)root.putNull("causationId");else root.put("causationId",causation.toString());
+        root.set("data",json.readTree(data));return json.writeValueAsString(root);
+    }
+    private void send(String payload,long tag) throws Exception {
+        Channel channel=mock(Channel.class);
+        new CoreRabbitMqConsumer(dispatcher,rabbit,"rentas.retry","q.rentas.retry.1","q.rentas.retry.2","q.rentas.retry.3",1000).receive(new Message(payload.getBytes(StandardCharsets.UTF_8),new MessageProperties()),channel,tag);
+        verify(channel).basicAck(tag,false);verify(channel,never()).basicNack(eq(tag),anyBoolean(),anyBoolean());
+    }
+    private void reject(String payload,long tag) throws Exception {
+        Channel channel=mock(Channel.class);
+        new CoreRabbitMqConsumer(dispatcher,rabbit,"rentas.retry","q.rentas.retry.1","q.rentas.retry.2","q.rentas.retry.3",1000).receive(new Message(payload.getBytes(StandardCharsets.UTF_8),new MessageProperties()),channel,tag);
+        verify(channel).basicNack(tag,false,false);verify(channel,never()).basicAck(eq(tag),anyBoolean());
+    }
+}

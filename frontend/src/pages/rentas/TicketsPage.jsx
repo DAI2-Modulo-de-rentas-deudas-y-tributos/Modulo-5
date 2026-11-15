@@ -1,4 +1,6 @@
 import { useCallback, useState } from "react";
+import { safeExternalUrl } from "../../lib/safeUrl.js";
+import { Paperclip } from "lucide-react";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
 import Card from "../../components/common/Card.jsx";
 import DataTable from "../../components/common/DataTable.jsx";
@@ -11,19 +13,29 @@ import FormField from "../../components/ui/FormField.jsx";
 import useResource from "../../hooks/useResource.js";
 import useTaxpayerIndex from "../../hooks/useTaxpayerIndex.js";
 import { ticketService } from "../../services/rentasService.js";
-import { useAuth } from "../../context/AuthContext.jsx";
 import { formatDateTime, labelFor } from "../../lib/format.js";
 
-/** Estados acordados con M2: viajan dentro de updateTicketStatus, no como eventos sueltos. */
+/** Operaciones locales que solicitan una transición a M2; el estado canónico lo confirma M2. */
 const TICKET_STATUSES = [
   { value: "IN_PROGRESS", label: "En curso" },
   { value: "WAITING_FOR_INFORMATION", label: "Esperando información" },
   { value: "COMPLETED", label: "Resuelto" },
   { value: "REJECTED", label: "Rechazado" },
 ];
+const TICKET_ACTIONS = [
+  ...TICKET_STATUSES,
+  { value: "PROGRESS", label: "Registrar avance interno" },
+  { value: "RETURNED", label: "Devolver a M2" },
+];
+const RETURN_REASONS = [
+  { value: "INVALID_INFORMATION", label: "Informacion invalida" },
+  { value: "REQUEST_TYPE_MISMATCH", label: "Tipo de solicitud incorrecto" },
+  { value: "INSUFFICIENT_CONTEXT", label: "Contexto insuficiente" },
+  { value: "OTHER", label: "Otro motivo" },
+];
 
 /**
- * Tickets: reclamos que M2 deriva a Rentas (ticketCreated / ticketUpdated).
+ * Tickets: reclamos que M2 deriva a Rentas mediante ticketUpdated.
  * El área responde cambiando el estado con updateTicketStatus.
  */
 export default function TicketsPage() {
@@ -42,15 +54,21 @@ export default function TicketsPage() {
     {
       key: "ticketId",
       header: "Ticket",
-      render: (row) => <span className="tabular-nums">#{row.ticketId}</span>,
+      render: (row) => <span className="tabular-nums">{row.publicId ?? `#${row.ticketId}`}</span>,
     },
-    { key: "citizen", header: "Ciudadano", render: (row) => nameOf(row.citizenId) },
+    { key: "citizen", header: "Ciudadano", render: (row) => row.citizenId ? nameOf(row.citizenId) : "Anónimo" },
     {
       key: "description",
       header: "Reclamo",
       render: (row) => (
         <div className="flex max-w-xs flex-col">
           <span className="truncate text-neutral-700">{row.description}</span>
+          {row.attachments?.length > 0 && (
+            <span className="mt-0.5 inline-flex items-center gap-1 text-[12px] font-medium text-blue-700">
+              <Paperclip className="h-3 w-3" strokeWidth={2} />
+              {row.attachments.length} adjunto(s)
+            </span>
+          )}
           {row.additionalInformation && (
             <span className="truncate text-[12px] text-neutral-400">
               {row.additionalInformation}
@@ -64,7 +82,7 @@ export default function TicketsPage() {
     {
       key: "assignedTo",
       header: "Asignado",
-      render: (row) => row.assignedTo ?? <span className="text-neutral-300">Sin asignar</span>,
+      render: (row) => row.assignedTo ?? <span className="text-neutral-500">Sin asignar</span>,
     },
     { key: "status", header: "Estado", render: (row) => <StatusBadge status={row.status} /> },
     {
@@ -72,9 +90,9 @@ export default function TicketsPage() {
       header: "",
       align: "right",
       render: (row) => (
-        <Button size="sm" variant="secondary" onClick={() => setSelected(row)}>
-          Cambiar estado
-        </Button>
+        ["OPEN", "IN_PROGRESS"].includes(row.status)
+          ? <Button size="sm" variant="secondary" onClick={() => setSelected(row)}>Cambiar estado</Button>
+          : <span className="text-neutral-400">—</span>
       ),
     },
   ];
@@ -94,10 +112,8 @@ export default function TicketsPage() {
       )}
       {error && <Alert variant="error" title="No pudimos cargar los tickets">{error}</Alert>}
 
-      <Alert variant="info" title="El ticket es propiedad del Módulo 2">
-        Rentas no edita el reclamo: sólo informa el avance publicando{" "}
-        <code className="font-semibold">updateTicketStatus</code>. Los estados deben coincidir con
-        los que M2 tiene definidos.
+      <Alert variant="info" title="Atención Ciudadana administra el reclamo">
+        Rentas registra el avance localmente sin modificar el reclamo original. El envío de la actualización depende de la integración externa.
       </Alert>
 
       <Card title="Bandeja de reclamos" description="Priorizá los de prioridad alta y los que esperan respuesta.">
@@ -108,6 +124,7 @@ export default function TicketsPage() {
               label: "Estado",
               options: [
                 { value: "OPEN", label: labelFor("OPEN") },
+                { value: "CANCELLED", label: "Cancelado por M2" },
                 ...TICKET_STATUSES,
               ],
             },
@@ -139,14 +156,14 @@ export default function TicketsPage() {
       {selected && (
         <UpdateTicketModal
           ticket={selected}
-          citizenName={nameOf(selected.citizenId)}
+          citizenName={selected.citizenId ? nameOf(selected.citizenId) : "Anónimo"}
           onClose={() => setSelected(null)}
           onDone={(ticket) => {
             setSelected(null);
             setFeedback({
               variant: "success",
               title: "Estado actualizado",
-              message: `El ticket #${ticket.ticketId} quedó en "${labelFor(ticket.status)}" y se notificó a M2.`,
+              message: `El ticket ${ticket.publicId ?? `#${ticket.ticketId}`} quedó en "${labelFor(ticket.status)}". La actualización se registró localmente; el envío al área de Atención Ciudadana sigue pendiente de integración.`,
             });
             reload();
           }}
@@ -156,20 +173,27 @@ export default function TicketsPage() {
   );
 }
 
-/** UpdateTicketStatusRequest: el rechazo exige motivo porque viaja en el payload. */
+/** M5 solicita la transición a M2 mediante los casos de uso del backend. */
 function UpdateTicketModal({ ticket, citizenName, onClose, onDone }) {
-  const { user } = useAuth();
-  const [status, setStatus] = useState(ticket.status === "OPEN" ? "IN_PROGRESS" : ticket.status);
-  const [reason, setReason] = useState("");
-  const [takeOwnership, setTakeOwnership] = useState(!ticket.assignedTo);
+  const [status, setStatus] = useState(ticket.status === "OPEN" ? "IN_PROGRESS" : "");
+  const [message, setMessage] = useState("");
+  const [returnReason, setReturnReason] = useState("");
   const [error, setError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
   const onSubmit = async (event) => {
     event.preventDefault();
     setError(null);
-    if (status === "REJECTED" && !reason.trim()) {
-      setError("El motivo del rechazo viaja en el evento: es obligatorio.");
+    if (!status) {
+      setError("Seleccioná una operación para el ticket.");
+      return;
+    }
+    if (status !== "IN_PROGRESS" && !message.trim()) {
+      setError("Escribí un mensaje para continuar con la gestión del ticket.");
+      return;
+    }
+    if (status === "RETURNED" && !returnReason) {
+      setError("Selecciona un motivo de devolucion.");
       return;
     }
     setSubmitting(true);
@@ -178,8 +202,8 @@ function UpdateTicketModal({ ticket, citizenName, onClose, onDone }) {
         await ticketService.updateStatus({
           ticketId: ticket.ticketId,
           status,
-          reason,
-          assignedTo: takeOwnership ? user.username : undefined,
+          message: message.trim(),
+          reasonCode: status === "RETURNED" ? returnReason : undefined,
         }),
       );
     } catch (caught) {
@@ -192,7 +216,7 @@ function UpdateTicketModal({ ticket, citizenName, onClose, onDone }) {
   return (
     <Modal
       open
-      title={`Ticket #${ticket.ticketId}`}
+      title={`Ticket ${ticket.publicId ?? `#${ticket.ticketId}`}`}
       description={`${citizenName} · prioridad ${labelFor(ticket.priority).toLowerCase()}`}
       onClose={onClose}
       footer={
@@ -201,7 +225,7 @@ function UpdateTicketModal({ ticket, citizenName, onClose, onDone }) {
             Cancelar
           </Button>
           <Button variant="primary" loading={submitting} onClick={onSubmit}>
-            Informar a M2
+            Informar a Atención Ciudadana
           </Button>
         </>
       }
@@ -210,13 +234,47 @@ function UpdateTicketModal({ ticket, citizenName, onClose, onDone }) {
 
       <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-4 text-[13px] text-neutral-600">
         <p>{ticket.description}</p>
-        {ticket.additionalInformation && (
-          <p className="mt-2 text-neutral-500">
-            <span className="font-medium text-neutral-700">Información adicional:</span>{" "}
-            {ticket.additionalInformation}
-          </p>
-        )}
       </div>
+
+      {/* Lo que el ciudadano sumó después: llega de M2 en ticketUpdated. */}
+      {(ticket.additionalInformation || ticket.attachments?.length > 0) && (
+        <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-[13px] font-semibold text-blue-800">
+              Información recibida del ciudadano
+            </p>
+            {ticket.receivedAt && (
+              <span className="shrink-0 text-[12px] text-blue-700">
+                {formatDateTime(ticket.receivedAt)}
+              </span>
+            )}
+          </div>
+
+          {ticket.additionalInformation && (
+            <p className="mt-2 text-[13px] text-blue-700">{ticket.additionalInformation}</p>
+          )}
+
+          {ticket.attachments?.length > 0 && (
+            <ul className="mt-3 flex flex-col gap-1.5">
+              {ticket.attachments.map((url) => {
+                const safeUrl = safeExternalUrl(url);
+                return <li key={url}>
+                  {safeUrl ? <a
+                    href={safeUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title={url}
+                    className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#0F2C59] transition-colors hover:text-[#D63031]"
+                  >
+                    <Paperclip className="h-3.5 w-3.5" strokeWidth={2} />
+                    {url.split("/").pop()}
+                  </a> : <span className="text-[12px] text-neutral-500">Adjunto con enlace no válido</span>}
+                </li>;
+              })}
+            </ul>
+          )}
+        </div>
+      )}
 
       <FormField
         label="Nuevo estado"
@@ -224,31 +282,30 @@ function UpdateTicketModal({ ticket, citizenName, onClose, onDone }) {
         type="select"
         value={status}
         onChange={(event) => setStatus(event.target.value)}
-        options={TICKET_STATUSES}
+        options={ticket.status === "OPEN" ? TICKET_ACTIONS.filter((option) => option.value !== "PROGRESS") : TICKET_ACTIONS.filter((option) => option.value !== "IN_PROGRESS")}
         required
       />
 
-      {status === "REJECTED" && (
+      {status === "RETURNED" && (
+        <FormField label="Motivo de devolucion" name="returnReason" type="select" value={returnReason}
+          onChange={(event) => setReturnReason(event.target.value)} options={RETURN_REASONS} required />
+      )}
+
+      {status !== "IN_PROGRESS" && (
         <FormField
-          label="Motivo del rechazo"
-          name="reason"
+          label={status === "RETURNED" ? "Explicacion interna para M2" : status === "PROGRESS" ? "Avance interno" : status === "REJECTED" ? "Motivo del rechazo" : status === "COMPLETED" ? "Resolucion" : "Informacion solicitada"}
+          name="message"
           type="textarea"
-          placeholder="El caso no corresponde al módulo de Rentas"
-          value={reason}
-          onChange={(event) => setReason(event.target.value)}
+          placeholder={status === "REJECTED" ? "Explicá por qué se rechaza" : status === "COMPLETED" ? "Explicá cómo se resolvió" : "Indicá qué documentación necesitás"}
+          value={message}
+          onChange={(event) => setMessage(event.target.value)}
           required
         />
       )}
 
-      <label className="flex items-center gap-2 text-[13px] text-neutral-600">
-        <input
-          type="checkbox"
-          checked={takeOwnership}
-          onChange={(event) => setTakeOwnership(event.target.checked)}
-          className="h-4 w-4 rounded border-neutral-300 accent-[#D63031]"
-        />
-        Asignarme este ticket
-      </label>
+      {status === "IN_PROGRESS" && ticket.status === "OPEN" && (
+        <p className="text-[13px] text-neutral-600">Al iniciar la gestión, el ticket quedará asignado a tu usuario.</p>
+      )}
     </Modal>
   );
 }

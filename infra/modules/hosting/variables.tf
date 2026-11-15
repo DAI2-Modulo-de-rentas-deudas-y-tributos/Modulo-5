@@ -13,3 +13,14 @@ variable "api_base_url" {
   description = "URL HTTPS inyectada durante el build del frontend."
   type        = string
 }
+
+variable "environment_variables" {
+  description = "Variables no sensibles inyectadas durante el build del frontend."
+  type        = map(string)
+  default     = {}
+}
+variable "custom_domains" {
+  description = "Dominios completos del frontend y sus zonas públicas en Route 53."
+  type        = map(string)
+  default     = {}
+}

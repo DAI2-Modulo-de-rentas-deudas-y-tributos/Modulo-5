@@ -7,4 +7,5 @@ spring:
   flyway.enabled: true
 rentas:
   security.dev-mode: true
+  security.demo-bootstrap-password: test-bootstrap-secret
   outbox-delay-ms: 60000
