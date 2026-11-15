@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import ModuleShell from "../../components/layout/ModuleShell.jsx";
 import Card from "../../components/common/Card.jsx";
 import DataTable from "../../components/common/DataTable.jsx";
@@ -26,7 +26,14 @@ export default function OutboxPage() {
   const { data, loading, error, reload } = useResource(loader, []);
   const [filters, setFilters] = useState({ status: "", query: "" });
   const [page, setPage] = useState(0);
-  const [selected, setSelected] = useState(null);
+  const [selectedId, setSelectedId] = useState(null);
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState(null);
+  const [retryQueued, setRetryQueued] = useState(false);
+  const retryAttempts = useRef(new Map());
+  const selected = data?.find((event) => event.id === selectedId);
+  const canRetry = user.role === "SUPERVISOR" && selected?.targetModule !== "PLATFORM"
+    && ["FAILED", "DEAD_LETTER"].includes(selected?.status);
   const filtered = useMemo(() => {
     const query = filters.query.trim().toLocaleLowerCase("es");
     return (data ?? []).filter((row) => (!filters.status || row.status === filters.status)
@@ -35,6 +42,44 @@ export default function OutboxPage() {
   const pages = Math.ceil(filtered.length / PAGE_SIZE);
   const currentPage = Math.min(page, Math.max(0, pages - 1));
   const changeFilter = (name, value) => { setFilters((previous) => ({ ...previous, [name]: value })); setPage(0); };
+
+  const openDetail = (event) => {
+    setRetryError(null);
+    setSelectedId(event.id);
+  };
+
+  const closeDetail = () => {
+    if (retrying) return;
+    setRetryError(null);
+    setSelectedId(null);
+  };
+
+  const retrySelected = async () => {
+    if (!canRetry || retrying) return;
+    const { id } = selected;
+    setRetrying(true);
+    setRetryError(null);
+    setRetryQueued(false);
+    try {
+      // Conserva la misma clave y versión si se perdió la respuesta del POST.
+      const attempt = retryAttempts.current.get(id) ?? await integrationOutboxService.prepareRetry(selected);
+      retryAttempts.current.set(id, attempt);
+      await integrationOutboxService.retry(id, attempt);
+      retryAttempts.current.delete(id);
+      setRetryQueued(true);
+      setSelectedId(null);
+      await reload();
+    } catch (caught) {
+      setRetryError(caught.message ?? "No se pudo solicitar el reintento.");
+      if ([404, 409, 412].includes(caught.status)) {
+        retryAttempts.current.delete(id);
+        await reload();
+      }
+    } finally {
+      setRetrying(false);
+    }
+  };
+
   const columns = [
     { key: "eventType", header: "Evento" },
     { key: "targetModule", header: "Destino" },
@@ -42,12 +87,14 @@ export default function OutboxPage() {
     { key: "status", header: "Estado", render: (row) => badge(row.status) },
     { key: "retryCount", header: "Reintentos", align: "right" },
     { key: "createdAt", header: "Creado", render: (row) => formatDateTime(row.createdAt) },
-    { key: "detail", header: "", render: (row) => <Button size="sm" variant="secondary" onClick={() => setSelected(row)}>Ver detalle</Button> },
+    { key: "detail", header: "", render: (row) => <Button size="sm" variant="secondary" onClick={() => openDetail(row)}>Ver detalle</Button> },
   ];
   return <ModuleShell label="Integraciones" title="Eventos salientes" description="Estado de los envíos a otros módulos y resultado de cada intento."
     homePath={homePathForRole(user.role)}
     breadcrumb={[{ id: "outbox", label: "Eventos salientes" }]}>
-    <Alert variant="info" title="Reenvío manual no disponible">Los reintentos automáticos los gestiona el sistema. «Solo local» no confirma recepción; «Aceptado por Core» o «Confirmado por broker» tampoco confirman procesamiento por el consumidor.</Alert>
+    <Alert variant="info" title="Estados de entrega">«Solo local» no confirma recepción; «Aceptado por Core» o «Confirmado por broker» tampoco confirman procesamiento por el consumidor.</Alert>
+    {retryQueued && <Alert variant="success" title="Reintento encolado" onDismiss={() => setRetryQueued(false)}>El envío quedó pendiente de procesamiento.</Alert>}
+    {retryError && !selected && <Alert variant="error" title="No se pudo reintentar el envío" onDismiss={() => setRetryError(null)}>{retryError}</Alert>}
     <Card title="Bandeja de envíos" actions={<Button variant="secondary" loading={loading} onClick={reload}>Actualizar</Button>}>
       <FilterBar searchValue={filters.query} searchPlaceholder="Evento, destino o referencia…" onSearchChange={(value) => changeFilter("query", value)}
         filters={[{ name: "status", label: "Estado", options: Object.entries(STATES).map(([value, label]) => ({ value, label })) }]}
@@ -61,8 +108,13 @@ export default function OutboxPage() {
           <Button variant="secondary" disabled={currentPage + 1 >= pages} onClick={() => setPage(currentPage + 1)}>Siguiente</Button></div>
       </nav>}
     </Card>
-    {selected && <Modal open title="Detalle del evento saliente" description={selected.id} onClose={() => setSelected(null)} footer={<Button variant="secondary" onClick={() => setSelected(null)}>Cerrar</Button>}>
+    {selected && <Modal open title="Detalle del evento saliente" description={selected.id} onClose={closeDetail}
+      footer={<>
+        <Button variant="secondary" disabled={retrying} onClick={closeDetail}>Cerrar</Button>
+        {canRetry && <Button loading={retrying} onClick={retrySelected}>Reintentar envío</Button>}
+      </>}>
       <div className="flex flex-col gap-4">
+        {retryError && <Alert variant="error" title="No se pudo reintentar el envío">{retryError}</Alert>}
         {badge(selected.status)}
         <dl className="grid grid-cols-2 gap-3 text-sm">
           <div><dt className="text-neutral-500">Evento</dt><dd>{selected.eventType}</dd></div>
