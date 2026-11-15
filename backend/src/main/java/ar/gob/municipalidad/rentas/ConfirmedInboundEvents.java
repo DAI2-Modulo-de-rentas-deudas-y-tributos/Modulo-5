@@ -70,7 +70,7 @@ public final class ConfirmedInboundEvents {
     public record M8SocialBenefitData(@NotNull UUID benefitId,@NotNull UUID citizenId,
         @NotNull UUID applicationId,@NotNull UUID programId,@NotNull UUID programEditionId,
         @NotBlank String programName,@NotNull UUID benefitTypeId,@NotBlank String type,
-        @NotBlank String description,@CurrencyAmount BigDecimal amount,@NotBlank String status,String reason,
+        @Pattern(regexp="(?s).*\\S.*") String description,@CurrencyAmount BigDecimal amount,@NotBlank String status,String reason,
         LocalDate startDate,LocalDate endDate,@NotNull OffsetDateTime updatedAt) {}
 
     public enum M7DebtorIdType { DNI, CUIT }

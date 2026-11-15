@@ -41,6 +41,20 @@ class CoreRabbitMqConsumerTests {
         verifyNoInteractions(m2);
     }
 
+    @Test void ticketCreatedIsNotPartOfTheConfirmedCoreDispatcherContract() {
+        ConfirmedM1Consumer m1=mock(ConfirmedM1Consumer.class);ConfirmedM2Consumer m2=mock(ConfirmedM2Consumer.class);
+        CoreM4Consumer m4=mock(CoreM4Consumer.class);ConfirmedM7Consumer m7=mock(ConfirmedM7Consumer.class);
+        ConfirmedM8Consumer m8=mock(ConfirmedM8Consumer.class);
+        CoreInboundEventDispatcher dispatcher=new CoreInboundEventDispatcher(new ObjectMapper().findAndRegisterModules(),m1,m2,m4,m7,m8);
+        String unsupported="""
+            {"eventId":"%s","eventType":"ticketCreated","eventVersion":"1.0","occurredAt":"2026-11-15T10:00:00-03:00","sourceModule":"atencion-ciudadana","data":{}}
+            """.formatted(UUID.randomUUID());
+
+        assertThatThrownBy(()->dispatcher.dispatch(unsupported)).isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("UNSUPPORTED_CORE_EVENT_TYPE");
+        verifyNoInteractions(m1,m2,m4,m7,m8);
+    }
+
     @Test void acceptsOptionalEnvelopeFieldsWhenCoreOmitsThem() {
         ConfirmedM2Consumer m2=mock(ConfirmedM2Consumer.class);
         CoreInboundEventDispatcher dispatcher=new CoreInboundEventDispatcher(new ObjectMapper().findAndRegisterModules(),mock(ConfirmedM1Consumer.class),m2,

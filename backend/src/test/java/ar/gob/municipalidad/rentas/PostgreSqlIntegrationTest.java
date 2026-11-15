@@ -986,6 +986,26 @@ class PostgreSqlIntegrationTest {
             .extracting(x->x.outcome).containsExactly("APPLIED","STALE","APPLIED");
     }
 
+    @Test void m8NullDescriptionPersistsOnPostgreSqlWithoutInventedText() throws Exception {
+        var base=m8Event(UUID.randomUUID(),UUID.randomUUID(),UUID.randomUUID(),UUID.randomUUID(),"APPROVED",
+            OffsetDateTime.parse("2026-10-01T12:00:00-03:00"));
+        var source=base.data();
+        var data=new ConfirmedInboundEvents.M8SocialBenefitData(source.benefitId(),source.citizenId(),
+            source.applicationId(),source.programId(),source.programEditionId(),source.programName(),
+            source.benefitTypeId(),source.type(),null,source.amount(),source.status(),source.reason(),
+            source.startDate(),source.endDate(),source.updatedAt());
+        var event=new ConfirmedInboundEvents.M8SocialBenefitUpdatedEvent(base.eventId(),base.eventType(),
+            base.eventVersion(),base.occurredAt(),base.sourceModule(),base.correlationId(),base.causationId(),data);
+
+        coreM8.consume(event);
+
+        SocialBenefitReference stored=socialBenefits.findByExternalBenefitId(source.benefitId().toString()).orElseThrow();
+        assertThat(json.readTree(stored.benefitsPayload).path("description").isNull()).isTrue();
+        assertThat(stored.resolutionStatus).isEqualTo("PENDING_CITIZEN");
+        assertThat(socialBenefitHistory.findByExternalBenefitIdOrderBySourceUpdatedAtAsc(source.benefitId().toString()))
+            .singleElement().satisfies(entry->assertThat(entry.sourceEventId).isEqualTo(base.eventId()));
+    }
+
     private ConfirmedInboundEvents.M8SocialBenefitUpdatedEvent m8Event(UUID benefitId,UUID citizenId,
             UUID applicationId,UUID programId,String status,OffsetDateTime updatedAt){
         var data=new ConfirmedInboundEvents.M8SocialBenefitData(benefitId,citizenId,applicationId,programId,
