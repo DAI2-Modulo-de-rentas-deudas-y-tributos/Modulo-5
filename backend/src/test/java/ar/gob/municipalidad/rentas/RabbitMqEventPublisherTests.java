@@ -90,6 +90,46 @@ class RabbitMqEventPublisherTests {
         assertThat(received.getMessageProperties().getReceivedDeliveryMode()).isEqualTo(MessageDeliveryMode.PERSISTENT);
     }
 
+    @Test void exactM2RoutedFixtureTravelsThroughIsolatedRabbitAndTheRealDispatcher() throws Exception {
+        String payload;
+        try(var input=getClass().getResourceAsStream("/contracts/inbound/M2_ticketUpdated_ROUTED_REAL.json")){
+            if(input==null)throw new IllegalArgumentException("Missing exact M2 test fixture");
+            payload=new String(input.readAllBytes(),StandardCharsets.UTF_8);
+        }
+        String suffix=UUID.randomUUID().toString().replace("-","");
+        String exchangeName=EXCHANGE+".m2."+suffix,queueName=QUEUE+".m2."+suffix;
+        RabbitAdmin admin=new RabbitAdmin(connections);
+        FanoutExchange exchange=new FanoutExchange(exchangeName,true,false);
+        admin.declareExchange(exchange);
+        Queue queue=new Queue(queueName,true,false,true);
+        admin.declareQueue(queue);
+        admin.declareBinding(BindingBuilder.bind(queue).to(exchange));
+        org.springframework.amqp.core.MessageProperties properties=new org.springframework.amqp.core.MessageProperties();
+        properties.setMessageId("e06a8885-60b8-4660-83ff-6feb23843c26");
+        properties.setDeliveryMode(MessageDeliveryMode.PERSISTENT);
+        template.send(exchangeName,"",new Message(payload.getBytes(StandardCharsets.UTF_8),properties));
+
+        Message received=template.receive(queueName,3000);
+        assertThat(received).isNotNull();
+        assertThat(new String(received.getBody(),StandardCharsets.UTF_8)).isEqualTo(payload);
+        ConfirmedM2Consumer m2=mock(ConfirmedM2Consumer.class);
+        CoreInboundEventDispatcher dispatcher=new CoreInboundEventDispatcher(new ObjectMapper().findAndRegisterModules(),
+            mock(ConfirmedM1Consumer.class),m2,mock(CoreM4Consumer.class),mock(ConfirmedM7Consumer.class),mock(ConfirmedM8Consumer.class));
+
+        dispatcher.dispatch(new String(received.getBody(),StandardCharsets.UTF_8));
+
+        org.mockito.ArgumentCaptor<ConfirmedInboundEvents.M2TicketUpdatedEvent> event=
+            org.mockito.ArgumentCaptor.forClass(ConfirmedInboundEvents.M2TicketUpdatedEvent.class);
+        verify(m2).consume(event.capture());
+        assertThat(event.getValue().eventId()).isEqualTo(UUID.fromString("e06a8885-60b8-4660-83ff-6feb23843c26"));
+        assertThat(event.getValue().correlationId()).isEqualTo(UUID.fromString("b766e401-e818-4c42-ae63-eb3aa6b3c68f"));
+        assertThat(event.getValue().data().ticketId()).isEqualTo(UUID.fromString("1ab9e286-2ac9-40d5-b46e-e78c414f535a"));
+        assertThat(event.getValue().data().publicId()).isEqualTo("TK-2026-000047");
+        assertThat(event.getValue().data().updateType()).isEqualTo("ROUTED");
+        assertThat(event.getValue().data().currentStatus()).isEqualTo("ROUTED");
+        assertThat(event.getValue().data().responsibleAreaId()).isEqualTo("M5");
+    }
+
     @Test void transientInboundFailuresRetryThreeTimesThenDeadLetterWithTheSameEventId() throws Exception {
         RetryTopology topology=declareRetryTopology();
         String eventId=UUID.randomUUID().toString();

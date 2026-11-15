@@ -1,0 +1,27 @@
+{
+  "eventId": "114ab437-f36a-4f26-a565-0a3b59b2b88b",
+  "eventType": "infractionConfirmed",
+  "eventVersion": "1.0",
+  "occurredAt": "2026-11-15T14:15:24-03:00",
+  "sourceModule": "transito",
+  "correlationId": "3575c1aa-50ef-4b73-b486-0cdc1635a6fa",
+  "causationId": null,
+  "data": {
+    "infractionId": "cb63dbb5-054a-4a77-92b2-b5d5bd6c4483",
+    "debtorId": "30111222",
+    "debtorIdType": "DNI",
+    "licensePlate": "TEST123",
+    "infractionType": "ILLEGAL_PARKING",
+    "infractionDateTime": "2026-11-15T14:14:29",
+    "baseAmount": 1000.0,
+    "aggravatingFactors": [],
+    "finalAmount": 1000.0,
+    "inspectorId": "u-1001",
+    "location": {
+      "street": "Av. de Prueba",
+      "crossStreet": "Calle Ficticia",
+      "latitude": -34.6,
+      "longitude": -58.4
+    }
+  }
+}

@@ -314,6 +314,7 @@ class PostgreSqlIntegrationTest {
     @Autowired ConfirmedM7Consumer m7;
     @Autowired IntegrationEventLogRepository integrationLogs;
     @Autowired ProcessedEventRepository processedEvents;
+    @Autowired TicketCaseRepository ticketCases;
     @Autowired ExternalObligationRepository externalObligations;
     @Autowired TaxpayerRepository taxpayers;
     @Autowired TaxConceptRepository concepts;
@@ -1004,6 +1005,130 @@ class PostgreSqlIntegrationTest {
         assertThat(stored.resolutionStatus).isEqualTo("PENDING_CITIZEN");
         assertThat(socialBenefitHistory.findByExternalBenefitIdOrderBySourceUpdatedAtAsc(source.benefitId().toString()))
             .singleElement().satisfies(entry->assertThat(entry.sourceEventId).isEqualTo(base.eventId()));
+    }
+
+    @Test void exactM2RoutedEnvelopePersistsOnceAndKeepsExternalTraceabilityOnPostgreSql() throws Exception {
+        String payload=contractFixture("M2_ticketUpdated_ROUTED_REAL.json");
+        JsonNode envelope=json.readTree(payload),data=envelope.path("data"),routing=data.path("details").path("routing");
+        String eventId=envelope.path("eventId").asText(),ticketId=data.path("ticketId").asText();
+        String correlationId=envelope.path("correlationId").asText();
+        long ticketsBefore=ticketCases.count();
+
+        inbound.dispatch(payload);
+
+        TicketCase ticket=ticketCases.findByExternalTicketId(ticketId).orElseThrow();
+        assertThat(ticket.publicId).isEqualTo("TK-2026-000047");
+        assertThat(ticket.status).isEqualTo(TicketCaseStatus.OPEN);
+        assertThat(ticket.externalCitizenId).isEqualTo(data.path("citizenId").asText());
+        assertThat(ticket.correlationId).isEqualTo(correlationId);
+        assertThat(ticket.lastSourceEventId).isEqualTo(eventId);
+        assertThat(ticket.requestType).isEqualTo(routing.path("requestType").asText());
+        assertThat(ticket.category).isEqualTo(routing.path("category").asText());
+        assertThat(ticket.subcategory).isEqualTo(routing.path("subcategory").asText());
+        assertThat(ticket.description).isEqualTo(routing.path("description").asText());
+        assertThat(ticketCases.count()).isEqualTo(ticketsBefore+1);
+        assertThat(processedEvents.existsByExternalEventId(eventId)).isTrue();
+        assertThat(integrationLogs.findFirstByExternalEventIdOrderByIdDesc(eventId))
+            .get().extracting(x->x.status).isEqualTo(IntegrationEventStatus.PROCESSED);
+
+        inbound.dispatch(payload);
+
+        assertThat(ticketCases.findByExternalTicketId(ticketId).orElseThrow().id).isEqualTo(ticket.id);
+        assertThat(ticketCases.count()).isEqualTo(ticketsBefore+1);
+        assertThat(integrationLogs.findAll().stream().filter(x->eventId.equals(x.externalEventId))).hasSize(1);
+        assertThat(ticketCases.findByExternalTicketId(ticketId).orElseThrow().correlationId).isEqualTo(correlationId);
+    }
+
+    @Test void exactM7EnvelopeWithoutOffsetFailsDuringJacksonBindingBeforePersistence() throws Exception {
+        String payload=contractFixture("M7_infractionConfirmed_REAL_SIN_OFFSET.json");
+        JsonNode envelope=json.readTree(payload);
+        String eventId=envelope.path("eventId").asText(),infractionId=envelope.path("data").path("infractionId").asText();
+        long obligationsBefore=externalObligations.count(),debtsBefore=debts.count();
+
+        assertThatThrownBy(()->inbound.dispatch(payload))
+            .isInstanceOf(IllegalArgumentException.class).hasMessage("INVALID_CORE_EVENT_PAYLOAD")
+            .hasRootCauseInstanceOf(java.time.format.DateTimeParseException.class);
+
+        assertThat(externalObligations.count()).isEqualTo(obligationsBefore);
+        assertThat(debts.count()).isEqualTo(debtsBefore);
+        assertThat(processedEvents.existsByExternalEventId(eventId)).isFalse();
+        assertThat(integrationLogs.findFirstByExternalEventIdOrderByIdDesc(eventId)).isEmpty();
+        assertThat(externalObligations.findBySourceModuleAndExternalTypeAndExternalReferenceId(
+            "M7",ExternalObligationType.TRAFFIC_INFRACTION,infractionId)).isEmpty();
+    }
+
+    @Test void m7OffsetCorrectedCounterfactualOnlyProcessesWithLocalIdentityAndConcept() throws Exception {
+        String original=contractFixture("M7_infractionConfirmed_REAL_SIN_OFFSET.json");
+        UUID eventId=UUID.randomUUID(),infractionId=UUID.randomUUID();
+        String counterfactual=original
+            .replace("114ab437-f36a-4f26-a565-0a3b59b2b88b",eventId.toString())
+            .replace("cb63dbb5-054a-4a77-92b2-b5d5bd6c4483",infractionId.toString())
+            .replace("2026-11-15T14:14:29\"","2026-11-15T14:14:29Z\"");
+        assertThat(counterfactual).contains("2026-11-15T14:14:29Z")
+            .doesNotContain("114ab437-f36a-4f26-a565-0a3b59b2b88b","cb63dbb5-054a-4a77-92b2-b5d5bd6c4483");
+        TaxpayerReference taxpayer=taxpayers.findByTaxpayerTypeAndDni(TaxpayerType.CITIZEN,"30111222")
+            .orElseGet(()->{
+                TaxpayerReference created=new TaxpayerReference();created.taxpayerType=TaxpayerType.CITIZEN;
+                created.externalId="QA-M7-DNI-30111222";created.dni="30111222";created.displayName="M7 synthetic test citizen";
+                created.externalStatus=TaxpayerStatus.ACTIVE;created.createdAt=created.updatedAt=OffsetDateTime.now();
+                return taxpayers.saveAndFlush(created);
+            });
+        concept("TRAFFIC_INFRACTION",TaxConceptType.FINE,"M7");
+        long paymentsBefore=paymentRepository.count();
+        JsonNode envelope=json.readTree(counterfactual);String storedInfractionId=envelope.path("data").path("infractionId").asText();
+
+        inbound.dispatch(counterfactual);
+        inbound.dispatch(counterfactual);
+
+        ExternalObligation obligation=externalObligations.findBySourceModuleAndExternalTypeAndExternalReferenceId(
+            "M7",ExternalObligationType.TRAFFIC_INFRACTION,storedInfractionId).orElseThrow();
+        assertThat(obligation.status).isEqualTo(ExternalObligationStatus.PROCESSED);
+        assertThat(obligation.taxpayerId).isEqualTo(taxpayer.id);
+        assertThat(obligation.amount).isEqualByComparingTo("1000.00");
+        assertThat(debts.findAll().stream().filter(x->obligation.id.equals(x.externalObligationId))).hasSize(1);
+        assertThat(processedEvents.existsByExternalEventId(eventId.toString())).isTrue();
+        assertThat(paymentRepository.count()).isEqualTo(paymentsBefore);
+    }
+
+    @Test void exactM8NullDescriptionEnvelopePersistsWithoutApplyingBenefitOrDuplicatingHistory() throws Exception {
+        String payload=contractFixture("M8_socialBenefitUpdated_REAL_DESCRIPTION_NULL.json");
+        JsonNode envelope=json.readTree(payload),data=envelope.path("data");
+        UUID citizenId=UUID.fromString(data.path("citizenId").asText());
+        String eventId=envelope.path("eventId").asText(),benefitId=data.path("benefitId").asText();
+        assertThat(data.path("description").isNull()).isTrue();
+        assertThat(taxpayers.findByTaxpayerTypeAndCanonicalCitizenId(TaxpayerType.CITIZEN,citizenId)).isEmpty();
+        long benefitsBefore=socialBenefits.count(),debtsBefore=debts.count();
+
+        inbound.dispatch(payload);
+
+        SocialBenefitReference benefit=socialBenefits.findByExternalBenefitId(benefitId).orElseThrow();
+        assertThat(UUID.fromString(benefit.externalCitizenId)).isEqualTo(citizenId);
+        assertThat(benefit.externalStatus).isEqualTo("APPROVED");
+        assertThat(benefit.validFrom).isEqualTo(LocalDate.of(2026,11,15));
+        assertThat(benefit.validUntil).isEqualTo(LocalDate.of(2026,11,22));
+        assertThat(benefit.taxpayerId).isNull();
+        assertThat(benefit.resolutionStatus).isEqualTo("PENDING_CITIZEN");
+        assertThat(benefit.benefitsPayload).contains("\"description\":null");
+        assertThat(benefit.lastCorrelationId).isEqualTo(UUID.fromString(envelope.path("correlationId").asText()));
+        assertThat(processedEvents.existsByExternalEventId(eventId)).isTrue();
+        assertThat(integrationLogs.findFirstByExternalEventIdOrderByIdDesc(eventId))
+            .get().extracting(x->x.status).isEqualTo(IntegrationEventStatus.PROCESSED);
+        assertThat(socialBenefitHistory.findByExternalBenefitIdOrderBySourceUpdatedAtAsc(benefitId))
+            .singleElement().satisfies(entry->assertThat(entry.sourceEventId.toString()).isEqualTo(eventId));
+
+        inbound.dispatch(payload);
+
+        assertThat(socialBenefits.count()).isEqualTo(benefitsBefore+1);
+        assertThat(debts.count()).isEqualTo(debtsBefore);
+        assertThat(socialBenefitHistory.findByExternalBenefitIdOrderBySourceUpdatedAtAsc(benefitId)).hasSize(1);
+        assertThat(integrationLogs.findAll().stream().filter(x->eventId.equals(x.externalEventId))).hasSize(1);
+    }
+
+    private String contractFixture(String name) throws Exception {
+        try(var input=getClass().getResourceAsStream("/contracts/inbound/"+name)){
+            if(input==null)throw new IllegalArgumentException("Missing test contract fixture: "+name);
+            return new String(input.readAllBytes(),java.nio.charset.StandardCharsets.UTF_8);
+        }
     }
 
     private ConfirmedInboundEvents.M8SocialBenefitUpdatedEvent m8Event(UUID benefitId,UUID citizenId,
