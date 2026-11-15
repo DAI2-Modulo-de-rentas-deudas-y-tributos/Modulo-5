@@ -1,6 +1,7 @@
 package ar.gob.municipalidad.rentas;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -12,6 +13,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.*;
@@ -52,6 +54,13 @@ class M7ContractTests {
     @Autowired TaxConceptRepository concepts;@Autowired ExternalObligationRepository obligations;@Autowired DebtRepository debts;
     @Autowired ProcessedEventRepository processed;@Autowired IntegrationEventLogRepository logs;@Autowired IntegrationReprocessService reprocess;
     @Autowired PlatformTransactionManager transactionManager;
+
+    @Test void infractionTimestampWithoutOffsetFailsDuringJacksonBinding() {
+        String offsetless=DOCUMENTED_EVENT.replace("2026-08-24T13:45:00-03:00","2026-08-24T13:45:00");
+        assertThatThrownBy(()->read(offsetless))
+            .isInstanceOf(JsonProcessingException.class)
+            .hasRootCauseInstanceOf(DateTimeParseException.class);
+    }
 
     @Test void documentedPayloadUsesFinalAmountAndCreatesOneEconomicEffect() throws Exception {
         long before=obligations.count();TaxpayerReference taxpayer=citizen("40123456");concept();var event=read(DOCUMENTED_EVENT);
