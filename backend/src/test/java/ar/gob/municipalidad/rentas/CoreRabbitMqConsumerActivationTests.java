@@ -15,8 +15,18 @@ class CoreRabbitMqConsumerActivationTests {
         .withUserConfiguration(ConsumerConfiguration.class);
 
     @Test void coreHttpCanReceiveRabbitEventsOnlyWhenExplicitlyEnabled() {
-        contextRunner.withPropertyValues("BROKER_ADAPTER=core-http","rentas.core.amqp.consumer-enabled=true")
+        contextRunner.withPropertyValues("BROKER_ADAPTER=core-http","rentas.core.amqp.consumer-enabled=true","rentas.core.amqp.retry-mode=core-managed")
             .run(context->assertThat(context).hasSingleBean(CoreRabbitMqConsumer.class));
+    }
+
+    @Test void enabledConsumerRequiresExplicitRetryOwnershipMode() {
+        contextRunner.withPropertyValues("rentas.core.amqp.consumer-enabled=true")
+            .run(context->assertThat(context).hasFailed());
+    }
+
+    @Test void enabledConsumerRejectsUnknownRetryOwnershipMode() {
+        contextRunner.withPropertyValues("rentas.core.amqp.consumer-enabled=true","rentas.core.amqp.retry-mode=remote-mystery")
+            .run(context->assertThat(context).hasFailed());
     }
 
     @Test void consumerRemainsDisabledByDefaultForEveryOutboundTransport() {
