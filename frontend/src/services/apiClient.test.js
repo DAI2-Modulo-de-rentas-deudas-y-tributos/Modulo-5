@@ -34,3 +34,25 @@ describe("Problem Details API errors", () => {
     await expect(result).rejects.toMatchObject({ message: "Importe inválido", status: 422 });
   });
 });
+
+describe("encabezados de una respuesta exitosa", () => {
+  const path = "/api/v1/integrations/outbox/evento-1";
+  const event = { id: "evento-1", status: "FAILED" };
+  const etag = '"outbox-v2"';
+
+  it("devuelve los datos y encabezados con includeHeaders", async () => {
+    const response = Response.json(event, { headers: { ETag: etag } });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
+
+    const result = await request(path, { includeHeaders: true });
+
+    expect(result.data).toEqual(event);
+    expect(result.headers.get("ETag")).toBe(etag);
+  });
+
+  it("devuelve solo los datos por defecto", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json(event, { headers: { ETag: etag } })));
+
+    await expect(request(path)).resolves.toEqual(event);
+  });
+});
