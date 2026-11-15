@@ -73,12 +73,14 @@ interface ExternalObligationRepository extends FilteredRepository<ExternalObliga
 interface PaymentRepository extends FilteredRepository<Payment,Long> {
     List<Payment> findByTaxpayerId(Long taxpayerId); Page<Payment> findByTaxpayerId(Long taxpayerId,Pageable pageable); Optional<Payment> findByTaxpayerIdAndIdempotencyKey(Long taxpayerId,String idempotencyKey);
     @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select p from Payment p where p.id=:id") Optional<Payment> findByIdForUpdate(Long id);
-    long countByStatusAndUnallocatedAmountGreaterThan(PaymentStatus status,BigDecimal amount);
-    @Query("select coalesce(sum(p.unallocatedAmount),0) from Payment p where p.status=:status and p.unallocatedAmount>:amount")
-    BigDecimal sumUnallocatedAmount(@Param("status") PaymentStatus status,@Param("amount") BigDecimal amount);
+    @Query("select count(p.id) from Payment p where p.status=:status and p.unallocatedAmount>:amount and not exists (select c.id from CreditBalance c where c.sourcePaymentId=p.id)")
+    long countManuallyUnallocated(@Param("status") PaymentStatus status,@Param("amount") BigDecimal amount);
+    @Query("select coalesce(sum(p.unallocatedAmount),0) from Payment p where p.status=:status and p.unallocatedAmount>:amount and not exists (select c.id from CreditBalance c where c.sourcePaymentId=p.id)")
+    BigDecimal sumManuallyUnallocated(@Param("status") PaymentStatus status,@Param("amount") BigDecimal amount);
     @Query("""
         select count(p.id) as paymentCount, coalesce(sum(p.amount),0) as confirmedAmount,
-          coalesce(sum(p.allocatedAmount),0) as allocatedAmount, coalesce(sum(p.unallocatedAmount),0) as unallocatedAmount
+          coalesce(sum(p.allocatedAmount),0) as allocatedAmount,
+          coalesce(sum(case when not exists (select c.id from CreditBalance c where c.sourcePaymentId=p.id) then p.unallocatedAmount else 0 end),0) as unallocatedAmount
         from Payment p
         where p.status=ar.gob.municipalidad.rentas.PaymentStatus.CONFIRMED
           and (cast(:from as LocalDate) is null or cast(p.paidAt as LocalDate)>=:from)

@@ -252,7 +252,11 @@ function adaptRow(path, row) {
   if (path.includes("/tax-configurations")) return { ...row, conceptId: row.taxConceptId, calculationType: CALC_FROM_API[row.calculationType] ?? row.calculationType };
   if (path.includes("/liquidations")) return { ...row, conceptId: row.taxConceptId, conceptName: row.conceptName ?? `Concepto #${row.taxConceptId}`, taxpayerName: row.taxpayerName ?? `Contribuyente #${row.taxpayerId}`, amount: row.finalAmount, createdAt: row.issuedAt, origin: row.origin ?? { module: "M5" } };
   if (path.includes("/debts")) return { ...row, conceptId: row.taxConceptId, conceptCode: row.conceptCode ?? `#${row.taxConceptId}`, conceptName: row.conceptName ?? `Concepto #${row.taxConceptId}`, taxpayerName: row.taxpayerName ?? `Contribuyente #${row.taxpayerId}`, outstandingAmount: row.outstandingBalance, settlementId: row.liquidationId, originId: row.liquidationId ?? row.externalObligationId, originType: row.originType, daysLeft: row.daysLeft ?? daysUntil(row.dueDate), status: row.status === "PAID" ? "SETTLED" : row.overdue && row.status !== "CANCELLED" ? "OVERDUE" : row.status };
-  if (path.includes("/bills")) return { ...row, conceptName: row.conceptName ?? (row.debts?.[0]?.debtId ? `Deuda #${row.debts[0].debtId}` : "Boleta municipal"), amount: row.totalAmount, issuedAt: row.createdAt ?? row.issueDate, debtId: row.debts?.[0]?.debtId ?? null, daysLeft: row.daysLeft ?? daysUntil(row.dueDate), status: row.status === "PAID" ? "SETTLED" : row.status, barcode: row.number, documentUrl: `/api/v1/bills/${row.id}/document` };
+  if (path.includes("/bills")) {
+    const debts = Array.isArray(row.debts) ? row.debts : [];
+    const debtIds = debts.map((debt) => debt?.debtId).filter((id) => id != null);
+    return { ...row, debts, debtIds, conceptName: row.conceptName ?? (debtIds[0] ? `Deuda #${debtIds[0]}` : "Boleta municipal"), amount: row.totalAmount, issuedAt: row.createdAt ?? row.issueDate, debtId: debtIds[0] ?? null, daysLeft: row.daysLeft ?? daysUntil(row.dueDate), status: row.status === "PAID" ? "SETTLED" : row.status, barcode: row.number, documentUrl: `/api/v1/bills/${row.id}/document` };
+  }
   if (pathname.endsWith("/receipt")) return row;
   if (path.includes("/allocations")) return row;
   if (path.includes("/electronic-payments")) return row;

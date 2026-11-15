@@ -187,6 +187,22 @@ describe("portal del contribuyente", () => {
     expect(within(dialog).getByRole("button", { name: /^imprimir$/i })).toBeDefined();
   });
 
+  it("muestra la misma boleta en cada deuda asociada en Inicio y Mis Deudas", async () => {
+    instalarBackendFalso({
+    });
+    const debts = [
+      { id: 2, conceptName: "Tasa", outstandingAmount: 500, dueDate: "2026-11-20", daysLeft: 6, status: "PENDING", billIds: [1], billId: 1 },
+      { id: 3, conceptName: "Tasa", outstandingAmount: 700, dueDate: "2026-11-22", daysLeft: 8, status: "PENDING", billIds: [1], billId: 1 },
+    ];
+    vi.spyOn(portalService, "accountSummary").mockResolvedValue({ totalDebt: 1200, overdueDebt: 0, creditBalance: 0, obligations: debts, counts: { debts: 2, overdue: 0 }, nextDueDate: null });
+    vi.spyOn(portalService, "debts").mockResolvedValue(debts);
+    await loginAsContribuyente(user);
+    expect(await screen.findAllByText("#1")).toHaveLength(2);
+
+    await user.click(screen.getByRole("link", { name: /mis deudas/i }));
+    expect(await screen.findAllByText("#1")).toHaveLength(2);
+  });
+
   it("solicita una exencion y valida el formulario", async () => {
     await loginAsContribuyente(user);
     await user.click(screen.getByRole("link", { name: /^exenciones$/i }));

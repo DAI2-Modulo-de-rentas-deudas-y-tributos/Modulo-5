@@ -77,14 +77,19 @@ export default function MisDeudasPage() {
       key: "billId",
       header: "Boleta",
       render: (row) =>
-        row.billId ? (
-          <button
-            type="button"
-            onClick={() => navigate("/portal/boletas")}
-            className="text-[12px] font-semibold text-[#0F2C59] underline underline-offset-2 transition-colors hover:text-[#D63031]"
-          >
-            #{row.billId}
-          </button>
+        row.billIds?.length ? (
+          <span className="flex flex-wrap gap-1">
+            {row.billIds.map((id) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => navigate("/portal/boletas")}
+                className="text-[12px] font-semibold text-[#0F2C59] underline underline-offset-2 transition-colors hover:text-[#D63031]"
+              >
+                #{id}
+              </button>
+            ))}
+          </span>
         ) : (
           <span className="text-neutral-500">Sin emitir</span>
         ),

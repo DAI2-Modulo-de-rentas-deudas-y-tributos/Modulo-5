@@ -314,6 +314,31 @@ describe("lectura de la respuesta", () => {
     ]);
   });
 
+  it("asocia una boleta con todas sus deudas sin consultar por cada deuda y conserva páginas", async () => {
+    const backend = instalarBackendFalso({
+      "GET /api/v1/taxpayers/{id}/debts": pagina([
+        { id: 2, taxConceptId: 1, outstandingBalance: 500, dueDate: "2026-11-20", status: "PENDING" },
+        { id: 3, taxConceptId: 1, outstandingBalance: 700, dueDate: "2026-11-22", status: "PENDING" },
+      ]),
+      "GET /api/v1/taxpayers/{id}/bills": pagina([
+        { id: 1, debts: [{ debtId: 2 }, { debtId: 3 }] },
+        { id: 4, debts: [{ debtId: 2 }] },
+        { debts: [{ debtId: 3 }] },
+        { id: 5, debts: [{ debtId: null }] },
+      ]),
+      "GET /api/v1/tax-concepts": pagina([]),
+    });
+
+    const debts = await portalService.debts({ taxpayerId: 123 });
+
+    expect(debts.map(({ id, billIds, billId }) => ({ id, billIds, billId }))).toEqual([
+      { id: 2, billIds: [1, 4], billId: 1 },
+      { id: 3, billIds: [1], billId: 1 },
+    ]);
+    expect(debts.page).toMatchObject({ number: 0, totalElements: 2 });
+    expect(backend.llamadas.filter(({ ruta }) => ruta === "/api/v1/taxpayers/123/bills")).toHaveLength(1);
+  });
+
   it("la ficha de caja cruza deudas, pagos y boletas con sus totales", async () => {
     // El backend expone cada frente por separado; juntarlos y totalizar es del cliente.
     instalarBackendFalso({

@@ -21,6 +21,21 @@ describe("API adapters", () => {
     expect(rows.page).toEqual({ number: 0, size: 20, totalElements: 21, totalPages: 2, last: false });
   });
 
+  it("preserves every debt linked to a bill, including incomplete and empty relations", () => {
+    const bills = adaptApiResponse("/api/v1/taxpayers/7/bills", "/api/v1/taxpayers/7/bills", {
+      content: [
+        { id: 1, debts: [{ debtId: 2 }, { debtId: 3 }, {}] },
+        { id: 2, debts: [] },
+        { id: 3 },
+      ],
+      page: { number: 0, size: 20, totalElements: 3, totalPages: 1 },
+    });
+
+    expect(bills[0]).toMatchObject({ debtIds: [2, 3], debtId: 2, debts: [{ debtId: 2 }, { debtId: 3 }, {}] });
+    expect(bills.slice(1).map((bill) => bill.debtIds)).toEqual([[], []]);
+    expect(bills.page).toMatchObject({ number: 0, totalElements: 3 });
+  });
+
   it("maps taxpayer DTO without inventing missing data", () => {
     const value = adaptApiResponse("/api/v1/taxpayers/1", "/api/v1/taxpayers/1", { id: 1, taxpayerType: "CITIZEN", dni: "123", cuit: null, displayName: "Ana", status: "ACTIVE" });
     expect(value).toMatchObject({ id: 1, type: "CITIZEN", documentType: "DNI", document: "123", name: "Ana" });

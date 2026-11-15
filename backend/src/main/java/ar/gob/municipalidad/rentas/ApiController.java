@@ -1,6 +1,8 @@
 package ar.gob.municipalidad.rentas;
 
 import jakarta.validation.Valid;
+import jakarta.persistence.criteria.Root;
+import jakarta.persistence.criteria.Subquery;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.*;
 import org.springframework.http.*;
@@ -90,7 +92,7 @@ class ApiController {
     @GetMapping("/payments/{id}/receipt") @PreAuthorize("hasAnyRole('CASHIER','RENTAS','AUDITOR','TAXPAYER')") ApiDtos.ReceiptResponse receipt(@PathVariable Long id){return paymentReceipts.get(id);}
     @GetMapping("/payments/{id}/allocations") @PreAuthorize("hasAnyRole('RENTAS','SUPERVISOR','AUDITOR','TAXPAYER')") List<ApiDtos.PaymentAllocationResponse> paymentAllocations(@PathVariable Long id){Payment payment=payments.findById(id).orElseThrow(()->CatalogService.notFound("Pago"));identity.requireOwnership(payment.taxpayerId);return allocations.findByPaymentId(id).stream().map(ApiResponses::of).toList();}
     @GetMapping("/payment-allocations") @PreAuthorize("hasAnyRole('RENTAS','AUDITOR')") Page<ApiDtos.PaymentAllocationResponse> paymentAllocations(@RequestParam Map<String,String> f,Pageable p){return queries.list(paymentAllocations,PaymentAllocation.class,f,p).map(ApiResponses::of);}
-    @GetMapping("/payments/unallocated") @PreAuthorize("hasRole('RENTAS')") Page<ApiDtos.PaymentResponse> unallocatedPayments(@RequestParam Map<String,String> f,Pageable p){return queries.list(payments,Payment.class,f,p,(root,cq,cb)->cb.and(cb.equal(root.get("status"),PaymentStatus.CONFIRMED),cb.greaterThan(root.get("unallocatedAmount"),java.math.BigDecimal.ZERO))).map(ApiResponses::of);}
+    @GetMapping("/payments/unallocated") @PreAuthorize("hasRole('RENTAS')") Page<ApiDtos.PaymentResponse> unallocatedPayments(@RequestParam Map<String,String> f,Pageable p){return queries.list(payments,Payment.class,f,p,(root,cq,cb)->{Subquery<Long> credits=cq.subquery(Long.class);Root<CreditBalance> credit=credits.from(CreditBalance.class);credits.select(credit.get("id")).where(cb.equal(credit.get("sourcePaymentId"),root.get("id")));return cb.and(cb.equal(root.get("status"),PaymentStatus.CONFIRMED),cb.greaterThan(root.get("unallocatedAmount"),java.math.BigDecimal.ZERO),cb.not(cb.exists(credits)));}).map(ApiResponses::of);}
     @PostMapping("/payments/{id}/allocations") @PreAuthorize("hasRole('RENTAS')") ResponseEntity<ApiDtos.PaymentAllocationResponse> allocatePayment(@PathVariable Long id,@Valid @RequestBody ApiDtos.AllocationRequest r,@RequestHeader(name="If-Match",required=false) String ifMatch,@RequestHeader(name="Idempotency-Key",required=false) String key){var result=idempotency.execute("POST:/payments/{id}/allocations:"+id,key,ifMatchRequest(ifMatch,r),ApiDtos.PaymentAllocationResponse.class,()->ApiResponses.of(paymentService.allocateExisting(id,r,ifMatch)));return ResponseEntity.ok().eTag(allocationTargetTag(r)).body(result);}
 
     @PostMapping("/electronic-payments/preview") @PreAuthorize("hasRole('TAXPAYER')") ApiDtos.ElectronicPaymentPreview previewElectronic(@Valid @RequestBody ApiDtos.ElectronicPaymentRequest r){return electronicPayments.preview(r);}
