@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -21,6 +22,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -50,6 +52,7 @@ class PaymentPlanRequestEtagHttpTests {
     @Autowired ObjectMapper json;
     @Autowired PaymentPlanRequestRepository requests;
     @Autowired TaxpayerRepository taxpayers;
+    @Autowired FilteredQueryService filteredQueries;
 
     @Test void stalePreconditionDoesNotChangeRequestAndFreshTagTracksEachTransition() throws Exception {
         PaymentPlanRequest request=request();
@@ -167,6 +170,44 @@ class PaymentPlanRequestEtagHttpTests {
         assertThat(requests.findById(exceptional.id).orElseThrow().resolvedBy).isEqualTo("supervisor-plan-reject-etag");
     }
 
+    @Test void supervisorListCannotOverrideDerivedReviewScopeAndKeepsPaginationAndRentasFilters() throws Exception {
+        long pendingBefore=filteredQueries.list(requests,PaymentPlanRequest.class,Map.of("status","PENDING"),PageRequest.of(0,1)).getTotalElements();
+        long exceptionBefore=filteredQueries.list(requests,PaymentPlanRequest.class,Map.of("status","PENDING_EXCEPTION_APPROVAL"),PageRequest.of(0,1)).getTotalElements();
+        PaymentPlanRequest ordinary=request();ordinary.exceptional=false;ordinary.status=PaymentPlanRequestStatus.PENDING;requests.saveAndFlush(ordinary);
+        PaymentPlanRequest firstException=request();firstException.status=PaymentPlanRequestStatus.PENDING_EXCEPTION_APPROVAL;requests.saveAndFlush(firstException);
+        PaymentPlanRequest secondException=request();secondException.status=PaymentPlanRequestStatus.PENDING_EXCEPTION_APPROVAL;requests.saveAndFlush(secondException);
+        var supervisor=actor("supervisor-plan-request-list","SUPERVISOR");
+        var allSupervisor=mvc.perform(get("/api/v1/payment-plan-requests").with(authentication(supervisor))
+                .param("status","PENDING").param("page","0").param("size","100").param("sort","requestedAt,asc"))
+            .andExpect(status().isOk()).andReturn().getResponse();
+        JsonNode supervisorBody=json.readTree(allSupervisor.getContentAsByteArray());
+        assertThat(supervisorBody.at("/page/totalElements").asLong()).isEqualTo(exceptionBefore+2);
+        assertThat(supervisorBody.path("content").findValuesAsText("status"))
+            .isNotEmpty().allMatch("PENDING_EXCEPTION_APPROVAL"::equals);
+        assertThat(supervisorBody.path("content").findValuesAsText("id"))
+            .contains(firstException.id.toString(),secondException.id.toString())
+            .doesNotContain(ordinary.id.toString());
+
+        var supervisorPage=mvc.perform(get("/api/v1/payment-plan-requests").with(authentication(supervisor))
+                .param("status","PENDING").param("page","0").param("size","1"))
+            .andExpect(status().isOk()).andReturn().getResponse();
+        JsonNode page=json.readTree(supervisorPage.getContentAsByteArray());
+        assertThat(page.at("/page/totalElements").asLong()).isEqualTo(exceptionBefore+2);
+        assertThat(page.at("/page/size").asInt()).isEqualTo(1);
+        assertThat(page.path("content").size()).isEqualTo(1);
+        assertThat(page.at("/content/0/status").asText()).isEqualTo("PENDING_EXCEPTION_APPROVAL");
+
+        var rentas=actor("rentas-plan-request-list","RENTAS");
+        var rentasResponse=mvc.perform(get("/api/v1/payment-plan-requests").with(authentication(rentas))
+                .param("status","PENDING").param("page","0").param("size","100"))
+            .andExpect(status().isOk()).andReturn().getResponse();
+        JsonNode rentasBody=json.readTree(rentasResponse.getContentAsByteArray());
+        assertThat(rentasBody.at("/page/totalElements").asLong()).isEqualTo(pendingBefore+1);
+        assertThat(rentasBody.path("content").findValuesAsText("id")).contains(ordinary.id.toString())
+            .doesNotContain(firstException.id.toString(),secondException.id.toString());
+        assertThat(rentasBody.path("content").findValuesAsText("status"))
+            .isNotEmpty().allMatch("PENDING"::equals);
+    }
     private PaymentPlanRequest request(){
         TaxpayerReference taxpayer=new TaxpayerReference();
         taxpayer.taxpayerType=TaxpayerType.CITIZEN;taxpayer.externalId="ETAG-PLAN-"+java.util.UUID.randomUUID();

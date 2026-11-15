@@ -42,25 +42,34 @@ class FiscalProcessingDateValidationTests {
             .isInstanceOfSatisfying(BusinessException.class,ex->{assertThat(ex.code).isEqualTo("FUTURE_DATE_NOT_ALLOWED");assertThat(ex.status).isEqualTo(422);});
     }
 
-    @Test void futureRequestsReturn422BeforeCallingEconomicServices() throws Exception {
+    @Test void futureHttpRequestsKeep422WhenDateValidationIsDelegatedToServices() throws Exception {
         LateChargeService lateCharges=mock(LateChargeService.class);
         DueDateService dueDates=mock(DueDateService.class);
         ReconciliationService reconciliations=mock(ReconciliationService.class);
         IdempotencyExecutor idempotency=new IdempotencyExecutor(){@Override public <T> T execute(String operation,String key,Object request,Class<T> responseType,java.util.function.Supplier<T> action){return action.get();}};
         FiscalProcessingController controller=new FiscalProcessingController(lateCharges,dueDates,reconciliations,dates,idempotency);
         MockMvc mvc=MockMvcBuilders.standaloneSetup(controller).setControllerAdvice(new GlobalExceptionHandler(null)).build();
-        String tomorrow=dates.today().plusDays(1).toString();
+        LocalDate tomorrow=dates.today().plusDays(1);
+        String date=tomorrow.toString();
+        BusinessException future=new BusinessException("FUTURE_DATE_NOT_ALLOWED","La fecha de procesamiento no puede ser futura",422);
+        doThrow(future).when(lateCharges).preview(123L,tomorrow);
+        doThrow(future).when(lateCharges).apply(123L,tomorrow,null);
+        doThrow(future).when(dueDates).enqueue(tomorrow);
 
-        mvc.perform(post("/api/v1/debts/123/late-charge-preview").contentType("application/json").content("{\"calculationDate\":\""+tomorrow+"\"}"))
+        mvc.perform(post("/api/v1/debts/123/late-charge-preview").contentType("application/json").content("{\"calculationDate\":\""+date+"\"}"))
             .andExpect(status().isUnprocessableEntity()).andExpect(jsonPath("$.code").value("FUTURE_DATE_NOT_ALLOWED"));
-        mvc.perform(post("/api/v1/debts/123/late-charges").contentType("application/json").content("{\"calculationDate\":\""+tomorrow+"\"}"))
+        mvc.perform(post("/api/v1/debts/123/late-charges").header("Idempotency-Key","future-charge")
+                .contentType("application/json").content("{\"calculationDate\":\""+date+"\"}"))
             .andExpect(status().isUnprocessableEntity()).andExpect(jsonPath("$.code").value("FUTURE_DATE_NOT_ALLOWED"));
-        mvc.perform(post("/api/v1/administration/process-due-dates").contentType("application/json").content("{\"processingDate\":\""+tomorrow+"\"}"))
+        mvc.perform(post("/api/v1/administration/process-due-dates").header("Idempotency-Key","future-due-date")
+                .contentType("application/json").content("{\"processingDate\":\""+date+"\"}"))
             .andExpect(status().isUnprocessableEntity()).andExpect(jsonPath("$.code").value("FUTURE_DATE_NOT_ALLOWED"));
 
-        verifyNoInteractions(lateCharges,dueDates,reconciliations);
+        verify(lateCharges).preview(123L,tomorrow);
+        verify(lateCharges).apply(123L,tomorrow,null);
+        verify(dueDates).enqueue(tomorrow);
+        verifyNoInteractions(reconciliations);
     }
-
     @Test void servicesRejectFutureDatesBeforeReadingOrMutatingPersistence() {
         DebtRepository debts=mock(DebtRepository.class);
         LateChargeRuleRepository rules=mock(LateChargeRuleRepository.class);
