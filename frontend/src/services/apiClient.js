@@ -38,7 +38,7 @@ export function authHeaders() {
   return { "X-Demo-Session": token };
 }
 
-export async function request(path, { method = "GET", body, signal, responseType, headers, requiresAuth = true } = {}) {
+export async function request(path, { method = "GET", body, signal, responseType, headers, requiresAuth = true, includeHeaders = false } = {}) {
   const adapted = adaptApiRequest(path, { method, body, signal });
   const requestHeaders = {
     ...(responseType === "blob" ? { Accept: "application/pdf" } : {}),
@@ -99,5 +99,6 @@ export async function request(path, { method = "GET", body, signal, responseType
     );
   }
 
-  return adaptApiResponse(path, adapted.path, payload);
+  const data = adaptApiResponse(path, adapted.path, payload);
+  return includeHeaders ? { data, headers: response.headers } : data;
 }
