@@ -14,12 +14,14 @@ import { useAuth } from "../../context/AuthContext.jsx";
 import { homePathForRole } from "../../config/workspaces.js";
 
 const PAGE_SIZE = 20;
+const FAILURE_STATES = ["FAILED", "DEAD_LETTER"];
+const RETRY_COUNT_LABEL = "Reintentos del ciclo actual";
 const STATES = {
   PENDING: "Pendiente", LOCAL_ONLY: "Solo local", BROKER_CONFIRMED: "Confirmado por broker",
   CORE_ACCEPTED: "Aceptado por Core", PUBLISHED: "Publicado", FAILED: "Fallido", DEAD_LETTER: "Reintentos agotados",
 };
 const badge = (status) => <StatusBadge status={status} label={STATES[status] ?? status}
-  tone={["FAILED", "DEAD_LETTER"].includes(status) ? "danger" : undefined} />;
+  tone={FAILURE_STATES.includes(status) ? "danger" : undefined} />;
 export default function OutboxPage() {
   const { user } = useAuth();
   const loader = useCallback(() => integrationOutboxService.list(), []);
@@ -32,8 +34,11 @@ export default function OutboxPage() {
   const [retryQueued, setRetryQueued] = useState(false);
   const retryAttempts = useRef(new Map());
   const selected = data?.find((event) => event.id === selectedId);
-  const canRetry = user.role === "SUPERVISOR" && selected?.targetModule !== "PLATFORM"
-    && ["FAILED", "DEAD_LETTER"].includes(selected?.status);
+  const hasFailed = FAILURE_STATES.includes(selected?.status);
+  const canRetry = user.role === "SUPERVISOR" && selected?.targetModule !== "PLATFORM" && hasFailed;
+  const eventErrorAlert = hasFailed
+    ? { variant: "error", title: "Último error" }
+    : { variant: "info", title: "Error del intento anterior" };
   const filtered = useMemo(() => {
     const query = filters.query.trim().toLocaleLowerCase("es");
     return (data ?? []).filter((row) => (!filters.status || row.status === filters.status)
@@ -85,7 +90,7 @@ export default function OutboxPage() {
     { key: "targetModule", header: "Destino" },
     { key: "aggregateId", header: "Referencia" },
     { key: "status", header: "Estado", render: (row) => badge(row.status) },
-    { key: "retryCount", header: "Reintentos", align: "right" },
+    { key: "retryCount", header: RETRY_COUNT_LABEL, align: "right" },
     { key: "createdAt", header: "Creado", render: (row) => formatDateTime(row.createdAt) },
     { key: "detail", header: "", render: (row) => <Button size="sm" variant="secondary" onClick={() => openDetail(row)}>Ver detalle</Button> },
   ];
@@ -93,7 +98,7 @@ export default function OutboxPage() {
     homePath={homePathForRole(user.role)}
     breadcrumb={[{ id: "outbox", label: "Eventos salientes" }]}>
     <Alert variant="info" title="Estados de entrega">«Solo local» no confirma recepción; «Aceptado por Core» o «Confirmado por broker» tampoco confirman procesamiento por el consumidor.</Alert>
-    {retryQueued && <Alert variant="success" title="Reintento encolado" onDismiss={() => setRetryQueued(false)}>El envío quedó pendiente de procesamiento.</Alert>}
+    {retryQueued && <Alert variant="success" title="Reintento encolado" onDismiss={() => setRetryQueued(false)}>El evento quedó en cola y el contador de reintentos del ciclo se reinició.</Alert>}
     {retryError && !selected && <Alert variant="error" title="No se pudo reintentar el envío" onDismiss={() => setRetryError(null)}>{retryError}</Alert>}
     <Card title="Bandeja de envíos" actions={<Button variant="secondary" loading={loading} onClick={reload}>Actualizar</Button>}>
       <FilterBar searchValue={filters.query} searchPlaceholder="Evento, destino o referencia…" onSearchChange={(value) => changeFilter("query", value)}
@@ -122,9 +127,9 @@ export default function OutboxPage() {
           <div><dt className="text-neutral-500">Creado</dt><dd>{formatDateTime(selected.createdAt)}</dd></div>
           <div><dt className="text-neutral-500">Publicado</dt><dd>{formatDateTime(selected.publishedAt)}</dd></div>
           <div><dt className="text-neutral-500">Último intento</dt><dd>{formatDateTime(selected.lastAttemptAt)}</dd></div>
-          <div><dt className="text-neutral-500">Reintentos</dt><dd>{selected.retryCount}</dd></div>
+          <div><dt className="text-neutral-500">{RETRY_COUNT_LABEL}</dt><dd>{selected.retryCount}</dd></div>
         </dl>
-        {selected.errorMessage && <Alert variant="error" title="Último error">{selected.errorMessage}</Alert>}
+        {selected.errorMessage && <Alert {...eventErrorAlert}>{selected.errorMessage}</Alert>}
         <p className="text-sm text-neutral-500">El detalle técnico completo del payload no se muestra en esta pantalla.</p>
       </div>
     </Modal>}
