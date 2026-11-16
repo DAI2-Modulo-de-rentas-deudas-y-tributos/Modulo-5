@@ -114,9 +114,58 @@ class SocialBenefitRuleIdempotencyPostgreSqlTest {
             Long.class, actor, "POST:/social-benefit-rules/{id}/submit:" + ruleId, submitKey)).isOne();
     }
 
+    @Test
+    void auditUsesEffectiveRoleForApprovalAndPreservesSelfApprovalProtection() throws Exception {
+        TaxConcept concept = catalog.createConcept(new ApiDtos.CreateTaxConceptRequest(
+            "SBR_AUDIT_" + UUID.randomUUID(), "Social benefit audit role", null, TaxConceptType.FEE, "M5"));
+        UUID programId = UUID.randomUUID();
+        var rentas = rentas("social-benefit-audit-rentas-" + UUID.randomUUID());
+        var multiRoleSubmitter = multiRole("social-benefit-audit-submitter-" + UUID.randomUUID());
+        var supervisor = supervisor("social-benefit-audit-supervisor-" + UUID.randomUUID());
+        var request = new ApiDtos.CreateSocialBenefitRuleRequest(
+            programId, concept.code, new BigDecimal("25.00"), LocalDate.of(2026, 1, 1), null);
+
+        long ruleId = json.readTree(mvc.perform(post("/api/v1/social-benefit-rules").with(authentication(rentas))
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsBytes(request)))
+            .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString()).path("id").asLong();
+
+        mvc.perform(post("/api/v1/social-benefit-rules/{id}/submit", ruleId)
+                .with(authentication(multiRoleSubmitter)))
+            .andExpect(status().isOk());
+        mvc.perform(post("/api/v1/social-benefit-rules/{id}/approve", ruleId)
+                .with(authentication(multiRoleSubmitter)))
+            .andExpect(status().isForbidden())
+            .andExpect(jsonPath("$.code").value("SELF_APPROVAL_FORBIDDEN"));
+        assertThat(rules.findById(ruleId).orElseThrow().status).isEqualTo(SocialBenefitRuleStatus.PENDING_APPROVAL);
+
+        mvc.perform(post("/api/v1/social-benefit-rules/{id}/approve", ruleId)
+                .with(authentication(supervisor)))
+            .andExpect(status().isOk());
+
+        assertThat(auditedRole(ruleId, "SOCIAL_RULE_PROPOSED")).isEqualTo("ROLE_RENTAS");
+        assertThat(auditedRole(ruleId, "SOCIAL_RULE_SUBMITTED")).isEqualTo("ROLE_RENTAS");
+        assertThat(auditedRole(ruleId, "SOCIAL_RULE_APPROVED")).isEqualTo("ROLE_SUPERVISOR");
+        assertThat(rules.findById(ruleId).orElseThrow().status).isEqualTo(SocialBenefitRuleStatus.APPROVED);
+    }
+
+    private String auditedRole(long ruleId, String action) {
+        return jdbc.queryForObject("select user_role from audit_entry where entity_type='SocialBenefitRule' and entity_id=? and action=?",
+            String.class, Long.toString(ruleId), action);
+    }
+
     private static UsernamePasswordAuthenticationToken rentas(String actor) {
         return new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity(actor, null), null,
             List.of(new SimpleGrantedAuthority("ROLE_RENTAS")));
+    }
+
+    private static UsernamePasswordAuthenticationToken multiRole(String actor) {
+        return new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity(actor, null, UUID.randomUUID()), null,
+            List.of(new SimpleGrantedAuthority("ROLE_RENTAS"), new SimpleGrantedAuthority("ROLE_SUPERVISOR")));
+    }
+
+    private static UsernamePasswordAuthenticationToken supervisor(String actor) {
+        return new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity(actor, null, UUID.randomUUID()), null,
+            List.of(new SimpleGrantedAuthority("ROLE_SUPERVISOR")));
     }
 
 }

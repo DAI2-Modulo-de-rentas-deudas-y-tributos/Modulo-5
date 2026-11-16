@@ -69,7 +69,7 @@ class SocialBenefitRuleService {
             (rule.validUntil==null||!rule.validUntil.isBefore(b.validFrom))&&
             (b.validUntil==null||!rule.validFrom.isAfter(b.validUntil)))
             .forEach(b->b.resolutionStatus="RESOLVED");
-        audit.record("SocialBenefitRule",id,"SOCIAL_RULE_APPROVED",rule);return rule;
+        audit.recordAsRole("SocialBenefitRule",id,"SOCIAL_RULE_APPROVED",rule,"ROLE_SUPERVISOR");return rule;
     }
 
     @Transactional SocialBenefitRule disable(Long id){

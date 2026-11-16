@@ -28,8 +28,14 @@ class AuditService {
         record(entityType,entityId,action,null,newData);
     }
     void record(String entityType, Object entityId, String action, Object previousData, Object newData) {
+        recordAsRole(entityType,entityId,action,previousData,newData,identity.role());
+    }
+    void recordAsRole(String entityType, Object entityId, String action, Object newData, String effectiveRole) {
+        recordAsRole(entityType,entityId,action,null,newData,effectiveRole);
+    }
+    private void recordAsRole(String entityType, Object entityId, String action, Object previousData, Object newData, String effectiveRole) {
         AuditEntry e=new AuditEntry(); e.entityType=entityType; e.entityId=String.valueOf(entityId); e.action=action;
-        e.userId=identity.get().userId(); e.userRole=identity.role(); e.correlationId=MDC.get("traceId"); e.occurredAt=OffsetDateTime.now();
+        e.userId=identity.get().userId(); e.userRole=effectiveRole; e.correlationId=MDC.get("traceId"); e.occurredAt=OffsetDateTime.now();
         e.previousData=serialize(previousData); e.newData=serialize(newData);
         repository.save(e);
     }
