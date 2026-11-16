@@ -35,7 +35,7 @@ seguridad solo permite entrada desde el ALB. RDS nunca es publico.
 1. Un Pull Request ejecuta CI y valida Terraform sin conectarse a AWS.
 2. Si cambia IAM, el bootstrap se aplica localmente con `rentas-admin`.
 3. Al fusionar en `develop`, `cd-dev.yml` levanta un DEV **efímero**: aplica
-   Terraform, despliega backend (`cd-backend.yml`, imagen inmutable en ECR)
+   Terraform (`cd-terraform.yml`), despliega backend (`cd-backend.yml`, imagen inmutable en ECR)
    y frontend (`cd-frontend.yml`, `dist` en Amplify), corre un smoke test y
    destruye el ambiente, falle o no la verificación.
 4. Solo sobrevive el repositorio ECR de DEV, porque TEST promueve las imágenes
@@ -51,7 +51,7 @@ de alta o rotacion estan en `docs/runbooks/environment-secrets.md`.
 
 ## Promocion a TEST
 
-TEST no se despliega por pushes ni merges. El workflow `cd-test.yml` ejecuta `plan` por defecto y solo aplica con la seleccion explicita `apply` mas la confirmacion `DEPLOY_TEST`. El backend reutiliza una imagen inmutable publicada previamente en ECR DEV. El frontend se reconstruye desde el mismo commit porque necesita la URL de API propia de TEST.
+TEST no se despliega por pushes ni merges. El workflow `cd-test.yml` ejecuta `plan` por defecto y solo aplica con la seleccion explicita `apply` mas la confirmacion `DEPLOY_TEST`. El backend reutiliza una imagen inmutable publicada previamente en ECR DEV. El frontend se reconstruye desde el mismo commit porque necesita la URL de API propia de TEST. `cd-test.yml`, `cd-backend-test.yml` y `cd-frontend-test.yml` solo validan las confirmaciones y delegan en los mismos workflows reutilizables que DEV y PROD (`cd-terraform.yml`, `cd-backend.yml`, `cd-frontend.yml`) con `environment: test`.
 
 ## PROD desde `main`
 

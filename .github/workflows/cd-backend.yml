@@ -1,16 +1,23 @@
 name: Deploy backend AWS
 
-# Etapa reutilizable de cd-dev.yml (DEV efímero) y cd-prod.yml (PROD persistente).
+# Etapa reutilizable de cd-dev.yml (DEV efímero), cd-prod.yml (PROD persistente)
+# y cd-backend-test.yml (promoción manual a TEST).
 on:
   workflow_call:
     inputs:
       environment:
-        description: "Ambiente destino: dev o prod"
+        description: "Ambiente destino: dev, test o prod"
         required: true
         type: string
       amplify_branch:
-        description: "Rama de Amplify del ambiente: develop o main"
-        required: true
+        description: "Rama de Amplify cuyo origen se fuerza en CORS; vacío conserva el CORS de Terraform"
+        required: false
+        default: ""
+        type: string
+      image_tag:
+        description: "Tag ya publicado en ECR DEV para promover; vacío construye la imagen del commit"
+        required: false
+        default: ""
         type: string
 
 permissions:
@@ -28,6 +35,8 @@ jobs:
       AWS_REGION: ${{ vars.AWS_REGION }}
       AWS_ACCOUNT_ID: "756663253996"
       ECR_REPOSITORY: "modulo-5-rentas-${{ inputs.environment }}-backend"
+      DEV_ECR_REPOSITORY: "modulo-5-rentas-dev-backend"
+      PROMOTED_IMAGE_TAG: ${{ inputs.image_tag }}
       ECS_CLUSTER: "modulo-5-rentas-${{ inputs.environment }}-cluster"
       ECS_SERVICE: "modulo-5-rentas-${{ inputs.environment }}-backend"
       ECS_TASK_FAMILY: "modulo-5-rentas-${{ inputs.environment }}-backend"
@@ -57,7 +66,9 @@ jobs:
           set -euo pipefail
           : "${AWS_REGION:?Missing AWS_REGION in the ${TARGET_ENVIRONMENT} environment}"
 
+      # TEST no fuerza el origen: su CORS (Amplify + dominio propio) lo define Terraform.
       - name: Resolve frontend origin
+        if: inputs.amplify_branch != ''
         id: frontend
         shell: bash
         run: |
@@ -89,20 +100,50 @@ jobs:
                 --password-stdin \
                 "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 
-      - name: Build and publish immutable image
+      - name: Build or promote immutable image
         id: image
         shell: bash
         run: |
           set -euo pipefail
-          image_uri="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${GITHUB_SHA}"
+          registry="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 
-          if aws ecr describe-images \
-            --repository-name "${ECR_REPOSITORY}" \
-            --image-ids imageTag="${GITHUB_SHA}" > /dev/null 2>&1; then
-            echo "Image already exists; reusing ${image_uri}."
+          if [[ -z "${PROMOTED_IMAGE_TAG}" ]]; then
+            image_uri="${registry}/${ECR_REPOSITORY}:${GITHUB_SHA}"
+            if aws ecr describe-images \
+              --repository-name "${ECR_REPOSITORY}" \
+              --image-ids imageTag="${GITHUB_SHA}" > /dev/null 2>&1; then
+              echo "Image already exists; reusing ${image_uri}."
+            else
+              docker build --pull --tag "${image_uri}" backend
+              docker push "${image_uri}"
+            fi
           else
-            docker build --pull --tag "${image_uri}" backend
-            docker push "${image_uri}"
+            source_image="${registry}/${DEV_ECR_REPOSITORY}:${PROMOTED_IMAGE_TAG}"
+            image_uri="${registry}/${ECR_REPOSITORY}:${PROMOTED_IMAGE_TAG}"
+
+            source_digest=$(aws ecr describe-images \
+              --repository-name "${DEV_ECR_REPOSITORY}" \
+              --image-ids imageTag="${PROMOTED_IMAGE_TAG}" \
+              --query 'imageDetails[0].imageDigest' \
+              --output text)
+
+            target_digest=$(aws ecr describe-images \
+              --repository-name "${ECR_REPOSITORY}" \
+              --image-ids imageTag="${PROMOTED_IMAGE_TAG}" \
+              --query 'imageDetails[0].imageDigest' \
+              --output text 2> /dev/null || true)
+
+            if [[ -n "${target_digest}" && "${target_digest}" != "None" ]]; then
+              if [[ "${target_digest}" != "${source_digest}" ]]; then
+                echo "Immutable ${TARGET_ENVIRONMENT} tag exists with a different digest."
+                exit 1
+              fi
+              echo "Image already promoted; reusing ${image_uri}."
+            else
+              docker pull "${source_image}"
+              docker tag "${source_image}" "${image_uri}"
+              docker push "${image_uri}"
+            fi
           fi
 
           echo "uri=${image_uri}" >> "${GITHUB_OUTPUT}"
@@ -136,10 +177,10 @@ jobs:
             )
             | (.containerDefinitions[] | select(.name == $container)) |= (
                 .image = $image
-                | .environment = (
+                | if $frontend_origin == "" then . else .environment = (
                     ((.environment // []) | map(select(.name != "CORS_ALLOWED_ORIGINS")))
                     + [{name: "CORS_ALLOWED_ORIGINS", value: $frontend_origin}]
-                  )
+                  ) end
               )' \
             "${RUNNER_TEMP}/task-definition.json" \
             > "${RUNNER_TEMP}/task-definition-rendered.json"

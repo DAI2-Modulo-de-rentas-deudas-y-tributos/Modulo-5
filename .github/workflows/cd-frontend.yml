@@ -1,16 +1,22 @@
 name: Deploy frontend AWS
 
-# Etapa reutilizable de cd-dev.yml (DEV efímero) y cd-prod.yml (PROD persistente).
+# Etapa reutilizable de cd-dev.yml (DEV efímero), cd-prod.yml (PROD persistente)
+# y cd-frontend-test.yml (promoción manual a TEST).
 on:
   workflow_call:
     inputs:
       environment:
-        description: "Ambiente destino: dev o prod"
+        description: "Ambiente destino: dev, test o prod"
         required: true
         type: string
       amplify_branch:
-        description: "Rama de Amplify del ambiente: develop o main"
+        description: "Rama de Amplify del ambiente: develop, test o main"
         required: true
+        type: string
+      source_ref:
+        description: "SHA completo a construir; vacío usa el commit del workflow"
+        required: false
+        default: ""
         type: string
 
 permissions:
@@ -35,6 +41,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ inputs.source_ref }}
 
       - name: Configure temporary AWS credentials
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
@@ -169,4 +176,5 @@ jobs:
             echo
             echo "- URL: https://${AMPLIFY_BRANCH}.${default_domain}"
             echo "- Job: \`${{ steps.deployment.outputs.job-id }}\`"
+            echo "- Source commit: \`$(git rev-parse HEAD)\`"
           } >> "${GITHUB_STEP_SUMMARY}"
