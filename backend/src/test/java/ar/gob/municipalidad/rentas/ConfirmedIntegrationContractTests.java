@@ -163,7 +163,7 @@ class ConfirmedIntegrationContractTests {
 
     @Test void m2RoutedToM5CreatesCaseFromSnapshotAndDuplicateDoesNotDuplicate() throws Exception {
         var event=ticket("M2-EVT-ROUTED","M5",3881L,false,"ROUTED","ROUTED",routingDetails());TicketCase first=m2.consume(event);TicketCase duplicate=m2.consume(event);
-        assertThat(first.id).isEqualTo(duplicate.id);assertThat(first.externalTicketId).isEqualTo("550e8400-e29b-41d4-a716-446655440000");assertThat(first.publicId).isEqualTo("TK-2026-000123");assertThat(first.correlationId).isEqualTo(event.correlationId().toString());assertThat(first.lastSourceEventId).isEqualTo(event.eventId().toString());assertThat(first.category).isEqualTo("Pagos y deudas");assertThat(first.description).isEqualTo("El ciudadano informa que abonó pero el pago no figura.");assertThat(tickets.count()).isEqualTo(1);
+        assertThat(first.id).isEqualTo(duplicate.id);assertThat(first.externalTicketId).isEqualTo("550e8400-e29b-41d4-a716-446655440000");assertThat(first.publicId).isEqualTo("TK-2026-000123");assertThat(first.correlationId).isEqualTo(event.correlationId().toString());assertThat(first.lastSourceEventId).isEqualTo(event.eventId().toString());assertThat(first.category).isEqualTo("Pagos y deudas");assertThat(first.description).isEqualTo("El ciudadano informa que abonó pero el pago no figura.");
         entityManager.flush();entityManager.clear();
         TicketCase reloaded=tickets.findByExternalTicketId(first.externalTicketId).orElseThrow();
         assertThat(reloaded.requestType).isEqualTo("Informar un pago no registrado");
@@ -174,7 +174,7 @@ class ConfirmedIntegrationContractTests {
     }
 
     @Test void m2TicketForAnotherAreaIsIgnoredWithoutPersistingBusinessContent() throws Exception {
-        var event=ticket("M2-EVT-OTHER","M4",3881L,false,"ROUTED","ROUTED",routingDetails());assertThat(m2.consume(event)).isNull();assertThat(tickets.count()).isZero();IntegrationEventLog log=logs.findFirstByExternalEventIdOrderByIdDesc(event.eventId().toString()).orElseThrow();assertThat(log.status).isEqualTo(IntegrationEventStatus.IGNORED);assertThat(log.payload).isEqualTo("{}");
+        long ticketsBefore=tickets.count();var event=ticket("M2-EVT-OTHER","M4",3881L,false,"ROUTED","ROUTED",routingDetails());assertThat(m2.consume(event)).isNull();assertThat(tickets.count()).isEqualTo(ticketsBefore);IntegrationEventLog log=logs.findFirstByExternalEventIdOrderByIdDesc(event.eventId().toString()).orElseThrow();assertThat(log.status).isEqualTo(IntegrationEventStatus.IGNORED);assertThat(log.payload).isEqualTo("{}");
     }
 
     @Test void m2InformationProvidedDoesNotRequireInventedRequestId() throws Exception {
@@ -185,35 +185,39 @@ class ConfirmedIntegrationContractTests {
         TicketCase result=m2.consume(ticket("M2-EVT-ANON","M5",null,true,"ROUTED","ROUTED",routingDetails()));assertThat(result.externalCitizenId).isNull();assertThat(result.taxpayerId).isNull();
     }
 
-    @Test void m2CoreRetryUsesConfirmedConsumerRatherThanNumericLegacyAdapter() throws Exception {
-        var event=ticket("M2-EVT-RETRY","M5",null,true,"ROUTED","ROUTED",routingDetails());
+    @Test @Transactional(propagation=Propagation.NOT_SUPPORTED) void m2CoreRetryUsesConfirmedConsumerRatherThanNumericLegacyAdapter() throws Exception {
+        var source=ticket("M2-EVT-RETRY","M5",null,true,"ROUTED","ROUTED",routingDetails());var data=source.data();
+        var event=new ConfirmedInboundEvents.M2TicketUpdatedEvent(source.eventId(),source.eventType(),source.eventVersion(),source.occurredAt(),source.sourceModule(),source.correlationId(),source.causationId(),new ConfirmedInboundEvents.M2TicketUpdatedData(UUID.randomUUID(),"TK-RETRY-"+UUID.randomUUID(),data.citizenId(),data.isAnonymous(),data.responsibleAreaId(),data.updateType(),data.currentStatus(),data.currentPriority(),data.progress(),data.publicMessage(),data.details(),data.attachments(),data.updatedAt()));
         IntegrationEventLog failed=new IntegrationEventLog();failed.eventId=event.eventId();failed.externalEventId=event.eventId().toString();failed.eventType="ticketUpdated";failed.sourceModule="atencion-ciudadana";failed.direction=EventDirection.INBOUND;failed.status=IntegrationEventStatus.FAILED;failed.payload=json.writeValueAsString(event);failed.retryCount=0;failed.occurredAt=event.occurredAt();failed.receivedAt=OffsetDateTime.now();logs.save(failed);
         assertThat(reprocess.reprocess(event.eventId().toString(),"Reintento QA").status).isEqualTo(IntegrationEventStatus.PROCESSED);
         assertThat(tickets.findByExternalTicketId(event.data().ticketId().toString())).isPresent();
     }
 
     @Test void m2ReclassificationIsIgnoredEvenForM5() throws Exception {
+        long ticketsBefore=tickets.count();
         var event=ticket("M2-EVT-RECLASS","M5",3881L,false,"INFORMATION_PROVIDED","IN_REVIEW",
             json.readTree("{\"informationResponse\":{\"purpose\":\"RECLASSIFICATION\",\"message\":\"Datos nuevos\"}}"));
         assertThat(m2.consume(event)).isNull();
-        assertThat(tickets.count()).isZero();
+        assertThat(tickets.count()).isEqualTo(ticketsBefore);
         assertThat(logs.findFirstByExternalEventIdOrderByIdDesc(event.eventId().toString()).orElseThrow().payload).isEqualTo("{}");
     }
 
     @Test void m2RoutedRequiresCompleteClassification() throws Exception {
+        long ticketsBefore=tickets.count();
         var event=ticket("M2-EVT-INCOMPLETE","M5",3881L,false,"ROUTED","ROUTED",
             json.readTree("{\"routing\":{\"requestType\":\"Informar pago\",\"description\":\"Falta subcategoría\"}}"));
         assertThatThrownBy(()->m2.consume(event)).isInstanceOf(BusinessException.class).hasMessageContaining("details.routing.category");
-        assertThat(tickets.count()).isZero();
+        assertThat(tickets.count()).isEqualTo(ticketsBefore);
     }
 
     @Test void m2ReassignmentUpdatesSameTicketAndClearsAssignment() throws Exception {
+        long ticketsBefore=tickets.count();
         TicketCase first=m2.consume(ticket("M2-EVT-INITIAL","M5",3881L,false,"ROUTED","ROUTED",routingDetails()));
         first.assignedTo="empleado.anterior";tickets.save(first);
         JsonNode rerouting=json.readTree("{\"routing\":{\"requestType\":\"Consulta por deuda\",\"category\":\"Tributos\",\"subcategory\":\"Deudas\",\"ticketType\":\"INQUIRY\",\"summary\":\"Saldo\",\"description\":\"Solicita detalle de saldo\",\"reassignment\":true}}");
         TicketCase updated=m2.consume(change(ticket("M2-EVT-REASSIGNED","M5",3881L,false,"ROUTED","ROUTED",rerouting),"2026-08-24T19:11:00-03:00"));
         assertThat(updated.id).isEqualTo(first.id);assertThat(updated.externalTicketId).isEqualTo(first.externalTicketId);
-        assertThat(updated.category).isEqualTo("Tributos");assertThat(updated.assignedTo).isNull();assertThat(tickets.count()).isEqualTo(1);
+        assertThat(updated.category).isEqualTo("Tributos");assertThat(updated.assignedTo).isNull();assertThat(tickets.count()).isEqualTo(ticketsBefore+1);
         entityManager.flush();entityManager.clear();
         TicketCase reloaded=tickets.findById(first.id).orElseThrow();
         assertThat(reloaded.requestType).isEqualTo("Consulta por deuda");
@@ -291,9 +295,9 @@ class ConfirmedIntegrationContractTests {
         SocialBenefitReference result=m8.consume(benefit("M8-EVT-"+status,status));assertThat(result.externalStatus).isEqualTo(status);assertThat(result.calculatedStatus).isEqualTo(expectedCalculatedStatus(status));assertThat(result.benefitsPayload).contains("TAX_EXEMPTION","benefitTypeId","programEditionId");
     }
 
-    @Test void m8DuplicateBenefitUpdateHasOneEffect() throws Exception {var event=benefit("M8-EVT-DUP","APPROVED");SocialBenefitReference first=m8.consume(event);SocialBenefitReference duplicate=m8.consume(event);assertThat(duplicate.id).isEqualTo(first.id);assertThat(benefits.count()).isEqualTo(1);}
+    @Test void m8DuplicateBenefitUpdateHasOneEffect() throws Exception {long benefitsBefore=benefits.count();var event=benefit("M8-EVT-DUP","APPROVED");SocialBenefitReference first=m8.consume(event);SocialBenefitReference duplicate=m8.consume(event);assertThat(duplicate.id).isEqualTo(first.id);assertThat(benefits.count()).isEqualTo(benefitsBefore+1);}
 
-    @Test void m8CoreRetryUsesOfficialConsumerAndKeepsExternalUuid() throws Exception {
+    @Test @Transactional(propagation=Propagation.NOT_SUPPORTED) void m8CoreRetryUsesOfficialConsumerAndKeepsExternalUuid() throws Exception {
         var event=benefit("M8-EVT-RETRY","APPROVED");
         IntegrationEventLog failed=new IntegrationEventLog();failed.eventId=event.eventId();failed.externalEventId=event.eventId().toString();
         failed.eventType="socialBenefitUpdated";failed.sourceModule="desarrollo-social";failed.direction=EventDirection.INBOUND;
@@ -342,8 +346,9 @@ class ConfirmedIntegrationContractTests {
     }
     private ConfirmedInboundEvents.M8SocialBenefitUpdatedEvent benefit(String id,String status) throws Exception {
         String eventId=UUID.nameUUIDFromBytes(id.getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();
+        String benefitId=UUID.nameUUIDFromBytes((id+"-benefit").getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();
         String startDate="APPROVED".equals(status)?"\"2026-09-01\"":"null";
-        return json.readValue("{\"eventId\":\""+eventId+"\",\"eventType\":\"socialBenefitUpdated\",\"eventVersion\":\"1.0\",\"occurredAt\":\"2026-08-23T10:00:00-03:00\",\"sourceModule\":\"desarrollo-social\",\"data\":{\"benefitId\":\"a9866738-84db-4c10-acce-cfa78ec7485d\",\"citizenId\":\"a240d3e4-d143-4908-8797-ad0964aac6d5\",\"applicationId\":\"552eeb92-fc2b-4abe-b390-a9ca5f9f4bdc\",\"programId\":\"e19b76be-5ed6-49f4-9ae8-01c54ac7a34a\",\"programEditionId\":\"e6a13f58-2b9c-4d07-8e4f-7c5b1d9a0f26\",\"programName\":\"Subsidio Habitacional 2026\",\"benefitTypeId\":\"a0f3c1d8-2e4b-4c97-8d16-5b7e9f2a3c80\",\"type\":\"TAX_EXEMPTION\",\"description\":\"Exención de tasa\",\"amount\":null,\"status\":\""+status+"\",\"reason\":\"Actualización administrativa\",\"startDate\":"+startDate+",\"endDate\":\"2027-09-01\",\"updatedAt\":\"2026-08-23T10:00:00-03:00\"}}",ConfirmedInboundEvents.M8SocialBenefitUpdatedEvent.class);
+        return json.readValue("{\"eventId\":\""+eventId+"\",\"eventType\":\"socialBenefitUpdated\",\"eventVersion\":\"1.0\",\"occurredAt\":\"2026-08-23T10:00:00-03:00\",\"sourceModule\":\"desarrollo-social\",\"data\":{\"benefitId\":\""+benefitId+"\",\"citizenId\":\"a240d3e4-d143-4908-8797-ad0964aac6d5\",\"applicationId\":\"552eeb92-fc2b-4abe-b390-a9ca5f9f4bdc\",\"programId\":\"e19b76be-5ed6-49f4-9ae8-01c54ac7a34a\",\"programEditionId\":\"e6a13f58-2b9c-4d07-8e4f-7c5b1d9a0f26\",\"programName\":\"Subsidio Habitacional 2026\",\"benefitTypeId\":\"a0f3c1d8-2e4b-4c97-8d16-5b7e9f2a3c80\",\"type\":\"TAX_EXEMPTION\",\"description\":\"Exención de tasa\",\"amount\":null,\"status\":\""+status+"\",\"reason\":\"Actualización administrativa\",\"startDate\":"+startDate+",\"endDate\":\"2027-09-01\",\"updatedAt\":\"2026-08-23T10:00:00-03:00\"}}",ConfirmedInboundEvents.M8SocialBenefitUpdatedEvent.class);
     }
     private SocialBenefitStatus expectedCalculatedStatus(String status){return switch(status){case "APPROVED"->SocialBenefitStatus.ACTIVE;case "SUSPENDED"->SocialBenefitStatus.SUSPENDED;case "FINALIZED"->SocialBenefitStatus.EXPIRED;default->throw new IllegalArgumentException(status);};}
 }

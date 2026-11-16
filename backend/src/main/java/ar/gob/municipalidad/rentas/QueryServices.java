@@ -4,6 +4,8 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.*;
 import java.time.*;
@@ -30,11 +32,36 @@ class TaxpayerQueryService {
 
 @Service
 class IntegrationReprocessService {
-    private final IntegrationEventLogRepository logs;private final ObjectMapper json;private final ExternalObligationService obligations;private final TaxpayerIntegrationService taxpayers;private final TicketIntegrationService tickets;private final ConfirmedM2Consumer coreM2;private final SocialBenefitIntegrationService benefits;private final ConfirmedM8Consumer coreM8;private final ConfirmedM7Consumer m7;private final PreliminaryM4Consumer m4;private final CoreM4Consumer coreM4;
-    IntegrationReprocessService(IntegrationEventLogRepository logs,ObjectMapper json,ExternalObligationService obligations,TaxpayerIntegrationService taxpayers,TicketIntegrationService tickets,ConfirmedM2Consumer coreM2,SocialBenefitIntegrationService benefits,ConfirmedM8Consumer coreM8,ConfirmedM7Consumer m7,PreliminaryM4Consumer m4,CoreM4Consumer coreM4){this.logs=logs;this.json=json;this.obligations=obligations;this.taxpayers=taxpayers;this.tickets=tickets;this.coreM2=coreM2;this.benefits=benefits;this.coreM8=coreM8;this.m7=m7;this.m4=m4;this.coreM4=coreM4;}
+    private final IntegrationEventLogRepository logs;private final ProcessedEventRepository processedEvents;private final ObjectMapper json;private final ExternalObligationService obligations;private final TaxpayerIntegrationService taxpayers;private final TicketIntegrationService tickets;private final ConfirmedM2Consumer coreM2;private final SocialBenefitIntegrationService benefits;private final ConfirmedM8Consumer coreM8;private final ConfirmedM7Consumer m7;private final PreliminaryM4Consumer m4;private final CoreM4Consumer coreM4;private final TransactionTemplate transaction;
+    IntegrationReprocessService(IntegrationEventLogRepository logs,ProcessedEventRepository processedEvents,ObjectMapper json,ExternalObligationService obligations,TaxpayerIntegrationService taxpayers,TicketIntegrationService tickets,ConfirmedM2Consumer coreM2,SocialBenefitIntegrationService benefits,ConfirmedM8Consumer coreM8,ConfirmedM7Consumer m7,PreliminaryM4Consumer m4,CoreM4Consumer coreM4,PlatformTransactionManager transactionManager){this.logs=logs;this.processedEvents=processedEvents;this.json=json;this.obligations=obligations;this.taxpayers=taxpayers;this.tickets=tickets;this.coreM2=coreM2;this.benefits=benefits;this.coreM8=coreM8;this.m7=m7;this.m4=m4;this.coreM4=coreM4;this.transaction=new TransactionTemplate(transactionManager);this.transaction.setPropagationBehavior(TransactionTemplate.PROPAGATION_REQUIRES_NEW);}
     IntegrationEventLog get(String eventId){return logs.findFirstByExternalEventIdOrderByIdDesc(eventId).or(()->{try{return logs.findFirstByEventIdOrderByIdDesc(UUID.fromString(eventId));}catch(IllegalArgumentException ex){return Optional.empty();}}).orElseThrow(()->CatalogService.notFound("Evento de integración"));}
-    @Transactional IntegrationEventLog reprocess(String eventId,String reason){return reprocess(eventId,reason,null);}
-    @Transactional IntegrationEventLog reprocess(String eventId,String reason,String ifMatch){IntegrationEventLog resolved=get(eventId);IntegrationEventLog original=logs.findByIdForUpdate(resolved.id).orElseThrow(()->CatalogService.notFound("Evento de integración"));EntityTags.requireIfMatch(EntityTags.integrationEvent(ApiResponses.of(original)),ifMatch);CatalogService.require(original.status==IntegrationEventStatus.FAILED||original.status==IntegrationEventStatus.DEAD_LETTER,"INTEGRATION_EVENT_NOT_REPROCESSABLE","El evento no está en error");original.retryCount++;original.lastRetryAt=OffsetDateTime.now();try{switch(original.eventType){case "permitFeeGenerated"->reprocessPermitFee(original);case "commercialFineGenerated"->reprocessCommercialFine(original);case "infractionConfirmed"->reprocessInfraction(original);case "taxpayerCreated","taxpayerUpdated","taxpayerSynchronized"->taxpayers.consume(json.readValue(original.payload,new TypeReference<ApiDtos.EventEnvelope<ApiDtos.TaxpayerEventData>>(){}));case "ticketCreated"->tickets.consume(json.readValue(original.payload,new TypeReference<ApiDtos.EventEnvelope<ApiDtos.TicketEventData>>(){}));case "ticketUpdated"->reprocessTicketUpdated(original);case "socialBenefitUpdated"->reprocessSocialBenefitUpdated(original);default->throw new BusinessException("UNSUPPORTED_EVENT_TYPE","No hay reprocesador para "+original.eventType,422);}return get(eventId);}catch(Exception ex){original.status=original.retryCount>=5?IntegrationEventStatus.DEAD_LETTER:IntegrationEventStatus.FAILED;original.errorMessage=(reason==null?"":reason+": ")+ex.getMessage();return original;}}
+    IntegrationEventLog reprocess(String eventId,String reason){return reprocess(eventId,reason,null);}
+    IntegrationEventLog reprocess(String eventId,String reason,String ifMatch){
+        try{transaction.execute(status->attempt(eventId,ifMatch));}
+        catch(ReprocessAttemptFailure failure){transaction.execute(status->recordFailure(failure,reason));}
+        return get(eventId);
+    }
+    private IntegrationEventLog attempt(String eventId,String ifMatch){
+        IntegrationEventLog resolved=get(eventId);IntegrationEventLog original=logs.findByIdForUpdate(resolved.id).orElseThrow(()->CatalogService.notFound("Evento de integración"));
+        if(processedEvents.existsByExternalEventId(original.externalEventId))return get(eventId);
+        EntityTags.requireIfMatch(EntityTags.integrationEvent(ApiResponses.of(original)),ifMatch);
+        CatalogService.require(original.status==IntegrationEventStatus.FAILED||original.status==IntegrationEventStatus.DEAD_LETTER,"INTEGRATION_EVENT_NOT_REPROCESSABLE","El evento no está en error");
+        original.retryCount++;original.lastRetryAt=OffsetDateTime.now();
+        try{
+            switch(original.eventType){case "permitFeeGenerated"->reprocessPermitFee(original);case "commercialFineGenerated"->reprocessCommercialFine(original);case "infractionConfirmed"->reprocessInfraction(original);case "taxpayerCreated","taxpayerUpdated","taxpayerSynchronized"->taxpayers.consume(json.readValue(original.payload,new TypeReference<ApiDtos.EventEnvelope<ApiDtos.TaxpayerEventData>>(){}));case "ticketCreated"->tickets.consume(json.readValue(original.payload,new TypeReference<ApiDtos.EventEnvelope<ApiDtos.TicketEventData>>(){}));case "ticketUpdated"->reprocessTicketUpdated(original);case "socialBenefitUpdated"->reprocessSocialBenefitUpdated(original);default->throw new BusinessException("UNSUPPORTED_EVENT_TYPE","No hay reprocesador para "+original.eventType,422);}
+            return get(eventId);
+        }catch(Exception ex){throw new ReprocessAttemptFailure(original.id,ex);}
+    }
+    private IntegrationEventLog recordFailure(ReprocessAttemptFailure failure,String reason){
+        IntegrationEventLog original=logs.findByIdForUpdate(failure.logId).orElseThrow(()->CatalogService.notFound("Evento de integración"));
+        if(processedEvents.existsByExternalEventId(original.externalEventId))return get(original.externalEventId);
+        original.retryCount++;original.lastRetryAt=OffsetDateTime.now();original.status=original.retryCount>=5?IntegrationEventStatus.DEAD_LETTER:IntegrationEventStatus.FAILED;
+        original.errorMessage=(reason==null?"":reason+": ")+failure.getCause().getMessage();return original;
+    }
+    private static final class ReprocessAttemptFailure extends RuntimeException {
+        private final Long logId;
+        private ReprocessAttemptFailure(Long logId,Exception cause){super(cause);this.logId=logId;}
+    }
     private void reprocessSocialBenefitUpdated(IntegrationEventLog original)throws Exception{
         if(json.readTree(original.payload).path("data").has("benefitId")){
             coreM8.consume(json.readValue(original.payload,ConfirmedInboundEvents.M8SocialBenefitUpdatedEvent.class));return;
