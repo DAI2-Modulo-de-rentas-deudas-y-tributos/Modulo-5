@@ -21,7 +21,9 @@ porque un certificado ACM para el ALB necesita un nombre propio. El equipo compr
   `origin-<ambiente>.modulo-rentas.com.ar` en `us-east-2`, emitido y validado por DNS en el
   bootstrap. Con `https_origin`, el módulo `edge` busca ese certificado, abre el listener
   HTTPS:443 del ALB, publica el registro A `origin-<ambiente>` y CloudFront llega al ALB en
-  `https-only`. El ALB sigue exigiendo `X-Origin-Verify`.
+  `https-only`. El ALB sigue exigiendo `X-Origin-Verify`. `https_origin` es obligatorio: el
+  módulo ya no tiene listener HTTP:80 ni origen `http-only` (cierra el hallazgo de
+  SonarQube `terraform:S5332`).
 - **Frontend.** `aws_amplify_domain_association` (variable `custom_domains` del módulo
   `hosting`). Amplify emite su certificado y el módulo crea en la zona el alias y el CNAME de
   verificación.
@@ -31,7 +33,7 @@ porque un certificado ACM para el ALB necesita un nombre propio. El equipo compr
   |---|---|---|---|
   | TEST | `test.modulo-rentas.com.ar` | dominio de CloudFront | `origin-test.modulo-rentas.com.ar` |
   | PROD | dominio de Amplify | dominio de CloudFront | `origin-prod.modulo-rentas.com.ar` (PR #173) |
-  | DEV | dominio de Amplify | dominio de CloudFront | HTTP: existe `origin-dev`, pero la composición no lo usa |
+  | DEV | dominio de Amplify | dominio de CloudFront | `origin-dev.modulo-rentas.com.ar` (se crea y se destruye con el ambiente) |
 
 - **CORS.** TEST acepta el dominio de Amplify y `https://test.modulo-rentas.com.ar`
   (`cors_allowed_origins` en `infra/environments/test`).
@@ -65,9 +67,12 @@ porque un certificado ACM para el ALB necesita un nombre propio. El equipo compr
 - La zona cuesta USD 0,50 por mes. Los certificados ACM públicos son gratuitos.
 - La renovación de los certificados es automática mientras los registros de validación sigan
   en la zona; los administra el bootstrap.
-- Al activar `https_origin` en un ambiente, el listener del ALB pasa de HTTP:80 a HTTPS:443 y
-  el origen de CloudFront a `origin-<ambiente>`. Mientras CloudFront propaga el cambio, la API
-  puede devolver errores un rato.
+- En un ambiente que todavía tenga el listener HTTP:80 (PROD hasta aplicar el PR #173), el
+  primer `apply` lo reemplaza por el HTTPS:443 y cambia el origen de CloudFront a
+  `origin-<ambiente>`. Mientras CloudFront propaga el cambio, la API puede devolver errores un
+  rato.
+- Un ambiente nuevo necesita su certificado `origin-<ambiente>` emitido en el bootstrap antes
+  del primer `apply`: sin él, `edge` falla al buscarlo.
 - La zona y los certificados se aplican a mano desde el bootstrap. Antes de cualquier `apply`,
   `terraform plan` tiene que coincidir con el estado: si el código queda atrás, el `apply`
   destruye la zona delegada y los certificados en uso.

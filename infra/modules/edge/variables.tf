@@ -36,12 +36,12 @@ variable "deletion_protection" {
   default     = false
 }
 variable "https_origin" {
-  description = "Dominio de origen, con certificado ya emitido en la región del ALB."
+  description = "Dominio de origen del ALB (origin-<ambiente>) con certificado ACM ya emitido en su región, y su zona de Route 53."
   type = object({
     domain = string
     zone   = string
   })
-  default = null
+  nullable = false
 }
 
 variable "access_logs_bucket" {
