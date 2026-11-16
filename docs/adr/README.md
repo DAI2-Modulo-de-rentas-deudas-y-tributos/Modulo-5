@@ -15,3 +15,4 @@ Cada ADR debe indicar contexto, decisión, alternativas y consecuencias.
 - [ADR-0007: Auditoría de tickets en modo de sólo lectura](0007-auditor-ticket-read-only.md)
 - [ADR-0008: State para el ciclo de vida de la deuda](0008-state-ciclo-vida-deuda.md) (decisión funcional adoptada)
 - [ADR-0009: Ambiente de producción desde `main`](0009-ambiente-produccion.md)
+- [ADR-0010: Dominio propio `modulo-rentas.com.ar`](0010-dominio-propio.md)

@@ -61,7 +61,8 @@ manual que se hizo una sola vez, después del `apply` que creó la zona:
 
 La zona tiene `prevent_destroy`: recrearla cambia los nameservers y obliga a repetir la
 delegación. Los roles de TEST y PROD reciben la política `github-<ambiente>-domain`: TEST sólo
-puede escribir registros bajo `test.modulo-rentas.com.ar` y PROD, todos los demás.
+puede escribir registros bajo `test.modulo-rentas.com.ar` y PROD, todos los demás. La decisión
+completa está en el [ADR 0010](../../docs/adr/0010-dominio-propio.md).
 
 ## Origen HTTPS de la API
 
