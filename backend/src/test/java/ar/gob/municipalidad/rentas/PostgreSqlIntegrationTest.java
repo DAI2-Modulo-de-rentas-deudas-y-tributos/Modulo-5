@@ -353,6 +353,66 @@ class PostgreSqlIntegrationTest {
     @Autowired LiquidationRunService bulkRuns;
     @Autowired ExemptionRequestRepository exemptionRequests;
 
+    @Test void httpReprocessCommitsFailedAttemptsAndDeadLettersOnTheFifthPostgresAttempt() throws Exception {
+        UUID eventId=UUID.randomUUID();OffsetDateTime now=OffsetDateTime.now();
+        IntegrationEventLog failed=new IntegrationEventLog();failed.eventId=eventId;failed.externalEventId=eventId.toString();failed.eventType="ticketUpdated";failed.sourceModule="M2";failed.direction=EventDirection.INBOUND;failed.status=IntegrationEventStatus.FAILED;failed.payload="""
+            {"eventId":"%s","eventType":"ticketUpdated","occurredAt":"%s","sourceModule":"M2","data":{"ticketId":9999}}
+            """.formatted(eventId,now);failed.retryCount=0;failed.errorMessage="Error anterior";failed.occurredAt=now;failed.receivedAt=now;integrationLogs.saveAndFlush(failed);
+        var supervisor=new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("reprocess-qa-"+UUID.randomUUID(),null),null,List.of(new SimpleGrantedAuthority("ROLE_SUPERVISOR")));
+        String path="/api/v1/integrations/events/"+eventId;
+        String etag=mvc.perform(get(path).with(authentication(supervisor)))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+            .andReturn().getResponse().getHeader("ETag");
+        String initialEtag=etag;
+        var rentas=new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("reprocess-rentas-"+UUID.randomUUID(),null),null,List.of(new SimpleGrantedAuthority("ROLE_RENTAS")));
+        String requestBody=json.writeValueAsString(new ApiDtos.ReprocessEventRequest("QA persistencia"));
+        assertThat(mvc.perform(post(path+"/reprocess").with(authentication(rentas)).header("If-Match",etag)
+            .header("Idempotency-Key","reprocess-forbidden-"+eventId).contentType(MediaType.APPLICATION_JSON).content(requestBody))
+            .andReturn().getResponse().getStatus()).isEqualTo(403);
+        assertThat(integrationLogs.findById(failed.id).orElseThrow().retryCount).isZero();
+        assertThat(mvc.perform(post(path+"/reprocess").with(authentication(supervisor)).header("If-Match","\"stale\"")
+            .header("Idempotency-Key","reprocess-stale-"+eventId).contentType(MediaType.APPLICATION_JSON).content(requestBody))
+            .andReturn().getResponse().getStatus()).isEqualTo(412);
+        assertThat(integrationLogs.findById(failed.id).orElseThrow().retryCount).isZero();
+        long outboxBefore=outbox.count();
+
+        for(int attempt=1;attempt<=5;attempt++){
+            MockHttpServletResponse response=mvc.perform(post(path+"/reprocess").with(authentication(supervisor))
+                    .header("If-Match",etag).header("Idempotency-Key","reprocess-"+eventId+"-"+attempt)
+                    .contentType(MediaType.APPLICATION_JSON).content(requestBody))
+                .andExpect(result -> assertThat(result.getResponse().getStatus()).as(result.getResponse().getContentAsString()).isEqualTo(200))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.retryCount").value(attempt))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.status").value(attempt==5?"DEAD_LETTER":"FAILED"))
+                .andReturn().getResponse();
+            etag=response.getHeader("ETag");
+            assertThat(etag).isNotBlank();
+            if(attempt==1){
+                MockHttpServletResponse replay=mvc.perform(post(path+"/reprocess").with(authentication(supervisor))
+                        .header("If-Match",initialEtag).header("Idempotency-Key","reprocess-"+eventId+"-1")
+                        .contentType(MediaType.APPLICATION_JSON).content(requestBody))
+                    .andReturn().getResponse();
+                assertThat(replay.getStatus()).isEqualTo(200);
+                assertThat(json.readTree(replay.getContentAsString()).path("retryCount").asInt()).isEqualTo(1);
+                assertThat(integrationLogs.findById(failed.id).orElseThrow().retryCount).isEqualTo(1);
+                MockHttpServletResponse conflict=mvc.perform(post(path+"/reprocess").with(authentication(supervisor))
+                        .header("If-Match",initialEtag).header("Idempotency-Key","reprocess-"+eventId+"-1")
+                        .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsBytes(new ApiDtos.ReprocessEventRequest("otra solicitud"))))
+                    .andReturn().getResponse();
+                assertThat(conflict.getStatus()).isEqualTo(409);
+                assertThat(integrationLogs.findById(failed.id).orElseThrow().retryCount).isEqualTo(1);
+            }
+        }
+
+        IntegrationEventLog persisted=integrationLogs.findFirstByExternalEventIdOrderByIdDesc(eventId.toString()).orElseThrow();
+        assertThat(persisted.retryCount).isEqualTo(5);
+        assertThat(persisted.lastRetryAt).isNotNull();
+        assertThat(persisted.errorMessage).contains("ticketUpdated requiere additionalInformation");
+        assertThat(processedEvents.existsByExternalEventId(eventId.toString())).isFalse();
+        assertThat(outbox.count()).isEqualTo(outboxBefore);
+        assertThat(jdbc.queryForObject("select count(*) from integration_event_log where external_event_id=?",Long.class,eventId.toString())).isEqualTo(1L);
+    }
+
     @Test void m1RegisteredCanonicalCitizenCreatesStableExemptionOutboxOnPostgreSql() throws Exception {
         UUID incomingEventId=UUID.randomUUID(),canonicalId=UUID.fromString("f398dbcb-a2b4-49af-a724-3529c6ddd0f6");
         JsonNode incoming=json.readTree("""

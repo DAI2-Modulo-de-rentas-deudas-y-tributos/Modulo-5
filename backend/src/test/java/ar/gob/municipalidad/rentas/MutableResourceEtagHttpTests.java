@@ -12,6 +12,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Propagation;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -78,7 +79,7 @@ class MutableResourceEtagHttpTests {
         }
     }
 
-    @Test void retryAndReprocessCommandsRejectStaleTagsBeforeIncrementingAttempts() throws Exception {
+    @Test @Transactional(propagation=Propagation.NOT_SUPPORTED) void retryAndReprocessCommandsRejectStaleTagsBeforeIncrementingAttempts() throws Exception {
         ExternalObligation obligation=new ExternalObligation();obligation.sourceModule="M7";obligation.externalType=ExternalObligationType.TRAFFIC_INFRACTION;
         obligation.externalReferenceId="ETAG-RETRY-"+java.util.UUID.randomUUID();obligation.sourceEventId=java.util.UUID.randomUUID();
         obligation.externalTaxpayerType=TaxpayerType.CITIZEN;obligation.externalTaxpayerId="missing-"+java.util.UUID.randomUUID();

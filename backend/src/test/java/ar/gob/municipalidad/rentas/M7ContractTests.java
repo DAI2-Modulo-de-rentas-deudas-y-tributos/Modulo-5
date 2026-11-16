@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -112,11 +113,11 @@ class M7ContractTests {
         ExternalObligation result=m7.consume(event);assertThat(result.taxpayerId).isEqualTo(organization.id);assertThat(result.externalTaxpayerType).isEqualTo(TaxpayerType.ORGANIZATION);
     }
 
-    @Test void missingTaxpayerIsTraceableAndRetryDoesNotDuplicate() throws Exception {
-        long obligationsBefore=obligations.count(),debtsBefore=debts.count();concept();var event=read(DOCUMENTED_EVENT);ExternalObligation failed=m7.consume(event);
+    @Test @Transactional(propagation=Propagation.NOT_SUPPORTED) void missingTaxpayerIsTraceableAndRetryDoesNotDuplicate() throws Exception {
+        long obligationsBefore=obligations.count(),debtsBefore=debts.count();concept();String debtor="4"+String.format("%07d",Math.floorMod(UUID.randomUUID().hashCode(),10_000_000));String eventId=UUID.randomUUID().toString();String infractionId=UUID.randomUUID().toString();var event=read(DOCUMENTED_EVENT.replace("40123456",debtor).replace("7f9c91f0-03c6-4baf-8791-8cb2c38981d2",eventId).replace("93fd4382-2343-4f3f-a127-9328b29fc520",infractionId));ExternalObligation failed=m7.consume(event);
         assertThat(failed.status).isEqualTo(ExternalObligationStatus.ERROR);assertThat(debts.count()).isEqualTo(debtsBefore);assertThat(processed.existsByExternalEventId(event.eventId().toString())).isFalse();
         assertThat(logs.findFirstByExternalEventIdOrderByIdDesc(event.eventId().toString()).orElseThrow().status).isEqualTo(IntegrationEventStatus.FAILED);
-        TaxpayerReference taxpayer=citizen("40123456");IntegrationEventLog retried=reprocess.reprocess(event.eventId().toString(),"referencia sincronizada");
+        TaxpayerReference taxpayer=citizen(debtor);IntegrationEventLog retried=reprocess.reprocess(event.eventId().toString(),"referencia sincronizada");
         assertThat(retried.status).isEqualTo(IntegrationEventStatus.PROCESSED);assertThat(obligations.count()).isEqualTo(obligationsBefore+1);assertThat(debts.findByTaxpayerId(taxpayer.id)).hasSize(1);
     }
 
