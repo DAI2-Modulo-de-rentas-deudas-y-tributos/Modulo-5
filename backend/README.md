@@ -196,7 +196,7 @@ Los listados generales aceptan paginación y orden estándar:
 ?page=0&size=20&sort=createdAt,desc
 ```
 
-Cada recurso tiene una whitelist de filtros en `FilteredQueryService`. También se soportan `from`, `to` y `q` cuando corresponden. Un filtro u orden desconocido responde 400 con `INVALID_FILTER` o `INVALID_SORT`.
+`size` admite como máximo 100 registros por página, el tamaño que ya piden los clientes del proyecto. Cada recurso tiene una whitelist de filtros en `FilteredQueryService`, que arma las consultas con Criteria API parametrizada. También se soportan `from`, `to` y `q` cuando corresponden. Un filtro u orden desconocido responde 400 con `INVALID_FILTER` o `INVALID_SORT`.
 
 Las respuestas REST usan DTO explícitos; no serializan entidades JPA. Las páginas tienen forma estable con `content` y metadatos bajo `page`.
 
@@ -290,8 +290,6 @@ M5 no consulta bases de M1, M2, M4, M7 ni M8: conserva referencias locales y se 
 ## Documentación local
 
 - `BACKEND_COMPLETENESS.md`: matriz endpoint por endpoint y reporte OpenAPI.
-- `GUIA_APRENDIZAJE.md`: explicación progresiva del backend.
-- `GUIA_FINAL_HARDENING.md`: explicación específica de esta etapa de cierre.
 - `INTEGRATION_CONTRACTS.md`: contratos recibidos de M1/M2/M4/M7/M8, estado de implementación local y pendientes de interoperabilidad con Core/Broker. `../docs/integrations/M5_ESTADO_LOCAL_2026-10-30.md` resume la situación actual y las migraciones aún no autorizadas.
 
 ## Problemas frecuentes

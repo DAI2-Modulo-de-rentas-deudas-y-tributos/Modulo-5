@@ -5,10 +5,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Contexto del repositorio
 
 Monorepo del **Módulo 5 - Rentas** (tributos, deudas, planes de pago) de un sistema municipal
-multi-módulo. El proyecto está en **fase de inicio**: la estructura, los contratos y la base de
-Terraform existen, pero `frontend/` y `backend/` todavía no tienen aplicación ni tecnología
-elegida (solo README). Al crear código nuevo hay que respetar el modelo de despliegue ya decidido
-en los ADR, no inventar uno distinto.
+multi-módulo. El sistema está implementado y en etapa de entrega: `frontend/` es React + Vite
+(portal "Ciudad UADE") y `backend/` es Spring Boot 3.5 con Java 17, PostgreSQL 17 y Flyway; ambos
+consumen datos reales (no hay capa de mocks). La identidad usa el modo DEMO (`X-Demo-Session`)
+mientras Core/JWT siga pendiente. Al crear código nuevo hay que respetar el modelo de despliegue
+ya decidido en los ADR, no inventar uno distinto.
 
 El repositorio y su documentación están **en español**; mantener ese idioma en docs, ADR,
 commits y comentarios.
@@ -29,6 +30,11 @@ npm test -- -t "cancela la deuda"                # un test puntual
 npm run build                     # dist/ — lo que publica Amplify
 sh scripts/compose/e2e-test.sh    # (desde la raíz) E2E con Playwright contra el stack de Compose
 
+# Backend (Spring Boot, Maven Wrapper) — desde backend/; en Windows usar .\mvnw.cmd
+./mvnw clean verify               # tests + gate JaCoCo >= 85 % de líneas (el CI corre mvn -B clean verify)
+./mvnw -Dtest=PostgreSqlIntegrationTest test     # un test; Testcontainers se omite sin Docker
+./mvnw spring-boot:run -Dspring-boot.run.profiles=dev   # http://localhost:8080/api/v1, Swagger en /swagger-ui.html
+
 # Terraform — lo que valida el CI; ejecutar desde la raíz / cada ambiente
 terraform fmt -check -recursive infra
 cd infra/environments/dev  && terraform init -backend=false && terraform validate
@@ -36,7 +42,8 @@ cd infra/environments/test && terraform init -backend=false && terraform validat
 cd infra/environments/prod && terraform init -backend=false && terraform validate
 ```
 
-`backend/` todavía no tiene aplicación: agregar aquí sus comandos al scaffoldearlo.
+Variables necesarias para levantar el backend en modo dev y detalles de Docker en Windows:
+`backend/README.md`.
 
 ## Arquitectura
 
@@ -50,11 +57,11 @@ cd infra/environments/prod && terraform init -backend=false && terraform validat
 - **Contratos**: el catálogo de eventos, sus payloads y las reglas de integración viven en la
   sección "Memoria del proyecto — M5 Rentas / PO" de este archivo, que es la fuente de verdad.
   En el repo quedan `contracts/asyncapi.yaml` (AsyncAPI 3.0, con `channels`/`operations` todavía
-  vacíos) y `contracts/schemas/common-event-envelope.schema.json`. **Atención**: ese schema
-  todavía describe el envelope viejo (`producer: "rentas"`, `payload`, `eventVersion`,
-  `aggregateId`, `correlationId`, `additionalProperties: false`), que **no coincide** con el
-  envelope acordado más abajo (`sourceModule: "M5"`, `data`). Hay que unificarlo con el Módulo 9
-  antes de generar código: un cambio de contrato no es una decisión local.
+  vacíos) y `contracts/schemas/common-event-envelope.schema.json`. Ese schema ya usa el envelope
+  acordado (requeridos `eventId`, `eventType`, `occurredAt`, `sourceModule`, `data`; opcionales
+  `eventVersion`, `correlationId`, `causationId`), pero fija `sourceModule: "rentas"`, no `"M5"`
+  como el ejemplo de más abajo; el código publica `rentas`. Cualquier cambio de ese valor se
+  acuerda con el Módulo 9: un cambio de contrato no es una decisión local.
 - **Infra**: `infra/` es AWS solo por Terraform. `bootstrap/` (estado remoto S3 con
   `use_lockfile = true`, OIDC de GitHub, roles plan/deploy) se aplica una vez; `modules/` por
   capacidad (network, security, database, ecs, edge, hosting); `environments/dev`,
@@ -69,7 +76,7 @@ cd infra/environments/prod && terraform init -backend=false && terraform validat
 - `dev` es **efímero**: cada merge a `develop` lo levanta, corre un smoke test y lo destruye
   (`cd-dev.yml`); solo se conserva su repositorio ECR, desde donde se promueve a `test`.
 - `prod` es **persistente** y sigue a `main`: cada merge o commit corre el CI y despliega
-  (`cd-prod.yml`, ADR 0003). Un deploy en curso no se cancela; de los commits que llegan
+  (`cd-prod.yml`, ADR 0009). Un deploy en curso no se cancela; de los commits que llegan
   mientras tanto solo se despliega el último. Perfil `prod`, sin modo demo.
 - CI (`.github/workflows/ci.yml`): jobs `frontend`, `backend`, `terraform` (fmt/validate),
   `compose` (G1), `dependency-scan` (OSV-Scanner; excepciones con vencimiento en

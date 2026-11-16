@@ -74,8 +74,9 @@ Ninguna se usó en un ambiente compartido: `infra/` nunca las referencia y los a
 toman sus credenciales de Secrets Manager. Desde el PR #91 la configuración de `develop` no tiene
 contraseñas por defecto: cada una sale del `.env` local y el arranque se corta si falta. Siguen en
 `develop`, como datos de prueba, las contraseñas ficticias de los tests del frontend (que corren
-contra un backend falso en memoria) y la mención a la credencial de la base efímera de CI en
-`docs/testing/SCRUM-807_PIT_GITHUB_ACTIONS.md`.
+contra un backend falso en memoria). La mención a la credencial de la base efímera de CI que
+estaba en `docs/testing/SCRUM-807_PIT_GITHUB_ACTIONS.md` sólo queda en el historial: ese archivo
+se eliminó.
 
 **Decisión**: no reescribir el historial. La reescritura obligaría a forzar el push de todas las
 ramas, rompería los PR abiertos y los clones del equipo, y no cambiaría el resultado de

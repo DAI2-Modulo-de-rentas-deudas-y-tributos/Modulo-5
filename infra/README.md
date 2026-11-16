@@ -59,7 +59,7 @@ PROD es persistente y tiene su propia base PostgreSQL, con proteccion contra
 eliminacion, 7 dias de backups y snapshot final. `cd-prod.yml` corre el CI, aplica
 Terraform y despliega backend y frontend en cada push a `main`. Un deploy en curso
 nunca se cancela; los commits que llegan mientras tanto esperan y solo se despliega
-el mas reciente. Decision completa en `docs/adr/0003-ambiente-produccion.md`.
+el mas reciente. Decision completa en `docs/adr/0009-ambiente-produccion.md`.
 
 Alta, una sola vez:
 

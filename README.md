@@ -38,7 +38,7 @@ un dataset alternativo de producción: todas las operaciones pasan por la API.
 - `dev`: integración continua desde la rama `develop`.
 - `test`: promoción controlada del mismo artefacto validado en `dev`.
 - `prod`: persistente; se despliega automáticamente en cada merge o commit a `main`
-  ([ADR 0003](docs/adr/0003-ambiente-produccion.md)).
+  ([ADR 0009](docs/adr/0009-ambiente-produccion.md)).
 
 La rama `main` representa la versión estable. El desarrollo se realiza en ramas
 `feature/*` mediante pull requests hacia `develop`.
