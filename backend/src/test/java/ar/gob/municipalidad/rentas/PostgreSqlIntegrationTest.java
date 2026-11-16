@@ -1890,6 +1890,41 @@ class PostgreSqlIntegrationTest {
         assertThat(overdueEvents(debt)).hasSize(1);
     }
 
+    @Test void dueDateProcessorPublishesPreChargeSnapshotBeforeApplyingLateCharges() throws Exception {
+        authenticate();
+        TaxpayerReference citizen=taxpayer(TaxpayerType.CITIZEN,"PG-DUE-SNAPSHOT-"+UUID.randomUUID(),uniqueDigits(8),null);
+        citizen.canonicalCitizenId=UUID.randomUUID();taxpayers.save(citizen);
+        Debt debt=debt("DUE-SNAPSHOT-"+UUID.randomUUID(),citizen.id);
+        LocalDate processingDate=fiscalDates.today().minusDays(1);
+        while(dueDateRuns.findByProcessingDate(processingDate).isPresent())processingDate=processingDate.minusDays(1);
+        debt.originalAmount=debt.currentAmount=debt.outstandingBalance=new BigDecimal("19800.00");
+        debt.dueDate=processingDate.minusDays(30);debt.status=DebtStatus.PENDING;debts.saveAndFlush(debt);
+
+        LateChargeRule rule=new LateChargeRule();rule.code="PG-DUE-SNAPSHOT-"+UUID.randomUUID();
+        rule.surchargeRate=new BigDecimal("10.00");rule.dailyInterestRate=new BigDecimal("0.0399");
+        rule.active=true;rule.validFrom=processingDate.minusDays(1);rule.validUntil=processingDate;lateChargeRules.saveAndFlush(rule);
+
+        DueDateProcessing run=new DueDateProcessing();run.processingDate=processingDate;run.status=DueDateRunStatus.PROCESSING;
+        run.processingStage=DueDateProcessingStage.DEBTS;run.attemptCount=1;run.lastProcessedId=debt.id-1;
+        run.requestedAt=run.startedAt=OffsetDateTime.now();run.processedBy="postgres-it";run=dueDateRuns.saveAndFlush(run);
+
+        assertThat(dueDateProcessor.processNextBatch(run.id,run.attemptCount)).isFalse();
+        JsonNode envelope=json.readTree(overdueEvents(debt).get(0).payload);
+        assertThat(envelope.path("eventType").asText()).isEqualTo("debtOverdue");
+        assertThat(envelope.path("eventVersion").asText()).isEqualTo("1.0");
+        assertThat(envelope.path("data").path("citizenId").asText()).isEqualTo(citizen.canonicalCitizenId.toString());
+        assertThat(envelope.path("data").path("outstandingAmount").decimalValue()).isEqualByComparingTo("19800.00");
+        assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("22017.01");
+        assertThat(jdbc.queryForObject("select count(*) from late_charge_application where debt_id=? and calculation_date=?",Integer.class,debt.id,processingDate)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count(*) from adjustment_request where debt_id=?",Integer.class,debt.id)).isEqualTo(2);
+
+        assertThat(dueDateProcessor.processNextBatch(run.id,run.attemptCount)).isFalse();
+        assertThat(overdueEvents(debt)).hasSize(1);
+        assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("22017.01");
+        assertThat(jdbc.queryForObject("select count(*) from late_charge_application where debt_id=? and calculation_date=?",Integer.class,debt.id,processingDate)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count(*) from adjustment_request where debt_id=?",Integer.class,debt.id)).isEqualTo(2);
+    }
+
     @Test void dueDateProcessingHandlesMoreRowsThanOneBatch() {
         authenticate();
         TaxpayerReference taxpayer=taxpayer(TaxpayerType.CITIZEN,"PG-DUE-BATCH-"+UUID.randomUUID(),uniqueDigits(8),null);
