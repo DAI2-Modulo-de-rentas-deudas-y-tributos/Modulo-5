@@ -7,6 +7,7 @@ locals {
   environment        = "prod"
   name_prefix        = "${local.project_name}-${local.environment}"
   availability_zones = slice(data.aws_availability_zones.available.names, 0, 2)
+  domain_zone        = "modulo-rentas.com.ar"
 }
 
 module "network" {
@@ -26,6 +27,7 @@ module "security" {
   vpc_id                 = module.network.vpc_id
   backend_container_port = var.backend_container_port
   database_port          = var.database_port
+  alb_ingress_port       = 443
 }
 
 module "database" {
@@ -56,6 +58,11 @@ module "edge" {
   backend_container_port = var.backend_container_port
   health_check_path      = var.backend_health_check_path
   deletion_protection    = var.alb_deletion_protection
+  # CloudFront -> ALB por HTTPS. Requiere un certificado ACM emitido en la región del ALB.
+  https_origin = {
+    domain = "origin-prod.${local.domain_zone}"
+    zone   = local.domain_zone
+  }
 }
 
 module "ecs" {
