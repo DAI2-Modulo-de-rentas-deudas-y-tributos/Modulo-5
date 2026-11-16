@@ -1845,6 +1845,51 @@ class PostgreSqlIntegrationTest {
         }
     }
 
+    @Test void debtOverdueSnapshotRemainsPreChargeAndReprocessingDoesNotDuplicateOutboxOrCharge() throws Exception {
+        authenticate();
+        TaxpayerReference citizen=taxpayer(TaxpayerType.CITIZEN,"PG-OVERDUE-SNAPSHOT-"+UUID.randomUUID(),uniqueDigits(8),null);
+        citizen.canonicalCitizenId=UUID.randomUUID();taxpayers.save(citizen);
+        Debt debt=debt("OVERDUE-SNAPSHOT-"+UUID.randomUUID(),citizen.id);
+        LocalDate processingDate=fiscalDates.today().minusDays(1);
+        debt.originalAmount=debt.currentAmount=debt.outstandingBalance=new BigDecimal("19800.00");
+        debt.dueDate=processingDate.minusDays(30);debts.saveAndFlush(debt);
+
+        LateChargeRule rule=new LateChargeRule();rule.code="PG-OVERDUE-SNAPSHOT-"+UUID.randomUUID();
+        rule.surchargeRate=new BigDecimal("10.00");rule.dailyInterestRate=new BigDecimal("0.0399");
+        rule.active=true;rule.validFrom=processingDate.minusDays(1);rule.validUntil=processingDate;lateChargeRules.saveAndFlush(rule);
+
+        AtomicReference<String> initialPayload=new AtomicReference<>(),replayedPayload=new AtomicReference<>();
+        new TransactionTemplate(transactionManager).executeWithoutResult(status->{
+            confirmedOutbox.overdueDebt(debts.findByIdForUpdate(debt.id).orElseThrow(),processingDate);
+            List<OutboxEvent> events=overdueEvents(debt);
+            assertThat(events).hasSize(1);
+            OutboxEvent event=events.get(0);
+            initialPayload.set(event.payload);
+
+            var applied=lateCharges.apply(debt.id,processingDate);
+            assertThat(applied.applied()).isTrue();
+            assertThat(applied.updatedTotal()).isEqualByComparingTo("22017.01");
+            assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("22017.01");
+        });
+
+        new TransactionTemplate(transactionManager).executeWithoutResult(status->{
+            assertThat(lateCharges.apply(debt.id,processingDate).applied()).isFalse();
+            confirmedOutbox.overdueDebt(debts.findByIdForUpdate(debt.id).orElseThrow(),processingDate);
+            assertThat(overdueEvents(debt)).hasSize(1);
+            replayedPayload.set(overdueEvents(debt).get(0).payload);
+        });
+
+        JsonNode envelope=json.readTree(initialPayload.get()),data=envelope.path("data");
+        assertThat(envelope.path("eventType").asText()).isEqualTo("debtOverdue");
+        assertThat(envelope.path("eventVersion").asText()).isEqualTo("1.0");
+        assertThat(data.path("citizenId").asText()).isEqualTo(citizen.canonicalCitizenId.toString());
+        assertThat(data.path("outstandingAmount").decimalValue()).isEqualByComparingTo("19800.00");
+        assertThat(replayedPayload.get()).isEqualTo(initialPayload.get());
+        assertThat(jdbc.queryForObject("select count(*) from late_charge_application where debt_id=?",Integer.class,debt.id)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count(*) from adjustment_request where debt_id=?",Integer.class,debt.id)).isEqualTo(2);
+        assertThat(overdueEvents(debt)).hasSize(1);
+    }
+
     @Test void dueDateProcessingHandlesMoreRowsThanOneBatch() {
         authenticate();
         TaxpayerReference taxpayer=taxpayer(TaxpayerType.CITIZEN,"PG-DUE-BATCH-"+UUID.randomUUID(),uniqueDigits(8),null);
