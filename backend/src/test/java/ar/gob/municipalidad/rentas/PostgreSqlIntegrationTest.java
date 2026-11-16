@@ -1543,6 +1543,40 @@ class PostgreSqlIntegrationTest {
         assertThat(processedEvents.existsByExternalEventId(eventId.toString())).isFalse();
     }
 
+    @Test void coreManagedM4UnsupportedCurrencyLogsPersistedCodeWithoutPayloadOrStackTrace() throws Exception {
+        UUID eventId=UUID.randomUUID();
+        String cuit=uniqueDigits(11);
+        var event=new CoreM4Events.Envelope<>(eventId,"permitFeeGenerated","1.0",OffsetDateTime.now(),"habilitaciones",
+            UUID.randomUUID(),null,new CoreM4Events.PermitFeeGeneratedData(UUID.randomUUID().toString(),UUID.randomUUID().toString(),
+                UUID.randomUUID().toString(),cuit,BigDecimal.TEN,"USD"));
+        String payload=json.writeValueAsString(event);
+        long debtsBefore=debts.count(),obligationsBefore=externalObligations.count();
+        CoreRabbitMqConsumer listener=new CoreRabbitMqConsumer(inbound,
+            org.mockito.Mockito.mock(org.springframework.amqp.rabbit.core.RabbitTemplate.class),"core-managed",
+            "rentas.retry","q.rentas.retry.1","q.rentas.retry.2","q.rentas.retry.3",1000);
+        com.rabbitmq.client.Channel channel=org.mockito.Mockito.mock(com.rabbitmq.client.Channel.class);
+        ch.qos.logback.classic.Logger logger=(ch.qos.logback.classic.Logger)org.slf4j.LoggerFactory.getLogger(CoreRabbitMqConsumer.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> logs=new ch.qos.logback.core.read.ListAppender<>();
+        logs.start();logger.addAppender(logs);
+        try {
+            listener.receive(new org.springframework.amqp.core.Message(payload.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                new org.springframework.amqp.core.MessageProperties()),channel,902);
+
+            org.mockito.Mockito.verify(channel).basicNack(902,false,false);
+            IntegrationEventLog failed=integrationLogs.findFirstByExternalEventIdOrderByIdDesc(eventId.toString()).orElseThrow();
+            assertThat(failed.status).isEqualTo(IntegrationEventStatus.FAILED);
+            assertThat(failed.errorMessage).isEqualTo("M4_UNSUPPORTED_CURRENCY");
+            assertThat(debts.count()).isEqualTo(debtsBefore);
+            assertThat(externalObligations.count()).isEqualTo(obligationsBefore);
+            assertThat(logs.list).singleElement().satisfies(log->{
+                assertThat(log.getFormattedMessage()).contains("eventId="+eventId,"reason=M4_UNSUPPORTED_CURRENCY")
+                    .doesNotContain(cuit,"USD",payload);
+                assertThat(log.getThrowableProxy()).isNull();
+                assertThat(log.getTimeStamp()).isPositive();
+            });
+        } finally {logger.detachAppender(logs);}
+    }
+
     @Test void paymentsOverpaymentsCreditAndLocksRunOnPostgreSql() throws Exception {
         authenticate();Debt total=debt("PG-TOTAL",null),partial=debt("PG-PARTIAL",null),over=debt("PG-OVER",null);
         Payment totalPayment=payments.register(new ApiDtos.RegisterPaymentRequest(total.taxpayerId,PaymentMethod.CASH,new BigDecimal("100"),List.of(new ApiDtos.AllocationRequest(total.id,new BigDecimal("100")))));
