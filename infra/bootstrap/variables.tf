@@ -44,3 +44,9 @@ variable "github_prod_environment" {
   type        = string
   default     = "prod"
 }
+
+variable "domain_name" {
+  description = "Dominio propio registrado en NIC Argentina; PROD usa la raíz y TEST el subdominio test."
+  type        = string
+  default     = "modulo-rentas.com.ar"
+}
