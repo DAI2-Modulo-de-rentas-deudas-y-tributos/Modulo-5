@@ -261,35 +261,6 @@ data "aws_iam_policy_document" "github_prod_runtime_infrastructure" {
       ]
     }
   }
-
-  # Origen HTTPS de la API: lee la zona y el certificado, y sólo escribe su propio registro.
-  statement {
-    sid = "ReadProdApiOriginDnsAndCertificate"
-    actions = [
-      "acm:DescribeCertificate",
-      "acm:ListCertificates",
-      "acm:ListTagsForCertificate",
-      "route53:GetChange",
-      "route53:GetHostedZone",
-      "route53:ListHostedZones",
-      "route53:ListHostedZonesByName",
-      "route53:ListResourceRecordSets",
-      "route53:ListTagsForResource"
-    ]
-    resources = ["*"]
-  }
-
-  statement {
-    sid       = "ManageProdApiOriginRecord"
-    actions   = ["route53:ChangeResourceRecordSets"]
-    resources = ["arn:${data.aws_partition.current.partition}:route53:::hostedzone/*"]
-
-    condition {
-      test     = "ForAllValues:StringEquals"
-      variable = "route53:ChangeResourceRecordSetsNormalizedRecordNames"
-      values   = ["origin-prod.modulo-rentas.com.ar"]
-    }
-  }
 }
 
 resource "aws_iam_policy" "github_prod_runtime_infrastructure" {
