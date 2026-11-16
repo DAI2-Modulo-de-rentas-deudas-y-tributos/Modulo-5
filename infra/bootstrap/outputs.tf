@@ -57,3 +57,18 @@ output "prod_state_key" {
   description = "Clave S3 del estado PROD."
   value       = local.prod_state_key
 }
+
+output "route53_zone_id" {
+  description = "Zona Route 53 del dominio propio."
+  value       = aws_route53_zone.main.zone_id
+}
+
+output "route53_name_servers" {
+  description = "Nameservers que hay que cargar como delegación del dominio en NIC.ar."
+  value       = aws_route53_zone.main.name_servers
+}
+
+output "access_log_buckets" {
+  description = "Bucket de access logs del bootstrap y de cada ambiente."
+  value       = { for key, bucket in aws_s3_bucket.access_logs : key => bucket.bucket }
+}
