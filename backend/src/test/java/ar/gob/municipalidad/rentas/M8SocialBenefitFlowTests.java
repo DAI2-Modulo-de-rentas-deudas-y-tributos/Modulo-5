@@ -231,6 +231,29 @@ class M8SocialBenefitFlowTests {
         assertThat(preview(taxpayer,concept,"2026-11").finalAmount()).isEqualByComparingTo("100.00");
     }
 
+    @Test void benefitValidOnlyFromNovember15Through22DoesNotReduceNovemberLiquidation(){
+        TaxpayerReference taxpayer=taxpayer(true);TaxConcept concept=concept("M8-MID-NOVEMBER");configuration(concept);
+        approvedRule(concept,"100",LocalDate.of(2026,11,1),LocalDate.of(2026,11,30));
+        consumer.consume(event(UUID.randomUUID(),"APPROVED",OffsetDateTime.parse("2026-11-15T12:00:00-03:00"),LocalDate.of(2026,11,15),
+            LocalDate.of(2026,11,22),"Vigencia parcial de noviembre","TAX_EXEMPTION"));
+
+        assertThat(preview(taxpayer,concept,"2026-11").finalAmount()).isEqualByComparingTo("100.00");
+    }
+
+    @Test void approvedFullAblRuleAppliesOnlyForBenefitValidThroughNovember30(){
+        TaxpayerReference taxpayer=taxpayer(true);TaxConcept concept=concept("ABL");
+        configuration(concept);
+        SocialBenefitRule rule=approvedRule(concept,"100",LocalDate.of(2026,11,1),LocalDate.of(2026,11,30));
+        consumer.consume(event(UUID.randomUUID(),"APPROVED",OffsetDateTime.parse("2026-11-01T12:00:00-03:00"),LocalDate.of(2026,11,1),
+            LocalDate.of(2026,11,30),"Exención ABL aprobada","TAX_EXEMPTION"));
+
+        assertThat(rule.status).isEqualTo(SocialBenefitRuleStatus.APPROVED);
+        assertThat(rule.proposedBy).isEqualTo("rentas.qa");
+        assertThat(rule.approvedBy).isEqualTo("supervisor.qa");
+        assertThat(preview(taxpayer,concept,"2026-11").finalAmount()).isZero();
+        assertThat(preview(taxpayer,concept,"2026-12").finalAmount()).isEqualByComparingTo("100.00");
+    }
+
     @Test void resubmittingSocialRuleReturns409AndKeepsPendingState(){
         TaxConcept concept=concept("M8-STATE-CONFLICT");
         SocialBenefitRule proposal=ruleService.propose(new SocialBenefitRuleService.RuleProposal(PROGRAM_ID,
