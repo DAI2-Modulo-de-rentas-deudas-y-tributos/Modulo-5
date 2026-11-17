@@ -1,5 +1,13 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const projects = [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }];
+if (process.env.E2E_WEBKIT === "true") {
+  projects.push(
+    { name: "webkit-logout", testMatch: "**/logout-menu.e2e.js", grep: /@webkit/, use: { ...devices["Desktop Safari"] } },
+    { name: "webkit-touch-logout", testMatch: "**/logout-menu.e2e.js", grep: /@touch/, use: { ...devices["iPhone 13"] } },
+  );
+}
+
 // Escenarios de punta a punta contra el sistema levantado con `docker compose up -d --build`,
 // con los datos que carga `demo-setup`. Se corren con scripts/compose/e2e-test.sh.
 export default defineConfig({
@@ -18,5 +26,6 @@ export default defineConfig({
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  // WebKit es focalizado y opt-in local para no exigir instalar otro browser en el CI habitual.
+  projects,
 });

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { adaptApiRequest, adaptApiResponse, enumMappings, pageItems } from "./apiAdapters.js";
 import { formatCurrency } from "../lib/format.js";
 
@@ -419,12 +419,16 @@ describe("API client modes", () => {
     let api;
     function Probe() {
       api = useAuth();
-      return createElement("span", null, api.isAuthenticated ? "in" : "out");
+      return createElement("div", null,
+        createElement("span", null, api.isAuthenticated ? "in" : "out"),
+        api.sessionNotice && createElement("output", null, api.sessionNotice),
+      );
     }
     render(createElement(AuthProvider, null, createElement(Probe)));
-    await expect(api.logout()).rejects.toThrow("Failed to fetch");
+    await act(async () => { await api.logout(); });
     expect(sessionStorage.getItem("rentas.token")).toBeNull();
     expect(screen.getByText("out")).toBeDefined();
+    expect(screen.getByText("Cerraste la sesión en este dispositivo, pero no se pudo confirmar la revocación en el servidor.")).toBeDefined();
     cleanup();
   });
 });

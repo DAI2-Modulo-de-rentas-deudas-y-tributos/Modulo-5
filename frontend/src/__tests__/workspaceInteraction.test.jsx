@@ -6,11 +6,13 @@ import DataTable from "../components/common/DataTable.jsx";
 import Sidebar from "../components/layout/Sidebar.jsx";
 import Topbar from "../components/layout/Topbar.jsx";
 
+const authActions = vi.hoisted(() => ({ logout: vi.fn() }));
+
 vi.mock("../context/AuthContext.jsx", () => ({
-  useAuth: () => ({ user: { fullName: "Mariana Rivas", roleLabel: "Personal de Rentas", email: "mariana@ciudaduade.gob.ar" }, logout: vi.fn() }),
+  useAuth: () => ({ user: { fullName: "Mariana Rivas", roleLabel: "Personal de Rentas", email: "mariana@ciudaduade.gob.ar" }, logout: authActions.logout }),
 }));
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); authActions.logout.mockClear(); });
 
 describe("interacción del área de trabajo", () => {
   it("abre el detalle de una fila con Enter o Espacio", async () => {
@@ -49,6 +51,29 @@ describe("interacción del área de trabajo", () => {
     await user.click(trigger);
     await user.click(screen.getByRole("button", { name: "Contenido" }));
     expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("mantiene Cerrar sesión accionable si blur entrega relatedTarget null", async () => {
+    const user = userEvent.setup();
+    render(<><Topbar /><button>Contenido</button></>);
+    const trigger = screen.getByRole("button", { name: /opciones de cuenta/ });
+    await user.click(trigger);
+
+    trigger.dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget: null }));
+
+    const logout = screen.getByRole("menuitem", { name: "Cerrar sesión" });
+    expect(logout).toBeTruthy();
+    await user.click(logout);
+    expect(authActions.logout).toHaveBeenCalledOnce();
+  });
+
+  it("cierra el menú al mover el foco fuera con el teclado", async () => {
+    const user = userEvent.setup();
+    render(<><Topbar /><button>Contenido</button></>);
+    await user.click(screen.getByRole("button", { name: /opciones de cuenta/ }));
+    await user.tab();
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Contenido" }));
   });
 
   it("mantiene el foco dentro de la navegación abierta y lo restaura al cerrar", async () => {
