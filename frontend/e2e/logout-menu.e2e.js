@@ -28,8 +28,6 @@ async function openRentas(page) {
 }
 
 test("el click de logout sobrevive a blur con relatedTarget null @webkit", async ({ page }) => {
-  const consoleTypes = [];
-  page.on("console", (message) => consoleTypes.push(message.type()));
   await openRentas(page);
 
   const trigger = page.getByRole("button", { name: /opciones de cuenta/ });
@@ -38,6 +36,8 @@ test("el click de logout sobrevive a blur con relatedTarget null @webkit", async
   await trigger.evaluate((element) => element.dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget: null })));
 
   await expect(page.getByRole("menuitem", { name: "Cerrar sesión" })).toBeVisible();
+  const consoleTypes = [];
+  page.on("console", (message) => consoleTypes.push(message.type()));
   const logout = page.waitForResponse((response) => response.url().includes("/api/v1/dev-auth/logout"));
   await page.getByRole("menuitem", { name: "Cerrar sesión" }).click();
   expect((await logout).status()).toBe(204);
