@@ -61,6 +61,8 @@ jobs:
       TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
       TF_STATE_KEY: ${{ vars.TF_STATE_KEY }}
       AWS_REGION: ${{ vars.AWS_REGION }}
+      # ARNs de Secrets Manager (no los valores): {"CORE_RABBITMQ_PASSWORD": "arn:aws:secretsmanager:..."}.
+      TF_VAR_backend_secret_variables: ${{ vars.PROD_BACKEND_SECRET_ARNS }}
 
     steps:
       - name: Checkout
@@ -89,6 +91,11 @@ jobs:
           : "${TF_STATE_BUCKET:?Missing TF_STATE_BUCKET in the prod environment}"
           : "${TF_STATE_KEY:?Missing TF_STATE_KEY in the prod environment}"
           : "${AWS_REGION:?Missing AWS_REGION in the prod environment}"
+          # Sin la contraseña, el publicador AMQP no arranca y ECS hace rollback.
+          jq -e 'has("CORE_RABBITMQ_PASSWORD")' <<< "${TF_VAR_backend_secret_variables:-}" > /dev/null || {
+            echo "PROD_BACKEND_SECRET_ARNS must include the CORE_RABBITMQ_PASSWORD secret reference."
+            exit 1
+          }
 
       - name: Initialize remote state
         run: |
