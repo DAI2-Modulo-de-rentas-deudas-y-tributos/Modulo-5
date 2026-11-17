@@ -10,7 +10,7 @@ El adaptador es opt-in. M5 conserva `local-log` como valor seguro predeterminado
 | `CORE_HTTP_BASE_URL` | Origen HTTPS de Core | vacío; obligatorio sólo con `core-http` |
 | `CORE_MODULE_SECRET` | Secret de máquina de M5, inyectado en tiempo de ejecución | vacío; obligatorio sólo con `core-http` |
 | `CORE_HTTP_CONNECT_TIMEOUT` | Timeout de conexión | `3s` |
-| `CORE_HTTP_REQUEST_TIMEOUT` | Timeout por request | `10s` |
+| `CORE_HTTP_REQUEST_TIMEOUT` | Timeout por request (máximo exigido por la cátedra: 5 s) | `5s` |
 | `CORE_HTTP_TOKEN_EXPIRY_SKEW` | Renovación anticipada del token | `PT30S` |
 | `CORE_HTTP_ALLOWED_EVENT_TYPES` | Tipos autorizados para publicar | vacío; obligatorio con `core-http` |
 | `CORE_HTTP_ALLOWED_EVENT_IDS` | UUID exactos de filas Outbox autorizadas | vacío; obligatorio con `core-http` |
@@ -26,6 +26,17 @@ El secret no debe guardarse en archivos versionados, argumentos visibles del pro
 - `CORE_ACCEPTED`: Core respondió 202, o 200 duplicado. El OpenAPI 2.0.0 describe el 200 como duplicado, pero no define su cuerpo. El cliente acepta el 200 vacío descrito por OpenAPI; si recibe JSON, exige `duplicate=true` y valida `eventId` cuando viene informado. El cuerpo que devuelve el Core desplegado sigue pendiente de confirmación. Esto acredita aceptación/registro de Core, no entrega ni procesamiento de Ciudadanos M1.
 - 422 y 401/403 terminan en `DEAD_LETTER` con código técnico seguro; el payload y el `eventId` original permanecen en el registro de Outbox. Core no define un schema de respuesta 422, así que no se persiste su body no validado, que podría repetir datos del evento.
 - Timeout, 408, 429 y 5xx siguen la política existente: hasta cinco intentos y backoff de 5/10/20/40 segundos. Cada intento reutiliza el mismo JSON y `eventId`; el deduplicado de Core cubre una aceptación cuya respuesta se perdió.
+
+### Timeout de 5 s y fallback
+
+Criterio del Eje C: "REST externo no responde en 5 s → timeout efectivo, reintento acotado, fallback definido y comunicado al usuario; sin hilos colgados".
+
+- **Timeout efectivo**: cada request a Core (token y publicación) corta a los `CORE_HTTP_REQUEST_TIMEOUT` = `5s`; la conexión, a los `CORE_HTTP_CONNECT_TIMEOUT` = `3s`. El `HttpTimeoutException` se traduce a una falla reintentable (`CoreHttpPublishException.retryable()`), sin propagar el error crudo.
+- **Fallback**: la operación del usuario no llama a Core. El pago, la exención o el plan se confirman en la misma transacción que guarda el evento en Outbox, así que el usuario recibe su respuesta aunque Core esté caído o lento. La publicación la hace el worker después, en segundo plano.
+- **Reintento acotado**: hasta cinco intentos con backoff de 5/10/20/40 s y el mismo `eventId`; agotados, la fila queda en `DEAD_LETTER` con su payload para reproceso operativo. No se pierde el evento.
+- **Sin hilos colgados**: el worker procesa una fila por transacción y el lock dura, como máximo, el timeout de token más el de request.
+- **Comunicación al usuario**: el estado de integración queda visible en Outbox/EventLog (`LOCAL_ONLY`, `CORE_ACCEPTED`, `DEAD_LETTER`); la operación de negocio ya figura como registrada.
+- **Prueba automatizada**: `CoreHttpEventPublisherTests.serverErrorsAndTimeoutsAreRetryable` simula un Core que no responde a tiempo y verifica que la falla es reintentable.
 
 El estado terminal requiere intervención operativa antes de reintentar; este cambio no agrega una API de reencolado. Durante una llamada HTTP se mantiene el lock de una sola fila Outbox; `FOR UPDATE SKIP LOCKED` evita que dos workers publiquen simultáneamente la misma fila. Si Core acepta y M5 pierde la transacción antes del commit, la fila conserva su estado anterior y se reintenta con el mismo `eventId`; Core debe contestar como duplicado. La retención del lock queda limitada a una fila y a los timeouts de token/request configurados.
 

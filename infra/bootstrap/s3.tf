@@ -16,6 +16,15 @@ resource "aws_s3_bucket" "terraform_state" {
   }
 }
 
+# Server access logs del bucket de estado: quién leyó o escribió cada tfstate (Sonar S6258).
+resource "aws_s3_bucket_logging" "terraform_state" {
+  bucket        = aws_s3_bucket.terraform_state.id
+  target_bucket = aws_s3_bucket.access_logs["bootstrap"].id
+  target_prefix = "terraform-state/"
+
+  depends_on = [aws_s3_bucket_policy.access_logs]
+}
+
 resource "aws_s3_bucket_versioning" "terraform_state" {
   bucket = aws_s3_bucket.terraform_state.id
 

@@ -1,0 +1,44 @@
+{
+  "data": {
+    "details": {
+      "routing": {
+        "summary": "[TEST M2-M5] Solicitud de copia de boleta",
+        "category": "Tasas, tributos y pagos municipales",
+        "formData": {
+          "referencia": "TEST-M2-M5-001"
+        },
+        "location": null,
+        "escalation": {
+          "active": false,
+          "reasonCode": null,
+          "escalatedAt": null
+        },
+        "ticketType": "REQUEST",
+        "description": "Prueba controlada de integración entre Atención Ciudadana y Rentas mediante M9/Core. No corresponde a una solicitud real.",
+        "requestType": "Solicitar una copia de una boleta",
+        "subcategory": "Boletas y liquidaciones",
+        "reassignment": false,
+        "resolutionDueAt": "2026-11-27T19:00:00Z"
+      }
+    },
+    "progress": null,
+    "publicId": "TK-2026-000047",
+    "ticketId": "1ab9e286-2ac9-40d5-b46e-e78c414f535a",
+    "citizenId": "2a1bd3fe-4198-4f6f-ae7c-7cdda1483f55",
+    "updatedAt": "2026-11-15T18:07:48.441621456Z",
+    "updateType": "ROUTED",
+    "attachments": [],
+    "isAnonymous": false,
+    "currentStatus": "ROUTED",
+    "publicMessage": "El ticket fue derivado al área responsable.",
+    "currentPriority": "LOW",
+    "responsibleAreaId": "M5"
+  },
+  "eventId": "e06a8885-60b8-4660-83ff-6feb23843c26",
+  "eventType": "ticketUpdated",
+  "occurredAt": "2026-11-15T18:07:48.450132829Z",
+  "causationId": null,
+  "eventVersion": "1.0",
+  "sourceModule": "atencion-ciudadana",
+  "correlationId": "b766e401-e818-4c42-ae63-eb3aa6b3c68f"
+}

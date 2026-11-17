@@ -37,7 +37,8 @@ contrato Core/JWT sigue pendiente; PROD usa el perfil `prod`, sin modo demo:
 | Componente | Variable | DEV | TEST | PROD |
 | --- | --- | --- | --- | --- |
 | Backend | `backend_spring_profiles_active` | `dev` | `staging` | `prod` |
-| Backend | `BROKER_ADAPTER` | `local-log` | `local-log` | `local-log` |
+| Backend | `BROKER_ADAPTER` | `local-log` | `local-log` | `local-log`; `rabbitmq` (AMQPS a Core, 5671) cuando esté la contraseña AMQP |
+| Backend | `CORE_RABBITMQ_CONSUMER_ENABLED` | `false` | por ensayo | `false`; `true` (suscripción a `q.rentas`) junto con `rabbitmq` |
 | Backend | `OUTBOX_DELAY_MS` | `5000` | `5000` | `5000` |
 | Backend | `RENTAS_SECURITY_DEV_MODE` | `true` | `true` | `false` |
 | Frontend | `VITE_USE_MOCKS` | `false` | `false` | `false` |
@@ -66,6 +67,7 @@ no contienen credenciales:
 | `TF_STATE_KEY` | `environments/dev/terraform.tfstate` | `environments/test/terraform.tfstate` | `environments/prod/terraform.tfstate` |
 | `BUDGET_ALERT_EMAIL` | no aplica | opcional | no aplica |
 | `TEST_BACKEND_SECRET_ARNS` | no aplica | mapa JSON de nombres de variables a ARN | no aplica |
+| `PROD_BACKEND_SECRET_ARNS` | no aplica | no aplica | mapa JSON de nombres de variables a ARN; debe incluir `CORE_RABBITMQ_PASSWORD` |
 
 Los workflows obtienen credenciales AWS temporales mediante OIDC; no crear access
 keys de AWS en GitHub. El environment `test` debe conservar reviewer obligatorio y
@@ -76,6 +78,14 @@ Este último debe coincidir con el secreto que ECS obtiene desde Secrets Manager
 `TEST_BACKEND_SECRET_ARNS` debe incluir las referencias activas de
 `RENTAS_DEMO_BOOTSTRAP_PASSWORD` y `CORE_MODULE_SECRET`. Guardar los ARN en la
 variable del environment. Los valores permanecen en Secrets Manager.
+`PROD_BACKEND_SECRET_ARNS` debe incluir `CORE_RABBITMQ_PASSWORD`, la contraseña
+AMQP del usuario `module_rentas` (vhost `core`) en el broker de Core. No es la
+credencial del dashboard `rentas@muni.uade.edu.ar`. Sin esa referencia,
+`cd-prod.yml` falla antes del plan. PROD arranca con `BROKER_ADAPTER=local-log`
+y el consumidor apagado; el secreto puede tener un valor provisorio mientras
+ninguno de los dos use AMQP. Con una contraseña incorrecta y AMQP encendido, el
+broker responde `ACCESS_REFUSED`, el consumidor aborta el arranque y el
+contenedor termina con código 1, por lo que ECS hace rollback.
 
 ## Alta y rotacion
 

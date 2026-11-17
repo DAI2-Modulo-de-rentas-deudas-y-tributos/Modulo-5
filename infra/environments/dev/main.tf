@@ -7,6 +7,7 @@ locals {
   environment        = "dev"
   name_prefix        = "${local.project_name}-${local.environment}"
   availability_zones = slice(data.aws_availability_zones.available.names, 0, 2)
+  domain_zone        = "modulo-rentas.com.ar"
 }
 
 module "network" {
@@ -17,6 +18,7 @@ module "network" {
   availability_zones    = local.availability_zones
   public_subnet_cidrs   = var.public_subnet_cidrs
   database_subnet_cidrs = var.database_subnet_cidrs
+  app_subnet_cidrs      = var.app_subnet_cidrs
 }
 
 module "security" {
@@ -26,6 +28,7 @@ module "security" {
   vpc_id                 = module.network.vpc_id
   backend_container_port = var.backend_container_port
   database_port          = var.database_port
+  alb_ingress_port       = 443
 }
 
 module "database" {
@@ -56,6 +59,11 @@ module "edge" {
   backend_container_port = var.backend_container_port
   health_check_path      = var.backend_health_check_path
   deletion_protection    = var.alb_deletion_protection
+  # CloudFront -> ALB por HTTPS con el certificado origin-dev que emite el bootstrap.
+  https_origin = {
+    domain = "origin-dev.${local.domain_zone}"
+    zone   = local.domain_zone
+  }
 }
 
 module "ecs" {
@@ -66,7 +74,7 @@ module "ecs" {
   ecr_images_to_keep        = var.ecr_images_to_keep
   enable_container_insights = var.enable_container_insights
   log_retention_days        = var.log_retention_days
-  subnet_ids                = module.network.public_subnet_ids
+  subnet_ids                = module.network.app_subnet_ids
   security_group_id         = module.security.backend_security_group_id
   target_group_arn          = module.edge.target_group_arn
   container_port            = var.backend_container_port

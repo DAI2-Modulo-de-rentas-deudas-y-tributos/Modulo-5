@@ -44,6 +44,7 @@ class M8SocialBenefitFlowTests {
     @Autowired DebtRepository debts;
     @Autowired TaxpayerRepository taxpayers;
     @Autowired EntityManager entityManager;
+    @Autowired com.fasterxml.jackson.databind.ObjectMapper json;
 
     @BeforeEach void authenticate(){as("rentas.qa","RENTAS",UUID.fromString("0796688a-12fc-46b2-b8fc-9003e22d7fd2"));}
     @AfterEach void clearIdentity(){SecurityContextHolder.clearContext();}
@@ -91,6 +92,42 @@ class M8SocialBenefitFlowTests {
         assertThat(history.findByExternalBenefitIdOrderBySourceUpdatedAtAsc(BENEFIT_ID.toString()))
             .extracting(x->x.outcome).contains("APPLIED","STALE","CONFLICT");
         assertThat(benefits.count()).isEqualTo(1);
+    }
+
+    @Test void nullDescriptionIsPreservedAndDoesNotApplyWithoutApprovedTaxRule() throws Exception {
+        TaxpayerReference taxpayer=taxpayer(true);TaxConcept concept=concept("M8-NULL-DESCRIPTION");configuration(concept);
+        var base=event(UUID.randomUUID(),"APPROVED",FIRST_UPDATE,LocalDate.of(2026,9,1),null,null,"TAX_EXEMPTION");
+        var payload=json.valueToTree(base);
+        ((com.fasterxml.jackson.databind.node.ObjectNode)payload.path("data")).putNull("description");
+        ConfirmedInboundEvents.M8SocialBenefitUpdatedEvent nullableEvent=json.treeToValue(payload,
+            ConfirmedInboundEvents.M8SocialBenefitUpdatedEvent.class);
+        var source=nullableEvent.data();
+
+        SocialBenefitReference received=consumer.consume(nullableEvent);
+
+        assertThat(received.taxpayerId).isEqualTo(taxpayer.id);
+        assertThat(received.resolutionStatus).isEqualTo("PENDING_TAX_RULE");
+        assertThat(received.benefitsPayload).contains("\"description\":null");
+        assertThat(history.findByExternalBenefitIdOrderBySourceUpdatedAtAsc(source.benefitId().toString()))
+            .singleElement().satisfies(entry->assertThat(entry.sourceEventId).isEqualTo(base.eventId()));
+        assertThat(preview(taxpayer,concept,"2026-09").discountAmount()).isZero();
+        assertThat(consumer.consume(nullableEvent).id).isEqualTo(received.id);
+        assertThat(history.findByExternalBenefitIdOrderBySourceUpdatedAtAsc(source.benefitId().toString())).hasSize(1);
+    }
+
+    @Test void nullDescriptionIsAllowedButBlankDescriptionRemainsInvalid(){
+        var base=event(UUID.randomUUID(),"APPROVED",FIRST_UPDATE,LocalDate.of(2026,9,1),null,null,"TAX_EXEMPTION");
+        var source=base.data();
+        var blankData=new ConfirmedInboundEvents.M8SocialBenefitData(source.benefitId(),source.citizenId(),
+            source.applicationId(),source.programId(),source.programEditionId(),source.programName(),
+            source.benefitTypeId(),source.type(),"  ",source.amount(),source.status(),source.reason(),
+            source.startDate(),source.endDate(),source.updatedAt());
+        var blankEvent=new ConfirmedInboundEvents.M8SocialBenefitUpdatedEvent(base.eventId(),base.eventType(),
+            base.eventVersion(),base.occurredAt(),base.sourceModule(),base.correlationId(),base.causationId(),blankData);
+
+        assertThatThrownBy(()->consumer.consume(blankEvent)).isInstanceOfSatisfying(BusinessException.class,
+            error->assertThat(error.code).isEqualTo("INVALID_EVENT"));
+        assertThat(benefits.findByExternalBenefitId(source.benefitId().toString())).isEmpty();
     }
 
     @Test void benefitWithoutCanonicalM1IdentityCannotDiscountEvenWithApprovedRule(){
@@ -192,6 +229,29 @@ class M8SocialBenefitFlowTests {
         assertThat(preview(taxpayer,concept,"2026-09").finalAmount()).isEqualByComparingTo("75.00");
         assertThat(preview(taxpayer,concept,"2026-10").finalAmount()).isEqualByComparingTo("75.00");
         assertThat(preview(taxpayer,concept,"2026-11").finalAmount()).isEqualByComparingTo("100.00");
+    }
+
+    @Test void benefitValidOnlyFromNovember15Through22DoesNotReduceNovemberLiquidation(){
+        TaxpayerReference taxpayer=taxpayer(true);TaxConcept concept=concept("M8-MID-NOVEMBER");configuration(concept);
+        approvedRule(concept,"100",LocalDate.of(2026,11,1),LocalDate.of(2026,11,30));
+        consumer.consume(event(UUID.randomUUID(),"APPROVED",OffsetDateTime.parse("2026-11-15T12:00:00-03:00"),LocalDate.of(2026,11,15),
+            LocalDate.of(2026,11,22),"Vigencia parcial de noviembre","TAX_EXEMPTION"));
+
+        assertThat(preview(taxpayer,concept,"2026-11").finalAmount()).isEqualByComparingTo("100.00");
+    }
+
+    @Test void approvedFullAblRuleAppliesOnlyForBenefitValidThroughNovember30(){
+        TaxpayerReference taxpayer=taxpayer(true);TaxConcept concept=concept("ABL");
+        configuration(concept);
+        SocialBenefitRule rule=approvedRule(concept,"100",LocalDate.of(2026,11,1),LocalDate.of(2026,11,30));
+        consumer.consume(event(UUID.randomUUID(),"APPROVED",OffsetDateTime.parse("2026-11-01T12:00:00-03:00"),LocalDate.of(2026,11,1),
+            LocalDate.of(2026,11,30),"Exención ABL aprobada","TAX_EXEMPTION"));
+
+        assertThat(rule.status).isEqualTo(SocialBenefitRuleStatus.APPROVED);
+        assertThat(rule.proposedBy).isEqualTo("rentas.qa");
+        assertThat(rule.approvedBy).isEqualTo("supervisor.qa");
+        assertThat(preview(taxpayer,concept,"2026-11").finalAmount()).isZero();
+        assertThat(preview(taxpayer,concept,"2026-12").finalAmount()).isEqualByComparingTo("100.00");
     }
 
     @Test void resubmittingSocialRuleReturns409AndKeepsPendingState(){

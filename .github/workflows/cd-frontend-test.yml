@@ -12,37 +12,24 @@ on:
         required: true
         type: string
 
+# id-token: write sólo en el job que asume el rol de AWS por OIDC.
 permissions:
   contents: read
-  id-token: write
 
 concurrency:
   group: frontend-test
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    name: promote-frontend-test
+  validate:
+    name: validate-promotion
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-    environment: test
-
+    timeout-minutes: 5
     env:
-      AWS_REGION: ${{ vars.AWS_REGION }}
-      AMPLIFY_APP_NAME: "modulo-5-rentas-test-frontend"
-      AMPLIFY_BRANCH: "test"
       REQUESTED_SOURCE_REF: ${{ inputs.source_ref }}
       APPLY_CONFIRMATION: ${{ inputs.confirmation }}
-
     steps:
-      - name: Checkout promoted source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          ref: ${{ inputs.source_ref }}
-
       - name: Validate promotion request
-        id: source
         shell: bash
         run: |
           set -euo pipefail
@@ -54,147 +41,15 @@ jobs:
             echo "source_ref must be a complete 40-character commit SHA."
             exit 1
           fi
-          test -f frontend/package.json
-          test -f frontend/package-lock.json
-          resolved_sha=$(git rev-parse HEAD)
-          if [[ "${resolved_sha,,}" != "${REQUESTED_SOURCE_REF,,}" ]]; then
-            echo "Checked out commit does not match source_ref."
-            exit 1
-          fi
-          echo "sha=${resolved_sha}" >> "${GITHUB_OUTPUT}"
 
-      - name: Configure temporary AWS credentials
-        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
-        with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
-          allowed-account-ids: "756663253996"
-          mask-aws-account-id: true
-          role-session-name: frontend-test-${{ github.run_id }}
-
-      - name: Resolve Amplify configuration
-        id: amplify
-        shell: bash
-        run: |
-          set -euo pipefail
-          : "${AWS_REGION:?Missing AWS_REGION in the test environment}"
-
-          app_id=$(aws amplify list-apps \
-            --query "apps[?name=='${AMPLIFY_APP_NAME}'].appId | [0]" \
-            --output text)
-
-          if [[ -z "${app_id}" || "${app_id}" == "None" ]]; then
-            echo "Amplify app ${AMPLIFY_APP_NAME} was not found."
-            exit 1
-          fi
-
-          environment_variables=$(aws amplify get-app \
-            --app-id "${app_id}" \
-            --query 'app.environmentVariables' \
-            --output json)
-
-          api_base_url=$(jq -r '.VITE_API_BASE_URL // empty' <<< "${environment_variables}")
-          auth_mode=$(jq -r '.VITE_AUTH_MODE // "mock"' <<< "${environment_variables}")
-          use_mocks=$(jq -r '.VITE_USE_MOCKS // "false"' <<< "${environment_variables}")
-
-          : "${api_base_url:?Amplify app does not expose VITE_API_BASE_URL}"
-          echo "app-id=${app_id}" >> "${GITHUB_OUTPUT}"
-          echo "api-base-url=${api_base_url}" >> "${GITHUB_OUTPUT}"
-          echo "auth-mode=${auth_mode}" >> "${GITHUB_OUTPUT}"
-          echo "use-mocks=${use_mocks}" >> "${GITHUB_OUTPUT}"
-
-      - name: Setup Node.js
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Build frontend artifact
-        working-directory: frontend
-        env:
-          VITE_API_BASE_URL: ${{ steps.amplify.outputs.api-base-url }}
-          VITE_AUTH_MODE: ${{ steps.amplify.outputs.auth-mode }}
-          VITE_USE_MOCKS: ${{ steps.amplify.outputs.use-mocks }}
-        run: |
-          npm ci --ignore-scripts
-          npm run build
-
-      - name: Package frontend artifact
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -d frontend/dist
-          pushd frontend/dist > /dev/null
-          zip -qr "${RUNNER_TEMP}/frontend-dist.zip" .
-          popd > /dev/null
-
-      - name: Deploy artifact to Amplify Hosting
-        id: deployment
-        shell: bash
-        env:
-          AMPLIFY_APP_ID: ${{ steps.amplify.outputs.app-id }}
-        run: |
-          set -euo pipefail
-
-          deployment=$(aws amplify create-deployment \
-            --app-id "${AMPLIFY_APP_ID}" \
-            --branch-name "${AMPLIFY_BRANCH}")
-
-          job_id=$(jq -r '.jobId' <<< "${deployment}")
-          upload_url=$(jq -r '.zipUploadUrl' <<< "${deployment}")
-
-          curl --fail --silent --show-error \
-            --request PUT \
-            --header "Content-Type: application/zip" \
-            --upload-file "${RUNNER_TEMP}/frontend-dist.zip" \
-            "${upload_url}"
-
-          aws amplify start-deployment \
-            --app-id "${AMPLIFY_APP_ID}" \
-            --branch-name "${AMPLIFY_BRANCH}" \
-            --job-id "${job_id}" \
-            > /dev/null
-
-          for attempt in {1..120}; do
-            status=$(aws amplify get-job \
-              --app-id "${AMPLIFY_APP_ID}" \
-              --branch-name "${AMPLIFY_BRANCH}" \
-              --job-id "${job_id}" \
-              --query 'job.summary.status' \
-              --output text)
-
-            case "${status}" in
-              SUCCEED)
-                echo "job-id=${job_id}" >> "${GITHUB_OUTPUT}"
-                exit 0
-                ;;
-              FAILED|CANCELLED)
-                echo "Amplify deployment ended with status ${status}."
-                exit 1
-                ;;
-            esac
-
-            sleep 10
-          done
-
-          echo "Amplify deployment timed out."
-          exit 1
-
-      - name: Publish deployment summary
-        shell: bash
-        env:
-          AMPLIFY_APP_ID: ${{ steps.amplify.outputs.app-id }}
-        run: |
-          default_domain=$(aws amplify get-app \
-            --app-id "${AMPLIFY_APP_ID}" \
-            --query 'app.defaultDomain' \
-            --output text)
-
-          {
-            echo "### Frontend TEST desplegado"
-            echo
-            echo "- URL: https://${AMPLIFY_BRANCH}.${default_domain}"
-            echo "- Job: \`${{ steps.deployment.outputs.job-id }}\`"
-            echo "- Source commit: \`${{ steps.source.outputs.sha }}\`"
-          } >> "${GITHUB_STEP_SUMMARY}"
+  deploy:
+    name: promote-frontend-test
+    permissions:
+      contents: read
+      id-token: write
+    needs: validate
+    uses: ./.github/workflows/cd-frontend.yml
+    with:
+      environment: test
+      amplify_branch: test
+      source_ref: ${{ inputs.source_ref }}

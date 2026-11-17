@@ -233,6 +233,7 @@ data "aws_iam_policy_document" "github_dev_runtime_infrastructure" {
       "amplify:GetBranch",
       "amplify:GetJob",
       "amplify:ListBranches",
+      "amplify:ListDomainAssociations",
       "amplify:ListJobs",
       "amplify:ListTagsForResource",
       "amplify:StartDeployment",

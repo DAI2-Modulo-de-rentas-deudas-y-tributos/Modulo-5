@@ -313,6 +313,8 @@ class PostgreSqlIntegrationTest {
     @Autowired IntegrationReprocessService integrationReprocess;
     @Autowired ConfirmedM7Consumer m7;
     @Autowired IntegrationEventLogRepository integrationLogs;
+    @Autowired ProcessedEventRepository processedEvents;
+    @Autowired TicketCaseRepository ticketCases;
     @Autowired ExternalObligationRepository externalObligations;
     @Autowired TaxpayerRepository taxpayers;
     @Autowired TaxConceptRepository concepts;
@@ -350,6 +352,66 @@ class PostgreSqlIntegrationTest {
     @Autowired ReconciliationService reconciliations;
     @Autowired LiquidationRunService bulkRuns;
     @Autowired ExemptionRequestRepository exemptionRequests;
+
+    @Test void httpReprocessCommitsFailedAttemptsAndDeadLettersOnTheFifthPostgresAttempt() throws Exception {
+        UUID eventId=UUID.randomUUID();OffsetDateTime now=OffsetDateTime.now();
+        IntegrationEventLog failed=new IntegrationEventLog();failed.eventId=eventId;failed.externalEventId=eventId.toString();failed.eventType="ticketUpdated";failed.sourceModule="M2";failed.direction=EventDirection.INBOUND;failed.status=IntegrationEventStatus.FAILED;failed.payload="""
+            {"eventId":"%s","eventType":"ticketUpdated","occurredAt":"%s","sourceModule":"M2","data":{"ticketId":9999}}
+            """.formatted(eventId,now);failed.retryCount=0;failed.errorMessage="Error anterior";failed.occurredAt=now;failed.receivedAt=now;integrationLogs.saveAndFlush(failed);
+        var supervisor=new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("reprocess-qa-"+UUID.randomUUID(),null),null,List.of(new SimpleGrantedAuthority("ROLE_SUPERVISOR")));
+        String path="/api/v1/integrations/events/"+eventId;
+        String etag=mvc.perform(get(path).with(authentication(supervisor)))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+            .andReturn().getResponse().getHeader("ETag");
+        String initialEtag=etag;
+        var rentas=new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("reprocess-rentas-"+UUID.randomUUID(),null),null,List.of(new SimpleGrantedAuthority("ROLE_RENTAS")));
+        String requestBody=json.writeValueAsString(new ApiDtos.ReprocessEventRequest("QA persistencia"));
+        assertThat(mvc.perform(post(path+"/reprocess").with(authentication(rentas)).header("If-Match",etag)
+            .header("Idempotency-Key","reprocess-forbidden-"+eventId).contentType(MediaType.APPLICATION_JSON).content(requestBody))
+            .andReturn().getResponse().getStatus()).isEqualTo(403);
+        assertThat(integrationLogs.findById(failed.id).orElseThrow().retryCount).isZero();
+        assertThat(mvc.perform(post(path+"/reprocess").with(authentication(supervisor)).header("If-Match","\"stale\"")
+            .header("Idempotency-Key","reprocess-stale-"+eventId).contentType(MediaType.APPLICATION_JSON).content(requestBody))
+            .andReturn().getResponse().getStatus()).isEqualTo(412);
+        assertThat(integrationLogs.findById(failed.id).orElseThrow().retryCount).isZero();
+        long outboxBefore=outbox.count();
+
+        for(int attempt=1;attempt<=5;attempt++){
+            MockHttpServletResponse response=mvc.perform(post(path+"/reprocess").with(authentication(supervisor))
+                    .header("If-Match",etag).header("Idempotency-Key","reprocess-"+eventId+"-"+attempt)
+                    .contentType(MediaType.APPLICATION_JSON).content(requestBody))
+                .andExpect(result -> assertThat(result.getResponse().getStatus()).as(result.getResponse().getContentAsString()).isEqualTo(200))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.retryCount").value(attempt))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.status").value(attempt==5?"DEAD_LETTER":"FAILED"))
+                .andReturn().getResponse();
+            etag=response.getHeader("ETag");
+            assertThat(etag).isNotBlank();
+            if(attempt==1){
+                MockHttpServletResponse replay=mvc.perform(post(path+"/reprocess").with(authentication(supervisor))
+                        .header("If-Match",initialEtag).header("Idempotency-Key","reprocess-"+eventId+"-1")
+                        .contentType(MediaType.APPLICATION_JSON).content(requestBody))
+                    .andReturn().getResponse();
+                assertThat(replay.getStatus()).isEqualTo(200);
+                assertThat(json.readTree(replay.getContentAsString()).path("retryCount").asInt()).isEqualTo(1);
+                assertThat(integrationLogs.findById(failed.id).orElseThrow().retryCount).isEqualTo(1);
+                MockHttpServletResponse conflict=mvc.perform(post(path+"/reprocess").with(authentication(supervisor))
+                        .header("If-Match",initialEtag).header("Idempotency-Key","reprocess-"+eventId+"-1")
+                        .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsBytes(new ApiDtos.ReprocessEventRequest("otra solicitud"))))
+                    .andReturn().getResponse();
+                assertThat(conflict.getStatus()).isEqualTo(409);
+                assertThat(integrationLogs.findById(failed.id).orElseThrow().retryCount).isEqualTo(1);
+            }
+        }
+
+        IntegrationEventLog persisted=integrationLogs.findFirstByExternalEventIdOrderByIdDesc(eventId.toString()).orElseThrow();
+        assertThat(persisted.retryCount).isEqualTo(5);
+        assertThat(persisted.lastRetryAt).isNotNull();
+        assertThat(persisted.errorMessage).contains("ticketUpdated requiere additionalInformation");
+        assertThat(processedEvents.existsByExternalEventId(eventId.toString())).isFalse();
+        assertThat(outbox.count()).isEqualTo(outboxBefore);
+        assertThat(jdbc.queryForObject("select count(*) from integration_event_log where external_event_id=?",Long.class,eventId.toString())).isEqualTo(1L);
+    }
 
     @Test void m1RegisteredCanonicalCitizenCreatesStableExemptionOutboxOnPostgreSql() throws Exception {
         UUID incomingEventId=UUID.randomUUID(),canonicalId=UUID.fromString("f398dbcb-a2b4-49af-a724-3529c6ddd0f6");
@@ -985,6 +1047,150 @@ class PostgreSqlIntegrationTest {
             .extracting(x->x.outcome).containsExactly("APPLIED","STALE","APPLIED");
     }
 
+    @Test void m8NullDescriptionPersistsOnPostgreSqlWithoutInventedText() throws Exception {
+        var base=m8Event(UUID.randomUUID(),UUID.randomUUID(),UUID.randomUUID(),UUID.randomUUID(),"APPROVED",
+            OffsetDateTime.parse("2026-10-01T12:00:00-03:00"));
+        var source=base.data();
+        var data=new ConfirmedInboundEvents.M8SocialBenefitData(source.benefitId(),source.citizenId(),
+            source.applicationId(),source.programId(),source.programEditionId(),source.programName(),
+            source.benefitTypeId(),source.type(),null,source.amount(),source.status(),source.reason(),
+            source.startDate(),source.endDate(),source.updatedAt());
+        var event=new ConfirmedInboundEvents.M8SocialBenefitUpdatedEvent(base.eventId(),base.eventType(),
+            base.eventVersion(),base.occurredAt(),base.sourceModule(),base.correlationId(),base.causationId(),data);
+
+        coreM8.consume(event);
+
+        SocialBenefitReference stored=socialBenefits.findByExternalBenefitId(source.benefitId().toString()).orElseThrow();
+        assertThat(json.readTree(stored.benefitsPayload).path("description").isNull()).isTrue();
+        assertThat(stored.resolutionStatus).isEqualTo("PENDING_CITIZEN");
+        assertThat(socialBenefitHistory.findByExternalBenefitIdOrderBySourceUpdatedAtAsc(source.benefitId().toString()))
+            .singleElement().satisfies(entry->assertThat(entry.sourceEventId).isEqualTo(base.eventId()));
+    }
+
+    @Test void exactM2RoutedEnvelopePersistsOnceAndKeepsExternalTraceabilityOnPostgreSql() throws Exception {
+        String payload=contractFixture("M2_ticketUpdated_ROUTED_REAL.json");
+        JsonNode envelope=json.readTree(payload),data=envelope.path("data"),routing=data.path("details").path("routing");
+        String eventId=envelope.path("eventId").asText(),ticketId=data.path("ticketId").asText();
+        String correlationId=envelope.path("correlationId").asText();
+        long ticketsBefore=ticketCases.count();
+
+        inbound.dispatch(payload);
+
+        TicketCase ticket=ticketCases.findByExternalTicketId(ticketId).orElseThrow();
+        assertThat(ticket.publicId).isEqualTo("TK-2026-000047");
+        assertThat(ticket.status).isEqualTo(TicketCaseStatus.OPEN);
+        assertThat(ticket.externalCitizenId).isEqualTo(data.path("citizenId").asText());
+        assertThat(ticket.correlationId).isEqualTo(correlationId);
+        assertThat(ticket.lastSourceEventId).isEqualTo(eventId);
+        assertThat(ticket.requestType).isEqualTo(routing.path("requestType").asText());
+        assertThat(ticket.category).isEqualTo(routing.path("category").asText());
+        assertThat(ticket.subcategory).isEqualTo(routing.path("subcategory").asText());
+        assertThat(ticket.description).isEqualTo(routing.path("description").asText());
+        assertThat(ticketCases.count()).isEqualTo(ticketsBefore+1);
+        assertThat(processedEvents.existsByExternalEventId(eventId)).isTrue();
+        assertThat(integrationLogs.findFirstByExternalEventIdOrderByIdDesc(eventId))
+            .get().extracting(x->x.status).isEqualTo(IntegrationEventStatus.PROCESSED);
+
+        inbound.dispatch(payload);
+
+        assertThat(ticketCases.findByExternalTicketId(ticketId).orElseThrow().id).isEqualTo(ticket.id);
+        assertThat(ticketCases.count()).isEqualTo(ticketsBefore+1);
+        assertThat(integrationLogs.findAll().stream().filter(x->eventId.equals(x.externalEventId))).hasSize(1);
+        assertThat(ticketCases.findByExternalTicketId(ticketId).orElseThrow().correlationId).isEqualTo(correlationId);
+    }
+
+    @Test void exactM7EnvelopeWithoutOffsetFailsDuringJacksonBindingBeforePersistence() throws Exception {
+        String payload=contractFixture("M7_infractionConfirmed_REAL_SIN_OFFSET.json");
+        JsonNode envelope=json.readTree(payload);
+        String eventId=envelope.path("eventId").asText(),infractionId=envelope.path("data").path("infractionId").asText();
+        long obligationsBefore=externalObligations.count(),debtsBefore=debts.count();
+
+        assertThatThrownBy(()->inbound.dispatch(payload))
+            .isInstanceOf(IllegalArgumentException.class).hasMessage("INVALID_CORE_EVENT_PAYLOAD")
+            .hasRootCauseInstanceOf(java.time.format.DateTimeParseException.class);
+
+        assertThat(externalObligations.count()).isEqualTo(obligationsBefore);
+        assertThat(debts.count()).isEqualTo(debtsBefore);
+        assertThat(processedEvents.existsByExternalEventId(eventId)).isFalse();
+        assertThat(integrationLogs.findFirstByExternalEventIdOrderByIdDesc(eventId)).isEmpty();
+        assertThat(externalObligations.findBySourceModuleAndExternalTypeAndExternalReferenceId(
+            "M7",ExternalObligationType.TRAFFIC_INFRACTION,infractionId)).isEmpty();
+    }
+
+    @Test void m7OffsetCorrectedCounterfactualOnlyProcessesWithLocalIdentityAndConcept() throws Exception {
+        String original=contractFixture("M7_infractionConfirmed_REAL_SIN_OFFSET.json");
+        UUID eventId=UUID.randomUUID(),infractionId=UUID.randomUUID();
+        String counterfactual=original
+            .replace("114ab437-f36a-4f26-a565-0a3b59b2b88b",eventId.toString())
+            .replace("cb63dbb5-054a-4a77-92b2-b5d5bd6c4483",infractionId.toString())
+            .replace("2026-11-15T14:14:29\"","2026-11-15T14:14:29Z\"");
+        assertThat(counterfactual).contains("2026-11-15T14:14:29Z")
+            .doesNotContain("114ab437-f36a-4f26-a565-0a3b59b2b88b","cb63dbb5-054a-4a77-92b2-b5d5bd6c4483");
+        TaxpayerReference taxpayer=taxpayers.findByTaxpayerTypeAndDni(TaxpayerType.CITIZEN,"30111222")
+            .orElseGet(()->{
+                TaxpayerReference created=new TaxpayerReference();created.taxpayerType=TaxpayerType.CITIZEN;
+                created.externalId="QA-M7-DNI-30111222";created.dni="30111222";created.displayName="M7 synthetic test citizen";
+                created.externalStatus=TaxpayerStatus.ACTIVE;created.createdAt=created.updatedAt=OffsetDateTime.now();
+                return taxpayers.saveAndFlush(created);
+            });
+        concept("TRAFFIC_INFRACTION",TaxConceptType.FINE,"M7");
+        long paymentsBefore=paymentRepository.count();
+        JsonNode envelope=json.readTree(counterfactual);String storedInfractionId=envelope.path("data").path("infractionId").asText();
+
+        inbound.dispatch(counterfactual);
+        inbound.dispatch(counterfactual);
+
+        ExternalObligation obligation=externalObligations.findBySourceModuleAndExternalTypeAndExternalReferenceId(
+            "M7",ExternalObligationType.TRAFFIC_INFRACTION,storedInfractionId).orElseThrow();
+        assertThat(obligation.status).isEqualTo(ExternalObligationStatus.PROCESSED);
+        assertThat(obligation.taxpayerId).isEqualTo(taxpayer.id);
+        assertThat(obligation.amount).isEqualByComparingTo("1000.00");
+        assertThat(debts.findAll().stream().filter(x->obligation.id.equals(x.externalObligationId))).hasSize(1);
+        assertThat(processedEvents.existsByExternalEventId(eventId.toString())).isTrue();
+        assertThat(paymentRepository.count()).isEqualTo(paymentsBefore);
+    }
+
+    @Test void exactM8NullDescriptionEnvelopePersistsWithoutApplyingBenefitOrDuplicatingHistory() throws Exception {
+        String payload=contractFixture("M8_socialBenefitUpdated_REAL_DESCRIPTION_NULL.json");
+        JsonNode envelope=json.readTree(payload),data=envelope.path("data");
+        UUID citizenId=UUID.fromString(data.path("citizenId").asText());
+        String eventId=envelope.path("eventId").asText(),benefitId=data.path("benefitId").asText();
+        assertThat(data.path("description").isNull()).isTrue();
+        assertThat(taxpayers.findByTaxpayerTypeAndCanonicalCitizenId(TaxpayerType.CITIZEN,citizenId)).isEmpty();
+        long benefitsBefore=socialBenefits.count(),debtsBefore=debts.count();
+
+        inbound.dispatch(payload);
+
+        SocialBenefitReference benefit=socialBenefits.findByExternalBenefitId(benefitId).orElseThrow();
+        assertThat(UUID.fromString(benefit.externalCitizenId)).isEqualTo(citizenId);
+        assertThat(benefit.externalStatus).isEqualTo("APPROVED");
+        assertThat(benefit.validFrom).isEqualTo(LocalDate.of(2026,11,15));
+        assertThat(benefit.validUntil).isEqualTo(LocalDate.of(2026,11,22));
+        assertThat(benefit.taxpayerId).isNull();
+        assertThat(benefit.resolutionStatus).isEqualTo("PENDING_CITIZEN");
+        assertThat(benefit.benefitsPayload).contains("\"description\":null");
+        assertThat(benefit.lastCorrelationId).isEqualTo(UUID.fromString(envelope.path("correlationId").asText()));
+        assertThat(processedEvents.existsByExternalEventId(eventId)).isTrue();
+        assertThat(integrationLogs.findFirstByExternalEventIdOrderByIdDesc(eventId))
+            .get().extracting(x->x.status).isEqualTo(IntegrationEventStatus.PROCESSED);
+        assertThat(socialBenefitHistory.findByExternalBenefitIdOrderBySourceUpdatedAtAsc(benefitId))
+            .singleElement().satisfies(entry->assertThat(entry.sourceEventId.toString()).isEqualTo(eventId));
+
+        inbound.dispatch(payload);
+
+        assertThat(socialBenefits.count()).isEqualTo(benefitsBefore+1);
+        assertThat(debts.count()).isEqualTo(debtsBefore);
+        assertThat(socialBenefitHistory.findByExternalBenefitIdOrderBySourceUpdatedAtAsc(benefitId)).hasSize(1);
+        assertThat(integrationLogs.findAll().stream().filter(x->eventId.equals(x.externalEventId))).hasSize(1);
+    }
+
+    private String contractFixture(String name) throws Exception {
+        try(var input=getClass().getResourceAsStream("/contracts/inbound/"+name)){
+            if(input==null)throw new IllegalArgumentException("Missing test contract fixture: "+name);
+            return new String(input.readAllBytes(),java.nio.charset.StandardCharsets.UTF_8);
+        }
+    }
+
     private ConfirmedInboundEvents.M8SocialBenefitUpdatedEvent m8Event(UUID benefitId,UUID citizenId,
             UUID applicationId,UUID programId,String status,OffsetDateTime updatedAt){
         var data=new ConfirmedInboundEvents.M8SocialBenefitData(benefitId,citizenId,applicationId,programId,
@@ -1373,6 +1579,64 @@ class PostgreSqlIntegrationTest {
         assertThat(debts.findByTaxpayerId(citizen.id).stream().filter(x->x.externalObligationId!=null&&x.externalObligationId.equals(externalObligations.findBySourceModuleAndExternalTypeAndExternalReferenceId("M7",ExternalObligationType.TRAFFIC_INFRACTION,concurrentId.toString()).orElseThrow().id))).hasSize(1);
     }
 
+    @Test void coreManagedListenerAcknowledgesDurableM7ReconciliationErrorAfterPostgresCommit() throws Exception {
+        concept("TRAFFIC_INFRACTION",TaxConceptType.FINE,"M7");
+        String dni=uniqueDigits(8);
+        assertThat(taxpayers.findByTaxpayerTypeAndDni(TaxpayerType.CITIZEN,dni)).isEmpty();
+        UUID eventId=UUID.randomUUID(),infractionId=UUID.randomUUID();
+        var event=m7Event(eventId,"transito",m7Data(infractionId,dni,ConfirmedInboundEvents.M7DebtorIdType.DNI,new BigDecimal("1000")));
+        String payload=json.writeValueAsString(event);
+        CoreRabbitMqConsumer listener=new CoreRabbitMqConsumer(inbound,org.mockito.Mockito.mock(org.springframework.amqp.rabbit.core.RabbitTemplate.class),
+            "core-managed","rentas.retry","q.rentas.retry.1","q.rentas.retry.2","q.rentas.retry.3",1000);
+        com.rabbitmq.client.Channel channel=org.mockito.Mockito.mock(com.rabbitmq.client.Channel.class);
+
+        listener.receive(new org.springframework.amqp.core.Message(payload.getBytes(java.nio.charset.StandardCharsets.UTF_8),new org.springframework.amqp.core.MessageProperties()),channel,901);
+
+        org.mockito.Mockito.verify(channel).basicAck(901,false);
+        ExternalObligation obligation=externalObligations.findBySourceModuleAndExternalTypeAndExternalReferenceId(
+            "M7",ExternalObligationType.TRAFFIC_INFRACTION,infractionId.toString()).orElseThrow();
+        assertThat(obligation.status).isEqualTo(ExternalObligationStatus.ERROR);
+        assertThat(obligation.errorMessage).contains("TAXPAYER_REFERENCE_NOT_FOUND");
+        assertThat(debts.existsByExternalObligationId(obligation.id)).isFalse();
+        assertThat(integrationLogs.findFirstByExternalEventIdOrderByIdDesc(eventId.toString()).orElseThrow().status)
+            .isEqualTo(IntegrationEventStatus.FAILED);
+        assertThat(processedEvents.existsByExternalEventId(eventId.toString())).isFalse();
+    }
+
+    @Test void coreManagedM4UnsupportedCurrencyLogsPersistedCodeWithoutPayloadOrStackTrace() throws Exception {
+        UUID eventId=UUID.randomUUID();
+        String cuit=uniqueDigits(11);
+        var event=new CoreM4Events.Envelope<>(eventId,"permitFeeGenerated","1.0",OffsetDateTime.now(),"habilitaciones",
+            UUID.randomUUID(),null,new CoreM4Events.PermitFeeGeneratedData(UUID.randomUUID().toString(),UUID.randomUUID().toString(),
+                UUID.randomUUID().toString(),cuit,BigDecimal.TEN,"USD"));
+        String payload=json.writeValueAsString(event);
+        long debtsBefore=debts.count(),obligationsBefore=externalObligations.count();
+        CoreRabbitMqConsumer listener=new CoreRabbitMqConsumer(inbound,
+            org.mockito.Mockito.mock(org.springframework.amqp.rabbit.core.RabbitTemplate.class),"core-managed",
+            "rentas.retry","q.rentas.retry.1","q.rentas.retry.2","q.rentas.retry.3",1000);
+        com.rabbitmq.client.Channel channel=org.mockito.Mockito.mock(com.rabbitmq.client.Channel.class);
+        ch.qos.logback.classic.Logger logger=(ch.qos.logback.classic.Logger)org.slf4j.LoggerFactory.getLogger(CoreRabbitMqConsumer.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> logs=new ch.qos.logback.core.read.ListAppender<>();
+        logs.start();logger.addAppender(logs);
+        try {
+            listener.receive(new org.springframework.amqp.core.Message(payload.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                new org.springframework.amqp.core.MessageProperties()),channel,902);
+
+            org.mockito.Mockito.verify(channel).basicNack(902,false,false);
+            IntegrationEventLog failed=integrationLogs.findFirstByExternalEventIdOrderByIdDesc(eventId.toString()).orElseThrow();
+            assertThat(failed.status).isEqualTo(IntegrationEventStatus.FAILED);
+            assertThat(failed.errorMessage).isEqualTo("M4_UNSUPPORTED_CURRENCY");
+            assertThat(debts.count()).isEqualTo(debtsBefore);
+            assertThat(externalObligations.count()).isEqualTo(obligationsBefore);
+            assertThat(logs.list).singleElement().satisfies(log->{
+                assertThat(log.getFormattedMessage()).contains("eventId="+eventId,"reason=M4_UNSUPPORTED_CURRENCY")
+                    .doesNotContain(cuit,"USD",payload);
+                assertThat(log.getThrowableProxy()).isNull();
+                assertThat(log.getTimeStamp()).isPositive();
+            });
+        } finally {logger.detachAppender(logs);}
+    }
+
     @Test void paymentsOverpaymentsCreditAndLocksRunOnPostgreSql() throws Exception {
         authenticate();Debt total=debt("PG-TOTAL",null),partial=debt("PG-PARTIAL",null),over=debt("PG-OVER",null);
         Payment totalPayment=payments.register(new ApiDtos.RegisterPaymentRequest(total.taxpayerId,PaymentMethod.CASH,new BigDecimal("100"),List.of(new ApiDtos.AllocationRequest(total.id,new BigDecimal("100")))));
@@ -1639,6 +1903,86 @@ class PostgreSqlIntegrationTest {
             event.status=status;outbox.save(event);dueDates.process(processingDate.plusDays(status.ordinal()));
             assertThat(overdueEvents(eligible)).hasSize(1);
         }
+    }
+
+    @Test void debtOverdueSnapshotRemainsPreChargeAndReprocessingDoesNotDuplicateOutboxOrCharge() throws Exception {
+        authenticate();
+        TaxpayerReference citizen=taxpayer(TaxpayerType.CITIZEN,"PG-OVERDUE-SNAPSHOT-"+UUID.randomUUID(),uniqueDigits(8),null);
+        citizen.canonicalCitizenId=UUID.randomUUID();taxpayers.save(citizen);
+        Debt debt=debt("OVERDUE-SNAPSHOT-"+UUID.randomUUID(),citizen.id);
+        LocalDate processingDate=fiscalDates.today().minusDays(1);
+        debt.originalAmount=debt.currentAmount=debt.outstandingBalance=new BigDecimal("19800.00");
+        debt.dueDate=processingDate.minusDays(30);debts.saveAndFlush(debt);
+
+        LateChargeRule rule=new LateChargeRule();rule.code="PG-OVERDUE-SNAPSHOT-"+UUID.randomUUID();
+        rule.surchargeRate=new BigDecimal("10.00");rule.dailyInterestRate=new BigDecimal("0.0399");
+        rule.active=true;rule.validFrom=processingDate.minusDays(1);rule.validUntil=processingDate;lateChargeRules.saveAndFlush(rule);
+
+        AtomicReference<String> initialPayload=new AtomicReference<>(),replayedPayload=new AtomicReference<>();
+        new TransactionTemplate(transactionManager).executeWithoutResult(status->{
+            confirmedOutbox.overdueDebt(debts.findByIdForUpdate(debt.id).orElseThrow(),processingDate);
+            List<OutboxEvent> events=overdueEvents(debt);
+            assertThat(events).hasSize(1);
+            OutboxEvent event=events.get(0);
+            initialPayload.set(event.payload);
+
+            var applied=lateCharges.apply(debt.id,processingDate);
+            assertThat(applied.applied()).isTrue();
+            assertThat(applied.updatedTotal()).isEqualByComparingTo("22017.01");
+            assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("22017.01");
+        });
+
+        new TransactionTemplate(transactionManager).executeWithoutResult(status->{
+            assertThat(lateCharges.apply(debt.id,processingDate).applied()).isFalse();
+            confirmedOutbox.overdueDebt(debts.findByIdForUpdate(debt.id).orElseThrow(),processingDate);
+            assertThat(overdueEvents(debt)).hasSize(1);
+            replayedPayload.set(overdueEvents(debt).get(0).payload);
+        });
+
+        JsonNode envelope=json.readTree(initialPayload.get()),data=envelope.path("data");
+        assertThat(envelope.path("eventType").asText()).isEqualTo("debtOverdue");
+        assertThat(envelope.path("eventVersion").asText()).isEqualTo("1.0");
+        assertThat(data.path("citizenId").asText()).isEqualTo(citizen.canonicalCitizenId.toString());
+        assertThat(data.path("outstandingAmount").decimalValue()).isEqualByComparingTo("19800.00");
+        assertThat(replayedPayload.get()).isEqualTo(initialPayload.get());
+        assertThat(jdbc.queryForObject("select count(*) from late_charge_application where debt_id=?",Integer.class,debt.id)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count(*) from adjustment_request where debt_id=?",Integer.class,debt.id)).isEqualTo(2);
+        assertThat(overdueEvents(debt)).hasSize(1);
+    }
+
+    @Test void dueDateProcessorPublishesPreChargeSnapshotBeforeApplyingLateCharges() throws Exception {
+        authenticate();
+        TaxpayerReference citizen=taxpayer(TaxpayerType.CITIZEN,"PG-DUE-SNAPSHOT-"+UUID.randomUUID(),uniqueDigits(8),null);
+        citizen.canonicalCitizenId=UUID.randomUUID();taxpayers.save(citizen);
+        Debt debt=debt("DUE-SNAPSHOT-"+UUID.randomUUID(),citizen.id);
+        LocalDate processingDate=fiscalDates.today().minusDays(1);
+        while(dueDateRuns.findByProcessingDate(processingDate).isPresent())processingDate=processingDate.minusDays(1);
+        debt.originalAmount=debt.currentAmount=debt.outstandingBalance=new BigDecimal("19800.00");
+        debt.dueDate=processingDate.minusDays(30);debt.status=DebtStatus.PENDING;debts.saveAndFlush(debt);
+
+        LateChargeRule rule=new LateChargeRule();rule.code="PG-DUE-SNAPSHOT-"+UUID.randomUUID();
+        rule.surchargeRate=new BigDecimal("10.00");rule.dailyInterestRate=new BigDecimal("0.0399");
+        rule.active=true;rule.validFrom=processingDate.minusDays(1);rule.validUntil=processingDate;lateChargeRules.saveAndFlush(rule);
+
+        DueDateProcessing run=new DueDateProcessing();run.processingDate=processingDate;run.status=DueDateRunStatus.PROCESSING;
+        run.processingStage=DueDateProcessingStage.DEBTS;run.attemptCount=1;run.lastProcessedId=debt.id-1;
+        run.requestedAt=run.startedAt=OffsetDateTime.now();run.processedBy="postgres-it";run=dueDateRuns.saveAndFlush(run);
+
+        assertThat(dueDateProcessor.processNextBatch(run.id,run.attemptCount)).isFalse();
+        JsonNode envelope=json.readTree(overdueEvents(debt).get(0).payload);
+        assertThat(envelope.path("eventType").asText()).isEqualTo("debtOverdue");
+        assertThat(envelope.path("eventVersion").asText()).isEqualTo("1.0");
+        assertThat(envelope.path("data").path("citizenId").asText()).isEqualTo(citizen.canonicalCitizenId.toString());
+        assertThat(envelope.path("data").path("outstandingAmount").decimalValue()).isEqualByComparingTo("19800.00");
+        assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("22017.01");
+        assertThat(jdbc.queryForObject("select count(*) from late_charge_application where debt_id=? and calculation_date=?",Integer.class,debt.id,processingDate)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count(*) from adjustment_request where debt_id=?",Integer.class,debt.id)).isEqualTo(2);
+
+        assertThat(dueDateProcessor.processNextBatch(run.id,run.attemptCount)).isFalse();
+        assertThat(overdueEvents(debt)).hasSize(1);
+        assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("22017.01");
+        assertThat(jdbc.queryForObject("select count(*) from late_charge_application where debt_id=? and calculation_date=?",Integer.class,debt.id,processingDate)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count(*) from adjustment_request where debt_id=?",Integer.class,debt.id)).isEqualTo(2);
     }
 
     @Test void dueDateProcessingHandlesMoreRowsThanOneBatch() {

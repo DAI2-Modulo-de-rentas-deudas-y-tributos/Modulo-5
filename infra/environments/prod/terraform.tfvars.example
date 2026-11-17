@@ -5,6 +5,7 @@ aws_account_id = "756663253996"
 vpc_cidr             = "10.70.0.0/16"
 public_subnet_cidrs   = ["10.70.0.0/24", "10.70.1.0/24"]
 database_subnet_cidrs = ["10.70.10.0/24", "10.70.11.0/24"]
+app_subnet_cidrs      = ["10.70.20.0/24", "10.70.21.0/24"]
 
 ecr_images_to_keep        = 20
 enable_container_insights = false
@@ -17,14 +18,24 @@ backend_task_memory       = 512
 backend_spring_profiles_active = "prod"
 
 backend_environment_variables = {
-  BROKER_ADAPTER           = "local-log"
-  OUTBOX_DELAY_MS          = "5000"
-  RENTAS_SECURITY_DEV_MODE = "false"
+  BROKER_ADAPTER                 = "local-log"
+  CORE_RABBITMQ_HOST             = "core-uade-2026.duckdns.org"
+  CORE_RABBITMQ_PORT             = "5671"
+  SPRING_RABBITMQ_SSL_ENABLED    = "true"
+  CORE_RABBITMQ_USERNAME         = "module_rentas"
+  CORE_RABBITMQ_VHOST            = "core"
+  CORE_RABBITMQ_QUEUE            = "q.rentas"
+  CORE_RABBITMQ_RETRY_MODE       = "core-managed"
+  CORE_RABBITMQ_CONSUMER_ENABLED = "false"
+  OUTBOX_DELAY_MS                = "5000"
+  RENTAS_SECURITY_DEV_MODE       = "false"
 }
 
 # Los valores son ARNs de Secrets Manager, nunca secretos en texto plano.
 # El perfil prod rechaza secretos RENTAS_DEMO_*.
-backend_secret_variables = {}
+backend_secret_variables = {
+  CORE_RABBITMQ_PASSWORD = "arn:aws:secretsmanager:us-east-2:000000000000:secret:modulo-5-rentas-prod-core-rabbitmq-password"
+}
 
 frontend_environment_variables = {
   VITE_AUTH_MODE = "core"

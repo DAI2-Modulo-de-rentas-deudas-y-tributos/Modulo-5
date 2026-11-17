@@ -100,7 +100,13 @@ export function AuthProvider({ children }) {
     setUser(null);
     setInitializing(false);
     setSessionNotice(null);
-    if (token) await authService.logout(token);
+    if (token) {
+      try {
+        await authService.logout(token);
+      } catch {
+        setSessionNotice("Cerraste la sesión en este dispositivo, pero no se pudo confirmar la revocación en el servidor.");
+      }
+    }
   }, []);
 
   const value = useMemo(

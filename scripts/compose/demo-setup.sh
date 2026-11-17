@@ -98,12 +98,19 @@ $(sql "SELECT to_char(now() - interval '2 months', 'YYYY-MM'),
 EOF
 
 # Conceptos de M4 (Habilitaciones): sin ellos sus tasas y multas quedan pendientes al consumirse.
-ensure_concept() { # código nombre tipo
-  [ -n "$(concept "$1")" ] \
-    || api "$RENTAS_TOKEN" tax-concepts "{\"code\":\"$1\",\"name\":\"$2\",\"type\":\"$3\",\"originModule\":\"M4\"}" > /dev/null
+ensure_concept() { # código nombre tipo [módulo de origen]
+  concept_origin=${4:-M4}
+  current=$(sql "SELECT type || '|' || origin_module FROM tax_concept WHERE code = '$1'")
+  expected="$3|$concept_origin"
+  if [ -z "$current" ]; then
+    api "$RENTAS_TOKEN" tax-concepts "{\"code\":\"$1\",\"name\":\"$2\",\"type\":\"$3\",\"originModule\":\"$concept_origin\"}" > /dev/null
+  elif [ "$current" != "$expected" ]; then
+    fail "el concepto '$1' ya existe con tipo u origen distinto; no se modificó automáticamente."
+  fi
 }
 ensure_concept PERMIT_FEE "Tasa de habilitación comercial" FEE
 ensure_concept COMMERCIAL_FINE "Multa comercial" FINE
+ensure_concept TRAFFIC_INFRACTION "Multa de tránsito" FINE M7
 
 ensure_configuration ABL '"calculationType":"PERCENTAGE","rate":0.15,"minimumAmount":5000'
 ensure_configuration TASA_SERVICIOS '"calculationType":"FIXED","fixedAmount":12000'

@@ -167,7 +167,7 @@ Docker Compose lee `.env` automáticamente. Una ejecución directa mediante Mave
 | `RENTAS_SECURITY_DEV_MODE` | Habilita identidad y endpoints DEMO/DEV. | No; default `false`. Prohibido en producción. |
 | `RENTAS_DEMO_BOOTSTRAP_PASSWORD` | Secreto de `POST /api/v1/dev-auth/bootstrap` para el primer SUPERVISOR. | No; sin default. Secreto local/CI efímero. |
 | `RENTAS_DEMO_SESSION_TTL` | TTL de las sesiones DEMO persistidas. | No; default `PT8H`. |
-| `RENTAS_M4_DUEDAYS_PERMITFEE` / `RENTAS_M4_DUEDAYS_COMMERCIALFINE` | Plazo M5, en días, para las tasas y multas que llegan de M4. Sin él, esos eventos quedan `FAILED` con `M4_DUE_DATE_POLICY_PENDING`. | No; Compose usa 14 y 7. |
+| `RENTAS_M4_DUE_DAYS_PERMIT_FEE` / `RENTAS_M4_DUE_DAYS_COMMERCIAL_FINE` | Plazo M5, en días, para las tasas y multas que llegan de M4. Sin él, esos eventos quedan `FAILED` con `M4_DUE_DATE_POLICY_PENDING`. | No; Compose usa 14 y 7. |
 
 Las variables de descarga del Maven Wrapper (`MVNW_REPOURL`, `MVNW_USERNAME`, `MVNW_PASSWORD`, `MAVEN_USER_HOME` y `MVNW_VERBOSE`) son opcionales y pertenecen a la herramienta de build, no a la configuración de ejecución de M5. `MVNW_PASSWORD`, si se usa con un repositorio Maven privado, debe configurarse como secreto de CI o del entorno local.
 
@@ -196,7 +196,7 @@ Los listados generales aceptan paginación y orden estándar:
 ?page=0&size=20&sort=createdAt,desc
 ```
 
-Cada recurso tiene una whitelist de filtros en `FilteredQueryService`. También se soportan `from`, `to` y `q` cuando corresponden. Un filtro u orden desconocido responde 400 con `INVALID_FILTER` o `INVALID_SORT`.
+`size` admite como máximo 100 registros por página, el tamaño que ya piden los clientes del proyecto. Cada recurso tiene una whitelist de filtros en `FilteredQueryService`, que arma las consultas con Criteria API parametrizada. También se soportan `from`, `to` y `q` cuando corresponden. Un filtro u orden desconocido responde 400 con `INVALID_FILTER` o `INVALID_SORT`.
 
 Las respuestas REST usan DTO explícitos; no serializan entidades JPA. Las páginas tienen forma estable con `content` y metadatos bajo `page`.
 
@@ -290,8 +290,6 @@ M5 no consulta bases de M1, M2, M4, M7 ni M8: conserva referencias locales y se 
 ## Documentación local
 
 - `BACKEND_COMPLETENESS.md`: matriz endpoint por endpoint y reporte OpenAPI.
-- `GUIA_APRENDIZAJE.md`: explicación progresiva del backend.
-- `GUIA_FINAL_HARDENING.md`: explicación específica de esta etapa de cierre.
 - `INTEGRATION_CONTRACTS.md`: contratos recibidos de M1/M2/M4/M7/M8, estado de implementación local y pendientes de interoperabilidad con Core/Broker. `../docs/integrations/M5_ESTADO_LOCAL_2026-10-30.md` resume la situación actual y las migraciones aún no autorizadas.
 
 ## Problemas frecuentes

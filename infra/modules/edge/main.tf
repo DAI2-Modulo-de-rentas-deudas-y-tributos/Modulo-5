@@ -68,48 +68,22 @@ resource "aws_lb_target_group" "backend" {
   }
 }
 
-resource "aws_lb_listener" "http" {
-  count = var.https_origin == null ? 1 : 0
-
-  load_balancer_arn = aws_lb.api.arn
-  port              = 80
-  protocol          = "HTTP"
-
-  default_action {
-    type = "fixed-response"
-
-    fixed_response {
-      content_type = "text/plain"
-      message_body = "Forbidden"
-      status_code  = "403"
-    }
-  }
-}
-
-moved {
-  from = aws_lb_listener.http
-  to   = aws_lb_listener.http[0]
-}
-
 data "aws_route53_zone" "origin" {
-  count = var.https_origin == null ? 0 : 1
-  name  = var.https_origin.zone
+  name = var.https_origin.zone
 }
 
 data "aws_acm_certificate" "origin" {
-  count    = var.https_origin == null ? 0 : 1
   domain   = var.https_origin.domain
   statuses = ["ISSUED"]
 }
 
+# CloudFront llega al ALB sólo por HTTPS: el header X-Origin-Verify nunca viaja en texto plano.
 resource "aws_lb_listener" "https" {
-  count = var.https_origin == null ? 0 : 1
-
   load_balancer_arn = aws_lb.api.arn
   port              = 443
   protocol          = "HTTPS"
   ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
-  certificate_arn   = data.aws_acm_certificate.origin[0].arn
+  certificate_arn   = data.aws_acm_certificate.origin.arn
 
   default_action {
     type = "fixed-response"
@@ -121,14 +95,15 @@ resource "aws_lb_listener" "https" {
   }
 }
 
+# El listener y el registro tenían count mientras existía el origen HTTP. El estado de TEST
+# (y el de PROD una vez aplicado el PR #173) los guarda como [0]: así no se recrean.
 moved {
-  from = aws_lb_listener.https
-  to   = aws_lb_listener.https[0]
+  from = aws_lb_listener.https[0]
+  to   = aws_lb_listener.https
 }
 
 resource "aws_route53_record" "origin" {
-  count   = var.https_origin == null ? 0 : 1
-  zone_id = data.aws_route53_zone.origin[0].zone_id
+  zone_id = data.aws_route53_zone.origin.zone_id
   name    = var.https_origin.domain
   type    = "A"
 
@@ -140,12 +115,12 @@ resource "aws_route53_record" "origin" {
 }
 
 moved {
-  from = aws_route53_record.origin
-  to   = aws_route53_record.origin[0]
+  from = aws_route53_record.origin[0]
+  to   = aws_route53_record.origin
 }
 
 resource "aws_lb_listener_rule" "from_cloudfront" {
-  listener_arn = var.https_origin == null ? aws_lb_listener.http[0].arn : aws_lb_listener.https[0].arn
+  listener_arn = aws_lb_listener.https.arn
   priority     = 1
 
   action {
@@ -179,13 +154,13 @@ resource "aws_cloudfront_distribution" "api" {
   }
 
   origin {
-    domain_name = var.https_origin == null ? aws_lb.api.dns_name : aws_route53_record.origin[0].fqdn
+    domain_name = aws_route53_record.origin.fqdn
     origin_id   = "${var.name_prefix}-alb"
 
     custom_origin_config {
       http_port              = 80
       https_port             = 443
-      origin_protocol_policy = var.https_origin == null ? "http-only" : "https-only"
+      origin_protocol_policy = "https-only"
       origin_ssl_protocols   = ["TLSv1.2"]
     }
 

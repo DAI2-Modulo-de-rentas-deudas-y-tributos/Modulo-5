@@ -1,10 +1,12 @@
 package ar.gob.municipalidad.rentas;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -12,6 +14,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.*;
@@ -53,6 +56,13 @@ class M7ContractTests {
     @Autowired ProcessedEventRepository processed;@Autowired IntegrationEventLogRepository logs;@Autowired IntegrationReprocessService reprocess;
     @Autowired PlatformTransactionManager transactionManager;
 
+    @Test void infractionTimestampWithoutOffsetFailsDuringJacksonBinding() {
+        String offsetless=DOCUMENTED_EVENT.replace("2026-08-24T13:45:00-03:00","2026-08-24T13:45:00");
+        assertThatThrownBy(()->read(offsetless))
+            .isInstanceOf(JsonProcessingException.class)
+            .hasRootCauseInstanceOf(DateTimeParseException.class);
+    }
+
     @Test void documentedPayloadUsesFinalAmountAndCreatesOneEconomicEffect() throws Exception {
         long before=obligations.count();TaxpayerReference taxpayer=citizen("40123456");concept();var event=read(DOCUMENTED_EVENT);
         ExternalObligation first=m7.consume(event);ExternalObligation sameEvent=m7.consume(event);
@@ -69,6 +79,43 @@ class M7ContractTests {
         assertThat(obligations.count()).isEqualTo(before+1);assertThat(processed.existsByExternalEventId(event.eventId().toString())).isTrue();
         IntegrationEventLog log=logs.findFirstByExternalEventIdOrderByIdDesc(event.eventId().toString()).orElseThrow();
         assertThat(log.sourceModule).isEqualTo("M7");assertThat(log.payload).contains("\"sourceModule\":\"transito\"","\"baseAmount\":50000","\"aggravatingFactors\"");
+    }
+
+    @Test void partialLocationWithNullOptionalFieldsCreatesOnlyOneObligationAndDebt() throws Exception {
+        long obligationsBefore=obligations.count();TaxpayerReference taxpayer=citizen("40123456");concept();
+        String partialLocation=DOCUMENTED_EVENT.replace("\"crossStreet\": \"Juramento\"","\"crossStreet\": null")
+            .replace("\"latitude\": -34.5621","\"latitude\": null")
+            .replace("\"longitude\": -58.4563","\"longitude\": null");
+        var event=read(partialLocation);
+        ExternalObligation first=m7.consume(event);ExternalObligation duplicate=m7.consume(event);
+        var replay=new ConfirmedInboundEvents.M7InfractionConfirmedEvent(UUID.randomUUID(),event.eventType(),
+            event.eventVersion(),event.occurredAt(),event.sourceModule(),event.correlationId(),event.causationId(),event.data());
+        ExternalObligation sameInfraction=m7.consume(replay);
+
+        assertThat(event.data().location().street()).isEqualTo("Av. Cabildo");
+        assertThat(event.data().location().crossStreet()).isNull();
+        assertThat(event.data().location().latitude()).isNull();assertThat(event.data().location().longitude()).isNull();
+        assertThat(event.eventVersion()).isEqualTo("1.0");assertThat(event.sourceModule()).isEqualTo("transito");
+        assertThat(event.correlationId()).isEqualTo(UUID.fromString("78cff4cc-3cd0-4f3f-b0f7-78ec2b15cf0b"));
+        assertThat(first.id).isEqualTo(duplicate.id).isEqualTo(sameInfraction.id);
+        assertThat(obligations.count()).isEqualTo(obligationsBefore+1);
+        assertThat(debts.findByTaxpayerId(taxpayer.id)).singleElement()
+            .satisfies(debt->assertThat(debt.externalObligationId).isEqualTo(first.id));
+        assertThat(processed.existsByExternalEventId(event.eventId().toString())).isTrue();
+    }
+
+    @Test void blankRequiredLocationStreetIsRejectedWithoutEconomicWrites() throws Exception {
+        long obligationsBefore=obligations.count(),debtsBefore=debts.count(),logsBefore=logs.count();
+        citizen("40123456");concept();
+        String blankStreet=DOCUMENTED_EVENT.replace("\"street\": \"Av. Cabildo\"","\"street\": \"  \"")
+            .replace("\"crossStreet\": \"Juramento\"","\"crossStreet\": null")
+            .replace("\"latitude\": -34.5621","\"latitude\": null")
+            .replace("\"longitude\": -58.4563","\"longitude\": null");
+        var event=read(blankStreet);
+
+        assertThatThrownBy(()->m7.consume(event)).isInstanceOf(BusinessException.class).hasMessageContaining("street");
+        assertThat(obligations.count()).isEqualTo(obligationsBefore);
+        assertThat(debts.count()).isEqualTo(debtsBefore);assertThat(logs.count()).isEqualTo(logsBefore);
     }
 
     @Test void onlyExactDocumentedSourceIsAcceptedWithoutPartialWrites() throws Exception {
@@ -103,11 +150,11 @@ class M7ContractTests {
         ExternalObligation result=m7.consume(event);assertThat(result.taxpayerId).isEqualTo(organization.id);assertThat(result.externalTaxpayerType).isEqualTo(TaxpayerType.ORGANIZATION);
     }
 
-    @Test void missingTaxpayerIsTraceableAndRetryDoesNotDuplicate() throws Exception {
-        long obligationsBefore=obligations.count(),debtsBefore=debts.count();concept();var event=read(DOCUMENTED_EVENT);ExternalObligation failed=m7.consume(event);
+    @Test @Transactional(propagation=Propagation.NOT_SUPPORTED) void missingTaxpayerIsTraceableAndRetryDoesNotDuplicate() throws Exception {
+        long obligationsBefore=obligations.count(),debtsBefore=debts.count();concept();String debtor="4"+String.format("%07d",Math.floorMod(UUID.randomUUID().hashCode(),10_000_000));String eventId=UUID.randomUUID().toString();String infractionId=UUID.randomUUID().toString();var event=read(DOCUMENTED_EVENT.replace("40123456",debtor).replace("7f9c91f0-03c6-4baf-8791-8cb2c38981d2",eventId).replace("93fd4382-2343-4f3f-a127-9328b29fc520",infractionId));ExternalObligation failed=m7.consume(event);
         assertThat(failed.status).isEqualTo(ExternalObligationStatus.ERROR);assertThat(debts.count()).isEqualTo(debtsBefore);assertThat(processed.existsByExternalEventId(event.eventId().toString())).isFalse();
         assertThat(logs.findFirstByExternalEventIdOrderByIdDesc(event.eventId().toString()).orElseThrow().status).isEqualTo(IntegrationEventStatus.FAILED);
-        TaxpayerReference taxpayer=citizen("40123456");IntegrationEventLog retried=reprocess.reprocess(event.eventId().toString(),"referencia sincronizada");
+        TaxpayerReference taxpayer=citizen(debtor);IntegrationEventLog retried=reprocess.reprocess(event.eventId().toString(),"referencia sincronizada");
         assertThat(retried.status).isEqualTo(IntegrationEventStatus.PROCESSED);assertThat(obligations.count()).isEqualTo(obligationsBefore+1);assertThat(debts.findByTaxpayerId(taxpayer.id)).hasSize(1);
     }
 

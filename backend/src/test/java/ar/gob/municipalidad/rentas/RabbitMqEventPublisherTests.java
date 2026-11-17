@@ -90,6 +90,46 @@ class RabbitMqEventPublisherTests {
         assertThat(received.getMessageProperties().getReceivedDeliveryMode()).isEqualTo(MessageDeliveryMode.PERSISTENT);
     }
 
+    @Test void exactM2RoutedFixtureTravelsThroughIsolatedRabbitAndTheRealDispatcher() throws Exception {
+        String payload;
+        try(var input=getClass().getResourceAsStream("/contracts/inbound/M2_ticketUpdated_ROUTED_REAL.json")){
+            if(input==null)throw new IllegalArgumentException("Missing exact M2 test fixture");
+            payload=new String(input.readAllBytes(),StandardCharsets.UTF_8);
+        }
+        String suffix=UUID.randomUUID().toString().replace("-","");
+        String exchangeName=EXCHANGE+".m2."+suffix,queueName=QUEUE+".m2."+suffix;
+        RabbitAdmin admin=new RabbitAdmin(connections);
+        FanoutExchange exchange=new FanoutExchange(exchangeName,true,false);
+        admin.declareExchange(exchange);
+        Queue queue=new Queue(queueName,true,false,true);
+        admin.declareQueue(queue);
+        admin.declareBinding(BindingBuilder.bind(queue).to(exchange));
+        org.springframework.amqp.core.MessageProperties properties=new org.springframework.amqp.core.MessageProperties();
+        properties.setMessageId("e06a8885-60b8-4660-83ff-6feb23843c26");
+        properties.setDeliveryMode(MessageDeliveryMode.PERSISTENT);
+        template.send(exchangeName,"",new Message(payload.getBytes(StandardCharsets.UTF_8),properties));
+
+        Message received=template.receive(queueName,3000);
+        assertThat(received).isNotNull();
+        assertThat(new String(received.getBody(),StandardCharsets.UTF_8)).isEqualTo(payload);
+        ConfirmedM2Consumer m2=mock(ConfirmedM2Consumer.class);
+        CoreInboundEventDispatcher dispatcher=new CoreInboundEventDispatcher(new ObjectMapper().findAndRegisterModules(),
+            mock(ConfirmedM1Consumer.class),m2,mock(CoreM4Consumer.class),mock(ConfirmedM7Consumer.class),mock(ConfirmedM8Consumer.class));
+
+        dispatcher.dispatch(new String(received.getBody(),StandardCharsets.UTF_8));
+
+        org.mockito.ArgumentCaptor<ConfirmedInboundEvents.M2TicketUpdatedEvent> event=
+            org.mockito.ArgumentCaptor.forClass(ConfirmedInboundEvents.M2TicketUpdatedEvent.class);
+        verify(m2).consume(event.capture());
+        assertThat(event.getValue().eventId()).isEqualTo(UUID.fromString("e06a8885-60b8-4660-83ff-6feb23843c26"));
+        assertThat(event.getValue().correlationId()).isEqualTo(UUID.fromString("b766e401-e818-4c42-ae63-eb3aa6b3c68f"));
+        assertThat(event.getValue().data().ticketId()).isEqualTo(UUID.fromString("1ab9e286-2ac9-40d5-b46e-e78c414f535a"));
+        assertThat(event.getValue().data().publicId()).isEqualTo("TK-2026-000047");
+        assertThat(event.getValue().data().updateType()).isEqualTo("ROUTED");
+        assertThat(event.getValue().data().currentStatus()).isEqualTo("ROUTED");
+        assertThat(event.getValue().data().responsibleAreaId()).isEqualTo("M5");
+    }
+
     @Test void transientInboundFailuresRetryThreeTimesThenDeadLetterWithTheSameEventId() throws Exception {
         RetryTopology topology=declareRetryTopology();
         String eventId=UUID.randomUUID().toString();
@@ -105,7 +145,7 @@ class RabbitMqEventPublisherTests {
         CoreInboundEventDispatcher dispatcher=mock(CoreInboundEventDispatcher.class);
         doAnswer(invocation->{attempts.incrementAndGet();throw new IllegalStateException("CORE_INBOUND_RETRY");})
             .when(dispatcher).dispatch(payload);
-        CoreRabbitMqConsumer listener=new CoreRabbitMqConsumer(dispatcher,template,topology.retryExchange(),topology.retryQueue1(),topology.retryQueue2(),topology.retryQueue3(),5000);
+        CoreRabbitMqConsumer listener=new CoreRabbitMqConsumer(dispatcher,template,"local",topology.retryExchange(),topology.retryQueue1(),topology.retryQueue2(),topology.retryQueue3(),5000);
 
         try(var connection=connections.createConnection();Channel channel=connection.createChannel(false)){
             for(int attempt=0;attempt<4;attempt++){
@@ -127,6 +167,34 @@ class RabbitMqEventPublisherTests {
         assertThat(attempts).hasValue(4);
     }
 
+    @Test void coreManagedModeNacksToBrokerDlxWithoutPublishingToLocalRetryQueues() throws Exception {
+        RetryTopology topology=declareRetryTopology();
+        String eventId=UUID.randomUUID().toString();
+        String payload="{\"eventId\":\""+eventId+"\",\"eventType\":\"ticketUpdated\",\"eventVersion\":\"1.0\",\"data\":{}}";
+        Message original=new Message(payload.getBytes(StandardCharsets.UTF_8),new org.springframework.amqp.core.MessageProperties());
+        original.getMessageProperties().setMessageId(eventId);
+        template.send("",topology.mainQueue(),original,new CorrelationData(eventId));
+        CoreInboundEventDispatcher dispatcher=mock(CoreInboundEventDispatcher.class);
+        doThrow(new IllegalStateException("CORE_INBOUND_RETRY")).when(dispatcher).dispatch(payload);
+        CoreRabbitMqConsumer listener=new CoreRabbitMqConsumer(dispatcher,template,"core-managed",topology.retryExchange(),
+            topology.retryQueue1(),topology.retryQueue2(),topology.retryQueue3(),5000);
+
+        try(var connection=connections.createConnection();Channel channel=connection.createChannel(false)){
+            GetResponse delivery=awaitGet(channel,topology.mainQueue(),2000);
+            assertThat(delivery).isNotNull();
+            listener.receive(asSpringMessage(delivery),channel,delivery.getEnvelope().getDeliveryTag());
+            GetResponse deadLetter=awaitGet(channel,topology.deadLetterQueue(),2000);
+            assertThat(deadLetter).isNotNull();
+            assertThat(deadLetter.getProps().getMessageId()).isEqualTo(eventId);
+            assertThat(deadLetter.getProps().getHeaders()).containsKey("x-death");
+            assertThat(awaitGet(channel,topology.retryQueue1(),200)).isNull();
+            assertThat(awaitGet(channel,topology.retryQueue2(),200)).isNull();
+            assertThat(awaitGet(channel,topology.retryQueue3(),200)).isNull();
+            channel.basicAck(deadLetter.getEnvelope().getDeliveryTag(),false);
+        }
+        verify(dispatcher,times(1)).dispatch(payload);
+    }
+
     @Test void permanentInboundFailureGoesDirectlyToDeadLetterWithoutRetry() throws Exception {
         RetryTopology topology=declareRetryTopology();
         String eventId=UUID.randomUUID().toString();
@@ -136,7 +204,7 @@ class RabbitMqEventPublisherTests {
         template.send("",topology.mainQueue(),original,new CorrelationData(eventId));
         CoreInboundEventDispatcher dispatcher=mock(CoreInboundEventDispatcher.class);
         doThrow(new IllegalArgumentException("UNSUPPORTED_CORE_EVENT_TYPE")).when(dispatcher).dispatch(payload);
-        CoreRabbitMqConsumer listener=new CoreRabbitMqConsumer(dispatcher,template,topology.retryExchange(),topology.retryQueue1(),topology.retryQueue2(),topology.retryQueue3(),5000);
+        CoreRabbitMqConsumer listener=new CoreRabbitMqConsumer(dispatcher,template,"local",topology.retryExchange(),topology.retryQueue1(),topology.retryQueue2(),topology.retryQueue3(),5000);
 
         try(var connection=connections.createConnection();Channel channel=connection.createChannel(false)){
             GetResponse delivery=awaitGet(channel,topology.mainQueue(),2000);

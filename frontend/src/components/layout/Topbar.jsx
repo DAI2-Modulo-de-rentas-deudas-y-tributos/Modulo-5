@@ -23,9 +23,11 @@ export default function Topbar({ onOpenMenu, menuOpen: navigationOpen = false, a
       }
     };
     document.addEventListener("pointerdown", closeOnOutside);
+    document.addEventListener("focusin", closeOnOutside);
     document.addEventListener("keydown", closeOnEscape);
     return () => {
       document.removeEventListener("pointerdown", closeOnOutside);
+      document.removeEventListener("focusin", closeOnOutside);
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, [menuOpen]);
@@ -43,7 +45,6 @@ export default function Topbar({ onOpenMenu, menuOpen: navigationOpen = false, a
       </div>
       <div className="workspace-account" ref={menuRef}>
         <button ref={triggerRef} type="button" onClick={() => setMenuOpen((value) => !value)}
-          onBlur={(event) => { if (!event.currentTarget.parentElement.contains(event.relatedTarget)) setMenuOpen(false); }}
           className="workspace-account-trigger" aria-haspopup="menu" aria-expanded={menuOpen}>
           <span className="workspace-avatar" aria-hidden="true">{initials}</span>
           {/* El nombre accesible incluye el texto visible (WCAG 2.5.3). */}
@@ -54,8 +55,7 @@ export default function Topbar({ onOpenMenu, menuOpen: navigationOpen = false, a
         {menuOpen && (
           <div role="menu" className="workspace-account-menu" aria-label="Cuenta">
             <div><strong>{user.fullName}</strong><span>{user.email}</span></div>
-            <button ref={logoutRef} type="button" role="menuitem" onClick={logout}
-              onBlur={(event) => { if (!menuRef.current?.contains(event.relatedTarget)) setMenuOpen(false); }}>
+            <button ref={logoutRef} type="button" role="menuitem" onClick={logout}>
               <LogOut size={16} aria-hidden="true" />Cerrar sesión
             </button>
           </div>

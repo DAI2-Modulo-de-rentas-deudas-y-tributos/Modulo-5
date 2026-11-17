@@ -1,0 +1,173 @@
+name: Terraform AWS
+
+# Etapa reutilizable de Terraform de cd-dev.yml (apply y destroy del DEV efímero)
+# y cd-test.yml (plan, apply o destroy manual de TEST).
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "Ambiente: dev o test"
+        required: true
+        type: string
+      operation:
+        description: "plan, apply o destroy"
+        required: false
+        default: apply
+        type: string
+      preserved_ecr_repository:
+        description: "Repositorio ECR que sobrevive al destroy: se reimporta antes del plan y sale del estado antes de destruir"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  terraform:
+    name: terraform
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: ${{ inputs.environment }}
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: infra/environments/${{ inputs.environment }}
+
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      TF_STATE_KEY: ${{ vars.TF_STATE_KEY }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      TARGET_ENVIRONMENT: ${{ inputs.environment }}
+      OPERATION: ${{ inputs.operation }}
+      PRESERVED_ECR_REPOSITORY: ${{ inputs.preserved_ecr_repository }}
+      # Sólo el environment test define estas variables y sólo TEST declara budget_alert_email.
+      TF_VAR_budget_alert_email: ${{ vars.BUDGET_ALERT_EMAIL }}
+      TF_VAR_backend_secret_variables: ${{ inputs.environment == 'test' && vars.TEST_BACKEND_SECRET_ARNS || '{}' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "1.15.8"
+          terraform_wrapper: false
+
+      - name: Configure temporary AWS credentials
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: "756663253996"
+          mask-aws-account-id: true
+          role-session-name: terraform-${{ inputs.operation }}-${{ inputs.environment }}-${{ github.run_id }}
+
+      - name: Check environment variables
+        run: |
+          set -euo pipefail
+          : "${TF_STATE_BUCKET:?Missing TF_STATE_BUCKET in the ${TARGET_ENVIRONMENT} environment}"
+          : "${TF_STATE_KEY:?Missing TF_STATE_KEY in the ${TARGET_ENVIRONMENT} environment}"
+          : "${AWS_REGION:?Missing AWS_REGION in the ${TARGET_ENVIRONMENT} environment}"
+          case "${OPERATION}" in
+            plan | apply | destroy) ;;
+            *)
+              echo "Unsupported operation: ${OPERATION}"
+              exit 1
+              ;;
+          esac
+          if [[ "${TARGET_ENVIRONMENT}" == "test" && "${OPERATION}" != "destroy" ]]; then
+            jq -e 'has("RENTAS_DEMO_BOOTSTRAP_PASSWORD") and has("CORE_MODULE_SECRET")' \
+              <<< "${TF_VAR_backend_secret_variables}" > /dev/null || {
+                echo "TEST_BACKEND_SECRET_ARNS must include DEMO and Core secret references."
+                exit 1
+              }
+          fi
+
+      - name: Initialize remote state
+        run: |
+          terraform init -input=false -reconfigure \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${TF_STATE_KEY}" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="encrypt=true" \
+            -backend-config="use_lockfile=true"
+
+      - name: Validate
+        run: terraform validate -no-color
+
+      - name: Re-import preserved ECR repository
+        if: inputs.preserved_ecr_repository != '' && inputs.operation != 'destroy'
+        run: |
+          set -euo pipefail
+          state=$(terraform state list)
+          if grep -qx 'module.ecs.aws_ecr_repository.backend' <<< "${state}"; then
+            echo "El repositorio ECR ya está en el estado."
+          elif aws ecr describe-repositories --repository-names "${PRESERVED_ECR_REPOSITORY}" > /dev/null 2>&1; then
+            terraform import -input=false -lock-timeout=5m \
+              module.ecs.aws_ecr_repository.backend "${PRESERVED_ECR_REPOSITORY}"
+            terraform import -input=false -lock-timeout=5m \
+              module.ecs.aws_ecr_lifecycle_policy.backend "${PRESERVED_ECR_REPOSITORY}"
+          else
+            echo "El repositorio ECR no existe todavía; Terraform lo crea."
+          fi
+
+      - name: Preserve ECR repository before destroy
+        if: inputs.preserved_ecr_repository != '' && inputs.operation == 'destroy'
+        run: |
+          set -euo pipefail
+          state=$(terraform state list)
+          for address in \
+            module.ecs.aws_ecr_lifecycle_policy.backend \
+            module.ecs.aws_ecr_repository.backend; do
+            if grep -qx "${address}" <<< "${state}"; then
+              terraform state rm -lock-timeout=5m "${address}"
+            fi
+          done
+
+      - name: Plan
+        run: |
+          set -euo pipefail
+          destroy_flag=()
+          if [[ "${OPERATION}" == "destroy" ]]; then destroy_flag=(-destroy); fi
+          terraform plan "${destroy_flag[@]}" -input=false -lock-timeout=5m -no-color -out=tfplan
+
+      - name: Apply
+        if: inputs.operation != 'plan'
+        run: terraform apply -input=false -lock-timeout=5m -auto-approve tfplan
+
+      - name: Publish summary
+        if: always()
+        run: |
+          {
+            echo "### Terraform ${TARGET_ENVIRONMENT^^}: ${OPERATION}"
+            echo
+            echo "Commit: \`${GITHUB_SHA}\` — resultado: ${{ job.status }}"
+            echo
+            case "${OPERATION}" in
+              plan)
+                echo "No se aplicaron cambios ni se crearon recursos."
+                ;;
+              apply)
+                echo '```text'
+                terraform output -no-color || true
+                echo '```'
+                ;;
+              destroy)
+                if [[ -n "${PRESERVED_ECR_REPOSITORY}" ]]; then
+                  echo "Se conserva el repositorio ECR \`${PRESERVED_ECR_REPOSITORY}\` para promover imágenes a TEST."
+                fi
+                echo "Recursos que quedan en el estado:"
+                echo '```text'
+                terraform state list || true
+                echo '```'
+                ;;
+            esac
+          } >> "${GITHUB_STEP_SUMMARY}"

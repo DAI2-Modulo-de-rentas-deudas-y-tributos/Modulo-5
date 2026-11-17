@@ -1,0 +1,25 @@
+{
+  "data": {
+    "type": "TAX_EXEMPTION",
+    "amount": 12000,
+    "reason": null,
+    "status": "APPROVED",
+    "endDate": "2026-11-22",
+    "benefitId": "36c8e8e4-ba90-4959-b694-329272fe15c0",
+    "citizenId": "f398dbcb-a2b4-49af-a724-3529c6ddd0f6",
+    "programId": "ef61704b-9898-449b-95cc-9951b0b5ac2f",
+    "startDate": "2026-11-15",
+    "updatedAt": "2026-11-15T19:51:23.421377Z",
+    "description": null,
+    "programName": "Edicion deprueba",
+    "applicationId": "0d75ac64-ab27-48e8-a391-a184dcd9a32f",
+    "benefitTypeId": "c5436ab0-8b20-4c40-9f60-6f8ae97f4b5c",
+    "programEditionId": "919d035a-3d5a-45d6-af16-7c5f9debafc9"
+  },
+  "eventId": "3695bd72-57e4-43d4-aa51-ced6112ca33b",
+  "eventType": "socialBenefitUpdated",
+  "occurredAt": "2026-11-15T19:51:23.421377Z",
+  "eventVersion": "1.0",
+  "sourceModule": "desarrollo-social",
+  "correlationId": "0d75ac64-ab27-48e8-a391-a184dcd9a32f"
+}

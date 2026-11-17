@@ -77,3 +77,8 @@ output "frontend_url" {
   description = "URL publica HTTPS del frontend DEV."
   value       = module.hosting.frontend_url
 }
+
+output "nat_public_ip" {
+  description = "IP pública fija de salida del backend, la que Core autoriza como /32."
+  value       = module.network.nat_public_ip
+}

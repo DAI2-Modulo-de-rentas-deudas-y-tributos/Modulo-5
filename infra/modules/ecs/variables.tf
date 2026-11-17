@@ -32,7 +32,7 @@ variable "log_retention_days" {
 }
 
 variable "subnet_ids" {
-  description = "Subredes publicas para las tareas Fargate de DEV."
+  description = "Subredes privadas de las tareas Fargate; salen a Internet por el NAT Gateway."
   type        = list(string)
 }
 

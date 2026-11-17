@@ -10,6 +10,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Propagation;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -68,7 +69,7 @@ class M2TicketEventTests {
         assertThat(outbox.findAll()).noneMatch(x->x.eventType.equals("updateTicketStatus"));
     }
 
-    @Test void reintentaUnEventoFallidoHastaEnviarloALaColaDeErrores() {
+    @Test @Transactional(propagation=Propagation.NOT_SUPPORTED) void reintentaUnEventoFallidoHastaEnviarloALaColaDeErrores() {
         UUID eventId=UUID.randomUUID();OffsetDateTime now=OffsetDateTime.now();
         IntegrationEventLog failed=new IntegrationEventLog();failed.eventId=eventId;failed.externalEventId=eventId.toString();failed.eventType="ticketUpdated";failed.sourceModule="M2";failed.direction=EventDirection.INBOUND;failed.status=IntegrationEventStatus.FAILED;failed.payload="""
             {"eventId":"%s","eventType":"ticketUpdated","occurredAt":"%s","sourceModule":"M2","data":{"ticketId":9999}}

@@ -85,26 +85,29 @@ resource "aws_amplify_domain_association" "frontend" {
   }
 }
 
+# for_each sobre la variable (claves conocidas) y no sobre el recurso de Amplify:
+# `terraform import` evalúa los recursos fuera del estado como desconocidos y el
+# for_each sobre ellos falla con "Invalid for_each argument" (SCRUM-835).
 resource "aws_route53_record" "frontend" {
-  for_each        = aws_amplify_domain_association.frontend
+  for_each        = var.custom_domains
   zone_id         = data.aws_route53_zone.frontend[each.key].zone_id
   name            = each.key
   type            = "A"
   allow_overwrite = true
 
   alias {
-    name                   = split(" ", trimspace(one(each.value.sub_domain).dns_record))[1]
+    name                   = split(" ", trimspace(one(aws_amplify_domain_association.frontend[each.key].sub_domain).dns_record))[1]
     zone_id                = "Z2FDTNDATAQYW2"
     evaluate_target_health = false
   }
 }
 
 resource "aws_route53_record" "frontend_certificate" {
-  for_each        = aws_amplify_domain_association.frontend
+  for_each        = var.custom_domains
   zone_id         = data.aws_route53_zone.frontend[each.key].zone_id
-  name            = split(" ", each.value.certificate_verification_dns_record)[0]
+  name            = split(" ", aws_amplify_domain_association.frontend[each.key].certificate_verification_dns_record)[0]
   type            = "CNAME"
   ttl             = 60
-  records         = [split(" ", each.value.certificate_verification_dns_record)[2]]
+  records         = [split(" ", aws_amplify_domain_association.frontend[each.key].certificate_verification_dns_record)[2]]
   allow_overwrite = true
 }

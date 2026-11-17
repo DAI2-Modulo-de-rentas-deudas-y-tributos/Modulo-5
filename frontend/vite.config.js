@@ -11,7 +11,7 @@ const securityHeaders = {
     "default-src 'self'",
     "connect-src 'self'",
     "form-action 'self'",
-    "style-src 'self' 'unsafe-inline'",
+    "style-src 'self'",
     "font-src 'self'",
     "img-src 'self' data:",
     "object-src 'none'",

@@ -109,7 +109,9 @@ jobs:
               aws rds start-db-instance --db-instance-identifier "${RDS_INSTANCE}" > /dev/null
               ;;
             stopping)
-              aws rds wait db-instance-stopped --db-instance-identifier "${RDS_INSTANCE}"
+              # El CLI no trae waiter "db-instance-stopped"; el tope lo pone timeout-minutes del job.
+              until [[ $(aws rds describe-db-instances --db-instance-identifier "${RDS_INSTANCE}" \
+                --query 'DBInstances[0].DBInstanceStatus' --output text) == stopped ]]; do sleep 20; done
               aws rds start-db-instance --db-instance-identifier "${RDS_INSTANCE}" > /dev/null
               ;;
             starting|available)
@@ -169,7 +171,8 @@ jobs:
               ;;
           esac
 
-          aws rds wait db-instance-stopped --db-instance-identifier "${RDS_INSTANCE}"
+          until [[ $(aws rds describe-db-instances --db-instance-identifier "${RDS_INSTANCE}" \
+            --query 'DBInstances[0].DBInstanceStatus' --output text) == stopped ]]; do sleep 20; done
 
       - name: Publish runtime status
         if: always()

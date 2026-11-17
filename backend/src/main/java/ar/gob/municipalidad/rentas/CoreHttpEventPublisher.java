@@ -34,7 +34,7 @@ class CoreHttpEventPublisher implements EventPublisher {
         @Value("${rentas.core.http.base-url:}") String baseUrl,
         @Value("${rentas.core.http.module-secret:}") String moduleSecret,
         @Value("${rentas.core.http.connect-timeout:3s}") Duration connectTimeout,
-        @Value("${rentas.core.http.request-timeout:10s}") Duration requestTimeout,
+        @Value("${rentas.core.http.request-timeout:5s}") Duration requestTimeout,
         @Value("${rentas.core.http.token-expiry-skew:PT30S}") Duration tokenSkew) {
         this(json,baseUrl,moduleSecret,connectTimeout,requestTimeout,tokenSkew,Clock.systemUTC());
     }

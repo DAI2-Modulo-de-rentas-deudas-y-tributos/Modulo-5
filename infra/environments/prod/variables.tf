@@ -44,6 +44,12 @@ variable "database_subnet_cidrs" {
   default     = ["10.70.10.0/24", "10.70.11.0/24"]
 }
 
+variable "app_subnet_cidrs" {
+  description = "CIDR de las subredes privadas de las tareas Fargate PROD, con salida por NAT."
+  type        = list(string)
+  default     = ["10.70.20.0/24", "10.70.21.0/24"]
+}
+
 variable "ecr_images_to_keep" {
   description = "Cantidad de imagenes del backend conservadas en ECR."
   type        = number
@@ -96,14 +102,27 @@ variable "backend_environment_variables" {
   description = "Variables no sensibles del backend en PROD."
   type        = map(string)
   default = {
-    BROKER_ADAPTER           = "local-log"
-    OUTBOX_DELAY_MS          = "5000"
-    RENTAS_SECURITY_DEV_MODE = "false"
+    # Conexión AMQPS con el broker de Core, preparada pero apagada: local-log y sin
+    # consumidor hasta tener la contraseña AMQP de module_rentas. Con una contraseña
+    # inválida, el consumidor aborta el arranque (ACCESS_REFUSED, exit 1) y ECS
+    # hace rollback. Para encender: BROKER_ADAPTER=rabbitmq y
+    # CORE_RABBITMQ_CONSUMER_ENABLED=true. Core autoriza la EIP del NAT en TCP 5671.
+    BROKER_ADAPTER                 = "local-log"
+    CORE_RABBITMQ_HOST             = "core-uade-2026.duckdns.org"
+    CORE_RABBITMQ_PORT             = "5671"
+    SPRING_RABBITMQ_SSL_ENABLED    = "true"
+    CORE_RABBITMQ_USERNAME         = "module_rentas"
+    CORE_RABBITMQ_VHOST            = "core"
+    CORE_RABBITMQ_QUEUE            = "q.rentas"
+    CORE_RABBITMQ_RETRY_MODE       = "core-managed"
+    CORE_RABBITMQ_CONSUMER_ENABLED = "false"
+    OUTBOX_DELAY_MS                = "5000"
+    RENTAS_SECURITY_DEV_MODE       = "false"
   }
 }
 
 variable "backend_secret_variables" {
-  description = "Variables sensibles del backend referenciadas por ARN de Secrets Manager en PROD."
+  description = "Variables sensibles del backend referenciadas por ARN de Secrets Manager en PROD. cd-prod.yml la toma de la variable PROD_BACKEND_SECRET_ARNS y exige CORE_RABBITMQ_PASSWORD."
   type        = map(string)
   default     = {}
 }

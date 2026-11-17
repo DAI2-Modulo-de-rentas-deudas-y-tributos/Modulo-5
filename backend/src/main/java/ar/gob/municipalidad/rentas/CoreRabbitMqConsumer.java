@@ -50,15 +50,14 @@ class CoreInboundEventDispatcher {
                 case "ticketUpdated"->m2.consume(json.treeToValue(envelope,ConfirmedInboundEvents.M2TicketUpdatedEvent.class));
                 case "permitFeeGenerated"->{
                     IntegrationEventLog result=m4.consumePermitFee(json.readValue(envelope.traverse(),new TypeReference<CoreM4Events.Envelope<CoreM4Events.PermitFeeGeneratedData>>(){}));
-                    if(result.status==IntegrationEventStatus.FAILED)throw new IllegalStateException("CORE_INBOUND_RETRY");
+                    if(result.status==IntegrationEventStatus.FAILED)throw new CoreInboundRetryException(result.errorMessage);
                 }
                 case "commercialFineGenerated"->{
                     IntegrationEventLog result=m4.consumeCommercialFine(json.readValue(envelope.traverse(),new TypeReference<CoreM4Events.Envelope<CoreM4Events.CommercialFineGeneratedData>>(){}));
-                    if(result.status==IntegrationEventStatus.FAILED)throw new IllegalStateException("CORE_INBOUND_RETRY");
+                    if(result.status==IntegrationEventStatus.FAILED)throw new CoreInboundRetryException(result.errorMessage);
                 }
                 case "infractionConfirmed"->{
-                    ExternalObligation result=m7.consume(json.treeToValue(envelope,ConfirmedInboundEvents.M7InfractionConfirmedEvent.class));
-                    if(result.status==ExternalObligationStatus.ERROR)throw new IllegalStateException("CORE_INBOUND_RETRY");
+                    m7.consume(json.treeToValue(envelope,ConfirmedInboundEvents.M7InfractionConfirmedEvent.class));
                 }
                 case "socialBenefitUpdated"->m8.consume(json.treeToValue(envelope,ConfirmedInboundEvents.M8SocialBenefitUpdatedEvent.class));
                 default->throw new IllegalArgumentException("UNSUPPORTED_CORE_EVENT_TYPE");
@@ -70,6 +69,7 @@ class CoreInboundEventDispatcher {
         } catch (DataAccessException ex) {
             throw ex;
         } catch (Exception ex) {
+            if(ex instanceof CoreInboundRetryException retry)throw retry;
             if(ex instanceof IllegalStateException state&&"CORE_INBOUND_RETRY".equals(state.getMessage()))throw state;
             throw new IllegalStateException("CORE_INBOUND_PROCESSING_FAILED",ex);
         }
@@ -84,11 +84,15 @@ class CoreInboundEventDispatcher {
             if(UUID.fromString(envelope.path("eventId").asText()).version()!=4)throw new IllegalArgumentException();
             if(!envelope.path("eventType").isTextual()||envelope.path("eventType").asText().isBlank())throw new IllegalArgumentException();
             if(!envelope.has("eventVersion"))((com.fasterxml.jackson.databind.node.ObjectNode)envelope).put("eventVersion","1.0");
-            if(!"1.0".equals(envelope.path("eventVersion").asText()))throw new IllegalArgumentException();
+            else if(!envelope.path("eventVersion").isTextual()||!"1.0".equals(envelope.path("eventVersion").asText()))
+                throw new IllegalArgumentException("UNSUPPORTED_EVENT_VERSION");
             if(!envelope.path("sourceModule").isTextual()||!envelope.path("data").isObject())throw new IllegalArgumentException();
             OffsetDateTime.parse(envelope.path("occurredAt").asText());
             uuidOrNull(envelope.get("correlationId"));uuidOrNull(envelope.get("causationId"));
             return envelope;
+        } catch (IllegalArgumentException ex) {
+            if("UNSUPPORTED_EVENT_VERSION".equals(ex.getMessage()))throw ex;
+            throw new IllegalArgumentException("INVALID_CORE_ENVELOPE");
         } catch (Exception ex) {
             throw new IllegalArgumentException("INVALID_CORE_ENVELOPE");
         }
@@ -98,6 +102,18 @@ class CoreInboundEventDispatcher {
         java.util.HashSet<String> fields=new java.util.HashSet<>();node.fieldNames().forEachRemaining(fields::add);return fields;
     }
     private void uuidOrNull(JsonNode value){if(value!=null&&!value.isNull())UUID.fromString(value.asText());}
+}
+
+final class CoreInboundRetryException extends IllegalStateException {
+    private final String reasonCode;
+
+    CoreInboundRetryException(String errorMessage) {
+        super("CORE_INBOUND_RETRY");
+        String code=errorMessage==null?"":errorMessage.split(":",2)[0];
+        this.reasonCode=OperationalLogSupport.safeErrorCode(code).orElse("CORE_INBOUND_PROCESSING_FAILED");
+    }
+
+    String reasonCode(){return reasonCode;}
 }
 
 @Component
@@ -111,8 +127,10 @@ class CoreRabbitMqConsumer {
     private final String retryQueue2;
     private final String retryQueue3;
     private final long confirmTimeoutMillis;
+    private final boolean coreManagedRetries;
 
     CoreRabbitMqConsumer(CoreInboundEventDispatcher dispatcher,RabbitTemplate rabbit,
+        @org.springframework.beans.factory.annotation.Value("${rentas.core.amqp.retry-mode:}") String retryMode,
         @org.springframework.beans.factory.annotation.Value("${rentas.core.amqp.retry-exchange:rentas.retry}") String retryExchange,
         @org.springframework.beans.factory.annotation.Value("${rentas.core.amqp.retry-queue-1:q.rentas.retry.1}") String retryQueue1,
         @org.springframework.beans.factory.annotation.Value("${rentas.core.amqp.retry-queue-2:q.rentas.retry.2}") String retryQueue2,
@@ -120,6 +138,9 @@ class CoreRabbitMqConsumer {
         @org.springframework.beans.factory.annotation.Value("${rentas.core.amqp.confirm-timeout-ms:5000}") long confirmTimeoutMillis) {
         this.dispatcher=dispatcher;this.rabbit=rabbit;this.retryExchange=retryExchange;
         this.retryQueue1=retryQueue1;this.retryQueue2=retryQueue2;this.retryQueue3=retryQueue3;this.confirmTimeoutMillis=confirmTimeoutMillis;
+        if("core-managed".equalsIgnoreCase(retryMode))this.coreManagedRetries=true;
+        else if("local".equalsIgnoreCase(retryMode))this.coreManagedRetries=false;
+        else throw new IllegalStateException("CORE_AMQP_RETRY_MODE_REQUIRED");
     }
 
     @RabbitListener(queues="${rentas.core.amqp.queue:q.rentas}",
@@ -130,11 +151,12 @@ class CoreRabbitMqConsumer {
             channel.basicAck(deliveryTag,false);
         } catch (RuntimeException ex) {
             String payload=new String(message.getBody(),java.nio.charset.StandardCharsets.UTF_8);
-            log.warn("CORE_INBOUND rejected eventId={} correlationId={} eventType={} exceptionType={}",
+            log.warn("CORE_INBOUND rejected eventId={} correlationId={} eventType={} eventVersion={} reason={} exceptionType={}",
                 OperationalLogSupport.uuidField(payload,"eventId"),OperationalLogSupport.uuidField(payload,"correlationId"),
                 OperationalLogSupport.safeIdentifierField(payload,"eventType"),
-                ex.getClass().getSimpleName(),OperationalLogSupport.sanitizedStackTrace(ex));
-            String retryQueue=retryable(ex)?nextRetryQueue(message):null;
+                OperationalLogSupport.safeVersionField(payload,"eventVersion"),OperationalLogSupport.safeFailureReason(ex),
+                ex.getClass().getSimpleName());
+            String retryQueue=!coreManagedRetries&&retryable(ex)?nextRetryQueue(message):null;
             if(retryQueue==null){channel.basicNack(deliveryTag,false,false);return;}
             try {
                 Message retry=MessageBuilder.fromMessage(message).build();

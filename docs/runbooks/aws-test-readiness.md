@@ -125,17 +125,16 @@ se publica en la rama de deployment manual `test` de Amplify.
    necesita habilitar el cliente real en la tarea, usar
    `CORE_RABBITMQ_PORT=5671`, `SPRING_RABBITMQ_SSL_ENABLED=true` y las
    referencias a Secrets Manager para usuario y contraseña. Activar publicación
-   o consumo sólo para el ensayo acordado. La promoción cambia la tarea, por
-   lo que hay que identificar la IP después de promover.
-3. Listar las tareas `RUNNING` del servicio con `aws ecs list-tasks`. En la
-   salida de `aws ecs describe-tasks` obtener `networkInterfaceId` de
-   `attachments[].details`. Consultar `Association.PublicIp` de esa ENI con
-   `aws ec2 describe-network-interfaces`. La subred sale por Internet Gateway,
-   y esa IP pública es la candidata a autorizar en Core como `/32` TCP 5671.
+   o consumo sólo para el ensayo acordado.
+3. La IP de salida es la Elastic IP del NAT Gateway (ADR 0011): no cambia con
+   las promociones ni con el reemplazo de tareas. Se obtiene con
+   `terraform output nat_public_ip` en `infra/environments/test`, o con
+   `aws ec2 describe-addresses --filters Name=tag:Name,Values=modulo-5-rentas-test-nat-eip`.
+   Core la autoriza una vez como `/32` (TCP 5671 para AMQPS y 443 para HTTP).
 4. Con Core, verificar la IP observada, el handshake TLS y una conexión AMQP
-   autenticada desde la tarea actual antes de publicar o consumir. Si ECS
-   reemplaza la tarea, consultar la nueva ENI. Al cierre retirar la regla
-   temporal en Core y detener TEST con `STOP_TEST` si terminó la ventana.
+   autenticada desde la tarea actual antes de publicar o consumir. La regla en
+   Core es permanente mientras exista la red de TEST. Al cierre, detener TEST
+   con `STOP_TEST` si terminó la ventana.
 
 ## Inventario previo al retiro de integraciones (SCRUM-769)
 

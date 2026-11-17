@@ -44,6 +44,12 @@ variable "database_subnet_cidrs" {
   default     = ["10.50.10.0/24", "10.50.11.0/24"]
 }
 
+variable "app_subnet_cidrs" {
+  description = "CIDR de las subredes privadas de las tareas Fargate DEV, con salida por NAT."
+  type        = list(string)
+  default     = ["10.50.20.0/24", "10.50.21.0/24"]
+}
+
 variable "ecr_images_to_keep" {
   description = "Cantidad de imagenes del backend conservadas en ECR."
   type        = number

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Ejecuta el paso real de ambos workflows con AWS y las esperas simulados.
+# Ejecuta el paso real del workflow con AWS y las esperas simulados.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -58,7 +58,8 @@ check() {
   echo "PASS ${workflow}: ${scenario}"
 }
 
-for workflow in .github/workflows/cd-backend.yml .github/workflows/cd-backend-test.yml; do
+# cd-backend-test.yml delega en cd-backend.yml: hay un único paso de rollout.
+for workflow in .github/workflows/cd-backend.yml; do
   awk '
     /^      - name: Deploy service and wait until stable$/ { step = 1; next }
     step && /^      - name:/ { exit }

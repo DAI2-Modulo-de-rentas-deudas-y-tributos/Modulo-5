@@ -1,4 +1,4 @@
-# ADR 0003: Ambiente de producción desde `main`
+# ADR 0009: Ambiente de producción desde `main`
 
 - Estado: aceptado
 - Fecha: 2026-10-28

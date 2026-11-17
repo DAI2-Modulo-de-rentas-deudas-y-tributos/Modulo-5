@@ -41,6 +41,7 @@ rentas:
   cors.allowed-origins: ${CORS_ALLOWED_ORIGINS:}
   core.amqp.exchange: ${CORE_RABBITMQ_EXCHANGE:muni.inbox}
   core.amqp.queue: ${CORE_RABBITMQ_QUEUE:q.rentas}
+  core.amqp.retry-mode: ${CORE_RABBITMQ_RETRY_MODE:}
   core.amqp.confirm-timeout: ${CORE_RABBITMQ_CONFIRM_TIMEOUT:5s}
   core.amqp.retry-exchange: ${CORE_RABBITMQ_RETRY_EXCHANGE:rentas.retry}
   core.amqp.retry-queue-1: ${CORE_RABBITMQ_RETRY_QUEUE_1:q.rentas.retry.1}
@@ -51,7 +52,7 @@ rentas:
   core.http.base-url: ${CORE_HTTP_BASE_URL:}
   core.http.module-secret: ${CORE_MODULE_SECRET:}
   core.http.connect-timeout: ${CORE_HTTP_CONNECT_TIMEOUT:3s}
-  core.http.request-timeout: ${CORE_HTTP_REQUEST_TIMEOUT:10s}
+  core.http.request-timeout: ${CORE_HTTP_REQUEST_TIMEOUT:5s}
   core.http.token-expiry-skew: ${CORE_HTTP_TOKEN_EXPIRY_SKEW:PT30S}
   core.http.allowed-event-types: ${CORE_HTTP_ALLOWED_EVENT_TYPES:}
   core.http.allowed-event-ids: ${CORE_HTTP_ALLOWED_EVENT_IDS:}

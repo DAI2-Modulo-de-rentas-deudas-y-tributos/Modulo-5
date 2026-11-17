@@ -41,6 +41,20 @@ class CoreRabbitMqConsumerTests {
         verifyNoInteractions(m2);
     }
 
+    @Test void ticketCreatedIsNotPartOfTheConfirmedCoreDispatcherContract() {
+        ConfirmedM1Consumer m1=mock(ConfirmedM1Consumer.class);ConfirmedM2Consumer m2=mock(ConfirmedM2Consumer.class);
+        CoreM4Consumer m4=mock(CoreM4Consumer.class);ConfirmedM7Consumer m7=mock(ConfirmedM7Consumer.class);
+        ConfirmedM8Consumer m8=mock(ConfirmedM8Consumer.class);
+        CoreInboundEventDispatcher dispatcher=new CoreInboundEventDispatcher(new ObjectMapper().findAndRegisterModules(),m1,m2,m4,m7,m8);
+        String unsupported="""
+            {"eventId":"%s","eventType":"ticketCreated","eventVersion":"1.0","occurredAt":"2026-11-15T10:00:00-03:00","sourceModule":"atencion-ciudadana","data":{}}
+            """.formatted(UUID.randomUUID());
+
+        assertThatThrownBy(()->dispatcher.dispatch(unsupported)).isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("UNSUPPORTED_CORE_EVENT_TYPE");
+        verifyNoInteractions(m1,m2,m4,m7,m8);
+    }
+
     @Test void acceptsOptionalEnvelopeFieldsWhenCoreOmitsThem() {
         ConfirmedM2Consumer m2=mock(ConfirmedM2Consumer.class);
         CoreInboundEventDispatcher dispatcher=new CoreInboundEventDispatcher(new ObjectMapper().findAndRegisterModules(),mock(ConfirmedM1Consumer.class),m2,
@@ -106,6 +120,21 @@ class CoreRabbitMqConsumerTests {
         verify(channel,never()).basicNack(eq(40),anyBoolean(),anyBoolean());
     }
 
+    @Test void coreManagedTransientFailureNacksWithoutPublishingToLocalRetryQueues() throws Exception {
+        String payload="{\"eventId\":\""+UUID.randomUUID()+"\",\"eventType\":\"ticketUpdated\",\"data\":{}}";
+        CoreInboundEventDispatcher dispatcher=mock(CoreInboundEventDispatcher.class);
+        doThrow(new IllegalStateException("CORE_INBOUND_RETRY")).when(dispatcher).dispatch(payload);
+        RabbitTemplate rabbit=mock(RabbitTemplate.class);
+        Channel channel=mock(Channel.class);
+
+        listener(dispatcher,rabbit,"core-managed").receive(
+            new Message(payload.getBytes(StandardCharsets.UTF_8),new MessageProperties()),channel,45);
+
+        verify(channel).basicNack(45,false,false);
+        verify(channel,never()).basicAck(45,false);
+        verifyNoInteractions(rabbit);
+    }
+
     @Test void threeTransientRetriesUseThreeRetryQueuesThenDeadLetter() throws Exception {
         String payload="{\"eventId\":\""+UUID.randomUUID()+"\",\"eventType\":\"ticketUpdated\",\"data\":{}}";
         CoreInboundEventDispatcher dispatcher=mock(CoreInboundEventDispatcher.class);
@@ -147,12 +176,12 @@ class CoreRabbitMqConsumerTests {
         verify(channel,never()).basicAck(43,false);
     }
 
-    @Test void rejectedInboundLogsOnlyUuidIdentifiersAndSanitizedStackTrace() throws Exception {
+    @Test void rejectedInboundLogsOnlySafeMetadataWithoutMessagesOrStackTraces() throws Exception {
         UUID eventId=UUID.randomUUID(),correlationId=UUID.randomUUID();
         String payload="{\"eventId\":\""+eventId+"\",\"correlationId\":\""+correlationId
-            +"\",\"eventType\":\"ticketUpdated\",\"data\":{\"dni\":\"40111222\",\"cuit\":\"20-40111222-3\",\"token\":\"secret-token\"}}";
+            +"\",\"eventType\":\"ticketUpdated\",\"eventVersion\":\"1.0\",\"data\":{\"dni\":\"40111222\",\"cuit\":\"20-40111222-3\",\"token\":\"secret-token\"}}";
         CoreInboundEventDispatcher dispatcher=mock(CoreInboundEventDispatcher.class);
-        doThrow(new IllegalArgumentException("40111222 20-40111222-3 secret-token "+payload)).when(dispatcher).dispatch(payload);
+        doThrow(new BusinessException("TAXPAYER_REFERENCE_NOT_FOUND","40111222 20-40111222-3 secret-token "+payload,422)).when(dispatcher).dispatch(payload);
         CoreRabbitMqConsumer listener=listener(dispatcher);
         Channel channel=mock(Channel.class);
         Logger logger=(Logger)LoggerFactory.getLogger(CoreRabbitMqConsumer.class);
@@ -161,14 +190,114 @@ class CoreRabbitMqConsumerTests {
             listener.receive(new Message(payload.getBytes(StandardCharsets.UTF_8),new MessageProperties()),channel,31);
             verify(channel).basicNack(31,false,false);
             verify(channel,never()).basicNack(31,false,true);
-            String output=logs.list.stream().map(event->event.getFormattedMessage()+" "+event.getThrowableProxy().getMessage())
-                .reduce("",(left,right)->left+"\n"+right);
-            assertThat(output).contains("eventId="+eventId,"correlationId="+correlationId,"eventType=ticketUpdated","exceptionType=IllegalArgumentException")
+            String output=logs.list.stream().map(ILoggingEvent::getFormattedMessage).reduce("",(left,right)->left+"\n"+right);
+            assertThat(output).contains("eventId="+eventId,"correlationId="+correlationId,"eventType=ticketUpdated","eventVersion=1.0",
+                    "reason=TAXPAYER_REFERENCE_NOT_FOUND","exceptionType=BusinessException")
                 .doesNotContain("40111222","20-40111222-3","secret-token",payload);
-            assertThat(logs.list).anySatisfy(event->assertThat(event.getThrowableProxy().getStackTraceElementProxyArray()).isNotEmpty());
+            assertThat(logs.list).allSatisfy(event->assertThat(event.getThrowableProxy()).isNull());
+            assertThat(logs.list).allSatisfy(event->assertThat(event.getTimeStamp()).isPositive());
         } finally {
             logger.detachAppender(logs);
         }
+    }
+
+    @Test void unknownEventVersionLogsStableReasonAndNacksWithoutDispatching() throws Exception {
+        UUID eventId=UUID.randomUUID();
+        String payload="""
+            {"eventId":"%s","eventType":"ticketUpdated","eventVersion":"2.0","occurredAt":"2026-11-15T10:00:00-03:00","sourceModule":"atencion-ciudadana","data":{}}
+            """.formatted(eventId);
+        ConfirmedM1Consumer m1=mock(ConfirmedM1Consumer.class);ConfirmedM2Consumer m2=mock(ConfirmedM2Consumer.class);
+        CoreM4Consumer m4=mock(CoreM4Consumer.class);ConfirmedM7Consumer m7=mock(ConfirmedM7Consumer.class);
+        ConfirmedM8Consumer m8=mock(ConfirmedM8Consumer.class);
+        CoreInboundEventDispatcher dispatcher=new CoreInboundEventDispatcher(new ObjectMapper().findAndRegisterModules(),m1,m2,m4,m7,m8);
+        Channel channel=mock(Channel.class);RabbitTemplate rabbit=mock(RabbitTemplate.class);
+        Logger logger=(Logger)LoggerFactory.getLogger(CoreRabbitMqConsumer.class);
+        ListAppender<ILoggingEvent> logs=new ListAppender<>();logs.start();logger.addAppender(logs);
+        try {
+            listener(dispatcher,rabbit,"core-managed").receive(new Message(payload.getBytes(StandardCharsets.UTF_8),new MessageProperties()),channel,51);
+
+            verify(channel).basicNack(51,false,false);verify(channel,never()).basicAck(51,false);
+            verifyNoInteractions(rabbit,m1,m2,m4,m7,m8);
+            assertInboundLogHasReason(logs,eventId,"UNSUPPORTED_EVENT_VERSION");
+        } finally {logger.detachAppender(logs);}
+    }
+
+    @Test void m7TimestampWithoutOffsetLogsStablePayloadReasonBeforeConsumer() throws Exception {
+        String resource="/contracts/inbound/M7_infractionConfirmed_REAL_SIN_OFFSET.json";
+        String payload;
+        try(var input=CoreRabbitMqConsumerTests.class.getResourceAsStream(resource)){
+            assertThat(input).as("M7 contract fixture").isNotNull();
+            payload=new String(input.readAllBytes(),StandardCharsets.UTF_8);
+        }
+        UUID eventId=UUID.fromString(new ObjectMapper().readTree(payload).path("eventId").asText());
+        ConfirmedM7Consumer m7=mock(ConfirmedM7Consumer.class);
+        CoreInboundEventDispatcher dispatcher=new CoreInboundEventDispatcher(new ObjectMapper().findAndRegisterModules(),
+            mock(ConfirmedM1Consumer.class),mock(ConfirmedM2Consumer.class),mock(CoreM4Consumer.class),m7,mock(ConfirmedM8Consumer.class));
+        Channel channel=mock(Channel.class);Logger logger=(Logger)LoggerFactory.getLogger(CoreRabbitMqConsumer.class);
+        ListAppender<ILoggingEvent> logs=new ListAppender<>();logs.start();logger.addAppender(logs);
+        try {
+            listener(dispatcher,mock(RabbitTemplate.class),"core-managed").receive(
+                new Message(payload.getBytes(StandardCharsets.UTF_8),new MessageProperties()),channel,52);
+
+            verify(channel).basicNack(52,false,false);verify(channel,never()).basicAck(52,false);
+            verifyNoInteractions(m7);
+            assertInboundLogHasReason(logs,eventId,"INVALID_CORE_EVENT_PAYLOAD");
+            assertThat(logs.list).noneSatisfy(event->assertThat(event.getFormattedMessage()).contains("14:14:29"));
+        } finally {logger.detachAppender(logs);}
+    }
+
+    @Test void persistedM4UnsupportedCurrencyCodeIsLoggedWithoutChangingCoreManagedNack() throws Exception {
+        UUID eventId=UUID.randomUUID();
+        String payload="""
+            {"eventId":"%s","eventType":"permitFeeGenerated","eventVersion":"1.0","occurredAt":"2026-11-15T10:00:00-03:00","sourceModule":"habilitaciones","data":{"id":"FEE-TEST","permitApplicationId":"%s","establishmentId":"%s","cuit":"30712345678","currency":"USD","amount":100}}
+            """.formatted(eventId,UUID.randomUUID(),UUID.randomUUID());
+        IntegrationEventLog failed=new IntegrationEventLog();failed.status=IntegrationEventStatus.FAILED;
+        failed.errorMessage="M4_UNSUPPORTED_CURRENCY";
+        CoreM4Consumer m4=mock(CoreM4Consumer.class);when(m4.consumePermitFee(any())).thenReturn(failed);
+        CoreInboundEventDispatcher dispatcher=new CoreInboundEventDispatcher(new ObjectMapper().findAndRegisterModules(),
+            mock(ConfirmedM1Consumer.class),mock(ConfirmedM2Consumer.class),m4,mock(ConfirmedM7Consumer.class),mock(ConfirmedM8Consumer.class));
+        Channel channel=mock(Channel.class);RabbitTemplate rabbit=mock(RabbitTemplate.class);
+        Logger logger=(Logger)LoggerFactory.getLogger(CoreRabbitMqConsumer.class);
+        ListAppender<ILoggingEvent> logs=new ListAppender<>();logs.start();logger.addAppender(logs);
+        try {
+            listener(dispatcher,rabbit,"core-managed").receive(new Message(payload.getBytes(StandardCharsets.UTF_8),new MessageProperties()),channel,53);
+
+            verify(channel).basicNack(53,false,false);verify(channel,never()).basicAck(53,false);
+            verifyNoInteractions(rabbit);
+            verify(m4).consumePermitFee(argThat(event->"USD".equals(event.data().currency())));
+            assertInboundLogHasReason(logs,eventId,"M4_UNSUPPORTED_CURRENCY");
+            assertThat(logs.list).noneSatisfy(event->assertThat(event.getFormattedMessage()).contains("30712345678","USD"));
+        } finally {logger.detachAppender(logs);}
+    }
+
+    @Test void m4RetryReasonKeepsTheExistingLocalConfirmedRepublishAndAckPath() throws Exception {
+        UUID eventId=UUID.randomUUID();
+        String payload="""
+            {"eventId":"%s","eventType":"permitFeeGenerated","eventVersion":"1.0","occurredAt":"2026-11-15T10:00:00-03:00","sourceModule":"habilitaciones","data":{"id":"FEE-TEST","permitApplicationId":"%s","establishmentId":"%s","cuit":"30712345678","currency":"USD","amount":100}}
+            """.formatted(eventId,UUID.randomUUID(),UUID.randomUUID());
+        IntegrationEventLog failed=new IntegrationEventLog();failed.status=IntegrationEventStatus.FAILED;
+        failed.errorMessage="M4_UNSUPPORTED_CURRENCY";
+        CoreM4Consumer m4=mock(CoreM4Consumer.class);when(m4.consumePermitFee(any())).thenReturn(failed);
+        CoreInboundEventDispatcher dispatcher=new CoreInboundEventDispatcher(new ObjectMapper().findAndRegisterModules(),
+            mock(ConfirmedM1Consumer.class),mock(ConfirmedM2Consumer.class),m4,mock(ConfirmedM7Consumer.class),mock(ConfirmedM8Consumer.class));
+        RabbitTemplate rabbit=confirmedPublisher();Channel channel=mock(Channel.class);
+        Message original=new Message(payload.getBytes(StandardCharsets.UTF_8),new MessageProperties());
+        original.getMessageProperties().setMessageId(eventId.toString());
+
+        listener(dispatcher,rabbit).receive(original,channel,54);
+
+        verify(rabbit).send(eq("rentas.retry"),eq("q.rentas.retry.1"),argThat(retry->
+            eventId.toString().equals(retry.getMessageProperties().getMessageId())
+                &&payload.equals(new String(retry.getBody(),StandardCharsets.UTF_8))),any(CorrelationData.class));
+        verify(channel).basicAck(54,false);verify(channel,never()).basicNack(eq(54),anyBoolean(),anyBoolean());
+    }
+
+    private void assertInboundLogHasReason(ListAppender<ILoggingEvent> logs,UUID eventId,String reason){
+        assertThat(logs.list).singleElement().satisfies(event->{
+            assertThat(event.getFormattedMessage()).contains("eventId="+eventId,"reason="+reason);
+            assertThat(event.getThrowableProxy()).isNull();
+            assertThat(event.getTimeStamp()).isPositive();
+        });
     }
 
     @Test void inboundLogOmitsUnsafeEventTypeValues() throws Exception {
@@ -187,8 +316,9 @@ class CoreRabbitMqConsumerTests {
         }
     }
 
-    private CoreRabbitMqConsumer listener(CoreInboundEventDispatcher dispatcher){return new CoreRabbitMqConsumer(dispatcher,mock(RabbitTemplate.class),"rentas.retry","q.rentas.retry.1","q.rentas.retry.2","q.rentas.retry.3",1000);}
-    private CoreRabbitMqConsumer listener(CoreInboundEventDispatcher dispatcher,RabbitTemplate rabbit){return new CoreRabbitMqConsumer(dispatcher,rabbit,"rentas.retry","q.rentas.retry.1","q.rentas.retry.2","q.rentas.retry.3",1000);}
+    private CoreRabbitMqConsumer listener(CoreInboundEventDispatcher dispatcher){return listener(dispatcher,mock(RabbitTemplate.class),"local");}
+    private CoreRabbitMqConsumer listener(CoreInboundEventDispatcher dispatcher,RabbitTemplate rabbit){return listener(dispatcher,rabbit,"local");}
+    private CoreRabbitMqConsumer listener(CoreInboundEventDispatcher dispatcher,RabbitTemplate rabbit,String retryMode){return new CoreRabbitMqConsumer(dispatcher,rabbit,retryMode,"rentas.retry","q.rentas.retry.1","q.rentas.retry.2","q.rentas.retry.3",1000);}
     private RabbitTemplate confirmedPublisher(){RabbitTemplate rabbit=mock(RabbitTemplate.class);doAnswer(invocation->{CorrelationData correlation=invocation.getArgument(3);correlation.getFuture().complete(new CorrelationData.Confirm(true,null));return null;}).when(rabbit).send(any(String.class),any(String.class),any(Message.class),any(CorrelationData.class));return rabbit;}
     private Message message(long tag){MessageProperties properties=new MessageProperties();properties.setDeliveryTag(tag);return new Message(ticketUpdated().getBytes(StandardCharsets.UTF_8),properties);}
     private String envelope(String type,String source,String data){return """
@@ -198,6 +328,18 @@ class CoreRabbitMqConsumerTests {
         Channel channel=mock(Channel.class);
         listener(dispatcher).receive(new Message(payload.getBytes(StandardCharsets.UTF_8),new MessageProperties()),channel,tag);
         verify(channel).basicAck(tag,false);verify(channel,never()).basicNack(eq(tag),anyBoolean(),anyBoolean());
+    }
+
+    @Test void durableM7ErrorIsAcknowledgedForManualReconciliation() throws Exception {
+        ConfirmedM7Consumer m7=mock(ConfirmedM7Consumer.class);
+        ExternalObligation obligation=new ExternalObligation();obligation.status=ExternalObligationStatus.ERROR;
+        when(m7.consume(any())).thenReturn(obligation);
+        CoreInboundEventDispatcher dispatcher=new CoreInboundEventDispatcher(new ObjectMapper().findAndRegisterModules(),
+            mock(ConfirmedM1Consumer.class),mock(ConfirmedM2Consumer.class),mock(CoreM4Consumer.class),m7,mock(ConfirmedM8Consumer.class));
+
+        acknowledge(dispatcher,envelope("infractionConfirmed","transito","""
+            {"infractionId":"%s","debtorId":"30111222","debtorIdType":"DNI","licensePlate":"AA123BB","infractionType":"SPEEDING","infractionDateTime":"2026-10-30T10:00:00-03:00","baseAmount":100,"aggravatingFactors":[],"finalAmount":100,"inspectorId":"INSPECTOR","location":{"street":"Principal","crossStreet":"Otra","latitude":-34.6,"longitude":-58.4}}
+            """.formatted(UUID.randomUUID())),46);
     }
     private String ticketUpdated(){return """
         {"eventId":"%s","eventType":"ticketUpdated","eventVersion":"1.0","occurredAt":"%s","sourceModule":"atencion-ciudadana","correlationId":null,"causationId":null,"data":{"ticketId":"%s","publicId":"M2-100","citizenId":null,"isAnonymous":false,"responsibleAreaId":"M5","updateType":"STATUS_CHANGED","currentStatus":"IN_PROGRESS","currentPriority":"MEDIUM","progress":10,"updatedAt":"%s"}}

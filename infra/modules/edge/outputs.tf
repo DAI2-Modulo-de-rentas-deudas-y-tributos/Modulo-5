@@ -14,8 +14,8 @@ output "target_group_arn" {
 }
 
 output "listener_arn" {
-  description = "Listener de origen del ALB."
-  value       = one(concat(aws_lb_listener.http[*].arn, aws_lb_listener.https[*].arn))
+  description = "Listener HTTPS de origen del ALB."
+  value       = aws_lb_listener.https.arn
 }
 
 output "cloudfront_distribution_id" {
