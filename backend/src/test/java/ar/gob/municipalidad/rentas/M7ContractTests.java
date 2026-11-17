@@ -81,6 +81,43 @@ class M7ContractTests {
         assertThat(log.sourceModule).isEqualTo("M7");assertThat(log.payload).contains("\"sourceModule\":\"transito\"","\"baseAmount\":50000","\"aggravatingFactors\"");
     }
 
+    @Test void partialLocationWithNullOptionalFieldsCreatesOnlyOneObligationAndDebt() throws Exception {
+        long obligationsBefore=obligations.count();TaxpayerReference taxpayer=citizen("40123456");concept();
+        String partialLocation=DOCUMENTED_EVENT.replace("\"crossStreet\": \"Juramento\"","\"crossStreet\": null")
+            .replace("\"latitude\": -34.5621","\"latitude\": null")
+            .replace("\"longitude\": -58.4563","\"longitude\": null");
+        var event=read(partialLocation);
+        ExternalObligation first=m7.consume(event);ExternalObligation duplicate=m7.consume(event);
+        var replay=new ConfirmedInboundEvents.M7InfractionConfirmedEvent(UUID.randomUUID(),event.eventType(),
+            event.eventVersion(),event.occurredAt(),event.sourceModule(),event.correlationId(),event.causationId(),event.data());
+        ExternalObligation sameInfraction=m7.consume(replay);
+
+        assertThat(event.data().location().street()).isEqualTo("Av. Cabildo");
+        assertThat(event.data().location().crossStreet()).isNull();
+        assertThat(event.data().location().latitude()).isNull();assertThat(event.data().location().longitude()).isNull();
+        assertThat(event.eventVersion()).isEqualTo("1.0");assertThat(event.sourceModule()).isEqualTo("transito");
+        assertThat(event.correlationId()).isEqualTo(UUID.fromString("78cff4cc-3cd0-4f3f-b0f7-78ec2b15cf0b"));
+        assertThat(first.id).isEqualTo(duplicate.id).isEqualTo(sameInfraction.id);
+        assertThat(obligations.count()).isEqualTo(obligationsBefore+1);
+        assertThat(debts.findByTaxpayerId(taxpayer.id)).singleElement()
+            .satisfies(debt->assertThat(debt.externalObligationId).isEqualTo(first.id));
+        assertThat(processed.existsByExternalEventId(event.eventId().toString())).isTrue();
+    }
+
+    @Test void blankRequiredLocationStreetIsRejectedWithoutEconomicWrites() throws Exception {
+        long obligationsBefore=obligations.count(),debtsBefore=debts.count(),logsBefore=logs.count();
+        citizen("40123456");concept();
+        String blankStreet=DOCUMENTED_EVENT.replace("\"street\": \"Av. Cabildo\"","\"street\": \"  \"")
+            .replace("\"crossStreet\": \"Juramento\"","\"crossStreet\": null")
+            .replace("\"latitude\": -34.5621","\"latitude\": null")
+            .replace("\"longitude\": -58.4563","\"longitude\": null");
+        var event=read(blankStreet);
+
+        assertThatThrownBy(()->m7.consume(event)).isInstanceOf(BusinessException.class).hasMessageContaining("street");
+        assertThat(obligations.count()).isEqualTo(obligationsBefore);
+        assertThat(debts.count()).isEqualTo(debtsBefore);assertThat(logs.count()).isEqualTo(logsBefore);
+    }
+
     @Test void onlyExactDocumentedSourceIsAcceptedWithoutPartialWrites() throws Exception {
         long obligationsBefore=obligations.count(),debtsBefore=debts.count(),logsBefore=logs.count();citizen("40123456");concept();var event=read(DOCUMENTED_EVENT.replace("\"transito\"","\"M7\""));
         assertThatThrownBy(()->m7.consume(event)).isInstanceOf(BusinessException.class).hasMessageContaining("sourceModule transito");
