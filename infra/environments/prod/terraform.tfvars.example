@@ -18,15 +18,15 @@ backend_task_memory       = 512
 backend_spring_profiles_active = "prod"
 
 backend_environment_variables = {
-  BROKER_ADAPTER                 = "rabbitmq"
+  BROKER_ADAPTER                 = "local-log"
   CORE_RABBITMQ_HOST             = "core-uade-2026.duckdns.org"
   CORE_RABBITMQ_PORT             = "5671"
   SPRING_RABBITMQ_SSL_ENABLED    = "true"
-  CORE_RABBITMQ_USERNAME         = "rentas@muni.uade.edu.ar"
-  CORE_RABBITMQ_VHOST            = "/"
+  CORE_RABBITMQ_USERNAME         = "module_rentas"
+  CORE_RABBITMQ_VHOST            = "core"
   CORE_RABBITMQ_QUEUE            = "q.rentas"
   CORE_RABBITMQ_RETRY_MODE       = "core-managed"
-  CORE_RABBITMQ_CONSUMER_ENABLED = "true"
+  CORE_RABBITMQ_CONSUMER_ENABLED = "false"
   OUTBOX_DELAY_MS                = "5000"
   RENTAS_SECURITY_DEV_MODE       = "false"
 }
