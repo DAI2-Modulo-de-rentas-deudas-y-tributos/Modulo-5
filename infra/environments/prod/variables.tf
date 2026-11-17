@@ -102,17 +102,20 @@ variable "backend_environment_variables" {
   description = "Variables no sensibles del backend en PROD."
   type        = map(string)
   default = {
-    # Publicación (outbox) y suscripción (q.rentas) contra el broker de Core por AMQPS.
-    # Core autoriza la Elastic IP del NAT (output nat_public_ip) en TCP 5671.
-    BROKER_ADAPTER                 = "rabbitmq"
+    # Conexión AMQPS con el broker de Core, preparada pero apagada: local-log y sin
+    # consumidor hasta tener la contraseña AMQP de module_rentas. Con una contraseña
+    # inválida, el consumidor aborta el arranque (ACCESS_REFUSED, exit 1) y ECS
+    # hace rollback. Para encender: BROKER_ADAPTER=rabbitmq y
+    # CORE_RABBITMQ_CONSUMER_ENABLED=true. Core autoriza la EIP del NAT en TCP 5671.
+    BROKER_ADAPTER                 = "local-log"
     CORE_RABBITMQ_HOST             = "core-uade-2026.duckdns.org"
     CORE_RABBITMQ_PORT             = "5671"
     SPRING_RABBITMQ_SSL_ENABLED    = "true"
-    CORE_RABBITMQ_USERNAME         = "rentas@muni.uade.edu.ar"
-    CORE_RABBITMQ_VHOST            = "/"
+    CORE_RABBITMQ_USERNAME         = "module_rentas"
+    CORE_RABBITMQ_VHOST            = "core"
     CORE_RABBITMQ_QUEUE            = "q.rentas"
     CORE_RABBITMQ_RETRY_MODE       = "core-managed"
-    CORE_RABBITMQ_CONSUMER_ENABLED = "true"
+    CORE_RABBITMQ_CONSUMER_ENABLED = "false"
     OUTBOX_DELAY_MS                = "5000"
     RENTAS_SECURITY_DEV_MODE       = "false"
   }

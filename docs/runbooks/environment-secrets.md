@@ -37,8 +37,8 @@ contrato Core/JWT sigue pendiente; PROD usa el perfil `prod`, sin modo demo:
 | Componente | Variable | DEV | TEST | PROD |
 | --- | --- | --- | --- | --- |
 | Backend | `backend_spring_profiles_active` | `dev` | `staging` | `prod` |
-| Backend | `BROKER_ADAPTER` | `local-log` | `local-log` | `rabbitmq` (AMQPS a Core, puerto 5671) |
-| Backend | `CORE_RABBITMQ_CONSUMER_ENABLED` | `false` | por ensayo | `true` (suscripción a `q.rentas`) |
+| Backend | `BROKER_ADAPTER` | `local-log` | `local-log` | `local-log`; `rabbitmq` (AMQPS a Core, 5671) cuando esté la contraseña AMQP |
+| Backend | `CORE_RABBITMQ_CONSUMER_ENABLED` | `false` | por ensayo | `false`; `true` (suscripción a `q.rentas`) junto con `rabbitmq` |
 | Backend | `OUTBOX_DELAY_MS` | `5000` | `5000` | `5000` |
 | Backend | `RENTAS_SECURITY_DEV_MODE` | `true` | `true` | `false` |
 | Frontend | `VITE_USE_MOCKS` | `false` | `false` | `false` |
@@ -79,9 +79,13 @@ Este último debe coincidir con el secreto que ECS obtiene desde Secrets Manager
 `RENTAS_DEMO_BOOTSTRAP_PASSWORD` y `CORE_MODULE_SECRET`. Guardar los ARN en la
 variable del environment. Los valores permanecen en Secrets Manager.
 `PROD_BACKEND_SECRET_ARNS` debe incluir `CORE_RABBITMQ_PASSWORD`, la contraseña
-del usuario `rentas@muni.uade.edu.ar` en el broker de Core. Sin esa referencia,
-`cd-prod.yml` falla antes del plan: el publicador AMQP no arranca sin
-credenciales, y ECS haría rollback.
+AMQP del usuario `module_rentas` (vhost `core`) en el broker de Core. No es la
+credencial del dashboard `rentas@muni.uade.edu.ar`. Sin esa referencia,
+`cd-prod.yml` falla antes del plan. PROD arranca con `BROKER_ADAPTER=local-log`
+y el consumidor apagado; el secreto puede tener un valor provisorio mientras
+ninguno de los dos use AMQP. Con una contraseña incorrecta y AMQP encendido, el
+broker responde `ACCESS_REFUSED`, el consumidor aborta el arranque y el
+contenedor termina con código 1, por lo que ECS hace rollback.
 
 ## Alta y rotacion
 
