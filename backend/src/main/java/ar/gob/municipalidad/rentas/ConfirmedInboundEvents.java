@@ -87,6 +87,6 @@ public final class ConfirmedInboundEvents {
         @NotNull OffsetDateTime infractionDateTime,@NotNull @Positive @CurrencyAmount BigDecimal baseAmount,
         @NotNull List<@NotBlank String> aggravatingFactors,@NotNull @Positive @CurrencyAmount BigDecimal finalAmount,
         @NotBlank String inspectorId,@NotNull @Valid M7Location location) {}
-    public record M7Location(@NotBlank String street,@NotBlank String crossStreet,
-        @NotNull BigDecimal latitude,@NotNull BigDecimal longitude) {}
+    public record M7Location(@NotBlank String street,String crossStreet,
+        BigDecimal latitude,BigDecimal longitude) {}
 }
