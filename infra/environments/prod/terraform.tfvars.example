@@ -18,14 +18,24 @@ backend_task_memory       = 512
 backend_spring_profiles_active = "prod"
 
 backend_environment_variables = {
-  BROKER_ADAPTER           = "local-log"
-  OUTBOX_DELAY_MS          = "5000"
-  RENTAS_SECURITY_DEV_MODE = "false"
+  BROKER_ADAPTER                 = "rabbitmq"
+  CORE_RABBITMQ_HOST             = "core-uade-2026.duckdns.org"
+  CORE_RABBITMQ_PORT             = "5671"
+  SPRING_RABBITMQ_SSL_ENABLED    = "true"
+  CORE_RABBITMQ_USERNAME         = "rentas@muni.uade.edu.ar"
+  CORE_RABBITMQ_VHOST            = "/"
+  CORE_RABBITMQ_QUEUE            = "q.rentas"
+  CORE_RABBITMQ_RETRY_MODE       = "core-managed"
+  CORE_RABBITMQ_CONSUMER_ENABLED = "true"
+  OUTBOX_DELAY_MS                = "5000"
+  RENTAS_SECURITY_DEV_MODE       = "false"
 }
 
 # Los valores son ARNs de Secrets Manager, nunca secretos en texto plano.
 # El perfil prod rechaza secretos RENTAS_DEMO_*.
-backend_secret_variables = {}
+backend_secret_variables = {
+  CORE_RABBITMQ_PASSWORD = "arn:aws:secretsmanager:us-east-2:000000000000:secret:modulo-5-rentas-prod-core-rabbitmq-password"
+}
 
 frontend_environment_variables = {
   VITE_AUTH_MODE = "core"
