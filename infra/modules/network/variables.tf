@@ -53,3 +53,16 @@ variable "database_subnet_cidrs" {
     error_message = "Se requieren exactamente dos bloques CIDR válidos para las subredes de base de datos."
   }
 }
+
+variable "app_subnet_cidrs" {
+  description = "Bloques CIDR de las dos subredes privadas de las tareas Fargate, con salida por NAT."
+  type        = list(string)
+
+  validation {
+    condition = (
+      length(var.app_subnet_cidrs) == 2 &&
+      alltrue([for cidr in var.app_subnet_cidrs : can(cidrhost(cidr, 0))])
+    )
+    error_message = "Se requieren exactamente dos bloques CIDR válidos para las subredes de aplicación."
+  }
+}

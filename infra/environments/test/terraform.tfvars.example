@@ -5,6 +5,7 @@ aws_account_id = "756663253996"
 vpc_cidr             = "10.60.0.0/16"
 public_subnet_cidrs   = ["10.60.0.0/24", "10.60.1.0/24"]
 database_subnet_cidrs = ["10.60.10.0/24", "10.60.11.0/24"]
+app_subnet_cidrs      = ["10.60.20.0/24", "10.60.21.0/24"]
 
 ecr_images_to_keep        = 5
 enable_container_insights = false

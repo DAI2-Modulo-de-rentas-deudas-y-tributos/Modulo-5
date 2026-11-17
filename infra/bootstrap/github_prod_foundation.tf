@@ -18,24 +18,29 @@ data "aws_iam_policy_document" "github_prod_foundation" {
   statement {
     sid = "ManageProdNetworkFoundation"
     actions = [
+      "ec2:AllocateAddress",
       "ec2:AssociateRouteTable",
       "ec2:AttachInternetGateway",
       "ec2:CreateInternetGateway",
+      "ec2:CreateNatGateway",
       "ec2:CreateRoute",
       "ec2:CreateRouteTable",
       "ec2:CreateSubnet",
       "ec2:CreateTags",
       "ec2:CreateVpc",
       "ec2:DeleteInternetGateway",
+      "ec2:DeleteNatGateway",
       "ec2:DeleteRoute",
       "ec2:DeleteRouteTable",
       "ec2:DeleteSubnet",
       "ec2:DeleteTags",
       "ec2:DeleteVpc",
       "ec2:DetachInternetGateway",
+      "ec2:DisassociateAddress",
       "ec2:DisassociateRouteTable",
       "ec2:ModifySubnetAttribute",
       "ec2:ModifyVpcAttribute",
+      "ec2:ReleaseAddress",
       "ec2:ReplaceRoute",
       "ec2:ReplaceRouteTableAssociation"
     ]
