@@ -98,3 +98,8 @@ output "budget_email_alerts_enabled" {
   value       = local.budget_alert_email != ""
 }
 
+
+output "nat_public_ip" {
+  description = "IP pública fija de salida del backend, la que Core autoriza como /32."
+  value       = module.network.nat_public_ip
+}
