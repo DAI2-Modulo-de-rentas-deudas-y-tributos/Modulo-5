@@ -1905,6 +1905,68 @@ class PostgreSqlIntegrationTest {
         }
     }
 
+    @Test void replayedProcessedCitizenRegistrationRepairsCanonicalLinkBeforePublishingOneDebtOverdue() throws Exception {
+        authenticate();
+        UUID citizenId=UUID.randomUUID(),eventId=UUID.randomUUID();OffsetDateTime occurredAt=OffsetDateTime.now();
+        TaxpayerReference citizen=taxpayer(TaxpayerType.CITIZEN,citizenId.toString(),uniqueDigits(8),null);
+        String payload=processedCitizenEnvelope(eventId,citizenId,occurredAt);
+        recordProcessedInbound(eventId,payload,occurredAt);
+        long logCountBefore=integrationLogs.count(),processedCountBefore=processedEvents.count();
+
+        inbound.dispatch(payload);
+
+        TaxpayerReference linked=taxpayers.findById(citizen.id).orElseThrow();
+        assertThat(linked.canonicalCitizenId).isEqualTo(citizenId);
+        assertThat(linked.externalId).isEqualTo(citizenId.toString());
+        assertThat(linked.externalStatus).isEqualTo(TaxpayerStatus.ACTIVE);
+        assertThat(linked.dni).isEqualTo(citizen.dni);
+        assertThat(integrationLogs.count()).isEqualTo(logCountBefore);
+        assertThat(processedEvents.count()).isEqualTo(processedCountBefore);
+        assertThat(auditoria.findAll().stream().filter(entry->entry.action.equals("CANONICAL_CITIZEN_ID_REPAIRED_FROM_M1_EVENT")&&entry.newData.contains(eventId.toString()))).hasSize(1);
+
+        inbound.dispatch(payload);
+        assertThat(auditoria.findAll().stream().filter(entry->entry.action.equals("CANONICAL_CITIZEN_ID_REPAIRED_FROM_M1_EVENT")&&entry.newData.contains(eventId.toString()))).hasSize(1);
+
+        Debt eligible=debt("REPLAYED-CITIZEN-"+UUID.randomUUID(),citizen.id);
+        LocalDate processingDate=uniqueProcessingDate(eligible.id,0);eligible.dueDate=processingDate.minusDays(1);debts.saveAndFlush(eligible);
+        dueDates.process(processingDate);
+        List<OutboxEvent> events=overdueEvents(eligible);
+        assertThat(events).hasSize(1);
+        OutboxEvent event=events.get(0);var envelope=json.readTree(event.payload);var data=envelope.path("data");
+        assertThat(event.id.toString()).isEqualTo(envelope.path("eventId").asText());
+        assertThat(envelope.path("eventType").asText()).isEqualTo("debtOverdue");
+        assertThat(envelope.path("eventVersion").asText()).isEqualTo("1.0");
+        assertThat(envelope.path("sourceModule").asText()).isEqualTo("rentas");
+        assertThat(data.path("debtId").asText()).isEqualTo(eligible.integrationId.toString());
+        assertThat(data.path("citizenId").asText()).isEqualTo(citizenId.toString());
+
+        dueDates.process(processingDate);
+        assertThat(overdueEvents(eligible)).hasSize(1);
+    }
+
+    @Test void processedCitizenReplayDoesNotOverwriteAContradictoryCanonicalIdentity() {
+        UUID citizenId=UUID.randomUUID(),eventId=UUID.randomUUID();OffsetDateTime occurredAt=OffsetDateTime.now();
+        TaxpayerReference citizen=taxpayer(TaxpayerType.CITIZEN,citizenId.toString(),uniqueDigits(8),null);
+        UUID existingCanonical=UUID.randomUUID();citizen.canonicalCitizenId=existingCanonical;taxpayers.saveAndFlush(citizen);
+        String payload=processedCitizenEnvelope(eventId,citizenId,occurredAt);recordProcessedInbound(eventId,payload,occurredAt);
+
+        assertThatThrownBy(()->inbound.dispatch(payload)).isInstanceOfSatisfying(BusinessException.class,
+            ex->assertThat(ex.code).isEqualTo("CANONICAL_CITIZEN_LINK_CONFLICT"));
+        assertThat(taxpayers.findById(citizen.id).orElseThrow().canonicalCitizenId).isEqualTo(existingCanonical);
+        assertThat(auditoria.findAll().stream().noneMatch(entry->entry.action.equals("CANONICAL_CITIZEN_ID_REPAIRED_FROM_M1_EVENT")&&entry.newData.contains(eventId.toString()))).isTrue();
+    }
+
+    @Test void processedCitizenReplayWithoutHistoricalPayloadDoesNotGuessCanonicalIdentity() throws Exception {
+        UUID citizenId=UUID.randomUUID(),eventId=UUID.randomUUID();OffsetDateTime occurredAt=OffsetDateTime.now();
+        TaxpayerReference citizen=taxpayer(TaxpayerType.CITIZEN,citizenId.toString(),uniqueDigits(8),null);
+        recordProcessedInbound(eventId,"",occurredAt);
+
+        inbound.dispatch(processedCitizenEnvelope(eventId,citizenId,occurredAt));
+
+        assertThat(taxpayers.findById(citizen.id).orElseThrow().canonicalCitizenId).isNull();
+        assertThat(auditoria.findAll().stream().noneMatch(entry->entry.action.equals("CANONICAL_CITIZEN_ID_REPAIRED_FROM_M1_EVENT")&&entry.newData.contains(eventId.toString()))).isTrue();
+    }
+
     @Test void debtOverdueSnapshotRemainsPreChargeAndReprocessingDoesNotDuplicateOutboxOrCharge() throws Exception {
         authenticate();
         TaxpayerReference citizen=taxpayer(TaxpayerType.CITIZEN,"PG-OVERDUE-SNAPSHOT-"+UUID.randomUUID(),uniqueDigits(8),null);
@@ -2477,6 +2539,20 @@ class PostgreSqlIntegrationTest {
     }
 
     private void assertEquation(Payment payment){Payment stored=paymentRepository.findById(payment.id).orElseThrow();assertThat(stored.allocatedAmount.add(stored.unallocatedAmount)).isEqualByComparingTo(stored.amount);}
+    private String processedCitizenEnvelope(UUID eventId,UUID citizenId,OffsetDateTime occurredAt){return """
+        {"eventId":"%s","eventType":"citizenUpdated","eventVersion":"1.0","occurredAt":"%s",
+         "sourceModule":"ciudadanos","correlationId":"%s","data":{"citizenId":"%s","updateType":"REGISTERED",
+         "details":{"dni":"30123456","cuil":"20301234567","name":"Persona","lastname":"Sintetica","birthdate":"1990-04-12","state":"ACTIVE"},
+         "updatedBy":{"type":"SELF_SERVICE"}}}
+        """.formatted(eventId,occurredAt,UUID.randomUUID(),citizenId);}
+    private void recordProcessedInbound(UUID eventId,String payload,OffsetDateTime at){
+        IntegrationEventLog log=new IntegrationEventLog();log.eventId=eventId;log.externalEventId=eventId.toString();
+        log.eventType="citizenUpdated";log.sourceModule="ciudadanos";log.direction=EventDirection.INBOUND;
+        log.status=IntegrationEventStatus.PROCESSED;log.payload=payload;log.retryCount=0;log.occurredAt=at;log.receivedAt=at;log.processedAt=at;
+        integrationLogs.saveAndFlush(log);ProcessedEvent prior=new ProcessedEvent();prior.eventId=eventId;
+        prior.externalEventId=eventId.toString();prior.eventType="citizenUpdated";prior.sourceModule="ciudadanos";
+        prior.receivedAt=at;prior.processedAt=at;processedEvents.saveAndFlush(prior);
+    }
     private DueDateProcessing planStageRun(LocalDate date,long afterPlanId){DueDateProcessing run=new DueDateProcessing();run.processingDate=date;run.status=DueDateRunStatus.PROCESSING;run.processingStage=DueDateProcessingStage.PLANS;run.attemptCount=1;run.lastProcessedId=afterPlanId;run.requestedAt=OffsetDateTime.now();run.startedAt=run.requestedAt;run.processedBy="postgres-it";return dueDateRuns.saveAndFlush(run);}
     private LocalDate uniqueProcessingDate(Long debtId,int offset){return LocalDate.of(1900,1,1).plusDays(debtId*10+offset);}
     private List<OutboxEvent> overdueEvents(Debt debt){return outbox.findAll().stream().filter(x->x.eventType.equals("debtOverdue")&&x.targetModule.equals("CORE")&&x.aggregateType.equals("Debt")&&x.aggregateId.equals(debt.id.toString())).toList();}
