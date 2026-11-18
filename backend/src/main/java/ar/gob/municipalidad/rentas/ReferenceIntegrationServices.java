@@ -13,6 +13,7 @@ class IntegrationInbox {
     IntegrationInbox(ProcessedEventRepository processed,IntegrationEventLogRepository logs,ObjectMapper json){this.processed=processed;this.logs=logs;this.json=json;}
     boolean processed(UUID id){return processed(id.toString());}
     boolean processed(String id){return processed.existsByExternalEventId(id);}
+    Optional<IntegrationEventLog> processedLog(String id){return logs.findFirstByExternalEventIdOrderByIdDesc(id).filter(log->log.status==IntegrationEventStatus.PROCESSED);}
     IntegrationEventLog receive(ApiDtos.EventEnvelope<?> event){return receive(event,event);}
     IntegrationEventLog receive(ApiDtos.EventEnvelope<?> event,Object raw){return receive(normalize(event),raw,false);}
     IntegrationEventLog receive(NormalizedIntegrationEvent event,Object raw){return receive(event,raw,false);}
