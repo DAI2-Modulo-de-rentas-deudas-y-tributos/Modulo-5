@@ -12,6 +12,26 @@ import useResource from "../../hooks/useResource.js";
 import { eventService } from "../../services/rentasService.js";
 import { formatDateTime } from "../../lib/format.js";
 
+const ignoredReasons = {
+  RESPONSIBLE_AREA_OUTSIDE_M5: "Ticket de otra área",
+  ADMINISTRATIVE_RECLASSIFICATION: "Reclasificación administrativa",
+  TICKET_NOT_ROUTED_TO_M5: "Ticket no derivado a Rentas",
+};
+
+function auditReason(payload) {
+  try {
+    const parsed = typeof payload === "string" ? JSON.parse(payload) : payload;
+    return typeof parsed?.reason === "string" ? parsed.reason : null;
+  } catch {
+    return null;
+  }
+}
+
+function ignoredReason(event) {
+  const errorCode = Object.hasOwn(ignoredReasons, event.errorMessage) ? event.errorMessage : auditReason(event.payload);
+  return ignoredReasons[errorCode] ?? "Motivo no disponible";
+}
+
 /**
  * Bitácora de eventos: evidencia de lo publicado y procesado, con reproceso manual
  * de la DLQ. El reintento es seguro porque los consumidores son idempotentes por eventId.
@@ -87,6 +107,11 @@ export default function EventosPage() {
     { key: "processedAt", header: "Procesado", render: (row) => formatDateTime(row.processedAt) },
     { key: "attempts", header: "Intentos", align: "right" },
     { key: "status", header: "Estado", render: (row) => <StatusBadge status={row.status} /> },
+    {
+      key: "reason",
+      header: "Motivo",
+      render: (row) => row.status === "IGNORED" ? ignoredReason(row) : "—",
+    },
     {
       key: "actions",
       header: "",
