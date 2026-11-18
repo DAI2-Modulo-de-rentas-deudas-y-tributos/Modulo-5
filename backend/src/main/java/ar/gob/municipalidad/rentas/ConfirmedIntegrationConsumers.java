@@ -3,6 +3,8 @@ package ar.gob.municipalidad.rentas;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -19,9 +21,10 @@ class ConfirmedM1Consumer {
     private final ConfirmedContractValidator validator;
     private final ObjectMapper json;
     private final AuditService audit;
+    private final EntityManager entities;
 
     ConfirmedM1Consumer(TaxpayerRepository taxpayers,TaxpayerRepresentationRepository representations,
-        IntegrationInbox inbox,ConfirmedContractValidator validator,ObjectMapper json,AuditService audit){this.taxpayers=taxpayers;this.representations=representations;this.inbox=inbox;this.validator=validator;this.json=json;this.audit=audit;}
+        IntegrationInbox inbox,ConfirmedContractValidator validator,ObjectMapper json,AuditService audit,EntityManager entities){this.taxpayers=taxpayers;this.representations=representations;this.inbox=inbox;this.validator=validator;this.json=json;this.audit=audit;this.entities=entities;}
 
     @Transactional TaxpayerReference consumeCitizen(ConfirmedInboundEvents.M1CitizenUpdatedEvent event){
         validator.validate(event);
@@ -61,6 +64,7 @@ class ConfirmedM1Consumer {
         }
         if(!inbox.processedLog(event.eventId()).filter(log->matchesCitizenIdentity(log,event,canonicalId)).isPresent())return existing;
         TaxpayerReference locked=taxpayers.findByIdForUpdate(existing.id).orElseThrow(()->CatalogService.notFound("Contribuyente"));
+        entities.refresh(locked,LockModeType.PESSIMISTIC_WRITE);
         CatalogService.require(locked.taxpayerType==TaxpayerType.CITIZEN&&locked.externalId.equals(canonicalId.toString()),
             "CITIZEN_REFERENCE_CONFLICT","La referencia ya no coincide con la identidad recibida");
         if(locked.canonicalCitizenId!=null){
