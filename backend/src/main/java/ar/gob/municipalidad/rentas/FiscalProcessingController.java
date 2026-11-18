@@ -75,12 +75,12 @@ class FiscalProcessingDatePolicy {
 class LateChargeService {
     private static final BigDecimal HUNDRED=new BigDecimal("100");
     private final DebtRepository debts;private final LateChargeRuleRepository rules;private final LateChargeApplicationRepository applications;private final PaymentPlanRepository plans;private final PaymentPlanDebtRepository planDebts;
-    private final AdjustmentRepository adjustments;private final AuditService audit;private final CurrentIdentity identity;private final FiscalProcessingDatePolicy dates;
+    private final AdjustmentRepository adjustments;private final AuditService audit;private final CurrentIdentity identity;private final FiscalProcessingDatePolicy dates;private final BillLifecycleService billLifecycle;
     @org.springframework.beans.factory.annotation.Autowired
     LateChargeService(DebtRepository debts,LateChargeRuleRepository rules,LateChargeApplicationRepository applications,PaymentPlanRepository plans,PaymentPlanDebtRepository planDebts,
-        AdjustmentRepository adjustments,AuditService audit,CurrentIdentity identity,FiscalProcessingDatePolicy dates){this.debts=debts;this.rules=rules;this.applications=applications;this.plans=plans;this.planDebts=planDebts;this.adjustments=adjustments;this.audit=audit;this.identity=identity;this.dates=dates;}
+        AdjustmentRepository adjustments,AuditService audit,CurrentIdentity identity,FiscalProcessingDatePolicy dates,BillLifecycleService billLifecycle){this.debts=debts;this.rules=rules;this.applications=applications;this.plans=plans;this.planDebts=planDebts;this.adjustments=adjustments;this.audit=audit;this.identity=identity;this.dates=dates;this.billLifecycle=billLifecycle;}
     LateChargeService(DebtRepository debts,LateChargeRuleRepository rules,LateChargeApplicationRepository applications,
-        AdjustmentRepository adjustments,AuditService audit,CurrentIdentity identity,FiscalProcessingDatePolicy dates){this(debts,rules,applications,null,null,adjustments,audit,identity,dates);}
+        AdjustmentRepository adjustments,AuditService audit,CurrentIdentity identity,FiscalProcessingDatePolicy dates,BillLifecycleService billLifecycle){this(debts,rules,applications,null,null,adjustments,audit,identity,dates,billLifecycle);}
 
     FiscalProcessingController.LateChargeResponse preview(Long debtId,LocalDate date){
         dates.requireNotFuture(date);
@@ -94,7 +94,7 @@ class LateChargeService {
     @Transactional FiscalProcessingController.LateChargeResponse apply(Long debtId,LocalDate date){return apply(debtId,date,null);}
     @Transactional FiscalProcessingController.LateChargeResponse apply(Long debtId,LocalDate date,String ifMatch){
         dates.requireNotFuture(date);
-        Debt debt=debts.findByIdForUpdate(debtId).orElseThrow(()->CatalogService.notFound("Deuda"));if(ifMatch!=null)EntityTags.requireIfMatch(debtTag(debt),ifMatch);LateChargeRule rule=rule(date);
+        List<Bill> affectedBills=billLifecycle.lockForDebtBalanceChange(List.of(debtId));Debt debt=debts.findByIdForUpdate(debtId).orElseThrow(()->CatalogService.notFound("Deuda"));if(ifMatch!=null)EntityTags.requireIfMatch(debtTag(debt),ifMatch);LateChargeRule rule=rule(date);
         Optional<LateChargeApplication> existing=applications.findByDebtIdAndRuleIdAndCalculationDate(debt.id,rule.id,date);
         if(existing.isPresent())return response(existing.get(),rule.code,false);
         FiscalProcessingController.LateChargeResponse value=calculate(debt,rule,date,false,null);
@@ -106,7 +106,7 @@ class LateChargeService {
         BigDecimal previous=debt.currentAmount;createAdjustment(debt,AdjustmentType.SURCHARGE,value.surchargeAmount(),previous,"Recargo automático "+rule.code);
         previous=previous.add(value.surchargeAmount());createAdjustment(debt,AdjustmentType.INTEREST,value.interestAmount(),previous,"Interés automático "+rule.code);
         debt.currentAmount=debt.currentAmount.add(value.totalAdjustment());debt.outstandingBalance=debt.outstandingBalance.add(value.totalAdjustment());debt.updatedAt=OffsetDateTime.now();
-        audit.record("LateChargeApplication",application.id,"LATE_CHARGE_APPLIED",application);return response(application,rule.code,true);
+        audit.record("LateChargeApplication",application.id,"LATE_CHARGE_APPLIED",application);if(value.totalAdjustment().signum()!=0)billLifecycle.cancelForDebtBalanceChange(List.of(debt.id),affectedBills);return response(application,rule.code,true);
     }
     private FiscalProcessingController.LateChargeResponse calculate(Debt debt,LateChargeRule rule,LocalDate date,boolean applied,Long id){return calculate(debt,rule,date,applied,id,money(applications.findByDebtId(debt.id).stream().map(x->x.totalAdjustment).reduce(BigDecimal.ZERO,BigDecimal::add)));}
     private FiscalProcessingController.LateChargeResponse calculate(Debt debt,LateChargeRule rule,LocalDate date,boolean applied,Long id,BigDecimal previous){

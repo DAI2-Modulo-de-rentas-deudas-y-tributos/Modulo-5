@@ -67,6 +67,9 @@ class BlockedBillPostgreSqlIntegrationTest {
     @Autowired BillDebtRepository billDebts;
     @Autowired BillingService billing;
     @Autowired PaymentService payments;
+    @Autowired AdjustmentService adjustmentService;
+    @Autowired LateChargeService lateCharges;
+    @Autowired LateChargeRuleRepository lateChargeRules;
     @Autowired PaymentRepository paymentRepository;
     @Autowired ReversalService reversals;
     @Autowired AuditRepository audits;
@@ -264,6 +267,155 @@ class BlockedBillPostgreSqlIntegrationTest {
             .filter(bill -> billDebts.findByBillId(bill.id).stream().anyMatch(link -> link.debtId.equals(debt.id)))
             .toList();
         assertThat(issued).hasSize(1);
+    }
+
+    @Test
+    void approvedAdjustmentCancelsIssuedBillAndAllowsReissueAtUpdatedBalance() {
+        Debt debt = debtFor(TaxpayerStatus.ACTIVE);
+        Bill oldBill = billing.create(new ApiDtos.CreateBillRequest(debt.taxpayerId,
+            List.of(debt.id), LocalDate.now().plusDays(10)));
+        AdjustmentRequest adjustment = adjustmentService.create(new ApiDtos.CreateAdjustmentRequest(
+            debt.id, AdjustmentType.DISCOUNT, new BigDecimal("10.00"), "SCRUM-856 ajuste aprobado"));
+
+        TestActorSupport.asApprover(() -> adjustmentService.approve(adjustment.id, "Aprobado"));
+
+        Bill cancelled = bills.findById(oldBill.id).orElseThrow();
+        assertThat(cancelled.status).isEqualTo(BillStatus.CANCELLED);
+        assertThat(cancelled.cancellationReason).isEqualTo(BillLifecycleService.DEBT_BALANCE_CHANGED);
+        assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("90.00");
+        assertThat(audits.findByEntityTypeAndEntityIdOrderByOccurredAtAscIdAsc("Bill", oldBill.id.toString()))
+            .anySatisfy(entry -> assertThat(entry.action).isEqualTo("BILL_CANCELLED_AFTER_BALANCE_CHANGE"));
+        Bill replacement = billing.create(new ApiDtos.CreateBillRequest(debt.taxpayerId,
+            List.of(debt.id), LocalDate.now().plusDays(10)));
+        assertThat(replacement.totalAmount).isEqualByComparingTo("90.00");
+        assertThat(bills.findById(oldBill.id).orElseThrow().status).isEqualTo(BillStatus.CANCELLED);
+    }
+
+    @Test
+    void rejectedAndNoOpAdjustmentsKeepIssuedBillValid() {
+        Debt rejectedDebt = debtFor(TaxpayerStatus.ACTIVE);
+        Bill rejectedBill = billing.create(new ApiDtos.CreateBillRequest(rejectedDebt.taxpayerId,
+            List.of(rejectedDebt.id), LocalDate.now().plusDays(10)));
+        AdjustmentRequest rejected = adjustmentService.create(new ApiDtos.CreateAdjustmentRequest(
+            rejectedDebt.id, AdjustmentType.DISCOUNT, new BigDecimal("10.00"), "Solicitud rechazada"));
+        TestActorSupport.asApprover(() -> adjustmentService.reject(rejected.id, "No corresponde"));
+        assertThat(bills.findById(rejectedBill.id).orElseThrow().status).isEqualTo(BillStatus.ISSUED);
+
+        Debt unchangedDebt = debtFor(TaxpayerStatus.ACTIVE);
+        Bill unchangedBill = billing.create(new ApiDtos.CreateBillRequest(unchangedDebt.taxpayerId,
+            List.of(unchangedDebt.id), LocalDate.now().plusDays(10)));
+        AdjustmentRequest noOp = adjustmentService.create(new ApiDtos.CreateAdjustmentRequest(
+            unchangedDebt.id, AdjustmentType.CORRECTION, unchangedDebt.currentAmount, "Sin cambio"));
+        TestActorSupport.asApprover(() -> adjustmentService.approve(noOp.id, "Aprobado sin variación"));
+        assertThat(debts.findById(unchangedDebt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("100.00");
+        assertThat(bills.findById(unchangedBill.id).orElseThrow().status).isEqualTo(BillStatus.ISSUED);
+    }
+
+    @Test
+    void appliedLateChargeCancelsIssuedBillAndReissueUsesUpdatedBalance() {
+        Debt debt = debtFor(TaxpayerStatus.ACTIVE);
+        LocalDate processingDate = LocalDate.now();
+        debt.dueDate = processingDate.minusDays(5);
+        debts.saveAndFlush(debt);
+        Bill oldBill = billing.create(new ApiDtos.CreateBillRequest(debt.taxpayerId,
+            List.of(debt.id), processingDate.plusDays(10)));
+        LateChargeRule rule = new LateChargeRule();
+        rule.code = "SCRUM-856-" + UUID.randomUUID();
+        rule.surchargeRate = new BigDecimal("10.0000");
+        rule.dailyInterestRate = new BigDecimal("1.0000");
+        rule.active = true;
+        rule.validFrom = processingDate.minusDays(10);
+        lateChargeRules.saveAndFlush(rule);
+
+        var applied = lateCharges.apply(debt.id, processingDate);
+
+        assertThat(applied.applied()).isTrue();
+        assertThat(applied.totalAdjustment()).isEqualByComparingTo("15.00");
+        assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isEqualByComparingTo("115.00");
+        assertThat(bills.findById(oldBill.id).orElseThrow().status).isEqualTo(BillStatus.CANCELLED);
+        assertThat(bills.findById(oldBill.id).orElseThrow().cancellationReason)
+            .isEqualTo(BillLifecycleService.DEBT_BALANCE_CHANGED);
+        Bill replacement = billing.create(new ApiDtos.CreateBillRequest(debt.taxpayerId,
+            List.of(debt.id), processingDate.plusDays(10)));
+        assertThat(replacement.totalAmount).isEqualByComparingTo("115.00");
+
+        Debt zeroChangeDebt = debtFor(TaxpayerStatus.ACTIVE);
+        zeroChangeDebt.dueDate = processingDate.minusDays(5);
+        debts.saveAndFlush(zeroChangeDebt);
+        Bill unaffectedBill = billing.create(new ApiDtos.CreateBillRequest(zeroChangeDebt.taxpayerId,
+            List.of(zeroChangeDebt.id), processingDate.plusDays(10)));
+        LateChargeRule zeroRule = new LateChargeRule();
+        zeroRule.code = "SCRUM-856-ZERO-" + UUID.randomUUID();
+        zeroRule.surchargeRate = BigDecimal.ZERO;
+        zeroRule.dailyInterestRate = BigDecimal.ZERO;
+        zeroRule.active = true;
+        zeroRule.validFrom = processingDate;
+        lateChargeRules.saveAndFlush(zeroRule);
+
+        assertThat(lateCharges.apply(zeroChangeDebt.id, processingDate).totalAdjustment()).isZero();
+        assertThat(bills.findById(unaffectedBill.id).orElseThrow().status).isEqualTo(BillStatus.ISSUED);
+    }
+
+    @Test
+    void concurrentBillPaymentAndAdjustmentNeverLeaveAnIssuedBillWithStaleBalance() throws Exception {
+        Debt debt = debtFor(TaxpayerStatus.ACTIVE);
+        Bill bill = billing.create(new ApiDtos.CreateBillRequest(debt.taxpayerId,
+            List.of(debt.id), LocalDate.now().plusDays(10)));
+        AdjustmentRequest adjustment = adjustmentService.create(new ApiDtos.CreateAdjustmentRequest(
+            debt.id, AdjustmentType.DISCOUNT, new BigDecimal("10.00"), "Ajuste concurrente"));
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            Future<Boolean> payment = pool.submit(() -> payPartialBillAfter(start, debt, bill));
+            Future<Boolean> approval = pool.submit(() -> approveAdjustmentAfter(start, adjustment));
+            start.countDown();
+            payment.get(30, TimeUnit.SECONDS);
+            assertThat(approval.get(30, TimeUnit.SECONDS)).isTrue();
+        } finally {
+            pool.shutdownNow();
+        }
+
+        Bill finalBill = bills.findById(bill.id).orElseThrow();
+        assertThat(finalBill.status).isEqualTo(BillStatus.CANCELLED);
+        assertThat(bills.findAll().stream().filter(item -> item.status == BillStatus.ISSUED)
+            .filter(item -> billDebts.findByBillId(item.id).stream().anyMatch(link -> link.debtId.equals(debt.id)))
+            .count()).isZero();
+        assertThat(paymentRepository.findAll().stream().filter(item -> bill.id.equals(item.billId)).count())
+            .isLessThanOrEqualTo(1);
+        assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isIn(
+            new BigDecimal("90.00"), new BigDecimal("50.00"));
+    }
+
+    private boolean payPartialBillAfter(CountDownLatch start, Debt debt, Bill bill) throws Exception {
+        start.await(10, TimeUnit.SECONDS);
+        SecurityContextHolder.setContext(SecurityContextHolder.createEmptyContext());
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+            new AuthenticatedIdentity("scrum-856-concurrent-payer", debt.taxpayerId), null,
+            List.of(new SimpleGrantedAuthority("ROLE_RENTAS"))));
+        try {
+            payments.register(new ApiDtos.RegisterPaymentRequest(debt.taxpayerId, bill.id, PaymentMethod.CASH,
+                new BigDecimal("40.00"), List.of(new ApiDtos.AllocationRequest(debt.id, new BigDecimal("40.00")))));
+            return true;
+        } catch (BusinessException error) {
+            if ("BILL_NOT_PAYABLE".equals(error.code)) return false;
+            throw error;
+        } finally {
+            SecurityContextHolder.clearContext();
+        }
+    }
+
+    private boolean approveAdjustmentAfter(CountDownLatch start, AdjustmentRequest adjustment) throws Exception {
+        start.await(10, TimeUnit.SECONDS);
+        SecurityContextHolder.setContext(SecurityContextHolder.createEmptyContext());
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+            new AuthenticatedIdentity("fixture-supervisor", null), null,
+            List.of(new SimpleGrantedAuthority("ROLE_RENTAS"), new SimpleGrantedAuthority("ROLE_SUPERVISOR"))));
+        try {
+            adjustmentService.approve(adjustment.id, "Aprobado concurrentemente");
+            return true;
+        } finally {
+            SecurityContextHolder.clearContext();
+        }
     }
 
     private boolean issueBillAfter(CountDownLatch start, Debt debt) throws Exception {

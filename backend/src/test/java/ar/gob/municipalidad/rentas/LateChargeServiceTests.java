@@ -32,8 +32,9 @@ class LateChargeServiceTests {
     @Mock AdjustmentRepository adjustments;
     @Mock AuditService audit;
     @Mock CurrentIdentity identity;
+    @Mock BillLifecycleService billLifecycle;
 
-    private LateChargeService service(){return new LateChargeService(debts,rules,applications,adjustments,audit,identity,new FiscalProcessingDatePolicy(CLOCK));}
+    private LateChargeService service(){return new LateChargeService(debts,rules,applications,adjustments,audit,identity,new FiscalProcessingDatePolicy(CLOCK),billLifecycle);}
 
     @Test void previewCalculatesSurchargeInterestAndEarlierAdjustmentsWithoutChangingDebt(){
         Debt debt=debt();LateChargeRule rule=rule();
