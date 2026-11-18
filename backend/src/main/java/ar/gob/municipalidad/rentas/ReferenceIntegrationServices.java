@@ -18,6 +18,7 @@ class IntegrationInbox {
     IntegrationEventLog receive(ApiDtos.EventEnvelope<?> event,Object raw){return receive(normalize(event),raw,false);}
     IntegrationEventLog receive(NormalizedIntegrationEvent event,Object raw){return receive(event,raw,false);}
     IntegrationEventLog ignore(NormalizedIntegrationEvent event){IntegrationEventLog log=receive(event,null,true);complete(event,log,IntegrationEventStatus.IGNORED);return log;}
+    IntegrationEventLog ignore(NormalizedIntegrationEvent event,String reason,Object auditPayload){IntegrationEventLog log=receive(event,auditPayload,false);log.errorMessage=reason;complete(event,log,IntegrationEventStatus.IGNORED);return log;}
     void fail(IntegrationEventLog log,String message){log.status=IntegrationEventStatus.FAILED;log.errorMessage=message;}
     void complete(ApiDtos.EventEnvelope<?> event,IntegrationEventLog log){complete(normalize(event),log,IntegrationEventStatus.PROCESSED);}
     void complete(NormalizedIntegrationEvent event,IntegrationEventLog log){complete(event,log,IntegrationEventStatus.PROCESSED);}

@@ -174,7 +174,7 @@ class ConfirmedIntegrationContractTests {
     }
 
     @Test void m2TicketForAnotherAreaIsIgnoredWithoutPersistingBusinessContent() throws Exception {
-        long ticketsBefore=tickets.count();var event=ticket("M2-EVT-OTHER","M4",3881L,false,"ROUTED","ROUTED",routingDetails());assertThat(m2.consume(event)).isNull();assertThat(tickets.count()).isEqualTo(ticketsBefore);IntegrationEventLog log=logs.findFirstByExternalEventIdOrderByIdDesc(event.eventId().toString()).orElseThrow();assertThat(log.status).isEqualTo(IntegrationEventStatus.IGNORED);assertThat(log.payload).isEqualTo("{}");
+        long ticketsBefore=tickets.count();var event=ticket("M2-EVT-OTHER","M4",3881L,false,"ROUTED","ROUTED",routingDetails());assertThat(m2.consume(event)).isNull();assertThat(tickets.count()).isEqualTo(ticketsBefore);IntegrationEventLog log=logs.findFirstByExternalEventIdOrderByIdDesc(event.eventId().toString()).orElseThrow();assertThat(log.status).isEqualTo(IntegrationEventStatus.IGNORED);JsonNode audit=json.readTree(log.payload);assertThat(audit.path("reason").asText()).isEqualTo("RESPONSIBLE_AREA_OUTSIDE_M5");assertThat(audit.path("eventId").asText()).isEqualTo(event.eventId().toString());assertThat(audit.path("eventType").asText()).isEqualTo("ticketUpdated");assertThat(audit.path("sourceModule").asText()).isEqualTo("atencion-ciudadana");assertThat(audit.path("data").path("ticketId").asText()).isEqualTo(event.data().ticketId().toString());assertThat(audit.path("data").path("responsibleAreaId").asText()).isEqualTo("M4");assertThat(audit.toString()).doesNotContain("publicMessage").doesNotContain("citizenId");assertThat(log.errorMessage).isEqualTo("RESPONSIBLE_AREA_OUTSIDE_M5");
     }
 
     @Test void m2InformationProvidedDoesNotRequireInventedRequestId() throws Exception {
@@ -199,7 +199,7 @@ class ConfirmedIntegrationContractTests {
             json.readTree("{\"informationResponse\":{\"purpose\":\"RECLASSIFICATION\",\"message\":\"Datos nuevos\"}}"));
         assertThat(m2.consume(event)).isNull();
         assertThat(tickets.count()).isEqualTo(ticketsBefore);
-        assertThat(logs.findFirstByExternalEventIdOrderByIdDesc(event.eventId().toString()).orElseThrow().payload).isEqualTo("{}");
+        IntegrationEventLog log=logs.findFirstByExternalEventIdOrderByIdDesc(event.eventId().toString()).orElseThrow();JsonNode audit=json.readTree(log.payload);assertThat(audit.path("reason").asText()).isEqualTo("ADMINISTRATIVE_RECLASSIFICATION");assertThat(audit.path("eventId").asText()).isEqualTo(event.eventId().toString());assertThat(audit.path("data").path("updateType").asText()).isEqualTo("INFORMATION_PROVIDED");assertThat(audit.toString()).doesNotContain("Datos nuevos").doesNotContain("informationResponse").doesNotContain("message");assertThat(log.errorMessage).isEqualTo("ADMINISTRATIVE_RECLASSIFICATION");
     }
 
     @Test void m2RoutedRequiresCompleteClassification() throws Exception {

@@ -165,8 +165,9 @@ class ConfirmedM2Consumer {
         Optional<TicketCase> existing=tickets.findByExternalTicketIdForUpdate(ticketId);
         if(inbox.processed(event.eventId()))return existing.orElse(null);
         var normalized=new NormalizedIntegrationEvent(event.eventId().toString(),event.eventType(),event.occurredAt(),event.sourceModule(),ticketId,json.valueToTree(data),event.correlationId()==null?null:event.correlationId().toString());
-        if(!"M5".equals(data.responsibleAreaId())||isAdministrativeReclassification(data)){inbox.ignore(normalized);return null;}
-        if(existing.isEmpty()&&Set.of("REGISTERED","IN_REVIEW","DUPLICATE").contains(data.currentStatus())){inbox.ignore(normalized);return null;}
+        if(!"M5".equals(data.responsibleAreaId())){ignore(normalized,data,"RESPONSIBLE_AREA_OUTSIDE_M5");return null;}
+        if(isAdministrativeReclassification(data)){ignore(normalized,data,"ADMINISTRATIVE_RECLASSIFICATION");return null;}
+        if(existing.isEmpty()&&Set.of("REGISTERED","IN_REVIEW","DUPLICATE").contains(data.currentStatus())){ignore(normalized,data,"TICKET_NOT_ROUTED_TO_M5");return null;}
         if("ROUTED".equals(data.updateType()))validateRouting(data.details());
         IntegrationEventLog log=inbox.receive(normalized,event);
         TicketCase ticket=existing.orElseGet(TicketCase::new);
@@ -210,6 +211,15 @@ class ConfirmedM2Consumer {
             update.createdAt=data.updatedAt();updates.save(update);
         }
         inbox.complete(normalized,log);return ticket;
+    }
+
+    private void ignore(NormalizedIntegrationEvent event,ConfirmedInboundEvents.M2TicketUpdatedData data,String reason){
+        var audit=json.createObjectNode();audit.put("reason",reason);audit.put("eventId",event.eventId());
+        audit.put("eventType",event.eventType());audit.put("sourceModule",event.sourceModule());
+        audit.put("occurredAt",event.occurredAt().toString());if(event.correlationId()!=null)audit.put("correlationId",event.correlationId());
+        var fields=audit.putObject("data");fields.put("ticketId",data.ticketId().toString());
+        fields.put("responsibleAreaId",data.responsibleAreaId());fields.put("updateType",data.updateType());
+        fields.put("currentStatus",data.currentStatus());inbox.ignore(event,reason,audit);
     }
 
     private TicketCaseStatus nextStatus(TicketCase ticket,ConfirmedInboundEvents.M2TicketUpdatedData data){

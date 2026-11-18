@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -27,6 +29,7 @@ class M2TicketTraceabilityTests {
     @Autowired ConfirmedM2Consumer consumer;@Autowired TicketService tickets;
     @Autowired TicketCaseRepository cases;@Autowired TicketCaseUpdateRepository updates;
     @Autowired OutboxRepository outbox;@Autowired ObjectMapper json;@Autowired OutboxPublisher publisher;
+    @Autowired IntegrationEventLogRepository logs;@Autowired ProcessedEventRepository processed;
 
     @BeforeEach void authenticate(){SecurityContextHolder.getContext().setAuthentication(
         new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("empleado.m5",null,
@@ -35,9 +38,10 @@ class M2TicketTraceabilityTests {
     @AfterEach void clearAuthentication(){SecurityContextHolder.clearContext();}
 
     @Test void routedDuplicateAndNewerRepeatKeepOneCaseAndOneStart() throws Exception {
+        long casesBefore=cases.count();int startedBefore=events("STARTED").size();
         var routed=event(0,"ROUTED","ROUTED",route(false));TicketCase ticket=consumer.consume(routed);
         assertThat(consumer.consume(routed).id).isEqualTo(ticket.id);
-        assertThat(cases.count()).isEqualTo(1);
+        assertThat(cases.count()).isEqualTo(casesBefore+1);
         var repeat=event(1,"ROUTED","ROUTED",route(false));
         assertThat(consumer.consume(repeat).id).isEqualTo(ticket.id);
         assertThat(ticket.lastSourceEventId).isEqualTo(repeat.eventId().toString());
@@ -48,8 +52,8 @@ class M2TicketTraceabilityTests {
         });
         assertThat(ticket.status).isEqualTo(TicketCaseStatus.IN_PROGRESS);
         assertThat(outbox.count()).isEqualTo(eventCount);
-        assertThat(events("STARTED")).hasSize(1);
-        assertThat(payload(events("STARTED").get(0)).path("causationId").asText()).isEqualTo(repeat.eventId().toString());
+        assertThat(events("STARTED")).hasSize(startedBefore+1);
+        assertThat(payload(events("STARTED").get(startedBefore)).path("causationId").asText()).isEqualTo(repeat.eventId().toString());
     }
 
     @Test void priorityAndEscalationKeepTheApplicableRoutedCause() throws Exception {
@@ -154,6 +158,62 @@ class M2TicketTraceabilityTests {
         assertThat(ticket.status).isEqualTo(TicketCaseStatus.IN_PROGRESS);
     }
 
+    @Test void ignoredOutsideAreaKeepsSanitizedAuditAndRedeliveryIsIdempotent() throws Exception {
+        var ignored=event(0,"STATUS_CHANGED","IN_PROGRESS","M8",
+            json.readTree("{\"informationResponse\":{\"message\":\"dato privado\"}}"));
+        consumer.consume(ignored);
+        IntegrationEventLog log=logs.findFirstByExternalEventIdOrderByIdDesc(ignored.eventId().toString()).orElseThrow();
+        JsonNode audit=json.readTree(log.payload);
+        assertThat(log.status).isEqualTo(IntegrationEventStatus.IGNORED);
+        assertThat(log.errorMessage).isEqualTo("RESPONSIBLE_AREA_OUTSIDE_M5");
+        assertThat(audit.path("reason").asText()).isEqualTo(log.errorMessage);
+        assertThat(audit.path("eventId").asText()).isEqualTo(ignored.eventId().toString());
+        assertThat(audit.path("eventType").asText()).isEqualTo("ticketUpdated");
+        assertThat(audit.path("sourceModule").asText()).isEqualTo("atencion-ciudadana");
+        assertThat(audit.path("correlationId").asText()).isEqualTo(THREAD_ID.toString());
+        assertThat(audit.path("data").path("ticketId").asText()).isEqualTo(TICKET_ID.toString());
+        assertThat(audit.path("data").path("responsibleAreaId").asText()).isEqualTo("M8");
+        assertThat(audit.path("data").path("updateType").asText()).isEqualTo("STATUS_CHANGED");
+        assertThat(audit.path("data").path("currentStatus").asText()).isEqualTo("IN_PROGRESS");
+        assertThat(log.payload).doesNotContain("dato privado","citizenId","publicMessage","attachments");
+        assertThat(processed.existsByExternalEventId(ignored.eventId().toString())).isTrue();
+        long logCount=logs.count(),processedCount=processed.count();
+        consumer.consume(ignored);
+        assertThat(logs.count()).isEqualTo(logCount);
+        assertThat(processed.count()).isEqualTo(processedCount);
+    }
+
+    @Test void ignoredAdministrativeReclassificationKeepsItsReasonWithoutTheMessage() throws Exception {
+        long ticketsBefore=cases.count();
+        var ignored=event(0,"INFORMATION_PROVIDED","IN_REVIEW","M5",
+            json.readTree("{\"informationResponse\":{\"purpose\":\"RECLASSIFICATION\",\"message\":\"dato administrativo privado\"}}"));
+        consumer.consume(ignored);
+        IntegrationEventLog log=logs.findFirstByExternalEventIdOrderByIdDesc(ignored.eventId().toString()).orElseThrow();
+        JsonNode audit=json.readTree(log.payload);
+        assertThat(log.status).isEqualTo(IntegrationEventStatus.IGNORED);
+        assertThat(log.errorMessage).isEqualTo("ADMINISTRATIVE_RECLASSIFICATION");
+        assertThat(audit.path("reason").asText()).isEqualTo(log.errorMessage);
+        assertThat(audit.path("data").path("updateType").asText()).isEqualTo("INFORMATION_PROVIDED");
+        assertThat(audit.path("data").path("currentStatus").asText()).isEqualTo("IN_REVIEW");
+        assertThat(log.payload).doesNotContain("dato administrativo privado","message","purpose");
+        assertThat(cases.count()).isEqualTo(ticketsBefore);
+    }
+
+    @ParameterizedTest @ValueSource(strings={"REGISTERED","IN_REVIEW","DUPLICATE"})
+    void ignoredUnroutedTicketStatusesAreAuditable(String status) throws Exception {
+        long ticketsBefore=cases.count();
+        var ignored=event(0,"STATUS_CHANGED",status,"M5",null);
+        consumer.consume(ignored);
+        IntegrationEventLog log=logs.findFirstByExternalEventIdOrderByIdDesc(ignored.eventId().toString()).orElseThrow();
+        JsonNode audit=json.readTree(log.payload);
+        assertThat(log.status).isEqualTo(IntegrationEventStatus.IGNORED);
+        assertThat(log.errorMessage).isEqualTo("TICKET_NOT_ROUTED_TO_M5");
+        assertThat(audit.path("reason").asText()).isEqualTo(log.errorMessage);
+        assertThat(audit.path("data").path("updateType").asText()).isEqualTo("STATUS_CHANGED");
+        assertThat(audit.path("data").path("currentStatus").asText()).isEqualTo(status);
+        assertThat(cases.count()).isEqualTo(ticketsBefore);
+    }
+
     @Test void m2CancellationForExpiredInformationDiffersFromM5Rejection() throws Exception {
         TicketCase ticket=consumer.consume(event(0,"ROUTED","ROUTED",route(false)));
         tickets.requestInformation(ticket.id,"Adjunte informacion");long before=outbox.count();
@@ -198,9 +258,12 @@ class M2TicketTraceabilityTests {
     }
 
     private ConfirmedInboundEvents.M2TicketUpdatedEvent event(int minute,String type,String status,JsonNode details){
+        return event(minute,type,status,"M5",details);
+    }
+    private ConfirmedInboundEvents.M2TicketUpdatedEvent event(int minute,String type,String status,String area,JsonNode details){
         OffsetDateTime at=OffsetDateTime.parse("2026-10-29T10:00:00-03:00").plusMinutes(minute);
         var data=new ConfirmedInboundEvents.M2TicketUpdatedData(TICKET_ID,"TK-2026-000123",null,true,
-            "M5",type,status,"HIGH",null,null,details,List.of(),at);
+            area,type,status,"HIGH",null,null,details,List.of(),at);
         return new ConfirmedInboundEvents.M2TicketUpdatedEvent(UUID.randomUUID(),"ticketUpdated","1.0",at,
             "atencion-ciudadana",THREAD_ID,null,data);
     }
