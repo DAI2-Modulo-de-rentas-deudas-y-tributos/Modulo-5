@@ -133,9 +133,13 @@ class PdfDownloadTests {
         long billCount = bills.count();
         long linkCount = billDebts.count();
         long debtCount = debts.count();
+        byte[] cancelledDocument = mvc.perform(download(bill, "TAXPAYER", bill.taxpayerId)).andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsByteArray();
+        assertThat(new String(cancelledDocument, java.nio.charset.StandardCharsets.ISO_8859_1))
+            .contains("ESTADO: ANULADA", "Motivo: DEBT_BALANCE_CHANGED");
         for (int i = 0; i < 3; i++) {
             mvc.perform(download(bill, "TAXPAYER", bill.taxpayerId))
-                .andExpect(status().isOk()).andExpect(content().bytes(original));
+                .andExpect(status().isOk()).andExpect(content().bytes(cancelledDocument));
         }
         assertThat(bills.count()).isEqualTo(billCount);
         assertThat(billDebts.count()).isEqualTo(linkCount);

@@ -65,6 +65,11 @@ export const formatCompactCurrency = (value) =>
 export const formatPercentage = (value) =>
   value === null || value === undefined ? "—" : `${Number(value).toFixed(0)}%`;
 
+export const billCancellationReasonLabel = (reason) => {
+  if (reason === "DEBT_BALANCE_CHANGED") return "Anulada porque cambió el saldo de una o más deudas.";
+  return reason ? `Motivo de anulación: ${reason}` : null;
+};
+
 /** Etiquetas en español de los estados que viajan en los eventos. */
 export const STATUS_LABELS = {
   DRAFT: "Borrador",

@@ -11,7 +11,7 @@ import Alert from "../../components/ui/Alert.jsx";
 import useResource from "../../hooks/useResource.js";
 import useTaxpayerIndex from "../../hooks/useTaxpayerIndex.js";
 import { billService } from "../../services/rentasService.js";
-import { formatCurrency, formatDate, formatDateTime } from "../../lib/format.js";
+import { billCancellationReasonLabel, formatCurrency, formatDate, formatDateTime } from "../../lib/format.js";
 
 /**
  * Boletas: se busca por el número que trae el contribuyente. Desde el resultado se
@@ -36,7 +36,7 @@ export default function BoletasCajaPage() {
       render: (row) => (
         <div className="flex flex-col">
           <span className="font-medium tabular-nums text-neutral-800">#{row.id}</span>
-          <span className="text-[12px] tabular-nums text-neutral-400">{row.barcode}</span>
+          <span className="text-[12px] tabular-nums text-neutral-400">{row.status === "CANCELLED" ? "Código sin vigencia en M5" : row.barcode}</span>
         </div>
       ),
     },
@@ -49,7 +49,7 @@ export default function BoletasCajaPage() {
       align: "right",
       render: (row) => formatCurrency(row.amount),
     },
-    { key: "status", header: "Estado", render: (row) => <StatusBadge status={row.status} /> },
+    { key: "status", header: "Estado", render: (row) => <div><StatusBadge status={row.status} />{row.cancellationReason && <p className="mt-1 max-w-xs text-xs text-neutral-600">{billCancellationReasonLabel(row.cancellationReason)}</p>}</div> },
     {
       key: "issuedAt",
       header: "Emitida",
