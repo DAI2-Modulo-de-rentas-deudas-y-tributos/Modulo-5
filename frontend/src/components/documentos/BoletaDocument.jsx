@@ -1,6 +1,6 @@
 import logo from "../../assets/logo.png";
 import StatusBadge from "../common/StatusBadge.jsx";
-import { formatCurrency, formatDate } from "../../lib/format.js";
+import { billCancellationReasonLabel, formatCurrency, formatDate } from "../../lib/format.js";
 
 /**
  * Boleta de pago imprimible.
@@ -68,16 +68,23 @@ export default function BoletaDocument({ bill, taxpayer }) {
             Esta boleta ya fue cancelada. Se muestra sólo como constancia.
           </p>
         )}
+        {bill.status === "CANCELLED" && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-900">
+            <p className="font-semibold">Boleta anulada</p>
+            {bill.cancellationReason && <p className="mt-1">{billCancellationReasonLabel(bill.cancellationReason)}</p>}
+            <p className="mt-1">La anulación en M5 no revoca automáticamente códigos ya presentados a proveedores de cobro externos.</p>
+          </div>
+        )}
 
         {/* El código de barras es lo que lee la caja al cobrar. */}
-        <div className="rounded-lg border border-neutral-200 px-4 py-3">
+        {bill.status !== "CANCELLED" && <div className="rounded-lg border border-neutral-200 px-4 py-3">
           <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">
             Código de barras
           </p>
           <p className="mt-1 font-mono text-[15px] tracking-[0.18em] text-neutral-800 break-all">
             {bill.barcode}
           </p>
-        </div>
+        </div>}
       </div>
 
       <footer className="border-t border-dashed border-neutral-200 px-6 py-4">

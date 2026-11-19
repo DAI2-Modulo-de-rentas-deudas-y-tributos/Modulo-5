@@ -322,7 +322,7 @@ def run_pdf(
     taxpayer = taxpayers[0]
     due_date = (processing_date + timedelta(days=30)).isoformat()
     selected = []
-    for index, amount in enumerate(("100.25", "250.50")):
+    for index, amount in enumerate(("100.25", "250.50", "375.75")):
         concept = create_active_concept(client, supervisor, f"PDF{index}", run_id, amount, processing_date)
         liquidation = client.json("POST", "/liquidations", {
             "taxpayerId": taxpayer["id"], "taxConceptId": concept["id"],
@@ -336,13 +336,13 @@ def run_pdf(
         selected.append(debt)
 
     evidence = []
-    for count in (1, 2):
+    for bill_debts in (selected[:1], selected[1:3]):
         bill = client.json("POST", "/bills", {
-            "taxpayerId": taxpayer["id"], "debtIds": [debt["id"] for debt in selected[:count]],
+            "taxpayerId": taxpayer["id"], "debtIds": [debt["id"] for debt in bill_debts],
             "dueDate": (processing_date + timedelta(days=10)).isoformat(),
         }, expected=(201,))
         expected_debts = [{"debtId": debt["id"], "amountAtIssue": debt["outstandingBalance"]}
-                          for debt in selected[:count]]
+                          for debt in bill_debts]
         path = f"/bills/{bill['id']}/document"
         document = client.request("GET", path)
         # Conservar el archivo aun si el parser detecta un defecto.
@@ -353,7 +353,7 @@ def run_pdf(
         validate_pdf(repeated, bill, expected_debts)
         require(repeated.body == document.body, "La descarga repetida alteró el documento emitido")
         evidence.append({"billId": bill["id"], "billNumber": bill["number"], "totalAmount": bill["totalAmount"],
-                         "debts": count, "artifact": str(pdf_path), "repeatDownload": "passed", **metadata})
+                         "debts": len(bill_debts), "artifact": str(pdf_path), "repeatDownload": "passed", **metadata})
 
     for debt in selected:
         after = client.json("GET", f"/debts/{debt['id']}")

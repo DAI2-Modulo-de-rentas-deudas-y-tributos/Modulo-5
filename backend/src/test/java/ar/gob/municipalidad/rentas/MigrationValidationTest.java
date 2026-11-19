@@ -19,13 +19,13 @@ class MigrationValidationTest {
         registry.add("spring.flyway.locations",()->"classpath:db/migration,classpath:db/migration-test-h2,classpath:db/migration-m8-test-h2");
     }
     @Test void flywaySchemaMatchesJpaModel() {
-        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(32);
-        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(30);
+        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(34);
+        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(31);
         assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version='29'",Integer.class)).isZero();
         assertThat(jdbc.queryForObject("select count(*) from information_schema.tables where table_name='demo_login_attempt'",Integer.class)).isZero();
         assertThat(jdbc.queryForObject("select count(*) from information_schema.tables where table_name='demo_login_origin_attempt'",Integer.class)).isZero();
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='bill'",String.class))
-            .contains("idempotency_key","idempotency_fingerprint");
+            .contains("idempotency_key","idempotency_fingerprint","cancellation_reason");
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='ticket_case'",String.class))
             .contains("public_id","correlation_id","last_source_event_id","last_external_updated_at","request_type","subcategory");
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='demo_user'",String.class))

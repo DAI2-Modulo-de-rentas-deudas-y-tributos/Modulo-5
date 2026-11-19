@@ -61,9 +61,9 @@ class BillingServiceFiscalDateTests {
         applied.calculationDate=fiscalDate;applied.totalAdjustment=new BigDecimal("15.00");
         when(applications.findByDebtIdIn(List.of(debt.id))).thenReturn(List.of(applied));
         LateChargeService lateCharges=new LateChargeService(debts,rules,applications,adjustments,
-            mock(AuditService.class),identity,dates);
+            mock(AuditService.class),identity,dates,mock(BillLifecycleService.class));
         BillingService billing=new BillingService(bills,billDebts,debts,taxpayers,identity,liquidations,
-            adjustments,lateCharges,dates);
+            adjustments,lateCharges,dates,mock(BillLifecycleService.class));
 
         try(MockedStatic<LocalDate> systemDate=mockStatic(LocalDate.class,CALLS_REAL_METHODS)) {
             systemDate.when(LocalDate::now).thenReturn(utcDate);
