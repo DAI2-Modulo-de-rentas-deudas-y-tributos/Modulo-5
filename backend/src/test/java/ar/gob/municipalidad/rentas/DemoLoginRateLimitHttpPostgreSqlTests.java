@@ -271,8 +271,21 @@ class DemoLoginRateLimitHttpPostgreSqlTests {
             pool.shutdownNow();
         }
         String originKey = DemoAuthService.hashToken("login-origin:" + CONCURRENT_REMOTE_ADDRESS);
+        long persistedFailures = jdbc.queryForObject(
+                "select failures from demo_login_origin_attempt where origin_key_hash=?", Long.class, originKey);
+        assertThat(persistedFailures).isBetween(20L, 21L);
+
+        String blockedUsername = "spray-after-limit-" + UUID.randomUUID();
+        BusinessException blocked = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> demoAuth.login(new DemoAuthController.LoginRequest(blockedUsername, "incorrecta"),
+                        CONCURRENT_REMOTE_ADDRESS), BusinessException.class);
+        assertThat(blocked).isNotNull();
+        assertThat(blocked.code).isEqualTo("DEMO_LOGIN_RATE_LIMITED");
         assertThat(jdbc.queryForObject("select failures from demo_login_origin_attempt where origin_key_hash=?",
-                Long.class, originKey)).isEqualTo(21);
+                Long.class, originKey)).isEqualTo(persistedFailures);
+        assertThat(jdbc.queryForObject("select count(*) from demo_login_attempt where attempt_key_hash=?",
+                Long.class, DemoAuthService.hashToken("login:" + blockedUsername + ":" + CONCURRENT_REMOTE_ADDRESS)))
+                .isZero();
     }
 
     private org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder login(
