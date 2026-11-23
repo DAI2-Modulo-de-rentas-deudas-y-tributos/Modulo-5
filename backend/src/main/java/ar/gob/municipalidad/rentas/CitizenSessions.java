@@ -22,7 +22,7 @@ class CitizenSessions {
     private final TaxpayerRepository taxpayers;
     private final M1CitizenLoginClient client;
     private final SecureRandom random = new SecureRandom();
-    final int ttlSeconds;
+    private final int ttlSeconds;
 
     CitizenSessions(JdbcTemplate jdbc, TaxpayerRepository taxpayers, ObjectMapper json,
             @Value("${rentas.citizen-auth.base-url}") String baseUrl,
@@ -49,7 +49,7 @@ class CitizenSessions {
                 INSERT INTO citizen_session(token_hash, taxpayer_id, citizen_id, expires_at)
                 VALUES (?, ?, ?, CURRENT_TIMESTAMP + (? * INTERVAL '1 second'))
                 """, hash(token), taxpayer.id, citizenId, ttlSeconds);
-        return new Login(token, profile(taxpayer.id));
+        return new Login(token, profile(taxpayer.id), ttlSeconds);
     }
 
     Optional<AuthenticatedIdentity> resolve(String token) {
@@ -100,7 +100,7 @@ class CitizenSessions {
         return new ProfileResponse("Contribuyente", "TAXPAYER", taxpayerId);
     }
 
-    record Login(String token, ProfileResponse profile) {
+    record Login(String token, ProfileResponse profile, int ttlSeconds) {
         @Override public String toString() { return "CitizenLogin[redacted]"; }
     }
     record ProfileResponse(String displayName, String role, long taxpayerId) {}

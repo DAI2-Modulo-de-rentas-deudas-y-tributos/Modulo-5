@@ -1,6 +1,7 @@
 package ar.gob.municipalidad.rentas;
 
 import com.sun.net.httpserver.HttpServer;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
@@ -48,6 +49,8 @@ class CitizenSessionPostgreSqlTest {
     @Autowired MockMvc mvc;
     @Autowired TaxpayerRepository taxpayers;
     @Autowired JdbcTemplate jdbc;
+    @Autowired ConfirmedM1Consumer m1;
+    @Autowired ObjectMapper json;
 
     @DynamicPropertySource
     static void properties(DynamicPropertyRegistry registry) {
@@ -91,6 +94,25 @@ class CitizenSessionPostgreSqlTest {
         Cookie unlinked = authenticate(1);
         jdbc.update("UPDATE taxpayer_reference SET canonical_citizen_id=NULL WHERE id=?", owner.id);
         mvc.perform(get("/api/v1/citizen-auth/me").cookie(unlinked)).andExpect(status().isUnauthorized());
+
+        jdbc.update("UPDATE taxpayer_reference SET canonical_citizen_id=? WHERE id=?", CITIZEN, owner.id);
+        Cookie blocked = authenticate(1);
+        citizenUpdate("BLOCKED", """
+                {"reason":"DOCUMENTACION_APOCRIFA","reviewRequired":true}
+                """);
+        mvc.perform(get("/api/v1/citizen-auth/me").cookie(blocked)).andExpect(status().isUnauthorized());
+        citizenUpdate("UPDATED", """
+                {"dni":"99900042","cuil":"20999000429","name":"Synthetic","lastname":"Citizen",
+                 "birthdate":"1990-01-01","state":"ACTIVO"}
+                """);
+        mvc.perform(get("/api/v1/citizen-auth/me").cookie(blocked)).andExpect(status().isUnauthorized());
+    }
+
+    private void citizenUpdate(String type, String details) throws Exception {
+        m1.consumeCitizen(new ConfirmedInboundEvents.M1CoreEnvelope<>(UUID.randomUUID(), "citizenUpdated",
+                "1.0", OffsetDateTime.now(), "ciudadanos", UUID.randomUUID(), null,
+                new ConfirmedInboundEvents.M1CitizenUpdatedData(CITIZEN, type, json.readTree(details),
+                        new ConfirmedInboundEvents.UpdatedBy("AREA_USER", "synthetic"))));
     }
 
     @Test
@@ -132,6 +154,7 @@ class CitizenSessionPostgreSqlTest {
                 .andExpect(header().string("Set-Cookie", containsString("HttpOnly")))
                 .andExpect(header().string("Set-Cookie", containsString("Secure")))
                 .andExpect(header().string("Set-Cookie", containsString("SameSite=Strict")))
+                .andExpect(header().string("Set-Cookie", containsString("Max-Age=600")))
                 .andReturn().getResponse();
         return response.getCookie(CitizenAuthController.COOKIE);
     }

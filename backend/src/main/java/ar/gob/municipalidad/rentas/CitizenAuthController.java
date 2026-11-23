@@ -29,7 +29,7 @@ class CitizenAuthController {
     @PostMapping("/login")
     ResponseEntity<CitizenSessions.ProfileResponse> login(@Valid @RequestBody Credentials body, HttpServletRequest request) {
         var login = sessions.login(body.username().trim(), body.password(), request.getRemoteAddr(), token(request));
-        return ResponseEntity.ok().header(HttpHeaders.SET_COOKIE, cookie(login.token(), sessions.ttlSeconds))
+        return ResponseEntity.ok().header(HttpHeaders.SET_COOKIE, cookie(login.token(), login.ttlSeconds()))
                 .header(HttpHeaders.CACHE_CONTROL, "no-store").body(login.profile());
     }
 
