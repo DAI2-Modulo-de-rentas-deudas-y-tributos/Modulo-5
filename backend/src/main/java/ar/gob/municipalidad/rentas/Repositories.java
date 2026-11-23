@@ -71,7 +71,7 @@ interface ExternalObligationRepository extends FilteredRepository<ExternalObliga
     @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select o from ExternalObligation o where o.id=:id") Optional<ExternalObligation> findByIdForUpdate(@Param("id") Long id);
 }
 interface PaymentRepository extends FilteredRepository<Payment,Long> {
-    List<Payment> findByTaxpayerId(Long taxpayerId); Page<Payment> findByTaxpayerId(Long taxpayerId,Pageable pageable); Optional<Payment> findByTaxpayerIdAndIdempotencyKey(Long taxpayerId,String idempotencyKey);
+    List<Payment> findByTaxpayerId(Long taxpayerId); Page<Payment> findByTaxpayerId(Long taxpayerId,Pageable pageable); Optional<Payment> findByTaxpayerIdAndIdempotencyKey(Long taxpayerId,String idempotencyKey); List<Payment> findByBillIdIn(Collection<Long> billIds);
     @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select p from Payment p where p.id=:id") Optional<Payment> findByIdForUpdate(Long id);
     @Query("select count(p.id) from Payment p where p.status=:status and p.unallocatedAmount>:amount and not exists (select c.id from CreditBalance c where c.sourcePaymentId=p.id)")
     long countManuallyUnallocated(@Param("status") PaymentStatus status,@Param("amount") BigDecimal amount);
@@ -88,7 +88,7 @@ interface PaymentRepository extends FilteredRepository<Payment,Long> {
         """) CollectionIndicatorAggregate aggregateConfirmed(@Param("from") LocalDate from,@Param("to") LocalDate to);
 }
 interface PaymentAllocationRepository extends FilteredRepository<PaymentAllocation,Long> {
-    List<PaymentAllocation> findByPaymentId(Long paymentId);
+    List<PaymentAllocation> findByPaymentId(Long paymentId); List<PaymentAllocation> findByPaymentIdIn(Collection<Long> paymentIds);
     List<PaymentAllocation> findByDebtIdOrderByAllocatedAtAscIdAsc(Long debtId);
     List<PaymentAllocation> findByInstallmentIdInOrderByAllocatedAtAscIdAsc(Collection<Long> installmentIds);
 }

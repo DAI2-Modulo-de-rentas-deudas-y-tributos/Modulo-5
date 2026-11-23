@@ -70,6 +70,12 @@ export const billCancellationReasonLabel = (reason) => {
   return reason ? `Motivo de anulación: ${reason}` : null;
 };
 
+export const billPresentationStatusLabel = (status) => ({
+  PAID: "Pagada",
+  PARTIAL_PAYMENT: "Pago parcial; boleta sin vigencia",
+  PAYMENT_REVERSED: "Pago revertido; boleta sin vigencia",
+}[status] ?? null);
+
 /** Etiquetas en español de los estados que viajan en los eventos. */
 export const STATUS_LABELS = {
   DRAFT: "Borrador",
@@ -89,6 +95,9 @@ export const STATUS_LABELS = {
   UNDER_REVIEW: "En evaluación del Supervisor",
   REFINANCED: "Refinanciado",
   CANCELLED: "Anulada",
+  PAID: "Pagada",
+  PARTIAL_PAYMENT: "Pago parcial",
+  PAYMENT_REVERSED: "Pago revertido",
   APPROVED: "Aprobada",
   REJECTED: "Rechazada",
   OPEN: "Abierto",

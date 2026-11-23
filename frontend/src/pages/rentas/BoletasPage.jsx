@@ -45,7 +45,7 @@ export default function BoletasPage() {
       header: "Emitida",
       render: (row) => formatDateTime(row.issuedAt),
     },
-    { key: "status", header: "Estado", render: (row) => <div><StatusBadge status={row.status} />{row.cancellationReason && <p className="mt-1 max-w-xs text-xs text-neutral-600">{billCancellationReasonLabel(row.cancellationReason)}</p>}</div> },
+    { key: "status", header: "Estado", render: (row) => <div><StatusBadge status={row.presentationStatus ?? row.status} />{row.cancellationReason && row.presentationStatus !== "PAID" && <p className="mt-1 max-w-xs text-xs text-neutral-600">{billCancellationReasonLabel(row.cancellationReason)}</p>}</div> },
     {
       key: "actions",
       header: "",

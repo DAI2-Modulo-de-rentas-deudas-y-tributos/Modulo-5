@@ -159,11 +159,13 @@ class BlockedBillPostgreSqlIntegrationTest {
         mvc.perform(get("/api/v1/bills/{id}", oldBill.id).header("X-Demo-Session", session()))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.status").value("CANCELLED"))
-            .andExpect(jsonPath("$.cancellationReason").value(BillLifecycleService.DEBT_BALANCE_CHANGED));
+            .andExpect(jsonPath("$.cancellationReason").value(BillLifecycleService.DEBT_BALANCE_CHANGED))
+            .andExpect(jsonPath("$.presentationStatus").doesNotExist());
         mvc.perform(get("/api/v1/bills/{id}/document", oldBill.id).header("X-Demo-Session", session()))
             .andExpect(status().isOk())
             .andExpect(result -> assertThat(new String(result.getResponse().getContentAsByteArray(), StandardCharsets.ISO_8859_1))
-                .contains("ESTADO: ANULADA", "Motivo: DEBT_BALANCE_CHANGED"));
+                .contains("ESTADO: ANULADA", "Motivo: Anulada por cambio en el saldo de una o mas deudas.")
+                .doesNotContain("DEBT_BALANCE_CHANGED"));
     }
 
     @Test
@@ -192,6 +194,74 @@ class BlockedBillPostgreSqlIntegrationTest {
         assertThat(paymentRepository.count()).isEqualTo(paymentsBefore + 1);
         assertThat(billing.create(new ApiDtos.CreateBillRequest(debt.taxpayerId,
             List.of(debt.id), LocalDate.now().plusDays(10))).totalAmount).isEqualByComparingTo("60.00");
+        assertThat(bills.findById(bill.id).orElseThrow().status).isEqualTo(BillStatus.CANCELLED);
+    }
+
+    @Test
+    void fullConfirmedPaymentThroughOwnBillIsPresentedAsPaidWithoutChangingTechnicalCancellation() throws Exception {
+        Debt debt = debtFor(TaxpayerStatus.ACTIVE);
+        Bill bill = billing.create(new ApiDtos.CreateBillRequest(debt.taxpayerId,
+            List.of(debt.id), LocalDate.now().plusDays(10)));
+
+        payments.register(new ApiDtos.RegisterPaymentRequest(debt.taxpayerId, bill.id, PaymentMethod.CASH,
+            new BigDecimal("100.00"), List.of(new ApiDtos.AllocationRequest(debt.id, new BigDecimal("100.00")))));
+
+        Bill technical = bills.findById(bill.id).orElseThrow();
+        assertThat(technical.status).isEqualTo(BillStatus.CANCELLED);
+        assertThat(technical.cancellationReason).isEqualTo(BillLifecycleService.DEBT_BALANCE_CHANGED);
+        mvc.perform(get("/api/v1/bills/{id}", bill.id).header("X-Demo-Session", session()))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.status").value("CANCELLED"))
+            .andExpect(jsonPath("$.presentationStatus").value("PAID"));
+        mvc.perform(get("/api/v1/taxpayers/{id}/bills?size=100", debt.taxpayerId).header("X-Demo-Session", session()))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.content[0].presentationStatus").value("PAID"));
+        String pdf = new String(mvc.perform(get("/api/v1/bills/{id}/document", bill.id)
+                .header("X-Demo-Session", session())).andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsByteArray(), StandardCharsets.ISO_8859_1);
+        assertThat(pdf).contains("ESTADO: PAGADA").doesNotContain("DEBT_BALANCE_CHANGED", "Motivo: Anulada");
+    }
+
+    @Test
+    void partialOwnBillPaymentRemainsPartialEvenIfAnotherChannelSettlesTheRemainingDebt() throws Exception {
+        Debt debt = debtFor(TaxpayerStatus.ACTIVE);
+        Bill bill = billing.create(new ApiDtos.CreateBillRequest(debt.taxpayerId,
+            List.of(debt.id), LocalDate.now().plusDays(10)));
+
+        payments.register(new ApiDtos.RegisterPaymentRequest(debt.taxpayerId, bill.id, PaymentMethod.CASH,
+            new BigDecimal("40.00"), List.of(new ApiDtos.AllocationRequest(debt.id, new BigDecimal("40.00")))));
+        mvc.perform(get("/api/v1/bills/{id}", bill.id).header("X-Demo-Session", session()))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.presentationStatus").value("PARTIAL_PAYMENT"));
+
+        authenticateFixtureSetup();
+        payments.register(new ApiDtos.RegisterPaymentRequest(debt.taxpayerId, null, PaymentMethod.TRANSFER,
+            new BigDecimal("60.00"), List.of(new ApiDtos.AllocationRequest(debt.id, new BigDecimal("60.00")))));
+
+        assertThat(debts.findById(debt.id).orElseThrow().outstandingBalance).isZero();
+        mvc.perform(get("/api/v1/bills/{id}", bill.id).header("X-Demo-Session", session()))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.presentationStatus").value("PARTIAL_PAYMENT"));
+    }
+
+    @Test
+    void reversalOfOwnBillPaymentIsPresentedAsReversedAndDoesNotReactivateBill() throws Exception {
+        Debt debt = debtFor(TaxpayerStatus.ACTIVE);
+        Bill bill = billing.create(new ApiDtos.CreateBillRequest(debt.taxpayerId,
+            List.of(debt.id), LocalDate.now().plusDays(10)));
+        Payment payment = payments.register(new ApiDtos.RegisterPaymentRequest(debt.taxpayerId, bill.id,
+            PaymentMethod.CASH, new BigDecimal("100.00"),
+            List.of(new ApiDtos.AllocationRequest(debt.id, new BigDecimal("100.00")))));
+        PaymentReversalRequest reversal = reversals.request(payment.id, "Reversión de prueba");
+        TestActorSupport.asApprover(() -> reversals.approve(reversal.id));
+
+        reversals.execute(reversal.id);
+
+        assertThat(bills.findById(bill.id).orElseThrow().status).isEqualTo(BillStatus.CANCELLED);
+        mvc.perform(get("/api/v1/bills/{id}", bill.id).header("X-Demo-Session", session()))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("CANCELLED"))
+            .andExpect(jsonPath("$.presentationStatus").value("PAYMENT_REVERSED"));
+        authenticateFixtureSetup();
+        assertThat(billing.create(new ApiDtos.CreateBillRequest(debt.taxpayerId,
+            List.of(debt.id), LocalDate.now().plusDays(10))).totalAmount).isEqualByComparingTo("100.00");
         assertThat(bills.findById(bill.id).orElseThrow().status).isEqualTo(BillStatus.CANCELLED);
     }
 

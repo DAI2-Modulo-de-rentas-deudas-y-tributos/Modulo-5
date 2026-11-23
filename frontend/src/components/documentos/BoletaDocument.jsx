@@ -54,7 +54,7 @@ export default function BoletaDocument({ bill, taxpayer }) {
               {formatCurrency(bill.amount)}
             </p>
           </div>
-          <StatusBadge status={bill.status} />
+          <StatusBadge status={bill.presentationStatus ?? bill.status} />
         </div>
 
         {bill.status === "EXPIRED" && (
@@ -68,7 +68,13 @@ export default function BoletaDocument({ bill, taxpayer }) {
             Esta boleta ya fue cancelada. Se muestra sólo como constancia.
           </p>
         )}
-        {bill.status === "CANCELLED" && (
+        {bill.status === "CANCELLED" && bill.presentationStatus === "PAID" && (
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-[13px] text-emerald-900">
+            <p className="font-semibold">Pago confirmado</p>
+            <p className="mt-1">Esta boleta se conserva como constancia y su código no está vigente para nuevos cobros.</p>
+          </div>
+        )}
+        {bill.status === "CANCELLED" && bill.presentationStatus !== "PAID" && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-900">
             <p className="font-semibold">Boleta anulada</p>
             {bill.cancellationReason && <p className="mt-1">{billCancellationReasonLabel(bill.cancellationReason)}</p>}

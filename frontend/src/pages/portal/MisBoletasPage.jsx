@@ -70,7 +70,7 @@ export default function MisBoletasPage() {
       align: "right",
       render: (row) => formatCurrency(row.amount),
     },
-    { key: "status", header: "Estado", render: (row) => <div><StatusBadge status={row.status} />{row.cancellationReason && <p className="mt-1 max-w-xs text-xs text-neutral-600">{billCancellationReasonLabel(row.cancellationReason)}</p>}</div> },
+    { key: "status", header: "Estado", render: (row) => <div><StatusBadge status={row.presentationStatus ?? row.status} />{row.cancellationReason && row.presentationStatus !== "PAID" && <p className="mt-1 max-w-xs text-xs text-neutral-600">{billCancellationReasonLabel(row.cancellationReason)}</p>}</div> },
     { key: "issuedAt", header: "Emitida", render: (row) => formatDate(row.issuedAt) },
     {
       key: "actions",

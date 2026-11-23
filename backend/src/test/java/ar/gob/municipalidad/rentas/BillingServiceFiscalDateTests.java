@@ -63,7 +63,8 @@ class BillingServiceFiscalDateTests {
         LateChargeService lateCharges=new LateChargeService(debts,rules,applications,adjustments,
             mock(AuditService.class),identity,dates,mock(BillLifecycleService.class));
         BillingService billing=new BillingService(bills,billDebts,debts,taxpayers,identity,liquidations,
-            adjustments,lateCharges,dates,mock(BillLifecycleService.class));
+            adjustments,lateCharges,dates,mock(BillLifecycleService.class),
+            new BillPresentationStatusService(mock(PaymentRepository.class),mock(PaymentAllocationRepository.class)));
 
         try(MockedStatic<LocalDate> systemDate=mockStatic(LocalDate.class,CALLS_REAL_METHODS)) {
             systemDate.when(LocalDate::now).thenReturn(utcDate);

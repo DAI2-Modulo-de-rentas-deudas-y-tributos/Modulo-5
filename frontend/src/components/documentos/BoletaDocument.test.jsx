@@ -21,3 +21,24 @@ it("muestra el motivo de una boleta anulada y no vuelve a exponer su código de 
   expect(screen.getByText(/no revoca automáticamente códigos ya presentados a proveedores de cobro externos/)).toBeTruthy();
   expect(screen.queryByText("BILL-OLD-42")).toBeNull();
 });
+
+it("presenta como pagada una boleta cancelada cuyo pago propio fue confirmado", () => {
+  render(<BoletaDocument bill={{
+    id: 43,
+    debtId: 9,
+    barcode: "BILL-OLD-43",
+    status: "CANCELLED",
+    presentationStatus: "PAID",
+    cancellationReason: "DEBT_BALANCE_CHANGED",
+    amount: 100,
+    dueDate: "2026-11-30",
+    issuedAt: "2026-11-01T10:00:00Z",
+  }} taxpayer={{ name: "Contribuyente de prueba", documentType: "DNI", document: "12345678" }} />);
+
+  expect(screen.getByText("Pagada")).toBeTruthy();
+  expect(screen.getByText("Pago confirmado")).toBeTruthy();
+  expect(screen.queryByText("Boleta anulada")).toBeNull();
+  expect(screen.queryByText(/Motivo de anulación/)).toBeNull();
+  expect(screen.queryByText("BILL-OLD-43")).toBeNull();
+  expect(screen.getByText(/su código no está vigente/)).toBeTruthy();
+});
