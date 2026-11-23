@@ -69,6 +69,7 @@ class BlockedBillPostgreSqlIntegrationTest {
     @Autowired PaymentService payments;
     @Autowired AdjustmentService adjustmentService;
     @Autowired LateChargeService lateCharges;
+    @Autowired FiscalProcessingDatePolicy fiscalDates;
     @Autowired LateChargeRuleRepository lateChargeRules;
     @Autowired PaymentRepository paymentRepository;
     @Autowired ReversalService reversals;
@@ -314,7 +315,7 @@ class BlockedBillPostgreSqlIntegrationTest {
     @Test
     void appliedLateChargeCancelsIssuedBillAndReissueUsesUpdatedBalance() {
         Debt debt = debtFor(TaxpayerStatus.ACTIVE);
-        LocalDate processingDate = LocalDate.now();
+        LocalDate processingDate = fiscalDates.today();
         debt.dueDate = processingDate.minusDays(5);
         debts.saveAndFlush(debt);
         Bill oldBill = billing.create(new ApiDtos.CreateBillRequest(debt.taxpayerId,
