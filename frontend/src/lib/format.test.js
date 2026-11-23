@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { actionLabelFor, entityLabelFor, formatDate, labelFor, todayFiscalDate } from "./format.js";
+import { actionLabelFor, billPresentationStatusLabel, entityLabelFor, formatDate, labelFor, todayFiscalDate } from "./format.js";
 
 afterEach(() => vi.useRealTimers());
 
@@ -13,6 +13,9 @@ describe("formatDate", () => {
     expect(actionLabelFor("PAYMENT_ALLOCATED")).toBe("Pago imputado");
     expect(entityLabelFor("PaymentAllocation")).toBe("Imputación de pago");
     expect(labelFor("CANCELLED")).toBe("Anulada");
+    expect(labelFor("PAID")).toBe("Pagada");
+    expect(labelFor("PARTIAL_PAYMENT")).toBe("Pago parcial");
+    expect(billPresentationStatusLabel("PAYMENT_REVERSED")).toBe("Pago revertido; boleta sin vigencia");
   });
 
   it("uses the Buenos Aires civil date when UTC has already crossed midnight", () => {

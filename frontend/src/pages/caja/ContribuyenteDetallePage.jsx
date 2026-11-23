@@ -140,7 +140,7 @@ export default function ContribuyenteDetallePage() {
       align: "right",
       render: (row) => formatCurrency(row.amount),
     },
-    { key: "status", header: "Estado", render: (row) => <StatusBadge status={row.status} /> },
+    { key: "status", header: "Estado", render: (row) => <StatusBadge status={row.presentationStatus ?? row.status} /> },
     {
       key: "actions",
       header: "",
