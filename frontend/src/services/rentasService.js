@@ -53,6 +53,10 @@ const mapDemoAuthSession = (result) => ({
 
 export const authService = {
   async login({ username, password }) {
+    if (AUTH_MODE === "citizen") {
+      const user = await request("/api/v1/citizen-auth/login", { method: "POST", body: { username, password }, requiresAuth: false });
+      return mapDemoAuthSession({ user });
+    }
     if (AUTH_MODE === "core") {
       throw new ApiError("La autenticación Core/JWT todavía no tiene un contrato integrado.", 503, null, "CORE_AUTH_PENDING");
     }
@@ -64,6 +68,10 @@ export const authService = {
   },
 
   async me() {
+    if (AUTH_MODE === "citizen") {
+      const user = await request("/api/v1/citizen-auth/me");
+      return mapDemoAuthSession({ user }).user;
+    }
     if (AUTH_MODE === "core") {
       throw new ApiError("La autenticación Core/JWT todavía no tiene un contrato integrado.", 503, null, "CORE_AUTH_PENDING");
     }
@@ -75,6 +83,10 @@ export const authService = {
   },
 
   async logout(token) {
+    if (AUTH_MODE === "citizen") {
+      await request("/api/v1/citizen-auth/logout", { method: "POST" });
+      return;
+    }
     if (AUTH_MODE !== "demo") return;
     await request("/api/v1/dev-auth/logout", {
       method: "POST",

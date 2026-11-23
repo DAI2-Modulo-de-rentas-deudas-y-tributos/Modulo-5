@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { authService } from "../services/rentasService.js";
-import { ApiError, AUTH_MODE } from "../services/apiClient.js";
+import { ApiError, AUTH_MODE, CITIZEN_SESSION } from "../services/apiClient.js";
 import { onSessionExpired } from "../services/sessionEvents.js";
 
 const AuthContext = createContext(null);
@@ -10,6 +10,7 @@ const TOKEN_KEY = "rentas.token";
 const PAYMENT_INTENT_KEY = "rentas.electronicPaymentIntent";
 
 function hasStoredToken() {
+  if (AUTH_MODE === "citizen") return true;
   if (AUTH_MODE !== "demo") return false;
   return Boolean(sessionStorage.getItem(TOKEN_KEY));
 }
@@ -21,7 +22,7 @@ export function AuthProvider({ children }) {
   const [sessionNotice, setSessionNotice] = useState(null);
 
   useEffect(() => onSessionExpired((token) => {
-    if (sessionStorage.getItem(TOKEN_KEY) !== token) return;
+    if (AUTH_MODE === "citizen" ? token !== CITIZEN_SESSION : sessionStorage.getItem(TOKEN_KEY) !== token) return;
     ++sessionGeneration.current;
     sessionStorage.removeItem(TOKEN_KEY);
     sessionStorage.removeItem(SESSION_KEY);
@@ -36,12 +37,12 @@ export function AuthProvider({ children }) {
     let cancelled = false;
     const generation = sessionGeneration.current;
     async function restore() {
-      if (AUTH_MODE !== "demo") {
+      if (AUTH_MODE !== "demo" && AUTH_MODE !== "citizen") {
         setInitializing(false);
         return;
       }
       const token = sessionStorage.getItem(TOKEN_KEY);
-      if (!token) {
+      if (!token && AUTH_MODE === "demo") {
         setUser(null);
         setInitializing(false);
         return;
@@ -49,7 +50,7 @@ export function AuthProvider({ children }) {
       try {
         const profile = await authService.me();
         if (cancelled || generation !== sessionGeneration.current) return;
-        sessionStorage.setItem(SESSION_KEY, JSON.stringify(profile));
+        if (AUTH_MODE === "demo") sessionStorage.setItem(SESSION_KEY, JSON.stringify(profile));
         setUser(profile);
       } catch {
         if (cancelled || generation !== sessionGeneration.current) return;
@@ -82,8 +83,10 @@ export function AuthProvider({ children }) {
       throw new ApiError("Usuario o contraseña incorrectos.", 401, null, "INVALID_CREDENTIALS");
     }
 
-    sessionStorage.setItem(TOKEN_KEY, token);
-    sessionStorage.setItem(SESSION_KEY, JSON.stringify(profile));
+    if (AUTH_MODE === "demo") {
+      sessionStorage.setItem(TOKEN_KEY, token);
+      sessionStorage.setItem(SESSION_KEY, JSON.stringify(profile));
+    }
     setUser(profile);
     setInitializing(false);
     setSessionNotice(null);
@@ -100,11 +103,13 @@ export function AuthProvider({ children }) {
     setUser(null);
     setInitializing(false);
     setSessionNotice(null);
-    if (token) {
+    if (token || AUTH_MODE === "citizen") {
       try {
         await authService.logout(token);
       } catch {
-        setSessionNotice("Cerraste la sesión en este dispositivo, pero no se pudo confirmar la revocación en el servidor.");
+        setSessionNotice(AUTH_MODE === "citizen"
+          ? "No se pudo cerrar la sesión en el servidor. Reintentá cuando se restablezca la conexión."
+          : "Cerraste la sesión en este dispositivo, pero no se pudo confirmar la revocación en el servidor.");
       }
     }
   }, []);
