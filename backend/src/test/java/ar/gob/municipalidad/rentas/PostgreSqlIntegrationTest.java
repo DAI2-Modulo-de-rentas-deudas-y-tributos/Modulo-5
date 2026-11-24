@@ -1266,6 +1266,41 @@ class PostgreSqlIntegrationTest {
         assertThat(unchanged.payload).doesNotContain("privateMessage","do not store");
     }
 
+    @Test void coreHeaderMismatchesAreDurablyAuditedWithoutHidingProcessedInboxRows() throws Exception {
+        for(String mismatch:List.of("event-id","target-module")) {
+            UUID eventId=UUID.randomUUID();OffsetDateTime now=OffsetDateTime.now();
+            IntegrationEventLog processed=new IntegrationEventLog();processed.eventId=UUID.randomUUID();
+            processed.externalEventId=eventId.toString();processed.eventType="ticketUpdated";processed.sourceModule="atencion-ciudadana";
+            processed.direction=EventDirection.INBOUND;processed.status=IntegrationEventStatus.PROCESSED;
+            processed.payload="{\"eventId\":\""+eventId+"\"}";processed.retryCount=0;
+            processed.occurredAt=now;processed.receivedAt=now;processed.processedAt=now;integrationLogs.saveAndFlush(processed);
+
+            String payload="""
+                {"eventId":"%s","eventType":"ticketUpdated","eventVersion":"1.0","occurredAt":"%s","sourceModule":"atencion-ciudadana","data":{"privateMessage":"must not persist"}}
+                """.formatted(eventId,now);
+            org.springframework.amqp.core.MessageProperties properties=new org.springframework.amqp.core.MessageProperties();
+            String reason;
+            if("event-id".equals(mismatch)) {
+                properties.setHeader("x-core-event-id",UUID.randomUUID().toString());reason="CORE_EVENT_ID_HEADER_MISMATCH";
+            } else {properties.setHeader("x-core-target-module","transito");reason="CORE_TARGET_MODULE_MISMATCH";}
+            var channel=org.mockito.Mockito.mock(com.rabbitmq.client.Channel.class);
+            var rabbit=org.mockito.Mockito.mock(org.springframework.amqp.rabbit.core.RabbitTemplate.class);
+            new CoreRabbitMqConsumer(inbound,rabbit,"core-managed","rentas.retry","q.rentas.retry.1","q.rentas.retry.2","q.rentas.retry.3",1000)
+                .receive(new org.springframework.amqp.core.Message(payload.getBytes(java.nio.charset.StandardCharsets.UTF_8),properties),channel,900+("event-id".equals(mismatch)?1:2));
+
+            org.mockito.Mockito.verify(channel).basicNack(900+("event-id".equals(mismatch)?1:2),false,false);
+            IntegrationEventLog rejection=integrationLogs.findFirstByBusinessKeyOrderByIdDesc("INBOUND_REJECTION:"+eventId).orElseThrow();
+            assertThat(rejection.errorMessage).isEqualTo(reason);
+            assertThat(rejection.payload).contains(eventId.toString()).doesNotContain("privateMessage","must not persist");
+            assertThat(integrationInbox.processedLog(eventId.toString())).get().satisfies(row->assertThat(row.status).isEqualTo(IntegrationEventStatus.PROCESSED));
+            assertThatThrownBy(()->integrationReprocess.reprocess(eventId.toString(),"header mismatch"))
+                .isInstanceOfSatisfying(BusinessException.class,error->{
+                    assertThat(error.status).isEqualTo(409);
+                    assertThat(error.code).isEqualTo("INTEGRATION_EVENT_NOT_REPROCESSABLE");
+                });
+        }
+    }
+
     @Test void malformedJsonIsStoredAsSanitizedIdempotentRejection() {
         String malformed="""
             {"eventId":"private-event","eventType":"ticketUpdated","sourceModule":"atencion-ciudadana","data":{"dni":"30111222","password":"never-store"}

@@ -31,7 +31,7 @@ import java.util.regex.Pattern;
 class CoreInboundEventDispatcher {
     private static final Set<String> ENVELOPE_FIELDS=Set.of("eventId","eventType","eventVersion","occurredAt","sourceModule","correlationId","causationId","data");
     private static final Set<String> REQUIRED_ENVELOPE_FIELDS=Set.of("eventId","eventType","occurredAt","sourceModule","data");
-    private static final Set<String> PERMANENT_REASONS=Set.of("INVALID_CORE_ENVELOPE","INVALID_CORE_EVENT_PAYLOAD","UNSUPPORTED_EVENT_VERSION","UNSUPPORTED_CORE_EVENT_TYPE");
+    private static final Set<String> PERMANENT_REASONS=Set.of("INVALID_CORE_ENVELOPE","INVALID_CORE_EVENT_PAYLOAD","UNSUPPORTED_EVENT_VERSION","UNSUPPORTED_CORE_EVENT_TYPE","CORE_EVENT_ID_HEADER_MISMATCH","CORE_TARGET_MODULE_MISMATCH");
     private static final Logger log=LoggerFactory.getLogger(CoreInboundEventDispatcher.class);
     private final ObjectMapper json;
     private final ConfirmedM1Consumer m1;
@@ -51,14 +51,23 @@ class CoreInboundEventDispatcher {
     void dispatch(String payload) {
         try{dispatchValidated(payload);}
         catch(RuntimeException ex){
-            if(rejectionAudit!=null&&permanentRejection(ex))try{rejectionAudit.record(payload,ex);}
-            catch(RuntimeException auditFailure){
-                boolean duplicateRecorded=false;
-                try{duplicateRecorded=rejectionAudit.alreadyRecorded(payload);}catch(RuntimeException ignored){}
-                if(!duplicateRecorded)log.error("CORE_INBOUND rejection_audit_failed eventId={} reason={} exceptionType={}",
-                    OperationalLogSupport.uuidField(payload,"eventId"),OperationalLogSupport.safeFailureReason(ex),auditFailure.getClass().getSimpleName());
-            }
+            auditPermanentRejection(payload,ex);
             throw ex;
+        }
+    }
+
+    void auditHeaderRejection(String payload,RuntimeException failure){
+        if(Set.of("CORE_EVENT_ID_HEADER_MISMATCH","CORE_TARGET_MODULE_MISMATCH").contains(failure.getMessage()))
+            auditPermanentRejection(payload,failure);
+    }
+
+    private void auditPermanentRejection(String payload,RuntimeException failure){
+        if(rejectionAudit!=null&&permanentRejection(failure))try{rejectionAudit.record(payload,failure);}
+        catch(RuntimeException auditFailure){
+            boolean duplicateRecorded=false;
+            try{duplicateRecorded=rejectionAudit.alreadyRecorded(payload);}catch(RuntimeException ignored){}
+            if(!duplicateRecorded)log.error("CORE_INBOUND rejection_audit_failed eventId={} reason={} exceptionType={}",
+                OperationalLogSupport.uuidField(payload,"eventId"),OperationalLogSupport.safeFailureReason(failure),auditFailure.getClass().getSimpleName());
         }
     }
 
@@ -183,6 +192,7 @@ class CoreRabbitMqConsumer {
             dispatcher.dispatch(payload);
             channel.basicAck(deliveryTag,false);
         } catch (RuntimeException ex) {
+            dispatcher.auditHeaderRejection(payload,ex);
             log.warn("CORE_INBOUND rejected eventId={} correlationId={} eventType={} eventVersion={} coreTraceId={} coreAttempt={} coreLastErrorPresent={} reason={} exceptionType={}",
                 OperationalLogSupport.uuidField(payload,"eventId"),OperationalLogSupport.uuidField(payload,"correlationId"),
                 OperationalLogSupport.safeIdentifierField(payload,"eventType"),
@@ -215,7 +225,8 @@ class CoreRabbitMqConsumer {
         if(headers.containsKey("x-core-event-id")) {
             Object value=headers.get("x-core-event-id");
             String eventId=OperationalLogSupport.uuidField(payload,"eventId");
-            if(!(value instanceof String headerEventId)||!eventId.equals(OperationalLogSupport.uuidString(headerEventId)))
+            String normalizedHeaderId=value instanceof String headerEventId?OperationalLogSupport.uuidString(headerEventId):"unavailable";
+            if("unavailable".equals(eventId)||"unavailable".equals(normalizedHeaderId)||!eventId.equals(normalizedHeaderId))
                 throw new IllegalArgumentException("CORE_EVENT_ID_HEADER_MISMATCH");
         }
         if(headers.containsKey("x-core-target-module")) {

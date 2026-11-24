@@ -25,6 +25,7 @@ import org.testcontainers.utility.DockerImageName;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.UUID;
 import java.util.HashMap;
 import java.util.Map;
@@ -32,10 +33,13 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -51,6 +55,7 @@ class RabbitMqEventPublisherTests {
         .waitingFor(Wait.forLogMessage(".*Server startup complete.*",1));
     private static CachingConnectionFactory connections;
     private static RabbitTemplate template;
+    private static RabbitAdmin admin;
     private static RabbitMqEventPublisher publisher;
 
     @BeforeAll static void startRabbit() {
@@ -61,7 +66,7 @@ class RabbitMqEventPublisherTests {
         connections.setPublisherConfirmType(CachingConnectionFactory.ConfirmType.CORRELATED);
         connections.setPublisherReturns(true);
         template=new RabbitTemplate(connections);template.setMandatory(true);
-        RabbitAdmin admin=new RabbitAdmin(connections);
+        admin=new RabbitAdmin(connections);
         admin.declareExchange(new FanoutExchange(EXCHANGE,true,false));
         Queue testQueue=new Queue(QUEUE,true,false,false);
         admin.declareQueue(testQueue);admin.declareBinding(BindingBuilder.bind(testQueue).to(new FanoutExchange(EXCHANGE,true,false)));
@@ -98,7 +103,6 @@ class RabbitMqEventPublisherTests {
         }
         String suffix=UUID.randomUUID().toString().replace("-","");
         String exchangeName=EXCHANGE+".m2."+suffix,queueName=QUEUE+".m2."+suffix;
-        RabbitAdmin admin=new RabbitAdmin(connections);
         FanoutExchange exchange=new FanoutExchange(exchangeName,true,false);
         admin.declareExchange(exchange);
         Queue queue=new Queue(queueName,true,false,true);
@@ -218,6 +222,39 @@ class RabbitMqEventPublisherTests {
         verify(dispatcher,times(1)).dispatch(payload);
     }
 
+    @Test void coreHeaderMismatchesAreAuditedAndNackedToTheIsolatedDeadLetterQueue() throws Exception {
+        for(String headerCase:List.of("event-id","target-module")) {
+            RetryTopology topology=declareRetryTopology();
+            String eventId=UUID.randomUUID().toString();
+            String payload="""
+                {"eventId":"%s","eventType":"ticketUpdated","eventVersion":"1.0","occurredAt":"2026-11-15T10:00:00-03:00","sourceModule":"atencion-ciudadana","data":{"privateMessage":"never-persist"}}
+                """.formatted(eventId);
+            Message original=new Message(payload.getBytes(StandardCharsets.UTF_8),new org.springframework.amqp.core.MessageProperties());
+            original.getMessageProperties().setMessageId(eventId);
+            if("event-id".equals(headerCase))original.getMessageProperties().setHeader("x-core-event-id",UUID.randomUUID().toString());
+            else original.getMessageProperties().setHeader("x-core-target-module","transito");
+            template.send("",topology.mainQueue(),original,new CorrelationData(eventId));
+
+            CoreInboundEventDispatcher dispatcher=mock(CoreInboundEventDispatcher.class);
+            CoreRabbitMqConsumer listener=new CoreRabbitMqConsumer(dispatcher,template,"core-managed",topology.retryExchange(),
+                topology.retryQueue1(),topology.retryQueue2(),topology.retryQueue3(),5000);
+            try(var connection=connections.createConnection();Channel channel=connection.createChannel(false)) {
+                GetResponse delivery=awaitGet(channel,topology.mainQueue(),2000);
+                assertThat(delivery).isNotNull();
+                listener.receive(asSpringMessage(delivery),channel,delivery.getEnvelope().getDeliveryTag());
+                GetResponse deadLetter=awaitGet(channel,topology.deadLetterQueue(),2000);
+                assertThat(deadLetter).isNotNull();
+                assertThat(deadLetter.getProps().getMessageId()).isEqualTo(eventId);
+                assertThat(deadLetter.getProps().getHeaders()).containsKey("x-death");
+                assertThat(awaitGet(channel,topology.retryQueue1(),200)).isNull();
+                channel.basicAck(deadLetter.getEnvelope().getDeliveryTag(),false);
+            }
+            String expected="event-id".equals(headerCase)?"CORE_EVENT_ID_HEADER_MISMATCH":"CORE_TARGET_MODULE_MISMATCH";
+            verify(dispatcher).auditHeaderRejection(eq(payload),argThat(failure->expected.equals(failure.getMessage())));
+            verify(dispatcher,never()).dispatch(any());
+        }
+    }
+
     @Test void invalidEnvelopeIsRejectedBeforePublishing() {
         assertThatThrownBy(()->publisher.publish("event","CORE","{\"eventId\":\"not-a-uuid\"}"))
             .isInstanceOf(IllegalArgumentException.class).hasMessage("INVALID_CORE_ENVELOPE");
@@ -251,7 +288,7 @@ class RabbitMqEventPublisherTests {
 
     @Test void mandatoryReturnRejectsUnroutableMessage() {
         String exchange="m5.unroutable."+UUID.randomUUID();
-        new RabbitAdmin(connections).declareExchange(new DirectExchange(exchange,true,false));
+        admin.declareExchange(new DirectExchange(exchange,true,false));
         RabbitMqEventPublisher unroutablePublisher=new RabbitMqEventPublisher(template,new ObjectMapper(),exchange,Duration.ofSeconds(5),"m5-test","m5-test-only");
 
         assertThatThrownBy(()->unroutablePublisher.publish("paymentRegistered","CORE",payload()))
@@ -293,7 +330,6 @@ class RabbitMqEventPublisherTests {
         String main="q.rentas.retry-test."+suffix,dlx="rentas.retry-test.dlx."+suffix,dlq=main+".dlq";
         String returned="rentas.retry-test.return."+suffix,retry="rentas.retry-test.exchange."+suffix;
         String retry1=main+".retry.1",retry2=main+".retry.2",retry3=main+".retry.3";
-        RabbitAdmin admin=new RabbitAdmin(connections);
         DirectExchange returnExchange=new DirectExchange(returned,true,false),retryExchange=new DirectExchange(retry,true,false);
         FanoutExchange deadLetterExchange=new FanoutExchange(dlx,true,false);
         admin.declareExchange(returnExchange);admin.declareExchange(retryExchange);admin.declareExchange(deadLetterExchange);

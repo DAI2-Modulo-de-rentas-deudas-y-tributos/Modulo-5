@@ -277,7 +277,8 @@ class CoreRabbitMqConsumerTests {
         ListAppender<ILoggingEvent> logs=new ListAppender<>();logs.start();logger.addAppender(logs);
         try {
             listener(dispatcher).receive(new Message(payload.getBytes(StandardCharsets.UTF_8),properties),channel,63);
-            verifyNoInteractions(dispatcher);verify(channel).basicNack(63,false,false);verify(channel,never()).basicAck(63,false);
+            verify(dispatcher).auditHeaderRejection(eq(payload),argThat(failure->"CORE_EVENT_ID_HEADER_MISMATCH".equals(failure.getMessage())));
+            verify(dispatcher,never()).dispatch(any());verify(channel).basicNack(63,false,false);verify(channel,never()).basicAck(63,false);
             String output=logs.list.stream().map(ILoggingEvent::getFormattedMessage).reduce("",String::concat);
             assertThat(output).contains("coreTraceId=unavailable","coreAttempt=unavailable","coreLastErrorPresent=true",
                 "reason=CORE_EVENT_ID_HEADER_MISMATCH").doesNotContain("40111222","PRIVATE STACK TRACE","otro-modulo","DNI=");
@@ -300,10 +301,21 @@ class CoreRabbitMqConsumerTests {
         ListAppender<ILoggingEvent> logs=new ListAppender<>();logs.start();logger.addAppender(logs);
         try {
             listener(dispatcher).receive(new Message(payload.getBytes(StandardCharsets.UTF_8),properties),channel,65);
-            verifyNoInteractions(dispatcher);verify(channel).basicNack(65,false,false);
+            verify(dispatcher).auditHeaderRejection(eq(payload),argThat(failure->"CORE_TARGET_MODULE_MISMATCH".equals(failure.getMessage())));
+            verify(dispatcher,never()).dispatch(any());verify(channel).basicNack(65,false,false);
             assertInboundLogHasReason(logs,UUID.fromString(OperationalLogSupport.uuidField(payload,"eventId")),
                 "CORE_TARGET_MODULE_MISMATCH");
         } finally {logger.detachAppender(logs);}
+    }
+
+    @Test void twoInvalidEventIdsCannotMatchThroughUnavailableFallback() throws Exception {
+        String valid=ticketUpdated();
+        String payload=valid.replace(OperationalLogSupport.uuidField(valid,"eventId"),"not-a-uuid");
+        MessageProperties properties=new MessageProperties();properties.setHeader("x-core-event-id","also-not-a-uuid");
+        CoreInboundEventDispatcher dispatcher=mock(CoreInboundEventDispatcher.class);Channel channel=mock(Channel.class);
+        listener(dispatcher).receive(new Message(payload.getBytes(StandardCharsets.UTF_8),properties),channel,66);
+        verify(dispatcher).auditHeaderRejection(eq(payload),argThat(failure->"CORE_EVENT_ID_HEADER_MISMATCH".equals(failure.getMessage())));
+        verify(dispatcher,never()).dispatch(any());verify(channel).basicNack(66,false,false);
     }
 
     @Test void unknownEventVersionLogsStableReasonAndNacksWithoutDispatching() throws Exception {
