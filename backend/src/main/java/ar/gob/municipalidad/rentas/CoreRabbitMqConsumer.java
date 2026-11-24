@@ -50,8 +50,12 @@ class CoreInboundEventDispatcher {
         try{dispatchValidated(payload);}
         catch(RuntimeException ex){
             if(rejectionAudit!=null&&permanentRejection(ex))try{rejectionAudit.record(payload,ex);}
-            catch(RuntimeException auditFailure){log.error("CORE_INBOUND rejection_audit_failed eventId={} reason={} exceptionType={}",
-                OperationalLogSupport.uuidField(payload,"eventId"),OperationalLogSupport.safeFailureReason(ex),auditFailure.getClass().getSimpleName());}
+            catch(RuntimeException auditFailure){
+                boolean duplicateRecorded=false;
+                try{duplicateRecorded=rejectionAudit.alreadyRecorded(payload);}catch(RuntimeException ignored){}
+                if(!duplicateRecorded)log.error("CORE_INBOUND rejection_audit_failed eventId={} reason={} exceptionType={}",
+                    OperationalLogSupport.uuidField(payload,"eventId"),OperationalLogSupport.safeFailureReason(ex),auditFailure.getClass().getSimpleName());
+            }
             throw ex;
         }
     }

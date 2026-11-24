@@ -34,7 +34,7 @@ class TaxpayerQueryService {
 class IntegrationReprocessService {
     private final IntegrationEventLogRepository logs;private final ProcessedEventRepository processedEvents;private final ObjectMapper json;private final ExternalObligationService obligations;private final TaxpayerIntegrationService taxpayers;private final TicketIntegrationService tickets;private final ConfirmedM2Consumer coreM2;private final SocialBenefitIntegrationService benefits;private final ConfirmedM8Consumer coreM8;private final ConfirmedM7Consumer m7;private final PreliminaryM4Consumer m4;private final CoreM4Consumer coreM4;private final TransactionTemplate transaction;
     IntegrationReprocessService(IntegrationEventLogRepository logs,ProcessedEventRepository processedEvents,ObjectMapper json,ExternalObligationService obligations,TaxpayerIntegrationService taxpayers,TicketIntegrationService tickets,ConfirmedM2Consumer coreM2,SocialBenefitIntegrationService benefits,ConfirmedM8Consumer coreM8,ConfirmedM7Consumer m7,PreliminaryM4Consumer m4,CoreM4Consumer coreM4,PlatformTransactionManager transactionManager){this.logs=logs;this.processedEvents=processedEvents;this.json=json;this.obligations=obligations;this.taxpayers=taxpayers;this.tickets=tickets;this.coreM2=coreM2;this.benefits=benefits;this.coreM8=coreM8;this.m7=m7;this.m4=m4;this.coreM4=coreM4;this.transaction=new TransactionTemplate(transactionManager);this.transaction.setPropagationBehavior(TransactionTemplate.PROPAGATION_REQUIRES_NEW);}
-    IntegrationEventLog get(String eventId){return logs.findFirstByExternalEventIdOrderByIdDesc(eventId).or(()->{try{return logs.findFirstByEventIdOrderByIdDesc(UUID.fromString(eventId));}catch(IllegalArgumentException ex){return Optional.empty();}}).orElseThrow(()->CatalogService.notFound("Evento de integración"));}
+    IntegrationEventLog get(String eventId){return logs.findLatestNonRejectionByExternalEventId(eventId).or(()->logs.findFirstByExternalEventIdOrderByIdDesc(eventId)).or(()->{try{return logs.findFirstByEventIdOrderByIdDesc(UUID.fromString(eventId));}catch(IllegalArgumentException ex){return Optional.empty();}}).orElseThrow(()->CatalogService.notFound("Evento de integración"));}
     IntegrationEventLog reprocess(String eventId,String reason){return reprocess(eventId,reason,null);}
     IntegrationEventLog reprocess(String eventId,String reason,String ifMatch){
         try{transaction.execute(status->attempt(eventId,ifMatch));}
@@ -43,6 +43,8 @@ class IntegrationReprocessService {
     }
     private IntegrationEventLog attempt(String eventId,String ifMatch){
         IntegrationEventLog resolved=get(eventId);IntegrationEventLog original=logs.findByIdForUpdate(resolved.id).orElseThrow(()->CatalogService.notFound("Evento de integración"));
+        if(original.businessKey!=null&&original.businessKey.startsWith("INBOUND_REJECTION:"))
+            throw new BusinessException("INBOUND_REJECTION_NOT_REPROCESSABLE","El registro conserva metadatos sanitizados, no el payload original",409);
         if(processedEvents.existsByExternalEventId(original.externalEventId))return get(eventId);
         EntityTags.requireIfMatch(EntityTags.integrationEvent(ApiResponses.of(original)),ifMatch);
         CatalogService.require(original.status==IntegrationEventStatus.FAILED||original.status==IntegrationEventStatus.DEAD_LETTER,"INTEGRATION_EVENT_NOT_REPROCESSABLE","El evento no está en error");

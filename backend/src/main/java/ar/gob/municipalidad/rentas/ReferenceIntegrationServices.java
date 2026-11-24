@@ -13,7 +13,7 @@ class IntegrationInbox {
     IntegrationInbox(ProcessedEventRepository processed,IntegrationEventLogRepository logs,ObjectMapper json){this.processed=processed;this.logs=logs;this.json=json;}
     boolean processed(UUID id){return processed(id.toString());}
     boolean processed(String id){return processed.existsByExternalEventId(id);}
-    Optional<IntegrationEventLog> processedLog(String id){return logs.findFirstByExternalEventIdOrderByIdDesc(id).filter(log->log.status==IntegrationEventStatus.PROCESSED);}
+    Optional<IntegrationEventLog> processedLog(String id){return logs.findFirstByExternalEventIdAndStatusOrderByIdDesc(id,IntegrationEventStatus.PROCESSED);}
     IntegrationEventLog receive(ApiDtos.EventEnvelope<?> event){return receive(event,event);}
     IntegrationEventLog receive(ApiDtos.EventEnvelope<?> event,Object raw){return receive(normalize(event),raw,false);}
     IntegrationEventLog receive(NormalizedIntegrationEvent event,Object raw){return receive(event,raw,false);}
@@ -93,7 +93,7 @@ class TicketService {
     private String routedCause(TicketCase t){
         requireM2Thread(t);
         CatalogService.require(t.lastSourceEventId!=null,"M2_ROUTED_CAUSE_REQUIRED","No consta un ROUTED causal verificable");
-        IntegrationEventLog source=integrationLogs.findFirstByExternalEventIdOrderByIdDesc(t.lastSourceEventId).orElseThrow(()->new BusinessException("M2_ROUTED_CAUSE_REQUIRED","No consta un ROUTED causal verificable",409));
+        IntegrationEventLog source=integrationLogs.findFirstByExternalEventIdAndStatusOrderByIdDesc(t.lastSourceEventId,IntegrationEventStatus.PROCESSED).orElseThrow(()->new BusinessException("M2_ROUTED_CAUSE_REQUIRED","No consta un ROUTED causal verificable",409));
         try{
             var payload=json.readTree(source.payload);
             CatalogService.require(source.direction==EventDirection.INBOUND&&source.status==IntegrationEventStatus.PROCESSED&&"ticketUpdated".equals(source.eventType)&&"atencion-ciudadana".equals(source.sourceModule)&&t.externalTicketId.equals(payload.path("data").path("ticketId").asText())&&"ROUTED".equals(payload.path("data").path("updateType").asText())&&t.correlationId.equals(payload.path("correlationId").asText()),"M2_ROUTED_CAUSE_REQUIRED","El evento causal no es el ROUTED vigente de M2");

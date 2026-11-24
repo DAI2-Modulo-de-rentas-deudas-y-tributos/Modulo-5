@@ -313,8 +313,10 @@ class PostgreSqlIntegrationTest {
     @Autowired IntegrationReprocessService integrationReprocess;
     @Autowired ConfirmedM7Consumer m7;
     @Autowired IntegrationEventLogRepository integrationLogs;
+    @Autowired IntegrationInbox integrationInbox;
     @Autowired ProcessedEventRepository processedEvents;
     @Autowired TicketCaseRepository ticketCases;
+    @Autowired TicketService ticketService;
     @Autowired ExternalObligationRepository externalObligations;
     @Autowired TaxpayerRepository taxpayers;
     @Autowired TaxConceptRepository concepts;
@@ -1188,6 +1190,80 @@ class PostgreSqlIntegrationTest {
         assertThat(rejection.eventId).isNotEqualTo(prior.eventId);
         assertThat(rejection.externalEventId).isEqualTo(prior.externalEventId);
         assertThat(integrationLogs.findById(prior.id)).isPresent();
+    }
+
+    @Test void rejectedRedeliveryDoesNotHideProcessedRouteOrBreakItsCausation() throws Exception {
+        String routed=contractFixture("M2_ticketUpdated_ROUTED_REAL.json");
+        JsonNode envelope=json.readTree(routed),data=envelope.path("data");
+        String eventId=envelope.path("eventId").asText();
+        UUID ticketId=UUID.fromString(data.path("ticketId").asText());
+        String correlationId=envelope.path("correlationId").asText();
+
+        inbound.dispatch(routed);
+        String unsupportedVersion=routed.replace("\"eventVersion\": \"1.0\"","\"eventVersion\": \"2.0\"")
+            .replace("\"eventVersion\":\"1.0\"","\"eventVersion\":\"2.0\"");
+        assertThat(unsupportedVersion).contains("2.0");
+        assertThatThrownBy(()->inbound.dispatch(unsupportedVersion)).isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("UNSUPPORTED_EVENT_VERSION");
+
+        IntegrationEventLog rejection=integrationLogs.findFirstByBusinessKeyOrderByIdDesc("INBOUND_REJECTION:"+eventId).orElseThrow();
+        assertThat(rejection.status).isEqualTo(IntegrationEventStatus.FAILED);
+        assertThat(integrationLogs.findFirstByExternalEventIdOrderByIdDesc(eventId)).get()
+            .extracting(log->log.status).isEqualTo(IntegrationEventStatus.FAILED);
+        assertThat(integrationInbox.processedLog(eventId)).get().satisfies(log->{
+            assertThat(log.status).isEqualTo(IntegrationEventStatus.PROCESSED);
+            assertThat(log.businessKey).isNull();
+        });
+        assertThat(integrationReprocess.get(eventId).status).isEqualTo(IntegrationEventStatus.PROCESSED);
+
+        TicketCase ticket=ticketCases.findByExternalTicketId(ticketId.toString()).orElseThrow();
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+            new AuthenticatedIdentity("postgres-it-m2-cause",null,UUID.fromString("3b9f1c52-6a7e-4d08-9c41-5e2a8d7f0b13")),
+            null,List.of(new SimpleGrantedAuthority("ROLE_RENTAS"))));
+        try { ticketService.assign(ticket.id); }
+        finally { SecurityContextHolder.clearContext(); }
+
+        JsonNode started=outbox.findAll().stream().filter(event->"updateTicketStatus".equals(event.eventType))
+            .map(event->{try{return json.readTree(event.payload);}catch(Exception ex){throw new AssertionError(ex);}})
+            .filter(event->"STARTED".equals(event.path("data").path("updateType").asText()))
+            .filter(event->ticketId.toString().equals(event.path("data").path("ticketId").asText()))
+            .findFirst().orElseThrow();
+        assertThat(started.path("correlationId").asText()).isEqualTo(correlationId);
+        assertThat(started.path("causationId").asText()).isEqualTo(eventId);
+    }
+
+    @Test void concurrentRejectionRedeliveriesCreateOneSanitizedAuditRow() throws Exception {
+        UUID eventId=UUID.randomUUID();
+        String payload="""
+            {"eventId":"%s","eventType":"ticketCreated","eventVersion":"1.0","occurredAt":"2026-11-15T10:00:00-03:00","sourceModule":"atencion-ciudadana","data":{"privateMessage":"do not store"}}
+            """.formatted(eventId);
+        List<Throwable> failures=runTogether(()->{inbound.dispatch(payload);return null;},()->{inbound.dispatch(payload);return null;});
+        assertThat(failures).hasSize(2).allSatisfy(failure->assertThat(failure).isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("UNSUPPORTED_CORE_EVENT_TYPE"));
+        assertThat(jdbc.queryForObject("select count(*) from integration_event_log where business_key=?",Long.class,
+            "INBOUND_REJECTION:"+eventId)).isEqualTo(1L);
+        IntegrationEventLog row=integrationLogs.findFirstByBusinessKeyOrderByIdDesc("INBOUND_REJECTION:"+eventId).orElseThrow();
+        assertThat(row.payload).contains(eventId.toString()).doesNotContain("privateMessage","do not store");
+    }
+
+    @Test void sanitizedPermanentRejectionCannotBeReprocessedAsOriginalPayload() {
+        UUID eventId=UUID.randomUUID();
+        String payload="""
+            {"eventId":"%s","eventType":"ticketCreated","eventVersion":"1.0","occurredAt":"2026-11-15T10:00:00-03:00","sourceModule":"atencion-ciudadana","data":{"privateMessage":"do not store"}}
+            """.formatted(eventId);
+        assertThatThrownBy(()->inbound.dispatch(payload)).isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("UNSUPPORTED_CORE_EVENT_TYPE");
+        IntegrationEventLog row=integrationLogs.findFirstByBusinessKeyOrderByIdDesc("INBOUND_REJECTION:"+eventId).orElseThrow();
+
+        assertThatThrownBy(()->integrationReprocess.reprocess(eventId.toString(),"retry request"))
+            .isInstanceOfSatisfying(BusinessException.class,error->{
+                assertThat(error.code).isEqualTo("INBOUND_REJECTION_NOT_REPROCESSABLE");
+                assertThat(error.status).isEqualTo(409);
+            });
+        IntegrationEventLog unchanged=integrationLogs.findById(row.id).orElseThrow();
+        assertThat(unchanged.status).isEqualTo(IntegrationEventStatus.FAILED);
+        assertThat(unchanged.retryCount).isZero();
+        assertThat(unchanged.payload).doesNotContain("privateMessage","do not store");
     }
 
     @Test void malformedJsonIsStoredAsSanitizedIdempotentRejection() {

@@ -22,6 +22,12 @@ class InboundRejectionAudit {
 
     InboundRejectionAudit(IntegrationEventLogRepository logs,ObjectMapper json){this.logs=logs;this.json=json;}
 
+    boolean alreadyRecorded(String raw){
+        JsonNode envelope=read(raw);
+        String externalId=uuid(text(envelope,"eventId")).map(UUID::toString).orElse("rejected:"+sha256(raw));
+        return logs.existsByBusinessKey("INBOUND_REJECTION:"+externalId);
+    }
+
     @Transactional(propagation=Propagation.REQUIRES_NEW)
     void record(String raw,RuntimeException failure){
         JsonNode envelope=read(raw);

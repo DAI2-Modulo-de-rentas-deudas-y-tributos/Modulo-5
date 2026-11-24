@@ -105,7 +105,14 @@ interface ProcessedEventRepository extends JpaRepository<ProcessedEvent,UUID> { 
 interface IntegrationEventLogRepository extends FilteredRepository<IntegrationEventLog,Long> {
     Optional<IntegrationEventLog> findFirstByEventIdOrderByIdDesc(UUID eventId);
     Optional<IntegrationEventLog> findFirstByExternalEventIdOrderByIdDesc(String eventId);
+    Optional<IntegrationEventLog> findFirstByExternalEventIdAndStatusOrderByIdDesc(String eventId,IntegrationEventStatus status);
+    @Query("select e from IntegrationEventLog e where e.externalEventId=:externalEventId and (e.businessKey is null or e.businessKey not like 'INBOUND_REJECTION:%') order by e.id desc")
+    List<IntegrationEventLog> findNonRejectionsByExternalEventId(@Param("externalEventId") String externalEventId,Pageable pageable);
+    default Optional<IntegrationEventLog> findLatestNonRejectionByExternalEventId(String externalEventId){
+        return findNonRejectionsByExternalEventId(externalEventId,PageRequest.of(0,1)).stream().findFirst();
+    }
     Optional<IntegrationEventLog> findFirstByBusinessKeyOrderByIdDesc(String businessKey);
+    boolean existsByBusinessKey(String businessKey);
     @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select e from IntegrationEventLog e where e.id=:id") Optional<IntegrationEventLog> findByIdForUpdate(@Param("id") Long id);
     @Modifying
     @Query(value="""
