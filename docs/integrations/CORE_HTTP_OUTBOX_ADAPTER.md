@@ -1,6 +1,6 @@
 # Adaptador HTTP de Outbox hacia Core
 
-El adaptador es opt-in. M5 conserva `local-log` como valor seguro predeterminado; HTTP sólo se selecciona con `BROKER_ADAPTER=core-http`. El adaptador usa el módulo `rentas`, obtiene un token de máquina de `POST /api/v1/auth/module-token` y publica el JSON ya persistido en Outbox, sin reconstruir el envelope ni cambiar `eventId`.
+El adaptador es opt-in. M5 conserva `local-log` como valor seguro predeterminado; HTTP sólo se selecciona con `BROKER_ADAPTER=core-http`. El adaptador usa el módulo `rentas`, obtiene un token de máquina de `POST /api/v1/auth/module-token` mediante `CoreModuleTokenService` y publica el JSON ya persistido en Outbox, sin reconstruir el envelope ni cambiar `eventId`. El cliente de token también puede ser inyectado por clientes internos de consulta; no contacta Core ni exige credenciales hasta que se invoca. Con `local-log`, las credenciales HTTP pueden quedar vacías.
 
 ## Configuración externa
 
@@ -18,6 +18,10 @@ El adaptador es opt-in. M5 conserva `local-log` como valor seguro predeterminado
 Ambas listas deben estar presentes y ser no vacías para iniciar `core-http`. `CORE_HTTP_ALLOWED_EVENT_IDS` usa el UUID `outbox_event.id`, que para los eventos confirmados coincide con el `eventId` del envelope. Cada consulta de Core HTTP filtra en PostgreSQL por destino, tipo e ID, y procesa una fila por transacción. Una segunda comprobación valida el tipo, destino e igualdad entre ambos IDs antes de enviar. Esto evita publicar el backlog histórico por cambiar el adaptador y permite seleccionar un evento que el scheduler local ya haya marcado `LOCAL_ONLY`, sin tratar ese estado como entrega remota. Las listas son una autorización temporal de ensayo, no una allowlist permanente de producción.
 
 El secret no debe guardarse en archivos versionados, argumentos visibles del proceso ni logs. El cliente sólo admite HTTPS para hosts remotos; HTTP se acepta únicamente para loopback en pruebas locales. No se configura una URL remota por defecto.
+
+## Consulta read-only de Core
+
+`CoreModuleTokenService` también es reutilizado por `CoreReadOnlyClient`, independientemente del adaptador de publicación. El cliente implementa únicamente `GET /api/v1/dlq`, `GET /api/v1/dlq/{dead_letter_id}`, `GET /api/v1/dlq/{dead_letter_id}/audit` y `GET /api/v1/deliveries`; mantiene el token fuera de logs, renueva una vez ante 401 y no ofrece operaciones de retry, eliminación o republicación. Las respuestas se mantienen como JSON genérico porque no hay un schema/OpenAPI de respuesta disponible en el repositorio. No se expone aún un endpoint de consulta en la API de M5: antes deben definirse sus filtros, paginación, DTO de salida y autorización de roles para no filtrar datos de Core.
 
 ## Estados y reintentos
 

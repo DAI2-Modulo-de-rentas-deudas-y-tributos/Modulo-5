@@ -63,7 +63,8 @@ class BrokerAdapterConfigurationTests {
     }
 
     @Configuration(proxyBeanMethods = false)
-    @Import({LocalLogEventPublisher.class, RabbitMqEventPublisher.class, CoreHttpEventPublisher.class, OutboxPublisher.class})
+    @Import({LocalLogEventPublisher.class, RabbitMqEventPublisher.class, CoreModuleTokenService.class,
+        CoreHttpEventPublisher.class, OutboxPublisher.class})
     static class PublisherConfiguration {
         @Bean static ConversionService conversionService() { return ApplicationConversionService.getSharedInstance(); }
         @Bean ObjectMapper objectMapper() { return new ObjectMapper(); }

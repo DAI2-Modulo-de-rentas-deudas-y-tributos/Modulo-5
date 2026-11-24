@@ -14,6 +14,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -26,6 +27,92 @@ class CoreHttpEventPublisherTests {
     private static final String EVENT_ID="fc444493-302a-4f30-a2a1-9360eaa26ed7";
     private static final String PAYLOAD="{\"eventId\":\""+EVENT_ID+"\",\"eventType\":\"exemptionRequested\",\"eventVersion\":\"1.0\",\"occurredAt\":\"2026-10-31T12:30:00-03:00\",\"sourceModule\":\"rentas\",\"correlationId\":\"ec94049c-0fc7-4d80-b8cf-0b8f6a69dc4a\",\"causationId\":null,\"data\":{\"requestId\":\"synthetic\"}}";
     private final ObjectMapper json=new ObjectMapper();
+
+    @Test void tokenServiceCanAuthenticateWithoutAnEventPublisher() throws Exception {
+        AtomicInteger requests=new AtomicInteger();
+        try(TestServer server=server(exchange->{
+            assertThat(exchange.getRequestURI().getPath()).isEqualTo("/api/v1/auth/module-token");
+            assertThat(new String(exchange.getRequestBody().readAllBytes())).isEqualTo("{\"module\":\"rentas\",\"secret\":\""+SECRET+"\"}");
+            requests.incrementAndGet();respond(exchange,200,token("read-only-client",3600));
+        })){
+            CoreModuleTokenService tokens=new CoreModuleTokenService(json,server.uri(),SECRET,Duration.ofSeconds(1),
+                Duration.ofSeconds(2),Duration.ofSeconds(1),Clock.systemUTC());
+            assertThat(tokens.accessToken().value()).isEqualTo("read-only-client");
+            assertThat(tokens.accessToken().value()).isEqualTo("read-only-client");
+            assertThat(requests.get()).isEqualTo(1);
+        }
+    }
+
+    @Test void inactiveTokenClientDoesNotRequireHttpCredentials() {
+        CoreModuleTokenService tokens=new CoreModuleTokenService(json,"","",Duration.ofSeconds(1),
+            Duration.ofSeconds(2),Duration.ofSeconds(1),Clock.systemUTC());
+        assertThatThrownBy(tokens::accessToken).isInstanceOf(IllegalStateException.class)
+            .hasMessage("CORE_HTTP_CONFIGURATION_REQUIRED");
+    }
+
+    @Test void readOnlyClientUsesConfirmedRoutesAndForwardsFiltersWithSharedToken() throws Exception {
+        AtomicInteger tokens=new AtomicInteger();List<String> paths=new ArrayList<>();
+        try(TestServer server=server(exchange->{
+            if(exchange.getRequestURI().getPath().equals("/api/v1/auth/module-token")){
+                tokens.incrementAndGet();respond(exchange,200,token("read",3600));return;
+            }
+            assertThat(exchange.getRequestMethod()).isEqualTo("GET");
+            assertThat(exchange.getRequestHeaders().getFirst("Authorization")).isEqualTo("Bearer read");
+            paths.add(exchange.getRequestURI().toString());respond(exchange,200,"{\"items\":[]}");
+        })){
+            CoreModuleTokenService moduleTokens=new CoreModuleTokenService(json,server.uri(),SECRET,
+                Duration.ofSeconds(1),Duration.ofSeconds(2),Duration.ofSeconds(1),Clock.systemUTC());
+            CoreReadOnlyClient client=new CoreReadOnlyClient(moduleTokens,json);
+            assertThat(client.listDeadLetters(Map.of("status","DELIVERED","page","2")).path("items")).isEmpty();
+            assertThat(client.getDeadLetter("dl-17").path("items")).isEmpty();
+            assertThat(client.getDeadLetterAudit("dl-17").path("items")).isEmpty();
+            assertThat(client.listDeliveries(Map.of("eventId",EVENT_ID)).path("items")).isEmpty();
+            assertThat(paths).hasSize(4);
+            assertThat(paths.get(0)).startsWith("/api/v1/dlq?").contains("status=DELIVERED","page=2");
+            assertThat(paths).contains("/api/v1/dlq/dl-17","/api/v1/dlq/dl-17/audit",
+                "/api/v1/deliveries?eventId="+EVENT_ID);
+            assertThat(tokens.get()).isEqualTo(1);
+        }
+    }
+
+    @Test void readOnlyClientRenewsTokenOnceAfterUnauthorizedResponse() throws Exception {
+        AtomicInteger tokens=new AtomicInteger(),reads=new AtomicInteger();
+        try(TestServer server=server(exchange->{
+            if(exchange.getRequestURI().getPath().equals("/api/v1/auth/module-token")){
+                respond(exchange,200,token("t"+tokens.incrementAndGet(),3600));return;
+            }
+            if(reads.incrementAndGet()==1)respond(exchange,401,"{}");else respond(exchange,200,"{}");
+        })){
+            var moduleTokens=new CoreModuleTokenService(json,server.uri(),SECRET,Duration.ofSeconds(1),
+                Duration.ofSeconds(2),Duration.ofSeconds(1),Clock.systemUTC());
+            assertThat(new CoreReadOnlyClient(moduleTokens,json).listDeliveries(Map.of()).isObject()).isTrue();
+            assertThat(tokens.get()).isEqualTo(2);
+            assertThat(reads.get()).isEqualTo(2);
+        }
+    }
+
+    @Test void readOnlyClientDistinguishesNotFoundFromRetryableServiceLimits() throws Exception {
+        for(int status:List.of(404,429))try(TestServer server=server(exchange->{
+            if(exchange.getRequestURI().getPath().equals("/api/v1/auth/module-token"))respond(exchange,200,token("t",3600));
+            else respond(exchange,status,"sensitive body");
+        })){
+            var moduleTokens=new CoreModuleTokenService(json,server.uri(),SECRET,Duration.ofSeconds(1),
+                Duration.ofSeconds(2),Duration.ofSeconds(1),Clock.systemUTC());
+            assertThatThrownBy(()->new CoreReadOnlyClient(moduleTokens,json).listDeliveries(Map.of()))
+                .isInstanceOf(CoreHttpPublishException.class).satisfies(error->{
+                    var failure=(CoreHttpPublishException)error;
+                    assertThat(failure.retryable()).isEqualTo(status==429);
+                    assertThat(failure.getMessage()).doesNotContain("sensitive");
+                });
+        }
+    }
+
+    @Test void readOnlyClientRejectsPathTraversalInDeadLetterIdBeforeNetworkCall() {
+        var moduleTokens=new CoreModuleTokenService(json,"","",Duration.ofSeconds(1),Duration.ofSeconds(2),
+            Duration.ofSeconds(1),Clock.systemUTC());
+        assertThatThrownBy(()->new CoreReadOnlyClient(moduleTokens,json).getDeadLetter("../events"))
+            .isInstanceOf(CoreHttpPublishException.class).hasMessage("CORE_READ_INVALID_DEAD_LETTER_ID");
+    }
 
     @Test void postsSameEnvelopeWithBearerAndReturnsCoreAccepted() throws Exception {
         AtomicReference<String> sent=new AtomicReference<>();AtomicReference<String> authBody=new AtomicReference<>();
