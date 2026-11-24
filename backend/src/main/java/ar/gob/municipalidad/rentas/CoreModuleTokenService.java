@@ -115,6 +115,8 @@ class CoreModuleTokenService {
     private static CoreHttpPublishException permanent(String code){return new CoreHttpPublishException(code,false);}
     private static CoreHttpPublishException retryable(String code){return new CoreHttpPublishException(code,true);}
     private record Configuration(URI baseUri,HttpClient client) {}
-    record AccessToken(String value) {}
+    record AccessToken(String value) {
+        @Override public String toString(){return "AccessToken[REDACTED]";}
+    }
     private record CachedToken(AccessToken token,Instant expiresAt) {}
 }

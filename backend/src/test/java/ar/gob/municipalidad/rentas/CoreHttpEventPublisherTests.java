@@ -39,6 +39,7 @@ class CoreHttpEventPublisherTests {
                 Duration.ofSeconds(2),Duration.ofSeconds(1),Clock.systemUTC());
             assertThat(tokens.accessToken().value()).isEqualTo("read-only-client");
             assertThat(tokens.accessToken().value()).isEqualTo("read-only-client");
+            assertThat(tokens.accessToken().toString()).doesNotContain("read-only-client").isEqualTo("AccessToken[REDACTED]");
             assertThat(requests.get()).isEqualTo(1);
         }
     }
@@ -110,8 +111,41 @@ class CoreHttpEventPublisherTests {
     @Test void readOnlyClientRejectsPathTraversalInDeadLetterIdBeforeNetworkCall() {
         var moduleTokens=new CoreModuleTokenService(json,"","",Duration.ofSeconds(1),Duration.ofSeconds(2),
             Duration.ofSeconds(1),Clock.systemUTC());
-        assertThatThrownBy(()->new CoreReadOnlyClient(moduleTokens,json).getDeadLetter("../events"))
-            .isInstanceOf(CoreHttpPublishException.class).hasMessage("CORE_READ_INVALID_DEAD_LETTER_ID");
+        for(String id:List.of("../events",".","..","a/b","a%2fb","a?query","a#fragment"))
+            assertThatThrownBy(()->new CoreReadOnlyClient(moduleTokens,json).getDeadLetter(id))
+                .isInstanceOf(CoreHttpPublishException.class).hasMessage("CORE_READ_INVALID_DEAD_LETTER_ID");
+    }
+
+    @Test void readOnlyClientAllowsOnlyBoundedKnownFiltersAndPagination() throws Exception {
+        List<String> paths=new ArrayList<>();
+        try(TestServer server=server(exchange->{
+            if(exchange.getRequestURI().getPath().endsWith("module-token")){respond(exchange,200,token("read",3600));return;}
+            paths.add(exchange.getRequestURI().toString());respond(exchange,200,"{}");
+        })){
+            var client=new CoreReadOnlyClient(new CoreModuleTokenService(json,server.uri(),SECRET,Duration.ofSeconds(1),
+                Duration.ofSeconds(2),Duration.ofSeconds(1),Clock.systemUTC()),json);
+            client.listDeadLetters(Map.of("status","DELIVERED","page","0"));
+            client.listDeliveries(Map.of("eventId",EVENT_ID,"page","1"));
+            assertThat(paths).hasSize(2);
+            assertThat(paths.get(0)).contains("page=0","status=DELIVERED");
+            assertThat(paths.get(1)).contains("eventId="+EVENT_ID,"page=1");
+        }
+        var client=new CoreReadOnlyClient(new CoreModuleTokenService(json,"","",Duration.ofSeconds(1),Duration.ofSeconds(2),Duration.ofSeconds(1),Clock.systemUTC()),json);
+        for(Map<String,String> invalid:List.of(Map.of("payload","private"),Map.of("page","-1"),Map.of("page","1000001"),Map.of("status","private status"),Map.of("eventId","not-a-uuid")))
+            assertThatThrownBy(()->client.listDeliveries(invalid)).isInstanceOf(CoreHttpPublishException.class)
+                .hasMessage("CORE_READ_INVALID_QUERY_PARAMETER");
+    }
+
+    @Test void readOnlyClientRejectsOversizedResponsesWithoutParsingTheBody() throws Exception {
+        try(TestServer server=server(exchange->{
+            if(exchange.getRequestURI().getPath().endsWith("module-token")){respond(exchange,200,token("read",3600));return;}
+            respond(exchange,200,"x".repeat(1_048_577));
+        })){
+            var client=new CoreReadOnlyClient(new CoreModuleTokenService(json,server.uri(),SECRET,Duration.ofSeconds(1),
+                Duration.ofSeconds(2),Duration.ofSeconds(1),Clock.systemUTC()),json);
+            assertThatThrownBy(()->client.listDeliveries(Map.of())).isInstanceOf(CoreHttpPublishException.class)
+                .hasMessage("CORE_READ_RESPONSE_TOO_LARGE");
+        }
     }
 
     @Test void postsSameEnvelopeWithBearerAndReturnsCoreAccepted() throws Exception {
