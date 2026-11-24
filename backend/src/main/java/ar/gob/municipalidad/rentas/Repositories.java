@@ -107,6 +107,17 @@ interface IntegrationEventLogRepository extends FilteredRepository<IntegrationEv
     Optional<IntegrationEventLog> findFirstByExternalEventIdOrderByIdDesc(String eventId);
     Optional<IntegrationEventLog> findFirstByBusinessKeyOrderByIdDesc(String businessKey);
     @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select e from IntegrationEventLog e where e.id=:id") Optional<IntegrationEventLog> findByIdForUpdate(@Param("id") Long id);
+    @Modifying
+    @Query(value="""
+        insert into integration_event_log(event_id,external_event_id,business_key,event_type,source_module,direction,status,
+            payload,retry_count,error_message,occurred_at,received_at)
+        select :eventId,:externalEventId,:businessKey,:eventType,:sourceModule,'INBOUND','FAILED',:payload,0,:reason,:occurredAt,:receivedAt
+        where not exists (select 1 from integration_event_log where business_key=:businessKey)
+        """,nativeQuery=true)
+    int insertRejectedInbound(@Param("eventId") UUID eventId,@Param("externalEventId") String externalEventId,
+        @Param("businessKey") String businessKey,@Param("eventType") String eventType,@Param("sourceModule") String sourceModule,
+        @Param("payload") String payload,@Param("reason") String reason,@Param("occurredAt") OffsetDateTime occurredAt,
+        @Param("receivedAt") OffsetDateTime receivedAt);
     Page<IntegrationEventLog> findByDirectionAndStatusAndEventTypeInAndBusinessKeyStartingWith(EventDirection direction,
         IntegrationEventStatus status,Collection<String> eventTypes,String keyPrefix,Pageable pageable);
     Page<IntegrationEventLog> findByStatusIn(Collection<IntegrationEventStatus> statuses,Pageable pageable);

@@ -41,6 +41,24 @@ class CoreRabbitMqConsumerTests {
         verifyNoInteractions(m2);
     }
 
+    @Test void dispatcherAuditsPermanentRejectionsButLeavesTransientRetriesToCorePolicy() {
+        String payload=ticketUpdated();
+        ConfirmedM2Consumer m2=mock(ConfirmedM2Consumer.class);
+        InboundRejectionAudit audit=mock(InboundRejectionAudit.class);
+        BusinessException invalid=new BusinessException("INVALID_EVENT","invalid test event",422);
+        CoreInboundEventDispatcher dispatcher=new CoreInboundEventDispatcher(new ObjectMapper().findAndRegisterModules(),
+            mock(ConfirmedM1Consumer.class),m2,mock(CoreM4Consumer.class),mock(ConfirmedM7Consumer.class),mock(ConfirmedM8Consumer.class),audit);
+        doThrow(invalid).when(m2).consume(any());
+
+        assertThatThrownBy(()->dispatcher.dispatch(payload)).isSameAs(invalid);
+        verify(audit).record(payload,invalid);
+
+        reset(m2,audit);
+        doThrow(new CoreInboundRetryException("M4_TEMPORARY_FAILURE")).when(m2).consume(any());
+        assertThatThrownBy(()->dispatcher.dispatch(payload)).isInstanceOf(CoreInboundRetryException.class);
+        verifyNoInteractions(audit);
+    }
+
     @Test void ticketCreatedIsNotPartOfTheConfirmedCoreDispatcherContract() {
         ConfirmedM1Consumer m1=mock(ConfirmedM1Consumer.class);ConfirmedM2Consumer m2=mock(ConfirmedM2Consumer.class);
         CoreM4Consumer m4=mock(CoreM4Consumer.class);ConfirmedM7Consumer m7=mock(ConfirmedM7Consumer.class);
