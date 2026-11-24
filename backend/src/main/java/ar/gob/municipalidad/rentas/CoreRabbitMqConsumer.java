@@ -21,9 +21,11 @@ import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.time.OffsetDateTime;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
 
 @Component
 class CoreInboundEventDispatcher {
@@ -146,6 +148,8 @@ final class CoreInboundRetryException extends IllegalStateException {
 @ConditionalOnProperty(prefix="rentas.core.amqp",name="consumer-enabled",havingValue="true")
 class CoreRabbitMqConsumer {
     private static final Logger log=LoggerFactory.getLogger(CoreRabbitMqConsumer.class);
+    private static final Pattern SAFE_CORE_TRACE_ID=Pattern.compile("[A-Za-z0-9._:-]{1,128}");
+    private static final Pattern SAFE_CORE_ATTEMPT=Pattern.compile("[1-9][0-9]{0,5}");
     private final CoreInboundEventDispatcher dispatcher;
     private final RabbitTemplate rabbit;
     private final String retryExchange;
@@ -172,15 +176,18 @@ class CoreRabbitMqConsumer {
     @RabbitListener(queues="${rentas.core.amqp.queue:q.rentas}",
         autoStartup="${rentas.core.amqp.consumer-enabled:false}",ackMode="MANUAL")
     void receive(Message message,Channel channel,@Header(AmqpHeaders.DELIVERY_TAG) long deliveryTag) throws IOException {
+        String payload=new String(message.getBody(),java.nio.charset.StandardCharsets.UTF_8);
+        InboundCoreHeaders headers=InboundCoreHeaders.from(message.getMessageProperties().getHeaders());
         try {
-            dispatcher.dispatch(new String(message.getBody(),java.nio.charset.StandardCharsets.UTF_8));
+            validateCoreHeaders(message.getMessageProperties().getHeaders(),payload);
+            dispatcher.dispatch(payload);
             channel.basicAck(deliveryTag,false);
         } catch (RuntimeException ex) {
-            String payload=new String(message.getBody(),java.nio.charset.StandardCharsets.UTF_8);
-            log.warn("CORE_INBOUND rejected eventId={} correlationId={} eventType={} eventVersion={} reason={} exceptionType={}",
+            log.warn("CORE_INBOUND rejected eventId={} correlationId={} eventType={} eventVersion={} coreTraceId={} coreAttempt={} coreLastErrorPresent={} reason={} exceptionType={}",
                 OperationalLogSupport.uuidField(payload,"eventId"),OperationalLogSupport.uuidField(payload,"correlationId"),
                 OperationalLogSupport.safeIdentifierField(payload,"eventType"),
-                OperationalLogSupport.safeVersionField(payload,"eventVersion"),OperationalLogSupport.safeFailureReason(ex),
+                OperationalLogSupport.safeVersionField(payload,"eventVersion"),headers.traceId(),headers.attempt(),headers.lastErrorPresent(),
+                OperationalLogSupport.safeFailureReason(ex),
                 ex.getClass().getSimpleName());
             String retryQueue=!coreManagedRetries&&retryable(ex)?nextRetryQueue(message):null;
             if(retryQueue==null){channel.basicNack(deliveryTag,false,false);return;}
@@ -201,6 +208,30 @@ class CoreRabbitMqConsumer {
                     publishFailure.getClass().getSimpleName());
                 channel.basicNack(deliveryTag,false,false);
             }
+        }
+    }
+
+    private void validateCoreHeaders(Map<String,Object> headers,String payload) {
+        if(headers.containsKey("x-core-event-id")) {
+            Object value=headers.get("x-core-event-id");
+            String eventId=OperationalLogSupport.uuidField(payload,"eventId");
+            if(!(value instanceof String headerEventId)||!eventId.equals(OperationalLogSupport.uuidString(headerEventId)))
+                throw new IllegalArgumentException("CORE_EVENT_ID_HEADER_MISMATCH");
+        }
+        if(headers.containsKey("x-core-target-module")) {
+            Object value=headers.get("x-core-target-module");
+            if(!(value instanceof String target)||!"rentas".equalsIgnoreCase(target))
+                throw new IllegalArgumentException("CORE_TARGET_MODULE_MISMATCH");
+        }
+    }
+
+    private record InboundCoreHeaders(String traceId,String attempt,boolean lastErrorPresent) {
+        private static InboundCoreHeaders from(Map<String,Object> headers) {
+            Object trace=headers.get("x-core-trace-id"),attempt=headers.get("x-core-attempt");
+            String safeTrace=trace instanceof String value&&SAFE_CORE_TRACE_ID.matcher(value).matches()?value:"unavailable";
+            String attemptText=attempt instanceof Number||attempt instanceof String?attempt.toString():"";
+            String safeAttempt=SAFE_CORE_ATTEMPT.matcher(attemptText).matches()?attemptText:"unavailable";
+            return new InboundCoreHeaders(safeTrace,safeAttempt,headers.containsKey("x-core-last-error"));
         }
     }
 

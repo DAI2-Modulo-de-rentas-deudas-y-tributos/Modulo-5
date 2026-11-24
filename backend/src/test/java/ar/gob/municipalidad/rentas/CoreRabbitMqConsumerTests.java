@@ -147,12 +147,20 @@ class CoreRabbitMqConsumerTests {
         RabbitTemplate rabbit=confirmedPublisher();
         Message original=new Message(payload.getBytes(StandardCharsets.UTF_8),new MessageProperties());
         original.getMessageProperties().setMessageId(eventId);
+        original.getMessageProperties().setHeader("x-core-event-id",eventId);
+        original.getMessageProperties().setHeader("x-core-target-module","rentas");
+        original.getMessageProperties().setHeader("x-core-trace-id","trace-42");
+        original.getMessageProperties().setHeader("x-core-attempt",2);
         Channel channel=mock(Channel.class);
 
         listener(dispatcher,rabbit).receive(original,channel,40);
 
         verify(rabbit).send(eq("rentas.retry"),eq("q.rentas.retry.1"),argThat(message->
-            eventId.equals(message.getMessageProperties().getMessageId())&&payload.equals(new String(message.getBody(),StandardCharsets.UTF_8))),any(CorrelationData.class));
+            eventId.equals(message.getMessageProperties().getMessageId())&&payload.equals(new String(message.getBody(),StandardCharsets.UTF_8))
+                &&eventId.equals(message.getMessageProperties().getHeaders().get("x-core-event-id"))
+                &&"rentas".equals(message.getMessageProperties().getHeaders().get("x-core-target-module"))
+                &&"trace-42".equals(message.getMessageProperties().getHeaders().get("x-core-trace-id"))
+                &&Integer.valueOf(2).equals(message.getMessageProperties().getHeaders().get("x-core-attempt"))),any(CorrelationData.class));
         verify(channel).basicAck(40,false);
         verify(channel,never()).basicNack(eq(40),anyBoolean(),anyBoolean());
     }
@@ -236,6 +244,66 @@ class CoreRabbitMqConsumerTests {
         } finally {
             logger.detachAppender(logs);
         }
+    }
+
+    @Test void validatesCoreEventAndTargetHeadersWhenPresentButAcceptsMatchingEnvelope() throws Exception {
+        UUID eventId=UUID.randomUUID();
+        String payload=envelope("ticketUpdated","atencion-ciudadana","{}");
+        payload=payload.replace(OperationalLogSupport.uuidField(payload,"eventId"),eventId.toString());
+        MessageProperties properties=new MessageProperties();
+        properties.setHeader("x-core-event-id",eventId.toString());
+        properties.setHeader("x-core-target-module","rentas");
+        properties.setHeader("x-core-trace-id","trace-42");
+        properties.setHeader("x-core-attempt",2);
+        properties.setHeader("x-core-last-error","UPSTREAM_RETRY");
+        CoreInboundEventDispatcher dispatcher=mock(CoreInboundEventDispatcher.class);
+        Channel channel=mock(Channel.class);
+
+        listener(dispatcher).receive(new Message(payload.getBytes(StandardCharsets.UTF_8),properties),channel,62);
+
+        verify(dispatcher).dispatch(payload);verify(channel).basicAck(62,false);
+    }
+
+    @Test void mismatchingCoreIdentityHeadersAreRejectedWithoutDispatchAndLoggedSanitized() throws Exception {
+        String payload=envelope("ticketUpdated","atencion-ciudadana","{}");
+        MessageProperties properties=new MessageProperties();
+        properties.setHeader("x-core-event-id",UUID.randomUUID().toString());
+        properties.setHeader("x-core-target-module","otro-modulo");
+        properties.setHeader("x-core-trace-id","trace-42\\nDNI=40111222");
+        properties.setHeader("x-core-attempt","garbage");
+        properties.setHeader("x-core-last-error","40111222 PRIVATE STACK TRACE");
+        CoreInboundEventDispatcher dispatcher=mock(CoreInboundEventDispatcher.class);Channel channel=mock(Channel.class);
+        Logger logger=(Logger)LoggerFactory.getLogger(CoreRabbitMqConsumer.class);
+        ListAppender<ILoggingEvent> logs=new ListAppender<>();logs.start();logger.addAppender(logs);
+        try {
+            listener(dispatcher).receive(new Message(payload.getBytes(StandardCharsets.UTF_8),properties),channel,63);
+            verifyNoInteractions(dispatcher);verify(channel).basicNack(63,false,false);verify(channel,never()).basicAck(63,false);
+            String output=logs.list.stream().map(ILoggingEvent::getFormattedMessage).reduce("",String::concat);
+            assertThat(output).contains("coreTraceId=unavailable","coreAttempt=unavailable","coreLastErrorPresent=true",
+                "reason=CORE_EVENT_ID_HEADER_MISMATCH").doesNotContain("40111222","PRIVATE STACK TRACE","otro-modulo","DNI=");
+            assertThat(logs.list).allSatisfy(event->assertThat(event.getThrowableProxy()).isNull());
+        } finally {logger.detachAppender(logs);}
+    }
+
+    @Test void absentCoreHeadersRemainCompatibleWithHistoricalMessages() throws Exception {
+        String payload=ticketUpdated();CoreInboundEventDispatcher dispatcher=mock(CoreInboundEventDispatcher.class);
+        Channel channel=mock(Channel.class);
+        listener(dispatcher).receive(new Message(payload.getBytes(StandardCharsets.UTF_8),new MessageProperties()),channel,64);
+        verify(dispatcher).dispatch(payload);verify(channel).basicAck(64,false);
+    }
+
+    @Test void mismatchedCoreTargetHeaderIsRejectedWithoutDispatch() throws Exception {
+        String payload=ticketUpdated();MessageProperties properties=new MessageProperties();
+        properties.setHeader("x-core-target-module","transito");
+        CoreInboundEventDispatcher dispatcher=mock(CoreInboundEventDispatcher.class);Channel channel=mock(Channel.class);
+        Logger logger=(Logger)LoggerFactory.getLogger(CoreRabbitMqConsumer.class);
+        ListAppender<ILoggingEvent> logs=new ListAppender<>();logs.start();logger.addAppender(logs);
+        try {
+            listener(dispatcher).receive(new Message(payload.getBytes(StandardCharsets.UTF_8),properties),channel,65);
+            verifyNoInteractions(dispatcher);verify(channel).basicNack(65,false,false);
+            assertInboundLogHasReason(logs,UUID.fromString(OperationalLogSupport.uuidField(payload,"eventId")),
+                "CORE_TARGET_MODULE_MISMATCH");
+        } finally {logger.detachAppender(logs);}
     }
 
     @Test void unknownEventVersionLogsStableReasonAndNacksWithoutDispatching() throws Exception {

@@ -11,6 +11,10 @@ Si se habilita el consumidor, también es obligatorio elegir `CORE_RABBITMQ_RETR
 
 En Core, la topología comunicada es `muni.dlx -> q.dlq` y reintentos comunes de 5 s, 30 s, 2 min y 10 min. Esa política debe comprobarse con Core para el vhost/cola y la revisión desplegada antes de habilitar M5. Este repositorio no declara `rentas.retry` ni `q.rentas.retry.*` en el broker compartido.
 
+## Headers Core y confianza
+
+Cuando están presentes, M5 coteja `x-core-event-id` con el `eventId` del envelope y exige `x-core-target-module=rentas`; una discrepancia se rechaza con `NACK(requeue=false)` para la política de DLQ del broker. Los mensajes históricos que no tienen esos headers siguen siendo compatibles. `x-core-trace-id` y `x-core-attempt` sólo se registran después de sanitizarlos; `x-core-last-error` se reduce a un indicador de presencia y nunca se copia su texto al log. Estos metadatos ayudan a correlacionar, pero no prueban criptográficamente la identidad del productor ni sustituyen la autorización de Core/broker. `sourceModule` continúa siendo una declaración del envelope, no una credencial. La garantía bilateral sigue dependiendo de los permisos de publicación/consumo y del modo DEF-19 que Core aplique.
+
 ## ACK, errores durables y recuperación
 
 - Un evento conocido y procesado, duplicado ya deduplicado o ignorado deliberadamente retorna del dispatcher; el listener confirma el ACK después de que los servicios transaccionales terminan.

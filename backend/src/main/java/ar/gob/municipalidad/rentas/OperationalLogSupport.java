@@ -14,7 +14,8 @@ final class OperationalLogSupport {
     private static final Pattern SAFE_VERSION = Pattern.compile("[0-9]{1,3}\\.[0-9]{1,3}");
     private static final Pattern SAFE_ERROR_CODE = Pattern.compile("[A-Z][A-Z0-9_]{0,79}");
     private static final Set<String> SAFE_INBOUND_REASONS = Set.of(
-        "INVALID_CORE_ENVELOPE", "INVALID_CORE_EVENT_PAYLOAD", "UNSUPPORTED_EVENT_VERSION", "UNSUPPORTED_CORE_EVENT_TYPE");
+        "INVALID_CORE_ENVELOPE", "INVALID_CORE_EVENT_PAYLOAD", "UNSUPPORTED_EVENT_VERSION", "UNSUPPORTED_CORE_EVENT_TYPE",
+        "CORE_EVENT_ID_HEADER_MISMATCH", "CORE_TARGET_MODULE_MISMATCH");
 
     private OperationalLogSupport() {}
 
@@ -31,6 +32,11 @@ final class OperationalLogSupport {
         } catch (Exception ignored) {
             return "unavailable";
         }
+    }
+
+    static String uuidString(String value) {
+        try{return UUID.fromString(value).toString();}
+        catch(Exception ignored){return "unavailable";}
     }
 
     static String safeIdentifierField(String json, String field) {
