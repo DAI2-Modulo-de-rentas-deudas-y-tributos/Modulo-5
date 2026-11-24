@@ -1,6 +1,7 @@
 package ar.gob.municipalidad.rentas;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.rabbitmq.client.AMQP;
 import com.rabbitmq.client.Channel;
 import com.rabbitmq.client.GetResponse;
 import org.junit.jupiter.api.AfterAll;
@@ -53,9 +54,11 @@ class RabbitMqEventPublisherTests {
     private static RabbitTemplate template;
     private static RabbitMqEventPublisher publisher;
 
-    @BeforeAll static void startRabbit() {
+    @BeforeAll static void startRabbit() throws Exception {
         if(!DockerClientFactory.instance().isDockerAvailable())throw new IllegalStateException("Docker is required for the isolated RabbitMQ contract test");
         RABBIT.start();
+        assertThat(RABBIT.execInContainer("rabbitmqctl","add_user","m5-other","m5-other-only").getExitCode()).isZero();
+        assertThat(RABBIT.execInContainer("rabbitmqctl","set_permissions","-p","/","m5-other",".*",".*",".*").getExitCode()).isZero();
         connections=new CachingConnectionFactory(RABBIT.getHost(),RABBIT.getMappedPort(5672));
         connections.setUsername("m5-test");connections.setPassword("m5-test-only");
         connections.setPublisherConfirmType(CachingConnectionFactory.ConfirmType.CORRELATED);
@@ -76,7 +79,7 @@ class RabbitMqEventPublisherTests {
     @Test void publisherWaitsForBrokerConfirmAndPreservesPersistentEnvelope() {
         String id=UUID.randomUUID().toString();
         String payload="""
-            {"eventId":"%s","eventType":"paymentRegistered","eventVersion":"1.0","occurredAt":"%s","sourceModule":"rentas","correlationId":null,"causationId":null,"data":{"paymentId":"%s"}}
+            {"eventId":"%s","eventType":"paymentRegistered","eventVersion":"1.0","occurredAt":"%s","sourceModule":"rentas","correlationId":null,"causationId":null,"user_id":"forged-user","data":{"paymentId":"%s"}}
             """.formatted(id,OffsetDateTime.now().toString(),UUID.randomUUID());
 
         assertThat(publisher.publish("paymentRegistered","CORE",payload)).isEqualTo(OutboxStatus.BROKER_CONFIRMED);
@@ -88,6 +91,51 @@ class RabbitMqEventPublisherTests {
         assertThat(new String(received.getBody(),StandardCharsets.UTF_8)).isEqualTo(payload);
         assertThat(received.getMessageProperties().getMessageId()).isEqualTo(id);
         assertThat(received.getMessageProperties().getReceivedDeliveryMode()).isEqualTo(MessageDeliveryMode.PERSISTENT);
+        assertThat(received.getMessageProperties().getReceivedUserId()).isEqualTo("m5-test");
+        assertThat(received.getMessageProperties().getHeaders()).doesNotContainKeys("userId","user_id");
+    }
+
+    @Test void interleavedPublishersUseTheirOwnConnectionIdentity() throws Exception {
+        String exchange="muni.inbox.identity."+UUID.randomUUID();
+        String queue="q.rentas.identity."+UUID.randomUUID();
+        RabbitAdmin admin=new RabbitAdmin(connections);
+        FanoutExchange isolatedExchange=new FanoutExchange(exchange,true,false);
+        admin.declareExchange(isolatedExchange);
+        admin.declareQueue(new Queue(queue,true,false,false));
+        admin.declareBinding(BindingBuilder.bind(new Queue(queue,true,false,false)).to(isolatedExchange));
+
+        CachingConnectionFactory otherConnections=new CachingConnectionFactory(RABBIT.getHost(),RABBIT.getMappedPort(5672));
+        otherConnections.setUsername("m5-other");otherConnections.setPassword("m5-other-only");
+        otherConnections.setPublisherConfirmType(CachingConnectionFactory.ConfirmType.CORRELATED);
+        RabbitTemplate otherTemplate=new RabbitTemplate(otherConnections);otherTemplate.setMandatory(true);
+        try {
+            RabbitMqEventPublisher current=new RabbitMqEventPublisher(template,new ObjectMapper(),exchange,Duration.ofSeconds(5),"m5-test","m5-test-only");
+            RabbitMqEventPublisher other=new RabbitMqEventPublisher(otherTemplate,new ObjectMapper(),exchange,Duration.ofSeconds(5),"m5-other","m5-other-only");
+            assertThat(current.publish("paymentRegistered","CORE",payload())).isEqualTo(OutboxStatus.BROKER_CONFIRMED);
+            assertThat(other.publish("paymentRegistered","CORE",payload())).isEqualTo(OutboxStatus.BROKER_CONFIRMED);
+            assertThat(current.publish("paymentRegistered","CORE",payload())).isEqualTo(OutboxStatus.BROKER_CONFIRMED);
+
+            assertThat(template.receive(queue,3000).getMessageProperties().getReceivedUserId()).isEqualTo("m5-test");
+            assertThat(template.receive(queue,3000).getMessageProperties().getReceivedUserId()).isEqualTo("m5-other");
+            assertThat(template.receive(queue,3000).getMessageProperties().getReceivedUserId()).isEqualTo("m5-test");
+        } finally {
+            otherConnections.destroy();
+        }
+    }
+
+    @Test void rabbitRejectsUserIdThatDoesNotMatchAuthenticatedConnection() throws Exception {
+        com.rabbitmq.client.ConnectionFactory factory=new com.rabbitmq.client.ConnectionFactory();
+        factory.setHost(RABBIT.getHost());factory.setPort(RABBIT.getMappedPort(5672));
+        factory.setUsername("m5-test");factory.setPassword("m5-test-only");
+        try(var connection=factory.newConnection()) {
+            Channel channel=connection.createChannel();
+            channel.basicPublish(EXCHANGE,"",new AMQP.BasicProperties.Builder().userId("forged-user").build(),payload().getBytes(StandardCharsets.UTF_8));
+            long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(3);
+            while(channel.isOpen()&&System.nanoTime()<deadline)Thread.sleep(10);
+            assertThat(channel.isOpen()).isFalse();
+            assertThat(channel.getCloseReason()).isNotNull();
+            assertThat(channel.getCloseReason().getReason().toString()).contains("406").contains("authenticated user");
+        }
     }
 
     @Test void exactM2RoutedFixtureTravelsThroughIsolatedRabbitAndTheRealDispatcher() throws Exception {
@@ -228,8 +276,14 @@ class RabbitMqEventPublisherTests {
             .isInstanceOf(IllegalStateException.class).hasMessage("CORE_RABBITMQ_CREDENTIALS_REQUIRED");
     }
 
+    @Test void rejectsConfiguredUsernameThatDiffersFromConnectionFactoryIdentity() {
+        assertThatThrownBy(()->new RabbitMqEventPublisher(template,new ObjectMapper(),EXCHANGE,Duration.ofSeconds(5),"forged-user","m5-test-only"))
+            .isInstanceOf(IllegalStateException.class).hasMessage("CORE_RABBITMQ_CREDENTIALS_MISMATCH");
+    }
+
     @Test void negativePublisherConfirmFailsWithoutClaimingBrokerAcceptance() {
         RabbitTemplate rejected=mock(RabbitTemplate.class);
+        org.mockito.Mockito.when(rejected.getConnectionFactory()).thenReturn(connections);
         doAnswer(invocation->{
             CorrelationData correlation=invocation.getArgument(4);
             correlation.getFuture().complete(new CorrelationData.Confirm(false,"nack"));
@@ -243,6 +297,7 @@ class RabbitMqEventPublisherTests {
 
     @Test void confirmTimeoutFailsClosed() {
         RabbitTemplate silent=mock(RabbitTemplate.class);
+        org.mockito.Mockito.when(silent.getConnectionFactory()).thenReturn(connections);
         RabbitMqEventPublisher timingOutPublisher=new RabbitMqEventPublisher(silent,new ObjectMapper(),EXCHANGE,Duration.ofMillis(1),"m5-test","m5-test-only");
 
         assertThatThrownBy(()->timingOutPublisher.publish("paymentRegistered","CORE",payload()))

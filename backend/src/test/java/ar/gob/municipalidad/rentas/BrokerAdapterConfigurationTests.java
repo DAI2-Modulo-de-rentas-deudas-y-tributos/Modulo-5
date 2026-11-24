@@ -2,6 +2,7 @@ package ar.gob.municipalidad.rentas;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.boot.convert.ApplicationConversionService;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -9,6 +10,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.core.convert.ConversionService;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 
 import java.util.Set;
@@ -17,6 +19,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class BrokerAdapterConfigurationTests {
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
@@ -67,7 +70,13 @@ class BrokerAdapterConfigurationTests {
     static class PublisherConfiguration {
         @Bean static ConversionService conversionService() { return ApplicationConversionService.getSharedInstance(); }
         @Bean ObjectMapper objectMapper() { return new ObjectMapper(); }
-        @Bean RabbitTemplate rabbitTemplate() { return mock(RabbitTemplate.class); }
+        @Bean RabbitTemplate rabbitTemplate(@Value("${spring.rabbitmq.username:}") String username) {
+            ConnectionFactory connectionFactory=mock(ConnectionFactory.class);
+            when(connectionFactory.getUsername()).thenReturn(username);
+            RabbitTemplate rabbit=mock(RabbitTemplate.class);
+            when(rabbit.getConnectionFactory()).thenReturn(connectionFactory);
+            return rabbit;
+        }
         @Bean OutboxRepository outboxRepository() { return mock(OutboxRepository.class); }
     }
 }
