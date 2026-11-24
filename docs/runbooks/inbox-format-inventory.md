@@ -10,6 +10,7 @@ Proveer la conexión por el mecanismo aprobado del operador. La transacción es 
 
 - `LEGACY_TYPE` y `LEGACY_ROUTE` indican los fallbacks que aún usa `IntegrationReprocessService`.
 - `CURRENT_ROUTE` señala la ruta que elegiría ese servicio. No garantiza que el evento cumpla su contrato.
+- `SANITIZED_REJECTION` identifica filas de auditoría creadas por M5 con `business_key` `INBOUND_REJECTION:<id>`. Su payload contiene metadatos sanitizados, no el envelope original: no deben contarse como `UNCLASSIFIED` ni reprocesarse como mensajes entrantes.
 - `INVALID_ENVELOPE` y `UNCLASSIFIED` requieren revisión. Un payload vacío no se interpreta como historial descartable.
 - Una salida vacía significa que la consulta no encontró eventos entrantes en los cuatro estados inspeccionados. No dice nada sobre mensajes listos, sin ACK, retries o DLQ administrados por Core.
 
