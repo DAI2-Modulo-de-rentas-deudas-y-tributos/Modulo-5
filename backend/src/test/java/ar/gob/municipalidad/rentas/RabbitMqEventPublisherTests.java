@@ -52,6 +52,7 @@ class RabbitMqEventPublisherTests {
         .waitingFor(Wait.forLogMessage(".*Server startup complete.*",1));
     private static CachingConnectionFactory connections;
     private static RabbitTemplate template;
+    private static RabbitAdmin admin;
     private static RabbitMqEventPublisher publisher;
 
     @BeforeAll static void startRabbit() throws Exception {
@@ -64,7 +65,7 @@ class RabbitMqEventPublisherTests {
         connections.setPublisherConfirmType(CachingConnectionFactory.ConfirmType.CORRELATED);
         connections.setPublisherReturns(true);
         template=new RabbitTemplate(connections);template.setMandatory(true);
-        RabbitAdmin admin=new RabbitAdmin(connections);
+        admin=new RabbitAdmin(connections);
         admin.declareExchange(new FanoutExchange(EXCHANGE,true,false));
         Queue testQueue=new Queue(QUEUE,true,false,false);
         admin.declareQueue(testQueue);admin.declareBinding(BindingBuilder.bind(testQueue).to(new FanoutExchange(EXCHANGE,true,false)));
@@ -98,7 +99,6 @@ class RabbitMqEventPublisherTests {
     @Test void interleavedPublishersUseTheirOwnConnectionIdentity() throws Exception {
         String exchange="muni.inbox.identity."+UUID.randomUUID();
         String queue="q.rentas.identity."+UUID.randomUUID();
-        RabbitAdmin admin=new RabbitAdmin(connections);
         FanoutExchange isolatedExchange=new FanoutExchange(exchange,true,false);
         admin.declareExchange(isolatedExchange);
         admin.declareQueue(new Queue(queue,true,false,false));
@@ -146,7 +146,6 @@ class RabbitMqEventPublisherTests {
         }
         String suffix=UUID.randomUUID().toString().replace("-","");
         String exchangeName=EXCHANGE+".m2."+suffix,queueName=QUEUE+".m2."+suffix;
-        RabbitAdmin admin=new RabbitAdmin(connections);
         FanoutExchange exchange=new FanoutExchange(exchangeName,true,false);
         admin.declareExchange(exchange);
         Queue queue=new Queue(queueName,true,false,true);
@@ -316,7 +315,7 @@ class RabbitMqEventPublisherTests {
 
     @Test void mandatoryReturnRejectsUnroutableMessage() {
         String exchange="m5.unroutable."+UUID.randomUUID();
-        new RabbitAdmin(connections).declareExchange(new DirectExchange(exchange,true,false));
+        admin.declareExchange(new DirectExchange(exchange,true,false));
         RabbitMqEventPublisher unroutablePublisher=new RabbitMqEventPublisher(template,new ObjectMapper(),exchange,Duration.ofSeconds(5),"m5-test","m5-test-only");
 
         assertThatThrownBy(()->unroutablePublisher.publish("paymentRegistered","CORE",payload()))
@@ -358,7 +357,6 @@ class RabbitMqEventPublisherTests {
         String main="q.rentas.retry-test."+suffix,dlx="rentas.retry-test.dlx."+suffix,dlq=main+".dlq";
         String returned="rentas.retry-test.return."+suffix,retry="rentas.retry-test.exchange."+suffix;
         String retry1=main+".retry.1",retry2=main+".retry.2",retry3=main+".retry.3";
-        RabbitAdmin admin=new RabbitAdmin(connections);
         DirectExchange returnExchange=new DirectExchange(returned,true,false),retryExchange=new DirectExchange(retry,true,false);
         FanoutExchange deadLetterExchange=new FanoutExchange(dlx,true,false);
         admin.declareExchange(returnExchange);admin.declareExchange(retryExchange);admin.declareExchange(deadLetterExchange);
