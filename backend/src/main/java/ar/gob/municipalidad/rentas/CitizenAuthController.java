@@ -21,14 +21,16 @@ class CitizenAuthController {
     static final String CSRF_HEADER = "X-Rentas-CSRF";
 
     private final CitizenSessions sessions;
+    private final TrustedClientAddressResolver clientAddresses;
 
-    CitizenAuthController(CitizenSessions sessions) {
+    CitizenAuthController(CitizenSessions sessions, TrustedClientAddressResolver clientAddresses) {
         this.sessions = sessions;
+        this.clientAddresses = clientAddresses;
     }
 
     @PostMapping("/login")
     ResponseEntity<CitizenSessions.ProfileResponse> login(@Valid @RequestBody Credentials body, HttpServletRequest request) {
-        var login = sessions.login(body.username().trim(), body.password(), request.getRemoteAddr(), token(request));
+        var login = sessions.login(body.username().trim(), body.password(), clientAddresses.resolve(request), token(request));
         return ResponseEntity.ok().header(HttpHeaders.SET_COOKIE, cookie(login.token(), login.ttlSeconds()))
                 .header(HttpHeaders.CACHE_CONTROL, "no-store").body(login.profile());
     }

@@ -33,7 +33,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-@SpringBootTest(properties = {"rentas.citizen-auth.enabled=true", "rentas.citizen-auth.timeout-ms=1000"})
+@SpringBootTest(properties = {"rentas.citizen-auth.enabled=true", "rentas.citizen-auth.timeout-ms=1000",
+        "rentas.security.trusted-proxy-cidrs=192.0.2.0/24"})
 @AutoConfigureMockMvc
 @ActiveProfiles({"postgres-it", "citizen-auth-local"})
 @Testcontainers(disabledWithoutDocker = true)
@@ -130,8 +131,8 @@ class CitizenSessionPostgreSqlTest {
         var executor = Executors.newFixedThreadPool(8);
         try {
             var tasks = java.util.stream.IntStream.range(0, 8)
-                    .mapToObj(i -> (java.util.concurrent.Callable<Integer>) () -> mvc.perform(login("concurrent", 40)
-                            .header("X-Forwarded-For", "198.51.100." + i)).andReturn().getResponse().getStatus())
+                    .mapToObj(i -> (java.util.concurrent.Callable<Integer>) () -> mvc.perform(login("concurrent", 40))
+                            .andReturn().getResponse().getStatus())
                     .toList();
             var results = executor.invokeAll(tasks);
             int limited = 0;
@@ -147,6 +148,23 @@ class CitizenSessionPostgreSqlTest {
         }
     }
 
+    @Test
+    void rateLimitUsesTrustedProxyAddressAndIgnoresSpoofedForwardedHeader() throws Exception {
+        for (int attempt = 0; attempt < 4; attempt++) {
+            mvc.perform(loginFrom("denied", "192.0.2.240", "198.51.100.90"))
+                    .andExpect(status().isUnauthorized());
+        }
+        mvc.perform(loginFrom("denied", "192.0.2.240", "198.51.100.91"))
+                .andExpect(status().isUnauthorized());
+
+        for (int attempt = 0; attempt < 4; attempt++) {
+            mvc.perform(loginFrom("denied", "203.0.113.240", "198.51.100." + attempt))
+                    .andExpect(status().isUnauthorized());
+        }
+        mvc.perform(loginFrom("denied", "203.0.113.240", "198.51.100.99"))
+                .andExpect(status().isTooManyRequests());
+    }
+
     private Cookie authenticate(int origin) throws Exception {
         var response = mvc.perform(login("ok", origin)).andExpect(status().isOk())
                 .andExpect(jsonPath("$.role").value("TAXPAYER"))
@@ -160,13 +178,18 @@ class CitizenSessionPostgreSqlTest {
     }
 
     private static MockHttpServletRequestBuilder login(String username, int origin) {
-        return post("/api/v1/citizen-auth/login").header("X-Rentas-CSRF", "1")
+        return loginFrom(username, "192.0.2." + origin, null);
+    }
+
+    private static MockHttpServletRequestBuilder loginFrom(String username, String peer, String forwardedFor) {
+        var request = post("/api/v1/citizen-auth/login").header("X-Rentas-CSRF", "1")
                 .contentType("application/json").content("""
                         {"username":"%s","password":"synthetic-password"}
                         """.formatted(username)).with(r -> {
-                            r.setRemoteAddr("192.0.2." + origin);
+                            r.setRemoteAddr(peer);
                             return r;
                         });
+        return forwardedFor == null ? request : request.header("X-Forwarded-For", forwardedFor);
     }
 
     private TaxpayerReference taxpayer(UUID uuid) {
