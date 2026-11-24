@@ -130,18 +130,18 @@ try {
     "Chromium did not retain the secure cookie. " + JSON.stringify({ cookieRejections, authResponses, browserSessionStatus }));
   assert.equal(await page.evaluate(name => document.cookie.includes(name), cookieName), false);
   await page.reload();
-  await expect(page).toHaveURL(/\/portal\/?$/);
+  await page.waitForURL(/\/portal\/?$/);
   assert.equal((await me()).status(), 200);
   assert.equal((await context.request.get(base + "/api/v1/taxpayers/" + owner + "/debts")).status(), 200);
   assert.equal((await context.request.get(base + "/api/v1/taxpayers/" + stranger + "/debts")).status(), 403);
   assert.equal((await context.request.get(base + "/api/v1/taxpayers")).status(), 403);
   await page.goto(base + "/rentas/deudas");
-  await expect(page).toHaveURL(/\/portal\/?$/);
+  await page.waitForURL(/\/portal\/?$/);
   const denied = await page.evaluate(async () => (await fetch("/api/v1/citizen-auth/logout", { method: "POST" })).status);
   assert.equal(denied, 403);
   await page.getByRole("button", { name: /opciones de cuenta/ }).click();
   await page.getByRole("menuitem", { name: "Cerrar sesión" }).click();
-  await expect(page).toHaveURL(/\/login$/);
+  await page.waitForURL(/\/login$/);
   assert.equal((await me()).status(), 401);
   assert.equal((await context.request.get(base + "/api/v1/citizen-auth/me", {
     headers: { Cookie: cookieName + "=" + cookie.value },
@@ -150,7 +150,7 @@ try {
   sql("UPDATE citizen_session SET expires_at=now()-interval '1 second';");
   assert.equal((await me()).status(), 401);
   await page.reload();
-  await expect(page).toHaveURL(/\/login$/);
+  await page.waitForURL(/\/login$/);
   console.log("PASS Chromium HTTPS: cookie, recarga, titularidad, roles, CSRF, logout y expiración.");
 } finally {
   await browser?.close();
