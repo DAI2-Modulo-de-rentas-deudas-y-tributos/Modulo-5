@@ -185,6 +185,10 @@ class RabbitMqEventPublisherTests {
         Message original=new Message(payload.getBytes(StandardCharsets.UTF_8),new org.springframework.amqp.core.MessageProperties());
         original.getMessageProperties().setMessageId(eventId);
         original.getMessageProperties().setDeliveryMode(MessageDeliveryMode.PERSISTENT);
+        original.getMessageProperties().setHeader("x-core-event-id",eventId);
+        original.getMessageProperties().setHeader("x-core-target-module","rentas");
+        original.getMessageProperties().setHeader("x-core-attempt",1);
+        original.getMessageProperties().setHeader("x-core-trace-id","trace-local-test");
         CorrelationData publish=new CorrelationData(eventId);
         template.send("",topology.mainQueue(),original,publish);
         assertThat(publish.getFuture().get(5,TimeUnit.SECONDS).isAck()).isTrue();
@@ -203,8 +207,14 @@ class RabbitMqEventPublisherTests {
                 assertThat(lastDeathQueue==null?null:lastDeathQueue.toString())
                     .isEqualTo(attempt==0?null:attempt==1?topology.retryQueue1():attempt==2?topology.retryQueue2():topology.retryQueue3());
                 assertThat(delivery.getProps().getMessageId()).isEqualTo(eventId);
+                if(attempt>0)assertThat(delivery.getProps().getUserId()).isEqualTo("m5-test");
+                assertThat(delivery.getProps().getHeaders().get("x-core-event-id").toString()).isEqualTo(eventId);
+                assertThat(delivery.getProps().getHeaders().get("x-core-target-module").toString()).isEqualTo("rentas");
+                assertThat(delivery.getProps().getHeaders().get("x-core-trace-id").toString()).isEqualTo("trace-local-test");
                 assertThat(new String(delivery.getBody(),StandardCharsets.UTF_8)).isEqualTo(payload);
-                listener.receive(asSpringMessage(delivery),channel,delivery.getEnvelope().getDeliveryTag());
+                Message inbound=asSpringMessage(delivery);
+                if(attempt==0)inbound.getMessageProperties().setUserId("foreign-publisher");
+                listener.receive(inbound,channel,delivery.getEnvelope().getDeliveryTag());
             }
             GetResponse deadLetter=awaitGet(channel,topology.deadLetterQueue(),2000);
             assertThat(deadLetter).isNotNull();

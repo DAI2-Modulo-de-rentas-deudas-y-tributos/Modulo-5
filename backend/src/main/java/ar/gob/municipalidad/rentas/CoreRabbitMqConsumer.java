@@ -187,6 +187,10 @@ class CoreRabbitMqConsumer {
             try {
                 Message retry=MessageBuilder.fromMessage(message).build();
                 retry.getMessageProperties().setDeliveryMode(MessageDeliveryMode.PERSISTENT);
+                String authenticatedUserId=rabbit.getConnectionFactory()==null?null:rabbit.getConnectionFactory().getUsername();
+                if(authenticatedUserId==null||authenticatedUserId.isBlank())
+                    throw new IllegalStateException("CORE_AMQP_AUTHENTICATED_USER_REQUIRED");
+                retry.getMessageProperties().setUserId(authenticatedUserId);
                 CorrelationData correlation=new CorrelationData(OperationalLogSupport.uuidField(payload,"eventId")+retryQueue);
                 rabbit.send(retryExchange,retryQueue,retry,correlation);
                 CorrelationData.Confirm confirm=correlation.getFuture().get(confirmTimeoutMillis,TimeUnit.MILLISECONDS);
