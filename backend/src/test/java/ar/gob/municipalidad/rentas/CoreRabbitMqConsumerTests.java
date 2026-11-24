@@ -41,6 +41,43 @@ class CoreRabbitMqConsumerTests {
         verifyNoInteractions(m2);
     }
 
+    @Test void dispatcherAuditsPermanentRejectionsButLeavesTransientRetriesToCorePolicy() {
+        String payload=ticketUpdated();
+        ConfirmedM2Consumer m2=mock(ConfirmedM2Consumer.class);
+        InboundRejectionAudit audit=mock(InboundRejectionAudit.class);
+        BusinessException invalid=new BusinessException("INVALID_EVENT","invalid test event",422);
+        CoreInboundEventDispatcher dispatcher=new CoreInboundEventDispatcher(new ObjectMapper().findAndRegisterModules(),
+            mock(ConfirmedM1Consumer.class),m2,mock(CoreM4Consumer.class),mock(ConfirmedM7Consumer.class),mock(ConfirmedM8Consumer.class),audit);
+        doThrow(invalid).when(m2).consume(any());
+
+        assertThatThrownBy(()->dispatcher.dispatch(payload)).isSameAs(invalid);
+        verify(audit).record(payload,invalid);
+
+        reset(m2,audit);
+        doThrow(new CoreInboundRetryException("M4_TEMPORARY_FAILURE")).when(m2).consume(any());
+        assertThatThrownBy(()->dispatcher.dispatch(payload)).isInstanceOf(CoreInboundRetryException.class);
+        verifyNoInteractions(audit);
+    }
+
+    @Test void concurrentDuplicateRejectionAuditIsNotReportedAsAuditFailure() {
+        String payload=ticketUpdated().replace("\"eventType\":\"ticketUpdated\"","\"eventType\":\"ticketCreated\"");
+        InboundRejectionAudit audit=mock(InboundRejectionAudit.class);
+        doThrow(new org.springframework.dao.DataIntegrityViolationException("duplicate business key"))
+            .when(audit).record(eq(payload),any(RuntimeException.class));
+        when(audit.alreadyRecorded(payload)).thenReturn(true);
+        CoreInboundEventDispatcher dispatcher=new CoreInboundEventDispatcher(new ObjectMapper().findAndRegisterModules(),
+            mock(ConfirmedM1Consumer.class),mock(ConfirmedM2Consumer.class),mock(CoreM4Consumer.class),
+            mock(ConfirmedM7Consumer.class),mock(ConfirmedM8Consumer.class),audit);
+        Logger logger=(Logger)LoggerFactory.getLogger(CoreInboundEventDispatcher.class);
+        ListAppender<ILoggingEvent> logs=new ListAppender<>();logs.start();logger.addAppender(logs);
+        try {
+            assertThatThrownBy(()->dispatcher.dispatch(payload)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("UNSUPPORTED_CORE_EVENT_TYPE");
+            verify(audit).alreadyRecorded(payload);
+            assertThat(logs.list).noneSatisfy(event->assertThat(event.getFormattedMessage()).contains("rejection_audit_failed"));
+        } finally {logger.detachAppender(logs);}
+    }
+
     @Test void ticketCreatedIsNotPartOfTheConfirmedCoreDispatcherContract() {
         ConfirmedM1Consumer m1=mock(ConfirmedM1Consumer.class);ConfirmedM2Consumer m2=mock(ConfirmedM2Consumer.class);
         CoreM4Consumer m4=mock(CoreM4Consumer.class);ConfirmedM7Consumer m7=mock(ConfirmedM7Consumer.class);

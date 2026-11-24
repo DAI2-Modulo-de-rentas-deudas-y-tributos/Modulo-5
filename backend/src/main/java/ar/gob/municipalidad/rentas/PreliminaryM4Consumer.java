@@ -39,7 +39,7 @@ class PreliminaryM4Consumer {
 
     private IntegrationEventLog recordBlocked(PreliminaryM4Events.Envelope<?> event,String id){
         String key=mapper.businessKey(event,id);
-        var existing=logs.findFirstByExternalEventIdOrderByIdDesc(key);
+        var existing=logs.findLatestNonRejectionByExternalEventId(key);
         if(existing.isPresent())return existing.get();
         OffsetDateTime receivedAt=OffsetDateTime.now();
         IntegrationEventLog log=inbox.receive(mapper.normalize(event,key,receivedAt),event);

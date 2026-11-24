@@ -29,17 +29,38 @@ import java.util.concurrent.TimeUnit;
 class CoreInboundEventDispatcher {
     private static final Set<String> ENVELOPE_FIELDS=Set.of("eventId","eventType","eventVersion","occurredAt","sourceModule","correlationId","causationId","data");
     private static final Set<String> REQUIRED_ENVELOPE_FIELDS=Set.of("eventId","eventType","occurredAt","sourceModule","data");
+    private static final Set<String> PERMANENT_REASONS=Set.of("INVALID_CORE_ENVELOPE","INVALID_CORE_EVENT_PAYLOAD","UNSUPPORTED_EVENT_VERSION","UNSUPPORTED_CORE_EVENT_TYPE");
+    private static final Logger log=LoggerFactory.getLogger(CoreInboundEventDispatcher.class);
     private final ObjectMapper json;
     private final ConfirmedM1Consumer m1;
     private final ConfirmedM2Consumer m2;
     private final CoreM4Consumer m4;
     private final ConfirmedM7Consumer m7;
     private final ConfirmedM8Consumer m8;
+    private final InboundRejectionAudit rejectionAudit;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    CoreInboundEventDispatcher(ObjectMapper json,ConfirmedM1Consumer m1,ConfirmedM2Consumer m2,CoreM4Consumer m4,
+        ConfirmedM7Consumer m7,ConfirmedM8Consumer m8,InboundRejectionAudit rejectionAudit){this.json=json;this.m1=m1;this.m2=m2;this.m4=m4;this.m7=m7;this.m8=m8;this.rejectionAudit=rejectionAudit;}
 
     CoreInboundEventDispatcher(ObjectMapper json,ConfirmedM1Consumer m1,ConfirmedM2Consumer m2,CoreM4Consumer m4,
-        ConfirmedM7Consumer m7,ConfirmedM8Consumer m8){this.json=json;this.m1=m1;this.m2=m2;this.m4=m4;this.m7=m7;this.m8=m8;}
+        ConfirmedM7Consumer m7,ConfirmedM8Consumer m8){this(json,m1,m2,m4,m7,m8,null);}
 
     void dispatch(String payload) {
+        try{dispatchValidated(payload);}
+        catch(RuntimeException ex){
+            if(rejectionAudit!=null&&permanentRejection(ex))try{rejectionAudit.record(payload,ex);}
+            catch(RuntimeException auditFailure){
+                boolean duplicateRecorded=false;
+                try{duplicateRecorded=rejectionAudit.alreadyRecorded(payload);}catch(RuntimeException ignored){}
+                if(!duplicateRecorded)log.error("CORE_INBOUND rejection_audit_failed eventId={} reason={} exceptionType={}",
+                    OperationalLogSupport.uuidField(payload,"eventId"),OperationalLogSupport.safeFailureReason(ex),auditFailure.getClass().getSimpleName());
+            }
+            throw ex;
+        }
+    }
+
+    private void dispatchValidated(String payload) {
         JsonNode envelope=readEnvelope(payload);
         String eventType=envelope.path("eventType").asText();
         try {
@@ -73,6 +94,11 @@ class CoreInboundEventDispatcher {
             if(ex instanceof IllegalStateException state&&"CORE_INBOUND_RETRY".equals(state.getMessage()))throw state;
             throw new IllegalStateException("CORE_INBOUND_PROCESSING_FAILED",ex);
         }
+    }
+
+    private boolean permanentRejection(RuntimeException exception){
+        return exception instanceof BusinessException
+            ||exception instanceof IllegalArgumentException&&PERMANENT_REASONS.contains(exception.getMessage());
     }
 
     private JsonNode readEnvelope(String payload){

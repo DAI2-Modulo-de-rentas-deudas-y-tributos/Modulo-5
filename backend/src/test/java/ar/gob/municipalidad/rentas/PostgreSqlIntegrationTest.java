@@ -313,8 +313,10 @@ class PostgreSqlIntegrationTest {
     @Autowired IntegrationReprocessService integrationReprocess;
     @Autowired ConfirmedM7Consumer m7;
     @Autowired IntegrationEventLogRepository integrationLogs;
+    @Autowired IntegrationInbox integrationInbox;
     @Autowired ProcessedEventRepository processedEvents;
     @Autowired TicketCaseRepository ticketCases;
+    @Autowired TicketService ticketService;
     @Autowired ExternalObligationRepository externalObligations;
     @Autowired TaxpayerRepository taxpayers;
     @Autowired TaxConceptRepository concepts;
@@ -1112,9 +1114,176 @@ class PostgreSqlIntegrationTest {
         assertThat(externalObligations.count()).isEqualTo(obligationsBefore);
         assertThat(debts.count()).isEqualTo(debtsBefore);
         assertThat(processedEvents.existsByExternalEventId(eventId)).isFalse();
-        assertThat(integrationLogs.findFirstByExternalEventIdOrderByIdDesc(eventId)).isEmpty();
+        IntegrationEventLog rejection=integrationLogs.findFirstByExternalEventIdOrderByIdDesc(eventId).orElseThrow();
+        assertThat(rejection.status).isEqualTo(IntegrationEventStatus.FAILED);
+        assertThat(rejection.errorMessage).isEqualTo("INVALID_CORE_EVENT_PAYLOAD");
+        assertThat(rejection.payload).contains(eventId,"infractionConfirmed","transito")
+            .doesNotContain("30111222","AA123BB","infractionDateTime","data");
         assertThat(externalObligations.findBySourceModuleAndExternalTypeAndExternalReferenceId(
             "M7",ExternalObligationType.TRAFFIC_INFRACTION,infractionId)).isEmpty();
+
+        assertThatThrownBy(()->inbound.dispatch(payload)).isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("INVALID_CORE_EVENT_PAYLOAD");
+        assertThat(jdbc.queryForObject("select count(*) from integration_event_log where business_key=?",Long.class,
+            "INBOUND_REJECTION:"+eventId)).isEqualTo(1);
+        assertThat(processedEvents.existsByExternalEventId(eventId)).isFalse();
+    }
+
+    @Test void permanentEnvelopeAndContractRejectionsAreAuditedOnceWithoutRawPayload() throws Exception {
+        UUID malformedId=UUID.randomUUID(),versionId=UUID.randomUUID(),unknownId=UUID.randomUUID();
+        List<String> payloads=List.of(
+            """
+            {"eventId":"%s","eventType":"ticketUpdated","eventVersion":"1.0","occurredAt":"2026-11-15T10:00:00-03:00","sourceModule":"atencion-ciudadana","data":{},"unexpected":"private detail"}
+            """.formatted(malformedId),
+            """
+            {"eventId":"%s","eventType":"ticketUpdated","eventVersion":"2.0","occurredAt":"2026-11-15T10:00:00-03:00","sourceModule":"atencion-ciudadana","data":{}}
+            """.formatted(versionId),
+            """
+            {"eventId":"%s","eventType":"ticketCreated","eventVersion":"1.0","occurredAt":"2026-11-15T10:00:00-03:00","sourceModule":"atencion-ciudadana","data":{"dni":"30111222"}}
+            """.formatted(unknownId));
+        List<String> ids=List.of(malformedId.toString(),versionId.toString(),unknownId.toString());
+        List<String> reasons=List.of("INVALID_CORE_ENVELOPE","UNSUPPORTED_EVENT_VERSION","UNSUPPORTED_CORE_EVENT_TYPE");
+
+        for(int i=0;i<payloads.size();i++){
+            String payload=payloads.get(i),eventId=ids.get(i),reason=reasons.get(i);
+            assertThatThrownBy(()->inbound.dispatch(payload)).isInstanceOf(IllegalArgumentException.class).hasMessage(reason);
+            assertThatThrownBy(()->inbound.dispatch(payload)).isInstanceOf(IllegalArgumentException.class).hasMessage(reason);
+            IntegrationEventLog row=integrationLogs.findFirstByExternalEventIdOrderByIdDesc(eventId).orElseThrow();
+            assertThat(row.status).isEqualTo(IntegrationEventStatus.FAILED);
+            assertThat(row.errorMessage).isEqualTo(reason);
+            assertThat(row.businessKey).isEqualTo("INBOUND_REJECTION:"+eventId);
+            assertThat(row.payload).contains(eventId).doesNotContain("data","private detail","30111222","unexpected");
+            assertThat(integrationLogs.findAll().stream().filter(x->row.businessKey.equals(x.businessKey))).hasSize(1);
+            assertThat(processedEvents.existsByExternalEventId(eventId)).isFalse();
+        }
+
+        var supervisor=new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("scrum685-audit-"+UUID.randomUUID(),null),null,
+            List.of(new SimpleGrantedAuthority("ROLE_SUPERVISOR")));
+        JsonNode visible=json.readTree(mvc.perform(get("/api/v1/integrations/events/"+unknownId).with(authentication(supervisor)))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+            .andReturn().getResponse().getContentAsString());
+        assertThat(visible.path("status").asText()).isEqualTo("FAILED");
+        assertThat(visible.path("errorMessage").asText()).isEqualTo("UNSUPPORTED_CORE_EVENT_TYPE");
+        assertThat(visible.path("payload").asText()).contains(unknownId.toString()).doesNotContain("30111222","data");
+
+        var rentas=new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("scrum685-audit-rentas-"+UUID.randomUUID(),null),null,
+            List.of(new SimpleGrantedAuthority("ROLE_RENTAS")));
+        mvc.perform(get("/api/v1/integrations/events/"+unknownId).with(authentication(rentas)))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isForbidden());
+    }
+
+    @Test void rejectionAuditDoesNotCollideWithAnExistingLogForTheExternalEventId() throws Exception {
+        UUID eventId=UUID.randomUUID();OffsetDateTime now=OffsetDateTime.now();
+        IntegrationEventLog prior=new IntegrationEventLog();prior.eventId=eventId;prior.externalEventId=eventId.toString();
+        prior.eventType="ticketUpdated";prior.sourceModule="atencion-ciudadana";prior.direction=EventDirection.INBOUND;
+        prior.status=IntegrationEventStatus.IGNORED;prior.payload="{}";prior.retryCount=0;prior.occurredAt=now;prior.receivedAt=now;
+        integrationLogs.saveAndFlush(prior);
+        String payload="""
+            {"eventId":"%s","eventType":"ticketCreated","eventVersion":"1.0","occurredAt":"%s","sourceModule":"atencion-ciudadana","data":{}}
+            """.formatted(eventId,now);
+
+        assertThatThrownBy(()->inbound.dispatch(payload)).isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("UNSUPPORTED_CORE_EVENT_TYPE");
+
+        IntegrationEventLog rejection=integrationLogs.findFirstByBusinessKeyOrderByIdDesc("INBOUND_REJECTION:"+eventId).orElseThrow();
+        assertThat(rejection.status).isEqualTo(IntegrationEventStatus.FAILED);
+        assertThat(rejection.eventId).isNotEqualTo(prior.eventId);
+        assertThat(rejection.externalEventId).isEqualTo(prior.externalEventId);
+        assertThat(integrationLogs.findById(prior.id)).isPresent();
+    }
+
+    @Test void rejectedRedeliveryDoesNotHideProcessedRouteOrBreakItsCausation() throws Exception {
+        String routed=contractFixture("M2_ticketUpdated_ROUTED_REAL.json");
+        JsonNode envelope=json.readTree(routed),data=envelope.path("data");
+        String eventId=envelope.path("eventId").asText();
+        UUID ticketId=UUID.fromString(data.path("ticketId").asText());
+        String correlationId=envelope.path("correlationId").asText();
+
+        inbound.dispatch(routed);
+        String unsupportedVersion=routed.replace("\"eventVersion\": \"1.0\"","\"eventVersion\": \"2.0\"")
+            .replace("\"eventVersion\":\"1.0\"","\"eventVersion\":\"2.0\"");
+        assertThat(unsupportedVersion).contains("2.0");
+        assertThatThrownBy(()->inbound.dispatch(unsupportedVersion)).isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("UNSUPPORTED_EVENT_VERSION");
+
+        IntegrationEventLog rejection=integrationLogs.findFirstByBusinessKeyOrderByIdDesc("INBOUND_REJECTION:"+eventId).orElseThrow();
+        assertThat(rejection.status).isEqualTo(IntegrationEventStatus.FAILED);
+        assertThat(integrationLogs.findFirstByExternalEventIdOrderByIdDesc(eventId)).get()
+            .extracting(log->log.status).isEqualTo(IntegrationEventStatus.FAILED);
+        assertThat(integrationInbox.processedLog(eventId)).get().satisfies(log->{
+            assertThat(log.status).isEqualTo(IntegrationEventStatus.PROCESSED);
+            assertThat(log.businessKey).isNull();
+        });
+        assertThat(integrationReprocess.get(eventId).status).isEqualTo(IntegrationEventStatus.PROCESSED);
+
+        TicketCase ticket=ticketCases.findByExternalTicketId(ticketId.toString()).orElseThrow();
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+            new AuthenticatedIdentity("postgres-it-m2-cause",null,UUID.fromString("3b9f1c52-6a7e-4d08-9c41-5e2a8d7f0b13")),
+            null,List.of(new SimpleGrantedAuthority("ROLE_RENTAS"))));
+        try { ticketService.assign(ticket.id); }
+        finally { SecurityContextHolder.clearContext(); }
+
+        JsonNode started=outbox.findAll().stream().filter(event->"updateTicketStatus".equals(event.eventType))
+            .map(event->{try{return json.readTree(event.payload);}catch(Exception ex){throw new AssertionError(ex);}})
+            .filter(event->"STARTED".equals(event.path("data").path("updateType").asText()))
+            .filter(event->ticketId.toString().equals(event.path("data").path("ticketId").asText()))
+            .findFirst().orElseThrow();
+        assertThat(started.path("correlationId").asText()).isEqualTo(correlationId);
+        assertThat(started.path("causationId").asText()).isEqualTo(eventId);
+    }
+
+    @Test void concurrentRejectionRedeliveriesCreateOneSanitizedAuditRow() throws Exception {
+        UUID eventId=UUID.randomUUID();
+        String payload="""
+            {"eventId":"%s","eventType":"ticketCreated","eventVersion":"1.0","occurredAt":"2026-11-15T10:00:00-03:00","sourceModule":"atencion-ciudadana","data":{"privateMessage":"do not store"}}
+            """.formatted(eventId);
+        List<Throwable> failures=runTogether(()->{inbound.dispatch(payload);return null;},()->{inbound.dispatch(payload);return null;});
+        assertThat(failures).hasSize(2).allSatisfy(failure->assertThat(failure).isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("UNSUPPORTED_CORE_EVENT_TYPE"));
+        assertThat(jdbc.queryForObject("select count(*) from integration_event_log where business_key=?",Long.class,
+            "INBOUND_REJECTION:"+eventId)).isEqualTo(1L);
+        IntegrationEventLog row=integrationLogs.findFirstByBusinessKeyOrderByIdDesc("INBOUND_REJECTION:"+eventId).orElseThrow();
+        assertThat(row.payload).contains(eventId.toString()).doesNotContain("privateMessage","do not store");
+    }
+
+    @Test void sanitizedPermanentRejectionCannotBeReprocessedAsOriginalPayload() {
+        UUID eventId=UUID.randomUUID();
+        String payload="""
+            {"eventId":"%s","eventType":"ticketCreated","eventVersion":"1.0","occurredAt":"2026-11-15T10:00:00-03:00","sourceModule":"atencion-ciudadana","data":{"privateMessage":"do not store"}}
+            """.formatted(eventId);
+        assertThatThrownBy(()->inbound.dispatch(payload)).isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("UNSUPPORTED_CORE_EVENT_TYPE");
+        IntegrationEventLog row=integrationLogs.findFirstByBusinessKeyOrderByIdDesc("INBOUND_REJECTION:"+eventId).orElseThrow();
+
+        assertThatThrownBy(()->integrationReprocess.reprocess(eventId.toString(),"retry request"))
+            .isInstanceOfSatisfying(BusinessException.class,error->{
+                assertThat(error.code).isEqualTo("INBOUND_REJECTION_NOT_REPROCESSABLE");
+                assertThat(error.status).isEqualTo(409);
+            });
+        IntegrationEventLog unchanged=integrationLogs.findById(row.id).orElseThrow();
+        assertThat(unchanged.status).isEqualTo(IntegrationEventStatus.FAILED);
+        assertThat(unchanged.retryCount).isZero();
+        assertThat(unchanged.payload).doesNotContain("privateMessage","do not store");
+    }
+
+    @Test void malformedJsonIsStoredAsSanitizedIdempotentRejection() {
+        String malformed="""
+            {"eventId":"private-event","eventType":"ticketUpdated","sourceModule":"atencion-ciudadana","data":{"dni":"30111222","password":"never-store"}
+            """;
+        OffsetDateTime startedAt=OffsetDateTime.now().minusSeconds(1);
+
+        assertThatThrownBy(()->inbound.dispatch(malformed)).isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("INVALID_CORE_ENVELOPE");
+        IntegrationEventLog rejection=integrationLogs.findAll().stream()
+            .filter(row->row.errorMessage!=null&&row.errorMessage.equals("INVALID_CORE_ENVELOPE"))
+            .filter(row->row.externalEventId!=null&&row.externalEventId.startsWith("rejected:"))
+            .filter(row->row.receivedAt.isAfter(startedAt)).max(java.util.Comparator.comparing(row->row.id)).orElseThrow();
+        assertThat(rejection.status).isEqualTo(IntegrationEventStatus.FAILED);
+        assertThat(rejection.payload).doesNotContain("private-event","30111222","password","data");
+
+        assertThatThrownBy(()->inbound.dispatch(malformed)).isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("INVALID_CORE_ENVELOPE");
+        assertThat(integrationLogs.findAll().stream().filter(row->rejection.businessKey.equals(row.businessKey))).hasSize(1);
     }
 
     @Test void m7OffsetCorrectedCounterfactualOnlyProcessesWithLocalIdentityAndConcept() throws Exception {
