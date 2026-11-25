@@ -19,10 +19,8 @@ class MigrationValidationTest {
         registry.add("spring.flyway.locations",()->"classpath:db/migration,classpath:db/migration-test-h2,classpath:db/migration-m8-test-h2");
     }
     @Test void flywaySchemaMatchesJpaModel() {
-        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(35);
-        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(32);
-        assertThat(jdbc.queryForList("select table_name from information_schema.tables where table_name in ('citizen_session','citizen_login_window')",String.class))
-            .containsExactlyInAnyOrder("citizen_session","citizen_login_window");
+        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(34);
+        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(31);
         assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version='29'",Integer.class)).isZero();
         assertThat(jdbc.queryForObject("select count(*) from information_schema.tables where table_name='demo_login_attempt'",Integer.class)).isZero();
         assertThat(jdbc.queryForObject("select count(*) from information_schema.tables where table_name='demo_login_origin_attempt'",Integer.class)).isZero();

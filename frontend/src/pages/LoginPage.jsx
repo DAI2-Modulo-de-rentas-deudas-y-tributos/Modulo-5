@@ -7,10 +7,8 @@ import Alert from "../components/ui/Alert.jsx";
 import Button from "../components/common/Button.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
 import { homePathForRole } from "../config/workspaces.js";
-import { AUTH_MODE } from "../services/apiClient.js";
 
 export default function LoginPage() {
-  const citizen = AUTH_MODE === "citizen";
   const { login, isAuthenticated, user, sessionNotice, dismissSessionNotice } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -33,7 +31,7 @@ export default function LoginPage() {
 
   const validate = () => {
     const found = {};
-    if (!form.username.trim()) found.username = citizen ? "Ingresá tu correo de Ciudadanos." : "Ingresá tu usuario.";
+    if (!form.username.trim()) found.username = "Ingresá tu usuario.";
     if (!form.password) found.password = "Ingresá tu contraseña.";
     setErrors(found);
     return Object.keys(found).length === 0;
@@ -91,11 +89,11 @@ export default function LoginPage() {
           </header>
           <div className="login-card">
             <div className="login-card-heading">
-              <span>{citizen ? "Portal del Contribuyente" : "Acceso unificado"}</span>
+              <span>Acceso unificado</span>
             </div>
             <h2 id="login-title">Iniciar sesión</h2>
             <p className="login-card-description">
-              {citizen ? "Ingresá con tu cuenta de Ciudadanos." : "Usá tus credenciales. Te llevaremos automáticamente al portal o área de trabajo que te corresponde."}
+              Usá tus credenciales. Te llevaremos automáticamente al portal o área de trabajo que te corresponde.
             </p>
 
             <form id="login-form" onSubmit={onSubmit} noValidate aria-labelledby="login-title" aria-busy={submitting} tabIndex={-1}>
@@ -111,9 +109,9 @@ export default function LoginPage() {
                   )}
                 </div>
                 <FormField
-                  label={citizen ? "Correo de Ciudadanos" : "Usuario"}
+                  label="Usuario"
                   name="username"
-                  placeholder={citizen ? "Ingresá tu correo" : "Ingresá tu nombre de usuario"}
+                  placeholder="Ingresá tu nombre de usuario"
                   value={form.username}
                   onChange={onChange}
                   error={errors.username}
@@ -154,7 +152,7 @@ export default function LoginPage() {
                 </Button>
               </div>
               <p className="login-account-note">
-                {citizen ? "Tu cuenta debe estar vinculada a un contribuyente de Rentas." : "El acceso se define según tu perfil. Si todavía no tenés usuario, solicitá tu cuenta en la Dirección de Rentas."}
+                El acceso se define según tu perfil. Si todavía no tenés usuario, solicitá tu cuenta en la Dirección de Rentas.
               </p>
             </form>
           </div>

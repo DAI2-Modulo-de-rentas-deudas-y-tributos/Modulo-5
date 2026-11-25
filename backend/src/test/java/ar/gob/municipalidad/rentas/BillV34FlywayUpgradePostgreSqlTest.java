@@ -41,10 +41,10 @@ class BillV34FlywayUpgradePostgreSqlTest {
 
         assertThat(jdbc.queryForObject("select count(*) from information_schema.columns where table_name='bill' and column_name='cancellation_reason'", Integer.class)).isZero();
 
-        Flyway v34 = flyway().target(MigrationVersion.fromVersion("34")).load();
-        v34.migrate();
-        v34.validate();
-        assertThat(v34.info().current().getVersion().getVersion()).isEqualTo("34");
+        Flyway latest = flyway().load();
+        latest.migrate();
+        latest.validate();
+        assertThat(latest.info().current().getVersion().getVersion()).isEqualTo("34");
 
         assertThat(jdbc.queryForObject("select status from bill where id=?", String.class, oldBill)).isEqualTo("ISSUED");
         assertThat(jdbc.queryForObject("select total_amount from bill where id=?", BigDecimal.class, oldBill)).isEqualByComparingTo("200.00");

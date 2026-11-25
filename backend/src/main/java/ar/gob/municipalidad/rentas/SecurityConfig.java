@@ -98,7 +98,7 @@ class SecurityConfig {
     }
 
     @Bean SecurityFilterChain securityFilterChain(HttpSecurity http, DevIdentityFilter filter,
-            SecurityErrorResponseWriter errors, Environment environment, ObjectProvider<CitizenSessions> citizenSessions) throws Exception {
+            SecurityErrorResponseWriter errors, Environment environment) throws Exception {
         boolean publicDocs=!environment.acceptsProfiles(Profiles.of("prod", "staging"));
         return http.csrf(csrf -> csrf.disable())
             .sessionManagement(session -> session.sessionCreationPolicy(org.springframework.security.config.http.SessionCreationPolicy.STATELESS))
@@ -116,18 +116,12 @@ class SecurityConfig {
                 auth.requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                     .requestMatchers("/actuator/health", "/api/v1/health").permitAll();
                 if (publicDocs) auth.requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll();
-                if (citizenSessions.getIfAvailable() != null) {
-                    auth.requestMatchers(HttpMethod.POST, CitizenAuthController.PATH + "/login",
-                            CitizenAuthController.PATH + "/logout").permitAll()
-                        .requestMatchers(HttpMethod.GET, CitizenAuthController.PATH + "/me").permitAll();
-                }
                 auth
                 .requestMatchers(HttpMethod.POST, "/api/v1/dev-auth/login", "/api/v1/dev-auth/bootstrap").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/v1/**").authenticated()
                 .anyRequest().authenticated();
             })
             .addFilterBefore(filter, UsernamePasswordAuthenticationFilter.class)
-            .addFilterBefore(new CitizenSessionFilter(citizenSessions, errors), DevIdentityFilter.class)
             .build();
     }
 }
