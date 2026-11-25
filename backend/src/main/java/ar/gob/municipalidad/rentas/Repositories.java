@@ -71,7 +71,7 @@ interface ExternalObligationRepository extends FilteredRepository<ExternalObliga
     @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select o from ExternalObligation o where o.id=:id") Optional<ExternalObligation> findByIdForUpdate(@Param("id") Long id);
 }
 interface PaymentRepository extends FilteredRepository<Payment,Long> {
-    List<Payment> findByTaxpayerId(Long taxpayerId); Page<Payment> findByTaxpayerId(Long taxpayerId,Pageable pageable); Optional<Payment> findByTaxpayerIdAndIdempotencyKey(Long taxpayerId,String idempotencyKey);
+    List<Payment> findByTaxpayerId(Long taxpayerId); Page<Payment> findByTaxpayerId(Long taxpayerId,Pageable pageable); Optional<Payment> findByTaxpayerIdAndIdempotencyKey(Long taxpayerId,String idempotencyKey); List<Payment> findByBillIdIn(Collection<Long> billIds);
     @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select p from Payment p where p.id=:id") Optional<Payment> findByIdForUpdate(Long id);
     @Query("select count(p.id) from Payment p where p.status=:status and p.unallocatedAmount>:amount and not exists (select c.id from CreditBalance c where c.sourcePaymentId=p.id)")
     long countManuallyUnallocated(@Param("status") PaymentStatus status,@Param("amount") BigDecimal amount);
@@ -88,12 +88,12 @@ interface PaymentRepository extends FilteredRepository<Payment,Long> {
         """) CollectionIndicatorAggregate aggregateConfirmed(@Param("from") LocalDate from,@Param("to") LocalDate to);
 }
 interface PaymentAllocationRepository extends FilteredRepository<PaymentAllocation,Long> {
-    List<PaymentAllocation> findByPaymentId(Long paymentId);
+    List<PaymentAllocation> findByPaymentId(Long paymentId); List<PaymentAllocation> findByPaymentIdIn(Collection<Long> paymentIds);
     List<PaymentAllocation> findByDebtIdOrderByAllocatedAtAscIdAsc(Long debtId);
     List<PaymentAllocation> findByInstallmentIdInOrderByAllocatedAtAscIdAsc(Collection<Long> installmentIds);
 }
-interface BillRepository extends FilteredRepository<Bill,Long> { List<Bill> findByTaxpayerId(Long taxpayerId); Page<Bill> findByTaxpayerId(Long taxpayerId,Pageable pageable); Optional<Bill> findByTaxpayerIdAndIdempotencyKey(Long taxpayerId,String idempotencyKey); }
-interface BillDebtRepository extends JpaRepository<BillDebt,Long> { List<BillDebt> findByBillId(Long billId); List<BillDebt> findByBillIdOrderByIdAsc(Long billId); List<BillDebt> findByBillIdInOrderByBillIdAscIdAsc(Collection<Long> billIds); }
+interface BillRepository extends FilteredRepository<Bill,Long> { List<Bill> findByTaxpayerId(Long taxpayerId); Page<Bill> findByTaxpayerId(Long taxpayerId,Pageable pageable); Optional<Bill> findByTaxpayerIdAndIdempotencyKey(Long taxpayerId,String idempotencyKey); @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select b from Bill b where b.id=:id") Optional<Bill> findByIdForUpdate(@Param("id") Long id); }
+interface BillDebtRepository extends JpaRepository<BillDebt,Long> { List<BillDebt> findByBillId(Long billId); List<BillDebt> findByBillIdOrderByIdAsc(Long billId); List<BillDebt> findByBillIdInOrderByBillIdAscIdAsc(Collection<Long> billIds); @Query("select distinct link.billId from BillDebt link where link.debtId in :debtIds") List<Long> findBillIdsByDebtIdIn(@Param("debtIds") Collection<Long> debtIds); @Query("select distinct link.debtId from BillDebt link where link.billId in :billIds") List<Long> findDebtIdsByBillIdIn(@Param("billIds") Collection<Long> billIds); @Query("select count(link)>0 from BillDebt link, Bill bill where bill.id=link.billId and link.debtId in :debtIds and bill.status=ar.gob.municipalidad.rentas.BillStatus.ISSUED") boolean existsIssuedBillByDebtIdIn(@Param("debtIds") Collection<Long> debtIds); }
 interface ElectronicPaymentRepository extends JpaRepository<ElectronicPaymentAttempt,Long> { Optional<ElectronicPaymentAttempt> findByPaymentId(Long paymentId); Optional<ElectronicPaymentAttempt> findByTaxpayerIdAndIdempotencyKey(Long taxpayerId,String idempotencyKey); }
 interface CreditBalanceRepository extends FilteredRepository<CreditBalance,Long> { Optional<CreditBalance> findBySourcePaymentId(Long paymentId); @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select c from CreditBalance c where c.sourcePaymentId=:paymentId") Optional<CreditBalance> findBySourcePaymentIdForUpdate(Long paymentId); List<CreditBalance> findByTaxpayerId(Long taxpayerId); @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select c from CreditBalance c where c.id=:id") Optional<CreditBalance> findByIdForUpdate(Long id); }
 interface CreditBalanceApplicationRepository extends JpaRepository<CreditBalanceApplication,Long> {
@@ -105,8 +105,26 @@ interface ProcessedEventRepository extends JpaRepository<ProcessedEvent,UUID> { 
 interface IntegrationEventLogRepository extends FilteredRepository<IntegrationEventLog,Long> {
     Optional<IntegrationEventLog> findFirstByEventIdOrderByIdDesc(UUID eventId);
     Optional<IntegrationEventLog> findFirstByExternalEventIdOrderByIdDesc(String eventId);
+    Optional<IntegrationEventLog> findFirstByExternalEventIdAndStatusOrderByIdDesc(String eventId,IntegrationEventStatus status);
+    @Query("select e from IntegrationEventLog e where e.externalEventId=:externalEventId and (e.businessKey is null or e.businessKey not like 'INBOUND_REJECTION:%') order by e.id desc")
+    List<IntegrationEventLog> findNonRejectionsByExternalEventId(@Param("externalEventId") String externalEventId,Pageable pageable);
+    default Optional<IntegrationEventLog> findLatestNonRejectionByExternalEventId(String externalEventId){
+        return findNonRejectionsByExternalEventId(externalEventId,PageRequest.of(0,1)).stream().findFirst();
+    }
     Optional<IntegrationEventLog> findFirstByBusinessKeyOrderByIdDesc(String businessKey);
+    boolean existsByBusinessKey(String businessKey);
     @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select e from IntegrationEventLog e where e.id=:id") Optional<IntegrationEventLog> findByIdForUpdate(@Param("id") Long id);
+    @Modifying
+    @Query(value="""
+        insert into integration_event_log(event_id,external_event_id,business_key,event_type,source_module,direction,status,
+            payload,retry_count,error_message,occurred_at,received_at)
+        select :eventId,:externalEventId,:businessKey,:eventType,:sourceModule,'INBOUND','FAILED',:payload,0,:reason,:occurredAt,:receivedAt
+        where not exists (select 1 from integration_event_log where business_key=:businessKey)
+        """,nativeQuery=true)
+    int insertRejectedInbound(@Param("eventId") UUID eventId,@Param("externalEventId") String externalEventId,
+        @Param("businessKey") String businessKey,@Param("eventType") String eventType,@Param("sourceModule") String sourceModule,
+        @Param("payload") String payload,@Param("reason") String reason,@Param("occurredAt") OffsetDateTime occurredAt,
+        @Param("receivedAt") OffsetDateTime receivedAt);
     Page<IntegrationEventLog> findByDirectionAndStatusAndEventTypeInAndBusinessKeyStartingWith(EventDirection direction,
         IntegrationEventStatus status,Collection<String> eventTypes,String keyPrefix,Pageable pageable);
     Page<IntegrationEventLog> findByStatusIn(Collection<IntegrationEventStatus> statuses,Pageable pageable);

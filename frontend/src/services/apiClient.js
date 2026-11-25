@@ -17,8 +17,14 @@ function withoutTrailingSlashes(value) {
 const API_BASE_URL = withoutTrailingSlashes((import.meta.env.VITE_API_BASE_URL ?? "").trim());
 
 // DEMO autentica con usuarios y sesiones reales del backend. "mock" es un alias heredado.
+// "m1" (PROD) sólo ofrece el ingreso de vecinos con la cuenta de Ciudadanos (ADR 0012).
 const configuredAuthMode = (import.meta.env.VITE_AUTH_MODE ?? "demo").trim().toLowerCase();
 export const AUTH_MODE = configuredAuthMode === "mock" ? "demo" : configuredAuthMode;
+export const STAFF_LOGIN_ENABLED = AUTH_MODE === "demo";
+export const M1_LOGIN_ENABLED = AUTH_MODE === "demo" || AUTH_MODE === "m1";
+
+/** Origen de la sesión guardada: "m1" viaja como Bearer; cualquier otro valor es DEMO. */
+export const SESSION_SOURCE_KEY = "rentas.authSource";
 
 export class ApiError extends Error {
   constructor(message, status, details, code, traceId) {
@@ -32,10 +38,16 @@ export class ApiError extends Error {
 }
 
 export function authHeaders() {
-  if (AUTH_MODE !== "demo") return {};
   const token = sessionStorage.getItem("rentas.token");
   if (!token) return {};
-  return { "X-Demo-Session": token };
+  if (sessionStorage.getItem(SESSION_SOURCE_KEY) === "m1") return { Authorization: `Bearer ${token}` };
+  return AUTH_MODE === "demo" ? { "X-Demo-Session": token } : {};
+}
+
+function sentSessionToken(headers) {
+  const sent = new Headers(headers);
+  const authorization = sent.get("Authorization") ?? "";
+  return sent.get("X-Demo-Session") ?? (authorization.startsWith("Bearer ") ? authorization.slice(7) : null);
 }
 
 export async function request(path, { method = "GET", body, signal, responseType, headers, requiresAuth = true, includeHeaders = false } = {}) {
@@ -46,7 +58,7 @@ export async function request(path, { method = "GET", body, signal, responseType
     ...(requiresAuth ? authHeaders() : {}),
     ...headers,
   };
-  const sessionToken = new Headers(requestHeaders).get("X-Demo-Session");
+  const sessionToken = sentSessionToken(requestHeaders);
   const response = await fetch(`${API_BASE_URL}${adapted.path}`, {
     method: adapted.options.method,
     signal: adapted.options.signal,

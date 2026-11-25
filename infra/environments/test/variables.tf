@@ -144,10 +144,25 @@ variable "backend_environment_variables" {
   description = "Variables no sensibles del backend en TEST."
   type        = map(string)
   default = {
-    BROKER_ADAPTER           = "local-log"
-    CORE_HTTP_BASE_URL       = "https://core-uade-2026.duckdns.org"
-    OUTBOX_DELAY_MS          = "5000"
-    RENTAS_SECURITY_DEV_MODE = "true"
+    # AMQPS con el broker de Core: TEST publica pero no consume. q.rentas la consume PROD:
+    # con una cola compartida, lo que leyera TEST ya no le llegaría a PROD. Para consumir
+    # en TEST, Core tiene que crear una cola propia (por ejemplo q.rentas.test) con las
+    # mismas suscripciones y cambiar CORE_RABBITMQ_QUEUE. La contraseña llega por
+    # TEST_BACKEND_SECRET_ARNS y Core autoriza la EIP del NAT en TCP 5671.
+    BROKER_ADAPTER                 = "rabbitmq"
+    CORE_HTTP_BASE_URL             = "https://core-uade-2026.duckdns.org"
+    CORE_RABBITMQ_HOST             = "core-uade-2026.duckdns.org"
+    CORE_RABBITMQ_PORT             = "5671"
+    SPRING_RABBITMQ_SSL_ENABLED    = "true"
+    CORE_RABBITMQ_USERNAME         = "module_rentas"
+    CORE_RABBITMQ_VHOST            = "core"
+    CORE_RABBITMQ_QUEUE            = "q.rentas"
+    CORE_RABBITMQ_RETRY_MODE       = "core-managed"
+    CORE_RABBITMQ_CONSUMER_ENABLED = "false"
+    M1_AUTH_ENABLED                = "true"
+    M1_AUTH_BASE_URL               = "https://ciudadanos-m1-backend.onrender.com"
+    OUTBOX_DELAY_MS                = "5000"
+    RENTAS_SECURITY_DEV_MODE       = "true"
   }
 }
 

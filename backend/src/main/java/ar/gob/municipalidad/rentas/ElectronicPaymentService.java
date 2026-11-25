@@ -1,0 +1,28 @@
+package ar.gob.municipalidad.rentas;
+
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.time.OffsetDateTime;
+import java.util.HexFormat;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+@Service
+class ElectronicPaymentService {
+    private final DebtRepository debts; private final PaymentService payments; private final ElectronicPaymentRepository attempts; private final CurrentIdentity identity; private final PaymentPlanRepository plans; private final PaymentPlanDebtRepository planDebts; private final TaxpayerRepository taxpayers;
+    ElectronicPaymentService(DebtRepository debts,PaymentService payments,ElectronicPaymentRepository attempts,CurrentIdentity identity,PaymentPlanRepository plans,PaymentPlanDebtRepository planDebts,TaxpayerRepository taxpayers){this.debts=debts;this.payments=payments;this.attempts=attempts;this.identity=identity;this.plans=plans;this.planDebts=planDebts;this.taxpayers=taxpayers;}
+    ApiDtos.ElectronicPaymentPreview preview(ApiDtos.ElectronicPaymentRequest request){Debt debt=debt(request.debtId());identity.requireOwnership(debt.taxpayerId);boolean inPlan=plans.existsByDebtIdAndStatus(debt.id,PaymentPlanStatus.ACTIVE)||planDebts.existsByDebtIdAndStatus(debt.id,PaymentPlanDebtStatus.ACTIVE);BigDecimal payable=MonetaryAmounts.normalize(request.amount().min(debt.outstandingBalance));boolean approved=debt.admiteCobro()&&!inPlan&&payable.signum()>0;String message=inPlan?"La deuda está incluida en un plan: pagá sus cuotas en ventanilla":approved?"Pago disponible":"La deuda no admite pago";return new ApiDtos.ElectronicPaymentPreview(debt.id,request.amount(),payable,approved,message);}
+    @Transactional ElectronicPaymentAttempt create(ApiDtos.ElectronicPaymentRequest request){return create(request,null);}
+    @Transactional ElectronicPaymentAttempt create(ApiDtos.ElectronicPaymentRequest request,String key){Long taxpayerId=debts.findTaxpayerIdById(request.debtId()).orElseThrow(()->CatalogService.notFound("Deuda"));identity.requireOwnership(taxpayerId);String idempotencyKey=normalizeKey(key);String fingerprint=fingerprint(request);if(idempotencyKey!=null){taxpayers.findByIdForUpdate(taxpayerId).orElseThrow(()->CatalogService.notFound("Contribuyente"));Optional<ElectronicPaymentAttempt> existing=attempts.findByTaxpayerIdAndIdempotencyKey(taxpayerId,idempotencyKey);if(existing.isPresent()){if(!fingerprint.equals(existing.get().idempotencyFingerprint))throw new BusinessException("IDEMPOTENCY_KEY_REUSED","La clave de idempotencia ya fue utilizada con otro contenido",409);return existing.get();}}Debt debt=debts.findByIdForUpdate(request.debtId()).orElseThrow(()->CatalogService.notFound("Deuda"));boolean validMethod=request.paymentMethod()==PaymentMethod.CARD||request.paymentMethod()==PaymentMethod.DIGITAL_WALLET;if(!validMethod)return rejected(debt,request,idempotencyKey,fingerprint,"El pago electrónico requiere tarjeta o billetera digital");ApiDtos.ElectronicPaymentPreview preview=preview(request);if(!preview.approved())return rejected(debt,request,idempotencyKey,fingerprint,preview.message());Payment payment=payments.registerElectronic(new ApiDtos.RegisterPaymentRequest(debt.taxpayerId,null,request.paymentMethod(),request.amount(),List.of(new ApiDtos.AllocationRequest(debt.id,request.amount()))),idempotencyKey);return attempts.findByPaymentId(payment.id).orElseGet(()->saveAttempt(debt,payment.id,payment.amount,ElectronicPaymentStatus.APPROVED,null,idempotencyKey,fingerprint));}
+    ElectronicPaymentAttempt getByPayment(Long paymentId){ElectronicPaymentAttempt attempt=attempts.findByPaymentId(paymentId).orElseThrow(()->CatalogService.notFound("Pago electrónico"));identity.requireOwnership(attempt.taxpayerId);return attempt;}
+    private ElectronicPaymentAttempt rejected(Debt debt,ApiDtos.ElectronicPaymentRequest request,String key,String fingerprint,String reason){return saveAttempt(debt,null,request.amount(),ElectronicPaymentStatus.REJECTED,reason,key,fingerprint);}
+    private ElectronicPaymentAttempt saveAttempt(Debt debt,Long paymentId,BigDecimal amount,ElectronicPaymentStatus status,String reason,String key,String fingerprint){ElectronicPaymentAttempt attempt=new ElectronicPaymentAttempt();attempt.paymentId=paymentId;attempt.taxpayerId=debt.taxpayerId;attempt.debtId=debt.id;attempt.amount=PaymentService.money(amount);attempt.status=status;attempt.gatewayReference="SIM-"+UUID.randomUUID();attempt.rejectionReason=reason;attempt.idempotencyKey=key;attempt.idempotencyFingerprint=fingerprint;attempt.createdAt=OffsetDateTime.now();return attempts.save(attempt);}
+    private String normalizeKey(String value){if(value==null)return null;String normalized=value.trim();if(!normalized.matches("[A-Za-z0-9._:-]{1,128}"))throw new BusinessException("INVALID_IDEMPOTENCY_KEY","Idempotency-Key debe contener entre 1 y 128 caracteres alfanuméricos, punto, guion, guion bajo o dos puntos",400);return normalized;}
+    private String fingerprint(ApiDtos.ElectronicPaymentRequest request){try{String value=request.debtId()+"|"+request.paymentMethod()+"|"+PaymentService.money(request.amount()).toPlainString();return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));}catch(Exception exception){throw new IllegalStateException("No se pudo calcular la huella idempotente",exception);}}
+    private Debt debt(Long id){return debts.findById(id).orElseThrow(()->CatalogService.notFound("Deuda"));}
+}

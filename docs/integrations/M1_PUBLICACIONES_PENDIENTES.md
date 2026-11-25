@@ -14,7 +14,7 @@ M1 informó que implementó los cuatro consumidores y probó localmente el UUID 
 1. Solicitar a Core/M9 el esquema vigente y la autorización de `POST /api/v1/publications` para el módulo **rentas**. No hay un cliente ni una configuración de registro de publicaciones en este repositorio.
 2. Declarar desde la identidad propia de M5 los cuatro `eventType` exactos, con `eventVersion=1.0`; verificar en particular que Core registre `updateExemptionStatus` y `updatePaymentPlanStatus`. No usar credenciales de M1 ni modificar sus suscripciones.
 3. Leer el catálogo de Core después de la operación y conservar su respuesta como evidencia. Confirmar el ruteo a M1 y, para los dos eventos de exención, también a M8.
-4. Usar un ciudadano real con UUID canónico emitido por M1 y vinculación verificada con la referencia local. Hasta que M1 entregue el nombre del claim y el formato final del login/JWT, M5 no interpreta campos nuevos ni infiere equivalencias desde el ID numérico.
+4. Usar un ciudadano real con UUID canónico emitido por M1 y vinculación verificada con la referencia local. El login de M1 entrega ese UUID en `citizenId`, y M5 ya lo usa para abrir la sesión del vecino (ADR 0012). M5 no infiere equivalencias desde el ID numérico (`user_id`/`sub`).
 5. Probar solicitud y resolución en casos separados, comparar `requestId`, `citizenId`, `correlationId`, `causationId`, `eventId` y el JSON recibido por M1. Una respuesta de Core o `BROKER_CONFIRMED` no prueba consumo de M1.
 
 Las publicaciones sin `canonical_citizen_id` quedan aplazadas en `integration_event_log` y se preparan mediante la conciliación controlada una vez acreditada la vinculación. El outbox conserva el evento preparado y su `eventId` para reintentos.

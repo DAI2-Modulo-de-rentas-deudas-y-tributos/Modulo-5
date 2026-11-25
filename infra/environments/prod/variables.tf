@@ -102,12 +102,11 @@ variable "backend_environment_variables" {
   description = "Variables no sensibles del backend en PROD."
   type        = map(string)
   default = {
-    # Conexión AMQPS con el broker de Core, preparada pero apagada: local-log y sin
-    # consumidor hasta tener la contraseña AMQP de module_rentas. Con una contraseña
-    # inválida, el consumidor aborta el arranque (ACCESS_REFUSED, exit 1) y ECS
-    # hace rollback. Para encender: BROKER_ADAPTER=rabbitmq y
-    # CORE_RABBITMQ_CONSUMER_ENABLED=true. Core autoriza la EIP del NAT en TCP 5671.
-    BROKER_ADAPTER                 = "local-log"
+    # AMQPS con el broker de Core: PROD publica y es el único consumidor de q.rentas
+    # (TEST publica pero no consume). Con una contraseña AMQP inválida el consumidor aborta
+    # el arranque (ACCESS_REFUSED, exit 1) y ECS hace rollback. Core autoriza la EIP del NAT
+    # en TCP 5671.
+    BROKER_ADAPTER                 = "rabbitmq"
     CORE_RABBITMQ_HOST             = "core-uade-2026.duckdns.org"
     CORE_RABBITMQ_PORT             = "5671"
     SPRING_RABBITMQ_SSL_ENABLED    = "true"
@@ -115,7 +114,9 @@ variable "backend_environment_variables" {
     CORE_RABBITMQ_VHOST            = "core"
     CORE_RABBITMQ_QUEUE            = "q.rentas"
     CORE_RABBITMQ_RETRY_MODE       = "core-managed"
-    CORE_RABBITMQ_CONSUMER_ENABLED = "false"
+    CORE_RABBITMQ_CONSUMER_ENABLED = "true"
+    M1_AUTH_ENABLED                = "true"
+    M1_AUTH_BASE_URL               = "https://ciudadanos-m1-backend.onrender.com"
     OUTBOX_DELAY_MS                = "5000"
     RENTAS_SECURITY_DEV_MODE       = "false"
   }
@@ -131,7 +132,7 @@ variable "frontend_environment_variables" {
   description = "Variables publicas incorporadas al build del frontend en PROD."
   type        = map(string)
   default = {
-    VITE_AUTH_MODE = "core"
+    VITE_AUTH_MODE = "m1"
     VITE_USE_MOCKS = "false"
   }
 }

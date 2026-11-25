@@ -21,7 +21,8 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-@SpringBootTest @ActiveProfiles("test") @Transactional
+@SpringBootTest(properties="spring.datasource.url=jdbc:h2:mem:m8-social-benefit-flow;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE")
+@ActiveProfiles("test") @Transactional
 class M8SocialBenefitFlowTests {
     private static final UUID BENEFIT_ID=UUID.fromString("8b04513c-1e16-4a70-8882-93348cc3ddc0");
     private static final UUID CITIZEN_ID=UUID.fromString("ad1dc069-6020-44fc-98a3-17bbd32aa305");

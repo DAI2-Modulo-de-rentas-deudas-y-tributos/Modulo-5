@@ -5,7 +5,7 @@
  * con los DTO por caso de uso acordados: RegisterPaymentRequest, AllocatePaymentRequest,
  * RequestPaymentReversalRequest, etc. Toda la información viene del backend.
  */
-import { AUTH_MODE, request, ApiError } from "./apiClient.js";
+import { AUTH_MODE, SESSION_SOURCE_KEY, request, ApiError } from "./apiClient.js";
 import { allPages } from "./apiCollection.js";
 import { debtDetailsService } from "./debtDetailsService.js";
 import { todayFiscalDate } from "../lib/format.js";
@@ -51,7 +51,42 @@ const mapDemoAuthSession = (result) => ({
   },
 });
 
+/** Sesión ciudadana abierta con la cuenta de Ciudadanos (M1): siempre es un contribuyente. */
+const mapM1User = (user) => ({
+  ...user,
+  fullName: user.displayName,
+  roleLabel: ROLE_LABELS[user.role],
+  email: "Cuenta de Ciudadanos",
+  backendRole: user.role,
+  role: UI_ROLES[user.role],
+});
+
+// M1 corre en un plan que se suspende: el primer ingreso puede encontrarlo arrancando.
+const M1_RETRYABLE_CODES = new Set(["M1_UNAVAILABLE", "M1_TIMEOUT"]);
+export const M1_LOGIN_MAX_ATTEMPTS = 3;
+const M1_RETRY_DELAY_MS = 3000;
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export const authService = {
+  /** Reintenta sólo mientras Ciudadanos no responde; `onRetry` recibe el número del próximo intento. */
+  async loginM1({ email, password }, { onRetry, retryDelayMs = M1_RETRY_DELAY_MS } = {}) {
+    let lastError;
+    for (let attempt = 1; attempt <= M1_LOGIN_MAX_ATTEMPTS; attempt += 1) {
+      if (attempt > 1) {
+        onRetry?.(attempt);
+        await wait(retryDelayMs);
+      }
+      try {
+        const result = await request("/api/v1/auth/m1/login", { method: "POST", body: { email, password }, requiresAuth: false });
+        return { token: result.token, user: mapM1User(result.user) };
+      } catch (error) {
+        if (!M1_RETRYABLE_CODES.has(error.code)) throw error;
+        lastError = error;
+      }
+    }
+    throw lastError;
+  },
+
   async login({ username, password }) {
     if (AUTH_MODE === "core") {
       throw new ApiError("La autenticación Core/JWT todavía no tiene un contrato integrado.", 503, null, "CORE_AUTH_PENDING");
@@ -64,6 +99,7 @@ export const authService = {
   },
 
   async me() {
+    if (sessionStorage.getItem(SESSION_SOURCE_KEY) === "m1") return mapM1User(await request("/api/v1/auth/m1/me"));
     if (AUTH_MODE === "core") {
       throw new ApiError("La autenticación Core/JWT todavía no tiene un contrato integrado.", 503, null, "CORE_AUTH_PENDING");
     }
@@ -74,7 +110,11 @@ export const authService = {
     return mapDemoAuthSession({ token: sessionStorage.getItem("rentas.token"), user }).user;
   },
 
-  async logout(token) {
+  async logout(token, source) {
+    if (source === "m1") {
+      await request("/api/v1/auth/m1/logout", { method: "POST", requiresAuth: false, headers: { Authorization: `Bearer ${token}` } });
+      return;
+    }
     if (AUTH_MODE !== "demo") return;
     await request("/api/v1/dev-auth/logout", {
       method: "POST",

@@ -12,6 +12,9 @@ const TONES = {
 
 const STATUS_TONES = {
   SETTLED: "success",
+  PAID: "success",
+  PARTIAL_PAYMENT: "warning",
+  PAYMENT_REVERSED: "danger",
   APPROVED: "success",
   GRANTED: "success",
   COMPLETED: "success",

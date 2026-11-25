@@ -12,7 +12,7 @@ import FormField from "../../components/ui/FormField.jsx";
 import useResource from "../../hooks/useResource.js";
 import useTaxpayerIndex from "../../hooks/useTaxpayerIndex.js";
 import { billService, debtService } from "../../services/rentasService.js";
-import { formatCurrency, formatDate, formatDateTime } from "../../lib/format.js";
+import { billCancellationReasonLabel, formatCurrency, formatDate, formatDateTime } from "../../lib/format.js";
 
 /** Boletas emitidas y descarga del documento generado por el backend. */
 export default function BoletasPage() {
@@ -45,7 +45,7 @@ export default function BoletasPage() {
       header: "Emitida",
       render: (row) => formatDateTime(row.issuedAt),
     },
-    { key: "status", header: "Estado", render: (row) => <StatusBadge status={row.status} /> },
+    { key: "status", header: "Estado", render: (row) => <div><StatusBadge status={row.presentationStatus ?? row.status} />{row.cancellationReason && row.presentationStatus !== "PAID" && <p className="mt-1 max-w-xs text-xs text-neutral-600">{billCancellationReasonLabel(row.cancellationReason)}</p>}</div> },
     {
       key: "actions",
       header: "",
@@ -88,6 +88,7 @@ export default function BoletasPage() {
               options: [
                 { value: "ISSUED", label: "Emitida" },
                 { value: "EXPIRED", label: "Vencida" },
+                { value: "CANCELLED", label: "Anulada" },
               ],
             },
           ]}

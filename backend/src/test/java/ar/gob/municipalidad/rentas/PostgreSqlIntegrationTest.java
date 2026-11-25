@@ -313,8 +313,10 @@ class PostgreSqlIntegrationTest {
     @Autowired IntegrationReprocessService integrationReprocess;
     @Autowired ConfirmedM7Consumer m7;
     @Autowired IntegrationEventLogRepository integrationLogs;
+    @Autowired IntegrationInbox integrationInbox;
     @Autowired ProcessedEventRepository processedEvents;
     @Autowired TicketCaseRepository ticketCases;
+    @Autowired TicketService ticketService;
     @Autowired ExternalObligationRepository externalObligations;
     @Autowired TaxpayerRepository taxpayers;
     @Autowired TaxConceptRepository concepts;
@@ -655,14 +657,14 @@ class PostgreSqlIntegrationTest {
                     hasKey=true;
                 }
             }
-            boolean excludedFromIdempotency=excluded.contains(path)||java.util.Set.of("/api/v1/dev-auth/login","/api/v1/dev-auth/logout").contains(path);
+            boolean excludedFromIdempotency=excluded.contains(path)||ErrorContractOpenApiConfiguration.SESSION_SETUP_PATHS.contains(path);
             assertThat(hasKey).as("Idempotency-Key en POST %s",path).isEqualTo(!excludedFromIdempotency);
             if(hasKey) covered++;
         }
         assertThat(paths.path("/api/v1/tickets/{id}/return").path("post").isMissingNode()).isFalse();
         assertThat(paths.path("/api/v1/taxpayers/{id}/canonical-citizen-link").path("post").isMissingNode()).isFalse();
         assertThat(paths.path("/api/v1/integrations/outbox/{id}/retry").path("post").isMissingNode()).isFalse();
-        assertThat(postCount).isEqualTo(78);
+        assertThat(postCount).isEqualTo(80);
         assertThat(covered).isEqualTo(71);
     }
 
@@ -1112,9 +1114,176 @@ class PostgreSqlIntegrationTest {
         assertThat(externalObligations.count()).isEqualTo(obligationsBefore);
         assertThat(debts.count()).isEqualTo(debtsBefore);
         assertThat(processedEvents.existsByExternalEventId(eventId)).isFalse();
-        assertThat(integrationLogs.findFirstByExternalEventIdOrderByIdDesc(eventId)).isEmpty();
+        IntegrationEventLog rejection=integrationLogs.findFirstByExternalEventIdOrderByIdDesc(eventId).orElseThrow();
+        assertThat(rejection.status).isEqualTo(IntegrationEventStatus.FAILED);
+        assertThat(rejection.errorMessage).isEqualTo("INVALID_CORE_EVENT_PAYLOAD");
+        assertThat(rejection.payload).contains(eventId,"infractionConfirmed","transito")
+            .doesNotContain("30111222","AA123BB","infractionDateTime","data");
         assertThat(externalObligations.findBySourceModuleAndExternalTypeAndExternalReferenceId(
             "M7",ExternalObligationType.TRAFFIC_INFRACTION,infractionId)).isEmpty();
+
+        assertThatThrownBy(()->inbound.dispatch(payload)).isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("INVALID_CORE_EVENT_PAYLOAD");
+        assertThat(jdbc.queryForObject("select count(*) from integration_event_log where business_key=?",Long.class,
+            "INBOUND_REJECTION:"+eventId)).isEqualTo(1);
+        assertThat(processedEvents.existsByExternalEventId(eventId)).isFalse();
+    }
+
+    @Test void permanentEnvelopeAndContractRejectionsAreAuditedOnceWithoutRawPayload() throws Exception {
+        UUID malformedId=UUID.randomUUID(),versionId=UUID.randomUUID(),unknownId=UUID.randomUUID();
+        List<String> payloads=List.of(
+            """
+            {"eventId":"%s","eventType":"ticketUpdated","eventVersion":"1.0","occurredAt":"2026-11-15T10:00:00-03:00","sourceModule":"atencion-ciudadana","data":{},"unexpected":"private detail"}
+            """.formatted(malformedId),
+            """
+            {"eventId":"%s","eventType":"ticketUpdated","eventVersion":"2.0","occurredAt":"2026-11-15T10:00:00-03:00","sourceModule":"atencion-ciudadana","data":{}}
+            """.formatted(versionId),
+            """
+            {"eventId":"%s","eventType":"ticketCreated","eventVersion":"1.0","occurredAt":"2026-11-15T10:00:00-03:00","sourceModule":"atencion-ciudadana","data":{"dni":"30111222"}}
+            """.formatted(unknownId));
+        List<String> ids=List.of(malformedId.toString(),versionId.toString(),unknownId.toString());
+        List<String> reasons=List.of("INVALID_CORE_ENVELOPE","UNSUPPORTED_EVENT_VERSION","UNSUPPORTED_CORE_EVENT_TYPE");
+
+        for(int i=0;i<payloads.size();i++){
+            String payload=payloads.get(i),eventId=ids.get(i),reason=reasons.get(i);
+            assertThatThrownBy(()->inbound.dispatch(payload)).isInstanceOf(IllegalArgumentException.class).hasMessage(reason);
+            assertThatThrownBy(()->inbound.dispatch(payload)).isInstanceOf(IllegalArgumentException.class).hasMessage(reason);
+            IntegrationEventLog row=integrationLogs.findFirstByExternalEventIdOrderByIdDesc(eventId).orElseThrow();
+            assertThat(row.status).isEqualTo(IntegrationEventStatus.FAILED);
+            assertThat(row.errorMessage).isEqualTo(reason);
+            assertThat(row.businessKey).isEqualTo("INBOUND_REJECTION:"+eventId);
+            assertThat(row.payload).contains(eventId).doesNotContain("data","private detail","30111222","unexpected");
+            assertThat(integrationLogs.findAll().stream().filter(x->row.businessKey.equals(x.businessKey))).hasSize(1);
+            assertThat(processedEvents.existsByExternalEventId(eventId)).isFalse();
+        }
+
+        var supervisor=new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("scrum685-audit-"+UUID.randomUUID(),null),null,
+            List.of(new SimpleGrantedAuthority("ROLE_SUPERVISOR")));
+        JsonNode visible=json.readTree(mvc.perform(get("/api/v1/integrations/events/"+unknownId).with(authentication(supervisor)))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+            .andReturn().getResponse().getContentAsString());
+        assertThat(visible.path("status").asText()).isEqualTo("FAILED");
+        assertThat(visible.path("errorMessage").asText()).isEqualTo("UNSUPPORTED_CORE_EVENT_TYPE");
+        assertThat(visible.path("payload").asText()).contains(unknownId.toString()).doesNotContain("30111222","data");
+
+        var rentas=new UsernamePasswordAuthenticationToken(new AuthenticatedIdentity("scrum685-audit-rentas-"+UUID.randomUUID(),null),null,
+            List.of(new SimpleGrantedAuthority("ROLE_RENTAS")));
+        mvc.perform(get("/api/v1/integrations/events/"+unknownId).with(authentication(rentas)))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isForbidden());
+    }
+
+    @Test void rejectionAuditDoesNotCollideWithAnExistingLogForTheExternalEventId() throws Exception {
+        UUID eventId=UUID.randomUUID();OffsetDateTime now=OffsetDateTime.now();
+        IntegrationEventLog prior=new IntegrationEventLog();prior.eventId=eventId;prior.externalEventId=eventId.toString();
+        prior.eventType="ticketUpdated";prior.sourceModule="atencion-ciudadana";prior.direction=EventDirection.INBOUND;
+        prior.status=IntegrationEventStatus.IGNORED;prior.payload="{}";prior.retryCount=0;prior.occurredAt=now;prior.receivedAt=now;
+        integrationLogs.saveAndFlush(prior);
+        String payload="""
+            {"eventId":"%s","eventType":"ticketCreated","eventVersion":"1.0","occurredAt":"%s","sourceModule":"atencion-ciudadana","data":{}}
+            """.formatted(eventId,now);
+
+        assertThatThrownBy(()->inbound.dispatch(payload)).isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("UNSUPPORTED_CORE_EVENT_TYPE");
+
+        IntegrationEventLog rejection=integrationLogs.findFirstByBusinessKeyOrderByIdDesc("INBOUND_REJECTION:"+eventId).orElseThrow();
+        assertThat(rejection.status).isEqualTo(IntegrationEventStatus.FAILED);
+        assertThat(rejection.eventId).isNotEqualTo(prior.eventId);
+        assertThat(rejection.externalEventId).isEqualTo(prior.externalEventId);
+        assertThat(integrationLogs.findById(prior.id)).isPresent();
+    }
+
+    @Test void rejectedRedeliveryDoesNotHideProcessedRouteOrBreakItsCausation() throws Exception {
+        String routed=contractFixture("M2_ticketUpdated_ROUTED_REAL.json");
+        JsonNode envelope=json.readTree(routed),data=envelope.path("data");
+        String eventId=envelope.path("eventId").asText();
+        UUID ticketId=UUID.fromString(data.path("ticketId").asText());
+        String correlationId=envelope.path("correlationId").asText();
+
+        inbound.dispatch(routed);
+        String unsupportedVersion=routed.replace("\"eventVersion\": \"1.0\"","\"eventVersion\": \"2.0\"")
+            .replace("\"eventVersion\":\"1.0\"","\"eventVersion\":\"2.0\"");
+        assertThat(unsupportedVersion).contains("2.0");
+        assertThatThrownBy(()->inbound.dispatch(unsupportedVersion)).isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("UNSUPPORTED_EVENT_VERSION");
+
+        IntegrationEventLog rejection=integrationLogs.findFirstByBusinessKeyOrderByIdDesc("INBOUND_REJECTION:"+eventId).orElseThrow();
+        assertThat(rejection.status).isEqualTo(IntegrationEventStatus.FAILED);
+        assertThat(integrationLogs.findFirstByExternalEventIdOrderByIdDesc(eventId)).get()
+            .extracting(log->log.status).isEqualTo(IntegrationEventStatus.FAILED);
+        assertThat(integrationInbox.processedLog(eventId)).get().satisfies(log->{
+            assertThat(log.status).isEqualTo(IntegrationEventStatus.PROCESSED);
+            assertThat(log.businessKey).isNull();
+        });
+        assertThat(integrationReprocess.get(eventId).status).isEqualTo(IntegrationEventStatus.PROCESSED);
+
+        TicketCase ticket=ticketCases.findByExternalTicketId(ticketId.toString()).orElseThrow();
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+            new AuthenticatedIdentity("postgres-it-m2-cause",null,UUID.fromString("3b9f1c52-6a7e-4d08-9c41-5e2a8d7f0b13")),
+            null,List.of(new SimpleGrantedAuthority("ROLE_RENTAS"))));
+        try { ticketService.assign(ticket.id); }
+        finally { SecurityContextHolder.clearContext(); }
+
+        JsonNode started=outbox.findAll().stream().filter(event->"updateTicketStatus".equals(event.eventType))
+            .map(event->{try{return json.readTree(event.payload);}catch(Exception ex){throw new AssertionError(ex);}})
+            .filter(event->"STARTED".equals(event.path("data").path("updateType").asText()))
+            .filter(event->ticketId.toString().equals(event.path("data").path("ticketId").asText()))
+            .findFirst().orElseThrow();
+        assertThat(started.path("correlationId").asText()).isEqualTo(correlationId);
+        assertThat(started.path("causationId").asText()).isEqualTo(eventId);
+    }
+
+    @Test void concurrentRejectionRedeliveriesCreateOneSanitizedAuditRow() throws Exception {
+        UUID eventId=UUID.randomUUID();
+        String payload="""
+            {"eventId":"%s","eventType":"ticketCreated","eventVersion":"1.0","occurredAt":"2026-11-15T10:00:00-03:00","sourceModule":"atencion-ciudadana","data":{"privateMessage":"do not store"}}
+            """.formatted(eventId);
+        List<Throwable> failures=runTogether(()->{inbound.dispatch(payload);return null;},()->{inbound.dispatch(payload);return null;});
+        assertThat(failures).hasSize(2).allSatisfy(failure->assertThat(failure).isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("UNSUPPORTED_CORE_EVENT_TYPE"));
+        assertThat(jdbc.queryForObject("select count(*) from integration_event_log where business_key=?",Long.class,
+            "INBOUND_REJECTION:"+eventId)).isEqualTo(1L);
+        IntegrationEventLog row=integrationLogs.findFirstByBusinessKeyOrderByIdDesc("INBOUND_REJECTION:"+eventId).orElseThrow();
+        assertThat(row.payload).contains(eventId.toString()).doesNotContain("privateMessage","do not store");
+    }
+
+    @Test void sanitizedPermanentRejectionCannotBeReprocessedAsOriginalPayload() {
+        UUID eventId=UUID.randomUUID();
+        String payload="""
+            {"eventId":"%s","eventType":"ticketCreated","eventVersion":"1.0","occurredAt":"2026-11-15T10:00:00-03:00","sourceModule":"atencion-ciudadana","data":{"privateMessage":"do not store"}}
+            """.formatted(eventId);
+        assertThatThrownBy(()->inbound.dispatch(payload)).isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("UNSUPPORTED_CORE_EVENT_TYPE");
+        IntegrationEventLog row=integrationLogs.findFirstByBusinessKeyOrderByIdDesc("INBOUND_REJECTION:"+eventId).orElseThrow();
+
+        assertThatThrownBy(()->integrationReprocess.reprocess(eventId.toString(),"retry request"))
+            .isInstanceOfSatisfying(BusinessException.class,error->{
+                assertThat(error.code).isEqualTo("INBOUND_REJECTION_NOT_REPROCESSABLE");
+                assertThat(error.status).isEqualTo(409);
+            });
+        IntegrationEventLog unchanged=integrationLogs.findById(row.id).orElseThrow();
+        assertThat(unchanged.status).isEqualTo(IntegrationEventStatus.FAILED);
+        assertThat(unchanged.retryCount).isZero();
+        assertThat(unchanged.payload).doesNotContain("privateMessage","do not store");
+    }
+
+    @Test void malformedJsonIsStoredAsSanitizedIdempotentRejection() {
+        String malformed="""
+            {"eventId":"private-event","eventType":"ticketUpdated","sourceModule":"atencion-ciudadana","data":{"dni":"30111222","password":"never-store"}
+            """;
+        OffsetDateTime startedAt=OffsetDateTime.now().minusSeconds(1);
+
+        assertThatThrownBy(()->inbound.dispatch(malformed)).isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("INVALID_CORE_ENVELOPE");
+        IntegrationEventLog rejection=integrationLogs.findAll().stream()
+            .filter(row->row.errorMessage!=null&&row.errorMessage.equals("INVALID_CORE_ENVELOPE"))
+            .filter(row->row.externalEventId!=null&&row.externalEventId.startsWith("rejected:"))
+            .filter(row->row.receivedAt.isAfter(startedAt)).max(java.util.Comparator.comparing(row->row.id)).orElseThrow();
+        assertThat(rejection.status).isEqualTo(IntegrationEventStatus.FAILED);
+        assertThat(rejection.payload).doesNotContain("private-event","30111222","password","data");
+
+        assertThatThrownBy(()->inbound.dispatch(malformed)).isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("INVALID_CORE_ENVELOPE");
+        assertThat(integrationLogs.findAll().stream().filter(row->rejection.businessKey.equals(row.businessKey))).hasSize(1);
     }
 
     @Test void m7OffsetCorrectedCounterfactualOnlyProcessesWithLocalIdentityAndConcept() throws Exception {
@@ -1204,11 +1373,14 @@ class PostgreSqlIntegrationTest {
     }
 
     @Test void contextStartsAndFlywayAppliesEveryMigration(){
-        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(33);
-        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(32);
+        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(36);
+        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(35);
         assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version='29'",Integer.class)).isOne();
         assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version='31'",Integer.class)).isOne();
         assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version='33'",Integer.class)).isOne();
+        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version='34'",Integer.class)).isOne();
+        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version='35'",Integer.class)).isOne();
+        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version='36'",Integer.class)).isOne();
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='tax_configuration'",String.class)).contains("submitted_by");
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='liquidation_run'",String.class)).contains("submitted_by");
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='social_benefit_rule'",String.class)).contains("submitted_by");
@@ -1905,6 +2077,170 @@ class PostgreSqlIntegrationTest {
         }
     }
 
+    @Test void replayedProcessedCitizenRegistrationRepairsCanonicalLinkBeforePublishingOneDebtOverdue() throws Exception {
+        authenticate();
+        UUID citizenId=UUID.randomUUID(),eventId=UUID.randomUUID();OffsetDateTime occurredAt=OffsetDateTime.now();
+        TaxpayerReference citizen=taxpayer(TaxpayerType.CITIZEN,citizenId.toString(),uniqueDigits(8),null);
+        String payload=processedCitizenEnvelope(eventId,citizenId,occurredAt);
+        recordProcessedInbound(eventId,payload,occurredAt);
+        long logCountBefore=integrationLogs.count(),processedCountBefore=processedEvents.count();
+
+        inbound.dispatch(payload);
+
+        TaxpayerReference linked=taxpayers.findById(citizen.id).orElseThrow();
+        assertThat(linked.canonicalCitizenId).isEqualTo(citizenId);
+        assertThat(linked.externalId).isEqualTo(citizenId.toString());
+        assertThat(linked.externalStatus).isEqualTo(TaxpayerStatus.ACTIVE);
+        assertThat(linked.dni).isEqualTo(citizen.dni);
+        assertThat(integrationLogs.count()).isEqualTo(logCountBefore);
+        assertThat(processedEvents.count()).isEqualTo(processedCountBefore);
+        assertThat(auditoria.findAll().stream().filter(entry->entry.action.equals("CANONICAL_CITIZEN_ID_REPAIRED_FROM_M1_EVENT")&&entry.newData.contains(eventId.toString()))).hasSize(1);
+
+        inbound.dispatch(payload);
+        assertThat(auditoria.findAll().stream().filter(entry->entry.action.equals("CANONICAL_CITIZEN_ID_REPAIRED_FROM_M1_EVENT")&&entry.newData.contains(eventId.toString()))).hasSize(1);
+
+        Debt eligible=debt("REPLAYED-CITIZEN-"+UUID.randomUUID(),citizen.id);
+        LocalDate processingDate=uniqueProcessingDate(eligible.id,0);eligible.dueDate=processingDate.minusDays(1);debts.saveAndFlush(eligible);
+        dueDates.process(processingDate);
+        List<OutboxEvent> events=overdueEvents(eligible);
+        assertThat(events).hasSize(1);
+        OutboxEvent event=events.get(0);var envelope=json.readTree(event.payload);var data=envelope.path("data");
+        assertThat(event.id.toString()).isEqualTo(envelope.path("eventId").asText());
+        assertThat(envelope.path("eventType").asText()).isEqualTo("debtOverdue");
+        assertThat(envelope.path("eventVersion").asText()).isEqualTo("1.0");
+        assertThat(envelope.path("sourceModule").asText()).isEqualTo("rentas");
+        assertThat(data.path("debtId").asText()).isEqualTo(eligible.integrationId.toString());
+        assertThat(data.path("citizenId").asText()).isEqualTo(citizenId.toString());
+
+        dueDates.process(processingDate);
+        assertThat(overdueEvents(eligible)).hasSize(1);
+    }
+
+    @Test void processedCitizenReplayDoesNotOverwriteAContradictoryCanonicalIdentity() {
+        UUID citizenId=UUID.randomUUID(),eventId=UUID.randomUUID();OffsetDateTime occurredAt=OffsetDateTime.now();
+        TaxpayerReference citizen=taxpayer(TaxpayerType.CITIZEN,citizenId.toString(),uniqueDigits(8),null);
+        UUID existingCanonical=UUID.randomUUID();citizen.canonicalCitizenId=existingCanonical;taxpayers.saveAndFlush(citizen);
+        String payload=processedCitizenEnvelope(eventId,citizenId,occurredAt);recordProcessedInbound(eventId,payload,occurredAt);
+
+        assertThatThrownBy(()->inbound.dispatch(payload)).isInstanceOfSatisfying(BusinessException.class,
+            ex->assertThat(ex.code).isEqualTo("CANONICAL_CITIZEN_LINK_CONFLICT"));
+        assertThat(taxpayers.findById(citizen.id).orElseThrow().canonicalCitizenId).isEqualTo(existingCanonical);
+        assertThat(auditoria.findAll().stream().noneMatch(entry->entry.action.equals("CANONICAL_CITIZEN_ID_REPAIRED_FROM_M1_EVENT")&&entry.newData.contains(eventId.toString()))).isTrue();
+    }
+
+    @Test void processedCitizenReplayWithoutHistoricalPayloadDoesNotGuessCanonicalIdentity() throws Exception {
+        UUID citizenId=UUID.randomUUID(),eventId=UUID.randomUUID();OffsetDateTime occurredAt=OffsetDateTime.now();
+        TaxpayerReference citizen=taxpayer(TaxpayerType.CITIZEN,citizenId.toString(),uniqueDigits(8),null);
+        recordProcessedInbound(eventId,"",occurredAt);
+
+        inbound.dispatch(processedCitizenEnvelope(eventId,citizenId,occurredAt));
+
+        assertThat(taxpayers.findById(citizen.id).orElseThrow().canonicalCitizenId).isNull();
+        assertThat(auditoria.findAll().stream().noneMatch(entry->entry.action.equals("CANONICAL_CITIZEN_ID_REPAIRED_FROM_M1_EVENT")&&entry.newData.contains(eventId.toString()))).isTrue();
+    }
+
+    @Test void processedCitizenReplayRejectsMalformedOrMismatchedHistoricalEvidence() {
+        assertNoCanonicalRepair(UUID.randomUUID(),"{",EventDirection.INBOUND,IntegrationEventStatus.PROCESSED,"citizenUpdated","ciudadanos");
+
+        UUID eventId=UUID.randomUUID(),citizenId=UUID.randomUUID();OffsetDateTime occurredAt=OffsetDateTime.now();
+        String valid=processedCitizenEnvelope(eventId,citizenId,occurredAt);
+        List<String> mismatches=List.of(
+            valid.replace(eventId.toString(),UUID.randomUUID().toString()),
+            valid.replace("\"eventType\":\"citizenUpdated\"","\"eventType\":\"otherEvent\""),
+            valid.replace("\"sourceModule\":\"ciudadanos\"","\"sourceModule\":\"otro-modulo\""),
+            valid.replace(citizenId.toString(),UUID.randomUUID().toString()),
+            valid.replace("\"updateType\":\"REGISTERED\"","\"updateType\":\"UPDATED\"")
+        );
+        for(String historicalPayload:mismatches){
+            UUID replayId=UUID.randomUUID(),replayCitizenId=UUID.randomUUID();OffsetDateTime replayAt=OffsetDateTime.now();
+            String replay=processedCitizenEnvelope(replayId,replayCitizenId,replayAt);
+            TaxpayerReference taxpayer=taxpayer(TaxpayerType.CITIZEN,replayCitizenId.toString(),uniqueDigits(8),null);
+            String historical=historicalPayload.replace(eventId.toString(),replayId.toString()).replace(citizenId.toString(),replayCitizenId.toString());
+            recordProcessedInbound(replayId,historical,replayAt);
+
+            inbound.dispatch(replay);
+
+            assertThat(taxpayers.findById(taxpayer.id).orElseThrow().canonicalCitizenId).as("historical payload mismatch").isNull();
+            assertThat(auditoria.findAll().stream().noneMatch(entry->entry.action.equals("CANONICAL_CITIZEN_ID_REPAIRED_FROM_M1_EVENT")&&entry.newData.contains(replayId.toString()))).isTrue();
+        }
+    }
+
+    @Test void processedCitizenReplayRequiresLatestProcessedInboundEvidence() {
+        UUID missingLogEvent=UUID.randomUUID(),missingLogCitizen=UUID.randomUUID();OffsetDateTime now=OffsetDateTime.now();
+        TaxpayerReference noLog=taxpayer(TaxpayerType.CITIZEN,missingLogCitizen.toString(),uniqueDigits(8),null);
+        recordProcessedMarker(missingLogEvent,now);
+        inbound.dispatch(processedCitizenEnvelope(missingLogEvent,missingLogCitizen,now));
+        assertThat(taxpayers.findById(noLog.id).orElseThrow().canonicalCitizenId).isNull();
+
+        UUID failedLogEvent=UUID.randomUUID(),failedLogCitizen=UUID.randomUUID();OffsetDateTime failedAt=OffsetDateTime.now();
+        TaxpayerReference failedLog=taxpayer(TaxpayerType.CITIZEN,failedLogCitizen.toString(),uniqueDigits(8),null);
+        recordProcessedInbound(failedLogEvent,processedCitizenEnvelope(failedLogEvent,failedLogCitizen,failedAt),failedAt,
+            EventDirection.INBOUND,IntegrationEventStatus.FAILED,"citizenUpdated","ciudadanos");
+        inbound.dispatch(processedCitizenEnvelope(failedLogEvent,failedLogCitizen,failedAt));
+        assertThat(taxpayers.findById(failedLog.id).orElseThrow().canonicalCitizenId).isNull();
+
+        UUID outboundEvent=UUID.randomUUID(),outboundCitizen=UUID.randomUUID();OffsetDateTime outboundAt=OffsetDateTime.now();
+        TaxpayerReference outbound=taxpayer(TaxpayerType.CITIZEN,outboundCitizen.toString(),uniqueDigits(8),null);
+        recordProcessedInbound(outboundEvent,processedCitizenEnvelope(outboundEvent,outboundCitizen,outboundAt),outboundAt,
+            EventDirection.OUTBOUND,IntegrationEventStatus.PROCESSED,"citizenUpdated","ciudadanos");
+        inbound.dispatch(processedCitizenEnvelope(outboundEvent,outboundCitizen,outboundAt));
+        assertThat(taxpayers.findById(outbound.id).orElseThrow().canonicalCitizenId).isNull();
+
+        UUID typeColumnEvent=UUID.randomUUID(),typeColumnCitizen=UUID.randomUUID();OffsetDateTime typeColumnAt=OffsetDateTime.now();
+        TaxpayerReference wrongTypeColumn=taxpayer(TaxpayerType.CITIZEN,typeColumnCitizen.toString(),uniqueDigits(8),null);
+        recordProcessedInbound(typeColumnEvent,processedCitizenEnvelope(typeColumnEvent,typeColumnCitizen,typeColumnAt),typeColumnAt,
+            EventDirection.INBOUND,IntegrationEventStatus.PROCESSED,"otherEvent","ciudadanos");
+        inbound.dispatch(processedCitizenEnvelope(typeColumnEvent,typeColumnCitizen,typeColumnAt));
+        assertThat(taxpayers.findById(wrongTypeColumn.id).orElseThrow().canonicalCitizenId).isNull();
+
+        UUID sourceColumnEvent=UUID.randomUUID(),sourceColumnCitizen=UUID.randomUUID();OffsetDateTime sourceColumnAt=OffsetDateTime.now();
+        TaxpayerReference wrongSourceColumn=taxpayer(TaxpayerType.CITIZEN,sourceColumnCitizen.toString(),uniqueDigits(8),null);
+        recordProcessedInbound(sourceColumnEvent,processedCitizenEnvelope(sourceColumnEvent,sourceColumnCitizen,sourceColumnAt),sourceColumnAt,
+            EventDirection.INBOUND,IntegrationEventStatus.PROCESSED,"citizenUpdated","otro-modulo");
+        inbound.dispatch(processedCitizenEnvelope(sourceColumnEvent,sourceColumnCitizen,sourceColumnAt));
+        assertThat(taxpayers.findById(wrongSourceColumn.id).orElseThrow().canonicalCitizenId).isNull();
+    }
+
+    @Test void processedCitizenReplayDoesNotDuplicateAnExistingCanonicalLinkOrAudit() {
+        UUID citizenId=UUID.randomUUID(),eventId=UUID.randomUUID();OffsetDateTime occurredAt=OffsetDateTime.now();
+        TaxpayerReference citizen=taxpayer(TaxpayerType.CITIZEN,citizenId.toString(),uniqueDigits(8),null);
+        citizen.canonicalCitizenId=citizenId;taxpayers.saveAndFlush(citizen);
+        recordProcessedInbound(eventId,processedCitizenEnvelope(eventId,citizenId,occurredAt),occurredAt);
+        long auditCountBefore=auditoria.count();
+
+        inbound.dispatch(processedCitizenEnvelope(eventId,citizenId,occurredAt));
+
+        assertThat(taxpayers.findById(citizen.id).orElseThrow().canonicalCitizenId).isEqualTo(citizenId);
+        assertThat(auditoria.count()).isEqualTo(auditCountBefore);
+    }
+
+    @Test void processedCitizenReplayRejectsCanonicalUuidAlreadyOwnedByAnotherReference() {
+        UUID citizenId=UUID.randomUUID(),eventId=UUID.randomUUID();OffsetDateTime occurredAt=OffsetDateTime.now();
+        TaxpayerReference externalReference=taxpayer(TaxpayerType.CITIZEN,citizenId.toString(),uniqueDigits(8),null);
+        TaxpayerReference otherReference=taxpayer(TaxpayerType.CITIZEN,"OTHER-"+UUID.randomUUID(),uniqueDigits(8),null);
+        otherReference.canonicalCitizenId=citizenId;taxpayers.saveAndFlush(otherReference);
+        recordProcessedInbound(eventId,processedCitizenEnvelope(eventId,citizenId,occurredAt),occurredAt);
+
+        assertThatThrownBy(()->inbound.dispatch(processedCitizenEnvelope(eventId,citizenId,occurredAt)))
+            .isInstanceOfSatisfying(BusinessException.class,ex->assertThat(ex.code).isEqualTo("CITIZEN_REFERENCE_CONFLICT"));
+        assertThat(taxpayers.findById(externalReference.id).orElseThrow().canonicalCitizenId).isNull();
+        assertThat(taxpayers.findById(otherReference.id).orElseThrow().canonicalCitizenId).isEqualTo(citizenId);
+    }
+
+    @Test void concurrentProcessedCitizenReplaysRepairAndAuditOnlyOnce() throws Exception {
+        UUID citizenId=UUID.randomUUID(),eventId=UUID.randomUUID();OffsetDateTime occurredAt=OffsetDateTime.now();
+        TaxpayerReference citizen=taxpayer(TaxpayerType.CITIZEN,citizenId.toString(),uniqueDigits(8),null);
+        String payload=processedCitizenEnvelope(eventId,citizenId,occurredAt);recordProcessedInbound(eventId,payload,occurredAt);
+        long logCount=integrationLogs.count(),processedCount=processedEvents.count();
+
+        assertThat(runTogether(()->{inbound.dispatch(payload);return null;},()->{inbound.dispatch(payload);return null;})).containsOnlyNulls();
+
+        assertThat(taxpayers.findById(citizen.id).orElseThrow().canonicalCitizenId).isEqualTo(citizenId);
+        assertThat(integrationLogs.count()).isEqualTo(logCount);
+        assertThat(processedEvents.count()).isEqualTo(processedCount);
+        assertThat(auditoria.findAll().stream().filter(entry->entry.action.equals("CANONICAL_CITIZEN_ID_REPAIRED_FROM_M1_EVENT")&&entry.newData.contains(eventId.toString()))).hasSize(1);
+    }
+
     @Test void debtOverdueSnapshotRemainsPreChargeAndReprocessingDoesNotDuplicateOutboxOrCharge() throws Exception {
         authenticate();
         TaxpayerReference citizen=taxpayer(TaxpayerType.CITIZEN,"PG-OVERDUE-SNAPSHOT-"+UUID.randomUUID(),uniqueDigits(8),null);
@@ -2477,6 +2813,32 @@ class PostgreSqlIntegrationTest {
     }
 
     private void assertEquation(Payment payment){Payment stored=paymentRepository.findById(payment.id).orElseThrow();assertThat(stored.allocatedAmount.add(stored.unallocatedAmount)).isEqualByComparingTo(stored.amount);}
+    private String processedCitizenEnvelope(UUID eventId,UUID citizenId,OffsetDateTime occurredAt){return """
+        {"eventId":"%s","eventType":"citizenUpdated","eventVersion":"1.0","occurredAt":"%s",
+         "sourceModule":"ciudadanos","correlationId":"%s","data":{"citizenId":"%s","updateType":"REGISTERED",
+         "details":{"dni":"30123456","cuil":"20301234567","name":"Persona","lastname":"Sintetica","birthdate":"1990-04-12","state":"ACTIVE"},
+         "updatedBy":{"type":"SELF_SERVICE"}}}
+        """.formatted(eventId,occurredAt,UUID.randomUUID(),citizenId);}
+    private void assertNoCanonicalRepair(UUID eventId,String payload,EventDirection direction,IntegrationEventStatus status,String eventType,String sourceModule){
+        UUID citizenId=UUID.randomUUID();OffsetDateTime at=OffsetDateTime.now();
+        TaxpayerReference taxpayer=taxpayer(TaxpayerType.CITIZEN,citizenId.toString(),uniqueDigits(8),null);
+        recordProcessedInbound(eventId,payload,at,direction,status,eventType,sourceModule);
+        inbound.dispatch(processedCitizenEnvelope(eventId,citizenId,at));
+        assertThat(taxpayers.findById(taxpayer.id).orElseThrow().canonicalCitizenId).isNull();
+        assertThat(auditoria.findAll().stream().noneMatch(entry->entry.action.equals("CANONICAL_CITIZEN_ID_REPAIRED_FROM_M1_EVENT")&&entry.newData.contains(eventId.toString()))).isTrue();
+    }
+    private void recordProcessedInbound(UUID eventId,String payload,OffsetDateTime at){
+        recordProcessedInbound(eventId,payload,at,EventDirection.INBOUND,IntegrationEventStatus.PROCESSED,"citizenUpdated","ciudadanos");
+    }
+    private void recordProcessedInbound(UUID eventId,String payload,OffsetDateTime at,EventDirection direction,IntegrationEventStatus status,String eventType,String sourceModule){
+        IntegrationEventLog log=new IntegrationEventLog();log.eventId=eventId;log.externalEventId=eventId.toString();
+        log.eventType=eventType;log.sourceModule=sourceModule;log.direction=direction;
+        log.status=status;log.payload=payload;log.retryCount=0;log.occurredAt=at;log.receivedAt=at;log.processedAt=at;
+        integrationLogs.saveAndFlush(log);ProcessedEvent prior=new ProcessedEvent();prior.eventId=eventId;
+        prior.externalEventId=eventId.toString();prior.eventType="citizenUpdated";prior.sourceModule="ciudadanos";
+        prior.receivedAt=at;prior.processedAt=at;processedEvents.saveAndFlush(prior);
+    }
+    private void recordProcessedMarker(UUID eventId,OffsetDateTime at){ProcessedEvent prior=new ProcessedEvent();prior.eventId=eventId;prior.externalEventId=eventId.toString();prior.eventType="citizenUpdated";prior.sourceModule="ciudadanos";prior.receivedAt=at;prior.processedAt=at;processedEvents.saveAndFlush(prior);}
     private DueDateProcessing planStageRun(LocalDate date,long afterPlanId){DueDateProcessing run=new DueDateProcessing();run.processingDate=date;run.status=DueDateRunStatus.PROCESSING;run.processingStage=DueDateProcessingStage.PLANS;run.attemptCount=1;run.lastProcessedId=afterPlanId;run.requestedAt=OffsetDateTime.now();run.startedAt=run.requestedAt;run.processedBy="postgres-it";return dueDateRuns.saveAndFlush(run);}
     private LocalDate uniqueProcessingDate(Long debtId,int offset){return LocalDate.of(1900,1,1).plusDays(debtId*10+offset);}
     private List<OutboxEvent> overdueEvents(Debt debt){return outbox.findAll().stream().filter(x->x.eventType.equals("debtOverdue")&&x.targetModule.equals("CORE")&&x.aggregateType.equals("Debt")&&x.aggregateId.equals(debt.id.toString())).toList();}

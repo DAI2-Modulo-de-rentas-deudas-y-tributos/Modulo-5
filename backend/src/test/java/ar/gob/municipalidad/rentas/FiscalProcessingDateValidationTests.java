@@ -77,7 +77,7 @@ class FiscalProcessingDateValidationTests {
         AdjustmentRepository adjustments=mock(AdjustmentRepository.class);
         AuditService audit=mock(AuditService.class);
         CurrentIdentity lateChargeIdentity=mock(CurrentIdentity.class);
-        LateChargeService lateCharges=new LateChargeService(debts,rules,applications,adjustments,audit,lateChargeIdentity,dates);
+        LateChargeService lateCharges=new LateChargeService(debts,rules,applications,adjustments,audit,lateChargeIdentity,dates,mock(BillLifecycleService.class));
         assertThatThrownBy(()->lateCharges.preview(123L,dates.today().plusDays(1)))
             .isInstanceOfSatisfying(BusinessException.class,ex->assertThat(ex.code).isEqualTo("FUTURE_DATE_NOT_ALLOWED"));
         assertThatThrownBy(()->lateCharges.apply(123L,dates.today().plusDays(1)))

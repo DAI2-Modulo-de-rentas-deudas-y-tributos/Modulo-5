@@ -17,7 +17,6 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @ActiveProfiles("test")
@@ -28,45 +27,31 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class M2TicketEventTests {
     @Autowired MockMvc mvc;
     @Autowired TicketCaseRepository tickets;
-    @Autowired TicketCaseUpdateRepository updates;
-    @Autowired ProcessedEventRepository processed;
     @Autowired IntegrationEventLogRepository eventLog;
     @Autowired IntegrationReprocessService reprocess;
-    @Autowired OutboxRepository outbox;
     @Autowired DemoUserRepository demoUsers; @Autowired TaxpayerRepository taxpayers;
     @Autowired PasswordEncoder encoder; @Autowired DemoAuthService demoAuth;
 
-    @Test void simulaElAdaptadorLegadoSinPublicarUnEventoCoreInvalido() throws Exception {
-        UUID createdId=UUID.randomUUID();
-        String created="""
-            {"eventId":"%s","eventType":"ticketCreated","occurredAt":"2026-09-03T10:00:00-03:00","sourceModule":"M2","data":{"ticketId":1001,"citizenId":123,"category":"RENTAS","description":"El pago no aparece imputado","priority":"HIGH"}}
-            """.formatted(createdId);
+    @Test void elEndpointDeEnvelopeLegadoYaNoEstaExpuesto() throws Exception {
+        mvc.perform(post("/api/v1/dev/integrations/m2/events").headers(supervisor())
+                .contentType(MediaType.APPLICATION_JSON).content("{}"))
+            .andExpect(status().isNotFound());
+    }
 
-        mvc.perform(post("/api/v1/dev/integrations/m2/events").headers(supervisor()).contentType(MediaType.APPLICATION_JSON).content(created))
-            .andExpect(status().isAccepted()).andExpect(jsonPath("$.externalTicketId").value("1001")).andExpect(jsonPath("$.status").value("OPEN"));
-        mvc.perform(post("/api/v1/dev/integrations/m2/events").headers(supervisor()).contentType(MediaType.APPLICATION_JSON).content(created))
-            .andExpect(status().isAccepted());
+    @Test void elEndpointConfirmadoDeCoreSigueAceptandoTicketUpdatedIdempotente() throws Exception {
+        UUID ticketId=UUID.randomUUID();
+        long countBefore=tickets.count();
+        String event="""
+            {"eventId":"%s","eventType":"ticketUpdated","eventVersion":"1.0","occurredAt":"2026-11-20T10:00:00-03:00","sourceModule":"atencion-ciudadana","correlationId":"%s","data":{"ticketId":"%s","publicId":"TK-2026-TEST-772","citizenId":null,"isAnonymous":true,"responsibleAreaId":"M5","updateType":"ROUTED","currentStatus":"ROUTED","currentPriority":"HIGH","progress":null,"publicMessage":null,"details":{"routing":{"requestType":"Informar un pago no registrado","category":"Pagos y deudas","subcategory":"Pagos","ticketType":"COMPLAINT","summary":"Pago no registrado","description":"El ciudadano informa que abonó pero el pago no figura.","formData":{},"location":null,"resolutionDueAt":"2026-11-30T19:00:00-03:00","escalation":{"active":false}}},"attachments":[],"updatedAt":"2026-11-20T10:00:00-03:00"}}
+            """.formatted(UUID.randomUUID(),UUID.randomUUID(),ticketId);
 
-        TicketCase ticket=tickets.findByExternalTicketId("1001").orElseThrow();
-        assertThat(ticket.category).isEqualTo("RENTAS");
-        assertThat(ticket.requestType).isNull();
-        assertThat(ticket.subcategory).isNull();
-        assertThat(processed.existsByExternalEventId(createdId.toString())).isTrue();
-        assertThat(eventLog.findFirstByExternalEventIdOrderByIdDesc(createdId.toString()).orElseThrow().status).isEqualTo(IntegrationEventStatus.PROCESSED);
+        for(int delivery=0;delivery<2;delivery++)
+            mvc.perform(post("/api/v1/dev/integrations/m2/core-events").headers(supervisor())
+                    .contentType(MediaType.APPLICATION_JSON).content(event))
+                .andExpect(status().isAccepted());
 
-        UUID updatedId=UUID.randomUUID();
-        String updated="""
-            {"eventId":"%s","eventType":"ticketUpdated","occurredAt":"2026-09-03T10:05:00-03:00","sourceModule":"M2","data":{"ticketId":1001,"additionalInformation":"El ciudadano adjuntó información"}}
-            """.formatted(updatedId);
-        mvc.perform(post("/api/v1/dev/integrations/m2/events").headers(supervisor()).contentType(MediaType.APPLICATION_JSON).content(updated))
-            .andExpect(status().isAccepted()).andExpect(jsonPath("$.status").value("OPEN"));
-        mvc.perform(post("/api/v1/dev/integrations/m2/events").headers(supervisor()).contentType(MediaType.APPLICATION_JSON).content(updated))
-            .andExpect(status().isAccepted());
-        assertThat(updates.findByTicketCaseIdOrderByCreatedAt(ticket.id)).singleElement().extracting(x->x.message).isEqualTo("El ciudadano adjuntó información");
-
-        mvc.perform(post("/api/v1/tickets/{id}/assign",ticket.id).header("X-Demo-Session",new DemoAuthSessions(demoUsers,taxpayers,encoder,demoAuth).token(DemoRole.RENTAS)))
-            .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("IN_PROGRESS"));
-        assertThat(outbox.findAll()).noneMatch(x->x.eventType.equals("updateTicketStatus"));
+        assertThat(tickets.findByExternalTicketId(ticketId.toString())).isPresent();
+        assertThat(tickets.count()).isEqualTo(countBefore+1);
     }
 
     @Test @Transactional(propagation=Propagation.NOT_SUPPORTED) void reintentaUnEventoFallidoHastaEnviarloALaColaDeErrores() {

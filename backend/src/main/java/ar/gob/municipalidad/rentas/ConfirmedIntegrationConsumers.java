@@ -1,7 +1,10 @@
 package ar.gob.municipalidad.rentas;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -17,9 +20,11 @@ class ConfirmedM1Consumer {
     private final IntegrationInbox inbox;
     private final ConfirmedContractValidator validator;
     private final ObjectMapper json;
+    private final AuditService audit;
+    private final EntityManager entities;
 
     ConfirmedM1Consumer(TaxpayerRepository taxpayers,TaxpayerRepresentationRepository representations,
-        IntegrationInbox inbox,ConfirmedContractValidator validator,ObjectMapper json){this.taxpayers=taxpayers;this.representations=representations;this.inbox=inbox;this.validator=validator;this.json=json;}
+        IntegrationInbox inbox,ConfirmedContractValidator validator,ObjectMapper json,AuditService audit,EntityManager entities){this.taxpayers=taxpayers;this.representations=representations;this.inbox=inbox;this.validator=validator;this.json=json;this.audit=audit;this.entities=entities;}
 
     @Transactional TaxpayerReference consumeCitizen(ConfirmedInboundEvents.M1CitizenUpdatedEvent event){
         validator.validate(event);
@@ -37,7 +42,7 @@ class ConfirmedM1Consumer {
         CatalogService.require(byCanonical.isEmpty()||byExternalId.isEmpty()||byCanonical.get().id.equals(byExternalId.get().id),
             "CITIZEN_REFERENCE_CONFLICT","El UUID canónico y el ID externo apuntan a referencias distintas");
         Optional<TaxpayerReference> existing=byCanonical.isPresent()?byCanonical:byExternalId;
-        if(inbox.processed(normalized.eventId()))return existing.orElse(null);
+        if(inbox.processed(normalized.eventId()))return existing.map(taxpayer->repairCanonicalIdentity(taxpayer,canonicalId,normalized)).orElse(null);
         IntegrationEventLog log=inbox.receive(normalized,raw);
         existing=existing.map(reference->taxpayers.findByIdForUpdate(reference.id).orElseThrow(()->CatalogService.notFound("Contribuyente")));
         TaxpayerReference taxpayer;
@@ -50,6 +55,41 @@ class ConfirmedM1Consumer {
             default->throw new BusinessException("UNSUPPORTED_UPDATE_TYPE","Actualización de ciudadano no soportada",422);
         }
         inbox.complete(normalized,log);return taxpayer;
+    }
+
+    private TaxpayerReference repairCanonicalIdentity(TaxpayerReference existing,UUID canonicalId,NormalizedIntegrationEvent event){
+        if(existing.canonicalCitizenId!=null){
+            CatalogService.require(existing.canonicalCitizenId.equals(canonicalId),"CANONICAL_CITIZEN_LINK_CONFLICT","La referencia ya tiene otro UUID canónico");
+            return existing;
+        }
+        if(!inbox.processedLog(event.eventId()).filter(log->matchesCitizenIdentity(log,event,canonicalId)).isPresent())return existing;
+        TaxpayerReference locked=taxpayers.findByIdForUpdate(existing.id).orElseThrow(()->CatalogService.notFound("Contribuyente"));
+        entities.refresh(locked,LockModeType.PESSIMISTIC_WRITE);
+        CatalogService.require(locked.taxpayerType==TaxpayerType.CITIZEN&&locked.externalId.equals(canonicalId.toString()),
+            "CITIZEN_REFERENCE_CONFLICT","La referencia ya no coincide con la identidad recibida");
+        if(locked.canonicalCitizenId!=null){
+            CatalogService.require(locked.canonicalCitizenId.equals(canonicalId),"CANONICAL_CITIZEN_LINK_CONFLICT","La referencia ya tiene otro UUID canónico");
+            return locked;
+        }
+        CatalogService.require(taxpayers.findByTaxpayerTypeAndCanonicalCitizenId(TaxpayerType.CITIZEN,canonicalId)
+                .filter(reference->!reference.id.equals(locked.id)).isEmpty(),
+            "CANONICAL_CITIZEN_ID_ALREADY_LINKED","El UUID canónico ya está vinculado a otra referencia");
+        requireCanonicalIdentity(locked,canonicalId);locked.updatedAt=OffsetDateTime.now();taxpayers.save(locked);
+        audit.recordSecurityEvent("CANONICAL_CITIZEN_ID_REPAIRED_FROM_M1_EVENT","M1_CONSUMER","SYSTEM",
+            Map.of("taxpayerId",locked.id,"canonicalCitizenId",canonicalId,"sourceEventId",event.eventId()));
+        return locked;
+    }
+
+    private boolean matchesCitizenIdentity(IntegrationEventLog log,NormalizedIntegrationEvent event,UUID canonicalId){
+        if(log.payload==null||log.payload.isBlank()||log.direction!=EventDirection.INBOUND||!"citizenUpdated".equals(log.eventType)||!"ciudadanos".equals(log.sourceModule))return false;
+        try{
+            JsonNode original=json.readTree(log.payload);
+            return event.eventId().equals(original.path("eventId").asText())&&
+                "citizenUpdated".equals(original.path("eventType").asText())&&
+                "ciudadanos".equals(original.path("sourceModule").asText())&&
+                canonicalId.toString().equals(original.path("data").path("citizenId").asText())&&
+                event.payload().path("updateType").asText().equals(original.path("data").path("updateType").asText());
+        }catch(JsonProcessingException invalidPayload){return false;}
     }
 
     private void requireCanonicalIdentity(TaxpayerReference taxpayer,UUID canonicalId){
@@ -125,8 +165,9 @@ class ConfirmedM2Consumer {
         Optional<TicketCase> existing=tickets.findByExternalTicketIdForUpdate(ticketId);
         if(inbox.processed(event.eventId()))return existing.orElse(null);
         var normalized=new NormalizedIntegrationEvent(event.eventId().toString(),event.eventType(),event.occurredAt(),event.sourceModule(),ticketId,json.valueToTree(data),event.correlationId()==null?null:event.correlationId().toString());
-        if(!"M5".equals(data.responsibleAreaId())||isAdministrativeReclassification(data)){inbox.ignore(normalized);return null;}
-        if(existing.isEmpty()&&Set.of("REGISTERED","IN_REVIEW","DUPLICATE").contains(data.currentStatus())){inbox.ignore(normalized);return null;}
+        if(!"M5".equals(data.responsibleAreaId())){ignore(normalized,data,"RESPONSIBLE_AREA_OUTSIDE_M5");return null;}
+        if(isAdministrativeReclassification(data)){ignore(normalized,data,"ADMINISTRATIVE_RECLASSIFICATION");return null;}
+        if(existing.isEmpty()&&Set.of("REGISTERED","IN_REVIEW","DUPLICATE").contains(data.currentStatus())){ignore(normalized,data,"TICKET_NOT_ROUTED_TO_M5");return null;}
         if("ROUTED".equals(data.updateType()))validateRouting(data.details());
         IntegrationEventLog log=inbox.receive(normalized,event);
         TicketCase ticket=existing.orElseGet(TicketCase::new);
@@ -170,6 +211,15 @@ class ConfirmedM2Consumer {
             update.createdAt=data.updatedAt();updates.save(update);
         }
         inbox.complete(normalized,log);return ticket;
+    }
+
+    private void ignore(NormalizedIntegrationEvent event,ConfirmedInboundEvents.M2TicketUpdatedData data,String reason){
+        var audit=json.createObjectNode();audit.put("reason",reason);audit.put("eventId",event.eventId());
+        audit.put("eventType",event.eventType());audit.put("sourceModule",event.sourceModule());
+        audit.put("occurredAt",event.occurredAt().toString());if(event.correlationId()!=null)audit.put("correlationId",event.correlationId());
+        var fields=audit.putObject("data");fields.put("ticketId",data.ticketId().toString());
+        fields.put("responsibleAreaId",data.responsibleAreaId());fields.put("updateType",data.updateType());
+        fields.put("currentStatus",data.currentStatus());inbox.ignore(event,reason,audit);
     }
 
     private TicketCaseStatus nextStatus(TicketCase ticket,ConfirmedInboundEvents.M2TicketUpdatedData data){

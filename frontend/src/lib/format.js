@@ -65,6 +65,17 @@ export const formatCompactCurrency = (value) =>
 export const formatPercentage = (value) =>
   value === null || value === undefined ? "—" : `${Number(value).toFixed(0)}%`;
 
+export const billCancellationReasonLabel = (reason) => {
+  if (reason === "DEBT_BALANCE_CHANGED") return "Anulada porque cambió el saldo de una o más deudas.";
+  return reason ? `Motivo de anulación: ${reason}` : null;
+};
+
+export const billPresentationStatusLabel = (status) => ({
+  PAID: "Pagada",
+  PARTIAL_PAYMENT: "Pago parcial; boleta sin vigencia",
+  PAYMENT_REVERSED: "Pago revertido; boleta sin vigencia",
+}[status] ?? null);
+
 /** Etiquetas en español de los estados que viajan en los eventos. */
 export const STATUS_LABELS = {
   DRAFT: "Borrador",
@@ -84,6 +95,9 @@ export const STATUS_LABELS = {
   UNDER_REVIEW: "En evaluación del Supervisor",
   REFINANCED: "Refinanciado",
   CANCELLED: "Anulada",
+  PAID: "Pagada",
+  PARTIAL_PAYMENT: "Pago parcial",
+  PAYMENT_REVERSED: "Pago revertido",
   APPROVED: "Aprobada",
   REJECTED: "Rechazada",
   OPEN: "Abierto",

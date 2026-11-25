@@ -97,7 +97,7 @@ class SecurityConfig {
         return source;
     }
 
-    @Bean SecurityFilterChain securityFilterChain(HttpSecurity http, DevIdentityFilter filter,
+    @Bean SecurityFilterChain securityFilterChain(HttpSecurity http, DevIdentityFilter filter, CitizenSessionFilter citizenSessions,
             SecurityErrorResponseWriter errors, Environment environment) throws Exception {
         boolean publicDocs=!environment.acceptsProfiles(Profiles.of("prod", "staging"));
         return http.csrf(csrf -> csrf.disable())
@@ -117,11 +117,12 @@ class SecurityConfig {
                     .requestMatchers("/actuator/health", "/api/v1/health").permitAll();
                 if (publicDocs) auth.requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll();
                 auth
-                .requestMatchers(HttpMethod.POST, "/api/v1/dev-auth/login", "/api/v1/dev-auth/bootstrap").permitAll()
+                .requestMatchers(HttpMethod.POST, "/api/v1/dev-auth/login", "/api/v1/dev-auth/bootstrap", M1CitizenAuthController.LOGIN_PATH).permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/v1/**").authenticated()
                 .anyRequest().authenticated();
             })
             .addFilterBefore(filter, UsernamePasswordAuthenticationFilter.class)
+            .addFilterAfter(citizenSessions, DevIdentityFilter.class)
             .build();
     }
 }

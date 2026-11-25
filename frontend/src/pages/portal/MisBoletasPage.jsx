@@ -13,7 +13,7 @@ import BoletaDocument, { printBoleta } from "../../components/documentos/BoletaD
 import useResource from "../../hooks/useResource.js";
 import { portalService } from "../../services/rentasService.js";
 import { useAuth } from "../../context/AuthContext.jsx";
-import { formatCurrency, formatDate } from "../../lib/format.js";
+import { billCancellationReasonLabel, formatCurrency, formatDate } from "../../lib/format.js";
 
 /** Boletas emitidas al contribuyente, para descargar y pagar por los canales habilitados. */
 export default function MisBoletasPage() {
@@ -41,7 +41,7 @@ export default function MisBoletasPage() {
       render: (row) => (
         <div className="flex flex-col">
           <span className="font-medium tabular-nums text-neutral-800">#{row.id}</span>
-          <span className="text-[12px] tabular-nums text-neutral-400">{row.barcode}</span>
+          <span className="text-[12px] tabular-nums text-neutral-400">{row.status === "CANCELLED" ? "Código sin vigencia en M5" : row.barcode}</span>
         </div>
       ),
     },
@@ -70,7 +70,7 @@ export default function MisBoletasPage() {
       align: "right",
       render: (row) => formatCurrency(row.amount),
     },
-    { key: "status", header: "Estado", render: (row) => <StatusBadge status={row.status} /> },
+    { key: "status", header: "Estado", render: (row) => <div><StatusBadge status={row.presentationStatus ?? row.status} />{row.cancellationReason && row.presentationStatus !== "PAID" && <p className="mt-1 max-w-xs text-xs text-neutral-600">{billCancellationReasonLabel(row.cancellationReason)}</p>}</div> },
     { key: "issuedAt", header: "Emitida", render: (row) => formatDate(row.issuedAt) },
     {
       key: "actions",
@@ -119,7 +119,7 @@ export default function MisBoletasPage() {
               label: "Estado",
               options: [
                 { value: "ISSUED", label: "Emitida" },
-                { value: "SETTLED", label: "Cancelada" },
+                { value: "CANCELLED", label: "Anulada" },
                 { value: "EXPIRED", label: "Vencida" },
               ],
             },

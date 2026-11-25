@@ -68,7 +68,7 @@ class CoreM4Consumer {
         String businessKey=event.sourceModule()+":"+event.eventType()+":"+originId;
         var normalized=new NormalizedIntegrationEvent(event.eventId().toString(),event.eventType(),event.occurredAt(),
             event.sourceModule(),originId,json.valueToTree(event.data()),event.correlationId()==null?null:event.correlationId().toString());
-        var sameEvent=logs.findFirstByExternalEventIdOrderByIdDesc(event.eventId().toString());
+        var sameEvent=logs.findLatestNonRejectionByExternalEventId(event.eventId().toString());
         if(sameEvent.isPresent()){
             IntegrationEventLog original=sameEvent.orElseThrow();
             try{

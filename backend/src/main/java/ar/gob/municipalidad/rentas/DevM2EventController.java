@@ -19,17 +19,9 @@ import org.springframework.web.bind.annotation.RestController;
 @Profile("!prod & !staging")
 @ConditionalOnProperty(name="rentas.security.dev-mode",havingValue="true")
 class DevM2EventController {
-    private final TicketIntegrationService consumer;
     private final ConfirmedM2Consumer coreConsumer;
 
-    DevM2EventController(TicketIntegrationService consumer,ConfirmedM2Consumer coreConsumer){this.consumer=consumer;this.coreConsumer=coreConsumer;}
-
-    @PostMapping("/events")
-    @ResponseStatus(HttpStatus.ACCEPTED)
-    @PreAuthorize("hasAnyRole('SUPERVISOR','TECHNICAL')")
-    ApiDtos.TicketResponse simulate(@Valid @RequestBody ApiDtos.EventEnvelope<ApiDtos.TicketEventData> event){
-        return ApiResponses.of(consumer.consume(event));
-    }
+    DevM2EventController(ConfirmedM2Consumer coreConsumer){this.coreConsumer=coreConsumer;}
 
     @PostMapping("/core-events")
     @ResponseStatus(HttpStatus.ACCEPTED)

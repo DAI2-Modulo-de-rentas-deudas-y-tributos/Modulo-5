@@ -54,7 +54,8 @@ intervención manual y con datos propios.
 
 - Hasta integrar Core/JWT, PROD responde pero nadie puede iniciar sesión: el
   perfil `prod` no expone `/api/v1/dev-auth/*` y el modo `core` del frontend aún no
-  autentica.
+  autentica. Actualizado por el ADR 0012: los vecinos ingresan con su cuenta de
+  Ciudadanos (M1). El personal de Rentas sigue sin ingreso en PROD.
 - Las migraciones Flyway corren al iniciar la tarea nueva mientras la anterior
   sigue atendiendo, así que deben ser compatibles hacia atrás (expandir y luego
   contraer).

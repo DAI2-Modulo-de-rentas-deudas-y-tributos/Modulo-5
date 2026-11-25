@@ -178,7 +178,22 @@ Core/JWT todavía no tiene propiedades ni variables implementadas. Con `BROKER_A
 Con `RENTAS_SECURITY_DEV_MODE=true`, `DevIdentityFilter` resuelve la identidad
 desde `X-Demo-Session` contra `demo_auth_session` (hash SHA-256, TTL y revocación).
 No hay identidad por omisión ni privilegios vía `X-Dev-*`. `AUDITOR` sólo puede leer.
-Sin un proveedor Core/JWT configurado y con dev-mode desactivado el backend queda cerrado.
+Sin un proveedor Core/JWT configurado y con dev-mode desactivado el backend queda cerrado,
+salvo para los vecinos que ingresan con Ciudadanos.
+
+**Ingreso de vecinos con M1 (ADR 0012).** Con `M1_AUTH_ENABLED=true` y `M1_AUTH_BASE_URL`
+(un origen HTTPS sin ruta), `POST /api/v1/auth/m1/login` reenvía el correo y la contraseña (campos `gmail`/`password`) a
+`POST /auth/usuario/login` de M1. Acepta sólo `actorType=CIUDADANO` con un `citizenId` que
+corresponda a una referencia `CITIZEN` activa (`canonical_citizen_id`); si no existe, la crea en
+ese primer ingreso con el DNI, CUIL y nombre que devolvió M1, salvo que choque con otra
+referencia de ciudadano (DNI, CUIL o ID externo). Después emite una sesión
+opaca propia en `citizen_session`, con rol `TAXPAYER`. El cliente la envía como
+`Authorization: Bearer`; `CitizenSessionFilter` la resuelve en todos los perfiles, incluido
+`prod`. `GET /api/v1/auth/m1/me` devuelve el perfil y `POST /api/v1/auth/m1/logout` revoca la
+sesión. Códigos propios: `M1_CITIZEN_NOT_LINKED`, `M1_TAXPAYER_INACTIVE`,
+`M1_ACTOR_NOT_ALLOWED`, `M1_ACCOUNT_FORBIDDEN`, `M1_RATE_LIMITED`, `M1_UNAVAILABLE` (503),
+`M1_TIMEOUT` (504), `M1_INVALID_RESPONSE`/`M1_UPSTREAM_ERROR` (502) y `M1_AUTH_DISABLED` (503).
+El JWT de M1 se descarta: no hace falta su secreto.
 
 Cada solicitud recibe `X-Correlation-Id`; un valor entrante sólo se conserva si tiene formato seguro. El mismo identificador se usa en errores, logs y auditoría.
 
@@ -210,61 +225,64 @@ No hay endpoints productivos `/events/*`: un adapter de broker debe entregar `Ev
 
 ### Simulación local de eventos de tickets de M2
 
-Mientras el broker real no esté conectado, QA puede entregar `ticketCreated` y `ticketUpdated`
-al mismo consumidor mediante un adaptador HTTP exclusivo del modo de desarrollo. El endpoint
-no se registra cuando `RENTAS_SECURITY_DEV_MODE=false`.
+Mientras no se conecte el broker, el adaptador HTTP de desarrollo acepta el contrato confirmado
+`ticketUpdated` v1.0 en estado `ROUTED`. No simula `ticketCreated`. La ruta es
+`POST /api/v1/dev/integrations/m2/core-events`; solo se registra fuera de `prod` y `staging`
+cuando `RENTAS_SECURITY_DEV_MODE=true`. Esta simulación local no acredita entrega desde Core.
 
-Con PostgreSQL y el backend local iniciados con `RENTAS_SECURITY_DEV_MODE=true`:
+Con PostgreSQL y el backend local iniciados en modo de desarrollo, se puede enviar un envelope
+sintético con el mismo esquema que consume `ConfirmedM2Consumer`:
 
 ```powershell
 $headers = @{
   "X-Demo-Session" = "<token de POST /api/v1/dev-auth/login>"
 }
-
-$createdEventId = [guid]::NewGuid().ToString()
-$created = @{
-  eventId = $createdEventId
-  eventType = "ticketCreated"
-  occurredAt = "2026-09-03T10:00:00-03:00"
-  sourceModule = "M2"
-  data = @{
-    ticketId = 1001
-    citizenId = 123
-    category = "RENTAS"
-    description = "El pago no aparece imputado"
-    priority = "HIGH"
-  }
-} | ConvertTo-Json -Depth 5
-
-Invoke-RestMethod -Method Post `
-  -Uri "http://localhost:8080/api/v1/dev/integrations/m2/events" `
-  -Headers $headers -ContentType "application/json" -Body $created
-```
-
-Repetir exactamente el mismo body permite verificar la idempotencia por `eventId`: se devuelve
-el ticket existente y no se duplica el caso ni su evidencia de procesamiento.
-
-```powershell
-$updatedEventId = [guid]::NewGuid().ToString()
-$updated = @{
-  eventId = $updatedEventId
+$ticketId = [guid]::NewGuid().ToString()
+$event = @{
+  eventId = [guid]::NewGuid().ToString()
   eventType = "ticketUpdated"
-  occurredAt = "2026-09-03T10:05:00-03:00"
-  sourceModule = "M2"
+  eventVersion = "1.0"
+  occurredAt = "2026-11-20T10:00:00-03:00"
+  sourceModule = "atencion-ciudadana"
+  correlationId = [guid]::NewGuid().ToString()
   data = @{
-    ticketId = 1001
-    additionalInformation = "El ciudadano adjuntó información"
+    ticketId = $ticketId
+    publicId = "TK-2026-TEST-772"
+    citizenId = $null
+    isAnonymous = $true
+    responsibleAreaId = "M5"
+    updateType = "ROUTED"
+    currentStatus = "ROUTED"
+    currentPriority = "HIGH"
+    progress = $null
+    publicMessage = $null
+    details = @{
+      routing = @{
+        requestType = "Informar un pago no registrado"
+        category = "Pagos y deudas"
+        subcategory = "Pagos"
+        ticketType = "COMPLAINT"
+        summary = "Pago no registrado"
+        description = "El ciudadano informa que abonó pero el pago no figura."
+        formData = @{}
+        location = $null
+        resolutionDueAt = "2026-11-30T19:00:00-03:00"
+        escalation = @{ active = $false }
+      }
+    }
+    attachments = @()
+    updatedAt = "2026-11-20T10:00:00-03:00"
   }
-} | ConvertTo-Json -Depth 5
+} | ConvertTo-Json -Depth 8
 
 Invoke-RestMethod -Method Post `
-  -Uri "http://localhost:8080/api/v1/dev/integrations/m2/events" `
-  -Headers $headers -ContentType "application/json" -Body $updated
+  -Uri "http://localhost:8080/api/v1/dev/integrations/m2/core-events" `
+  -Headers $headers -ContentType "application/json" -Body $event
 ```
 
-El resultado se consulta en `GET /api/v1/tickets` y la evidencia técnica en
-`GET /api/v1/integrations/events`. Para tomar el ticket, un agente con rol `RENTAS` ejecuta
-`POST /api/v1/tickets/{id}/assign`: el caso pasa a `IN_PROGRESS` y M5 agrega
+Repetir exactamente el mismo body verifica la idempotencia por `eventId`: queda un solo caso.
+El ticket se consulta en `GET /api/v1/tickets` y la recepción en `GET /api/v1/integrations/events`.
+Para tomarlo, un agente `RENTAS` ejecuta `POST /api/v1/tickets/{id}/assign`; M5 agrega
 `updateTicketStatus` al transactional outbox para M2.
 
 El Outbox usa `PENDING`, `FAILED`, `DEAD_LETTER`, `LOCAL_ONLY` y `BROKER_CONFIRMED`. `LOCAL_ONLY` significa que el adaptador local sólo lo anotó en el log; `BROKER_CONFIRMED` acredita recepción por el broker, no procesamiento por M2. El estado histórico `PUBLISHED` es ambiguo: se conserva sin reclasificar. Por compatibilidad puede habilitar cadenas locales heredadas, pero no acredita entrega ni procesamiento por M2. Los reintentos de una misma fila conservan el JSON y el `eventId`. Una aceptación HTTP 202 de Core tampoco confirmaría que M2 consumió el evento.

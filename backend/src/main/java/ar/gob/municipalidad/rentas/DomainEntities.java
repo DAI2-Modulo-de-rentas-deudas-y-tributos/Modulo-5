@@ -224,6 +224,7 @@ class Bill {
     @Column(name="issue_date",nullable=false) public LocalDate issueDate;
     @Column(name="due_date",nullable=false) public LocalDate dueDate;
     @Enumerated(EnumType.STRING) @Column(nullable=false) public BillStatus status;
+    @Column(name="cancellation_reason",length=64) public String cancellationReason;
     @Column(name="created_by",nullable=false) public String createdBy;
     @Column(name="created_at",nullable=false) public OffsetDateTime createdAt;
     protected Bill() {}

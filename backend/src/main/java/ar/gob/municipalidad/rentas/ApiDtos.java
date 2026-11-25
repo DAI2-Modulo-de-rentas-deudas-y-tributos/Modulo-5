@@ -24,13 +24,13 @@ public final class ApiDtos {
     public record PaymentResponse(Long id,Long taxpayerId,Long billId,PaymentMethod paymentMethod,BigDecimal amount,BigDecimal allocatedAmount,BigDecimal unallocatedAmount,PaymentStatus status,PaymentAllocationStatus allocationStatus,PaymentOrigin origin,String receiptNumber,String registeredBy,OffsetDateTime paidAt,OffsetDateTime createdAt) {}
     public record PaymentAllocationResponse(Long id,Long paymentId,AllocationTargetType targetType,Long debtId,Long installmentId,BigDecimal amount,BigDecimal principalApplied,BigDecimal interestApplied,String status,String allocatedBy,OffsetDateTime allocatedAt,OffsetDateTime reversedAt) {}
     public record BillDebtResponse(Long debtId,BigDecimal amountAtIssue) {}
-    public record BillResponse(Long id,String number,Long taxpayerId,BigDecimal totalAmount,LocalDate issueDate,LocalDate dueDate,BillStatus status,boolean expired,String createdBy,OffsetDateTime createdAt,List<BillDebtResponse> debts) {}
+    public record BillResponse(Long id,String number,Long taxpayerId,BigDecimal totalAmount,LocalDate issueDate,LocalDate dueDate,BillStatus status,String cancellationReason,boolean expired,String createdBy,OffsetDateTime createdAt,List<BillDebtResponse> debts,String presentationStatus) {}
     public record BillDebtPricingResponse(Long debtId,BigDecimal amountAtIssue,BigDecimal currentAmount,BigDecimal outstandingBalance,
         BigDecimal issueDiscountAmount,BigDecimal issueExemptionAmount,BigDecimal issueSurchargeAmount,BigDecimal issueInterestAmount,
         BigDecimal appliedDiscountAmount,BigDecimal appliedSurchargeAmount,BigDecimal appliedInterestAmount,BigDecimal appliedCorrectionAmount,
         BigDecimal pendingSurchargeAmount,BigDecimal pendingInterestAmount,BigDecimal updatedPayableAmount) {}
     public record BillDetailResponse(Long id,String number,Long taxpayerId,BigDecimal totalAmount,LocalDate issueDate,LocalDate dueDate,
-        BillStatus status,boolean expired,String createdBy,OffsetDateTime createdAt,List<BillDebtResponse> debts,
+        BillStatus status,String cancellationReason,boolean expired,String createdBy,OffsetDateTime createdAt,List<BillDebtResponse> debts,String presentationStatus,
         BigDecimal updatedPayableAmount,OffsetDateTime calculatedAt,List<BillDebtPricingResponse> pricingDetails) {}
     public record CreditBalanceResponse(Long id,Long taxpayerId,Long sourcePaymentId,BigDecimal originalAmount,BigDecimal availableAmount,CreditBalanceStatus status,OffsetDateTime createdAt,OffsetDateTime updatedAt) {}
     public record CreditBalanceApplicationResponse(Long id,Long creditBalanceId,Long debtId,BigDecimal amount,String status,String appliedBy,OffsetDateTime appliedAt,OffsetDateTime reversedAt) {}
@@ -126,7 +126,7 @@ public final class ApiDtos {
         public AllocationRequest(Long debtId, BigDecimal amount) { this(debtId, null, amount); }
     }
     public record CreateBillRequest(@NotNull @Positive Long taxpayerId, @NotEmpty @Size(max=500) List<@NotNull @Positive Long> debtIds, @NotNull LocalDate dueDate) {}
-    public record BillDetail(Bill bill,List<BillDebt> debts) {}
+    public record BillDetail(Bill bill,List<BillDebt> debts,String presentationStatus) {}
     public record ReceiptResponse(String receiptNumber,Long paymentId,Long taxpayerId,BigDecimal amount,OffsetDateTime paidAt,String status) {}
     public record ElectronicPaymentRequest(@NotNull @Positive Long debtId,@NotNull PaymentMethod paymentMethod,@NotNull @Positive @CurrencyAmount BigDecimal amount) {}
     public record ElectronicPaymentPreview(Long debtId,BigDecimal requestedAmount,BigDecimal payableAmount,boolean approved,String message) {}

@@ -166,6 +166,24 @@ describe("bitácora de eventos", () => {
     await user.click(within(second).getByRole("button", { name: "Reprocesar" }));
     expect(await screen.findByText("El evento sigue pendiente")).toBeDefined();
   });
+
+  it("muestra motivos IGNORED en castellano sin exponer mensajes ni payload", async () => {
+    vi.spyOn(eventService, "list").mockResolvedValue([
+      { eventId: "ignored-area", eventType: "ticketUpdated", occurredAt: "2026-11-18T10:00:00Z", status: "IGNORED", direction: "IN", errorMessage: "RESPONSIBLE_AREA_OUTSIDE_M5" },
+      { eventId: "ignored-admin", eventType: "ticketUpdated", occurredAt: "2026-11-18T10:01:00Z", status: "IGNORED", direction: "IN", payload: JSON.stringify({ reason: "ADMINISTRATIVE_RECLASSIFICATION", publicMessage: "mensaje reservado", attachments: ["privado.pdf"] }) },
+      { eventId: "ignored-routing", eventType: "ticketUpdated", occurredAt: "2026-11-18T10:02:00Z", status: "IGNORED", direction: "IN", errorMessage: "TICKET_NOT_ROUTED_TO_M5" },
+      { eventId: "ignored-unknown", eventType: "ticketUpdated", occurredAt: "2026-11-18T10:03:00Z", status: "IGNORED", direction: "IN", errorMessage: "mensaje privado", payload: JSON.stringify({ reason: "UNKNOWN_REASON", message: "otro contenido privado" }) },
+      { eventId: "ignored-empty", eventType: "ticketUpdated", occurredAt: "2026-11-18T10:04:00Z", status: "IGNORED", direction: "IN", payload: "{}" },
+    ]);
+
+    render(<MemoryRouter><EventosPage /></MemoryRouter>);
+
+    expect(await screen.findByText("Ticket de otra área")).toBeDefined();
+    expect(screen.getByText("Reclasificación administrativa")).toBeDefined();
+    expect(screen.getByText("Ticket no derivado a Rentas")).toBeDefined();
+    expect(screen.getAllByText("Motivo no disponible")).toHaveLength(2);
+    expect(screen.queryByText(/mensaje reservado|privado\.pdf|otro contenido privado/)).toBeNull();
+  });
 });
 
 describe("bandeja de deudas", () => {
