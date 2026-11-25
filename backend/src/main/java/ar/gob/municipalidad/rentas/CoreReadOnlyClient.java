@@ -6,12 +6,12 @@ import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.io.ByteArrayOutputStream;
-import java.nio.ByteBuffer;
 import java.net.URI;
 import java.net.URLEncoder;
+import java.net.http.HttpTimeoutException;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.net.http.HttpTimeoutException;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
@@ -142,7 +142,8 @@ class CoreReadOnlyClient {
         }
         @Override public CompletionStage<byte[]> getBody(){return result;}
         @Override public void onSubscribe(Flow.Subscription subscription){
-            this.subscription=subscription;subscription.request(1);
+            this.subscription=subscription;
+            if(result.isDone())subscription.cancel();else subscription.request(1);
         }
         @Override public void onNext(List<ByteBuffer> buffers){
             if(result.isDone())return;
@@ -153,7 +154,7 @@ class CoreReadOnlyClient {
             for(ByteBuffer buffer:buffers){
                 byte[] chunk=new byte[buffer.remaining()];buffer.get(chunk);body.writeBytes(chunk);
             }
-            subscription.request(1);
+            if(!result.isDone())subscription.request(1);
         }
         @Override public void onError(Throwable error){result.completeExceptionally(error);}
         @Override public void onComplete(){result.complete(body.toByteArray());}
