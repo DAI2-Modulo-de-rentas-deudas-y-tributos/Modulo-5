@@ -52,15 +52,18 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class AuthorizationMatrixTests {
     private static final List<String> ROLES = List.of("RENTAS", "SUPERVISOR", "CASHIER", "AUDITOR", "TAXPAYER", "TECHNICAL");
     private static final Map<String, Set<String>> ROLE_POLICY = rolePolicies();
-    private static final Map<String, String> AUTHENTICATION_EXCEPTIONS = Map.of(
-        "GET /api/v1/health", "public",
-        "POST /api/v1/dev-auth/login", "public",
-        "POST /api/v1/dev-auth/bootstrap", "public",
-        "POST /api/v1/dev-auth/logout", "authenticated",
-        "GET /api/v1/dev-auth/me", "authenticated",
-        "POST /api/v1/auth/m1/login", "public",
-        "POST /api/v1/auth/m1/logout", "authenticated",
-        "GET /api/v1/auth/m1/me", "authenticated"
+    private static final Map<String, String> AUTHENTICATION_EXCEPTIONS = Map.ofEntries(
+        Map.entry("GET /api/v1/health", "public"),
+        Map.entry("POST /api/v1/dev-auth/login", "public"),
+        Map.entry("POST /api/v1/dev-auth/bootstrap", "public"),
+        Map.entry("POST /api/v1/dev-auth/logout", "authenticated"),
+        Map.entry("GET /api/v1/dev-auth/me", "authenticated"),
+        Map.entry("POST /api/v1/auth/m1/login", "public"),
+        Map.entry("POST /api/v1/auth/m1/logout", "authenticated"),
+        Map.entry("GET /api/v1/auth/m1/me", "authenticated"),
+        Map.entry("POST /api/v1/auth/staff/login", "public"),
+        Map.entry("POST /api/v1/auth/staff/logout", "authenticated"),
+        Map.entry("GET /api/v1/auth/staff/me", "authenticated")
     );
 
     @Autowired @Qualifier("requestMappingHandlerMapping") RequestMappingHandlerMapping handlerMapping;

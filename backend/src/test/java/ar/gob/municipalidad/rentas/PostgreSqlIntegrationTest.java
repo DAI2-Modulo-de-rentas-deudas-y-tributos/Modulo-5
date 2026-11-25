@@ -664,7 +664,7 @@ class PostgreSqlIntegrationTest {
         assertThat(paths.path("/api/v1/tickets/{id}/return").path("post").isMissingNode()).isFalse();
         assertThat(paths.path("/api/v1/taxpayers/{id}/canonical-citizen-link").path("post").isMissingNode()).isFalse();
         assertThat(paths.path("/api/v1/integrations/outbox/{id}/retry").path("post").isMissingNode()).isFalse();
-        assertThat(postCount).isEqualTo(80);
+        assertThat(postCount).isEqualTo(82);
         assertThat(covered).isEqualTo(71);
     }
 
@@ -1373,14 +1373,15 @@ class PostgreSqlIntegrationTest {
     }
 
     @Test void contextStartsAndFlywayAppliesEveryMigration(){
-        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(36);
-        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(35);
+        assertThat(jdbc.queryForObject("select max(cast(version as integer)) from flyway_schema_history where success",Integer.class)).isEqualTo(37);
+        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version is not null",Integer.class)).isEqualTo(36);
         assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version='29'",Integer.class)).isOne();
         assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version='31'",Integer.class)).isOne();
         assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version='33'",Integer.class)).isOne();
         assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version='34'",Integer.class)).isOne();
         assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version='35'",Integer.class)).isOne();
         assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version='36'",Integer.class)).isOne();
+        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success and version='37'",Integer.class)).isOne();
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='tax_configuration'",String.class)).contains("submitted_by");
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='liquidation_run'",String.class)).contains("submitted_by");
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_name='social_benefit_rule'",String.class)).contains("submitted_by");

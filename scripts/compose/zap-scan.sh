@@ -30,11 +30,11 @@ zap zap-baseline.py -t "$FRONTEND_URL" -J baseline.json -r baseline.html -I
 
 # La sesión DEMO viaja en cada request. dev-auth queda afuera del OpenAPI que recibe ZAP: al
 # importarlo llama a cada operación, y /logout invalidaría la sesión del escaneo. auth/m1 también:
-# depende del login de M1, que Compose no tiene.
+# depende del login de M1, que Compose no tiene; auth/staff, por su límite de intentos.
 curl --fail --silent --show-error "http://localhost:${BACKEND_PORT:-8080}/v3/api-docs" | node -e '
   let raw = ""; process.stdin.on("data", (chunk) => { raw += chunk; }).on("end", () => {
     const spec = JSON.parse(raw);
-    for (const path of Object.keys(spec.paths)) if (path.includes("/dev-auth/") || path.includes("/auth/m1/")) delete spec.paths[path];
+    for (const path of Object.keys(spec.paths)) if (path.includes("/dev-auth/") || path.includes("/auth/m1/") || path.includes("/auth/staff/")) delete spec.paths[path];
     process.stdout.write(JSON.stringify(spec));
   });' > "$REPORT_DIR/openapi.json"
 zap zap-api-scan.py -t /zap/wrk/openapi.json -f openapi -O "$API_URL" -J api.json -r api.html -I -z "\
@@ -50,6 +50,9 @@ zap zap-api-scan.py -t /zap/wrk/openapi.json -f openapi -O "$API_URL" -J api.jso
 -config globalexcludeurl.url_list.url(1).regex=.*/auth/m1/.* \
 -config globalexcludeurl.url_list.url(1).description=login-m1 \
 -config globalexcludeurl.url_list.url(1).enabled=true \
+-config globalexcludeurl.url_list.url(2).regex=.*/auth/staff/.* \
+-config globalexcludeurl.url_list.url(2).description=login-personal \
+-config globalexcludeurl.url_list.url(2).enabled=true \
 -config scanner.maxScanDurationInMins=$ACTIVE_SCAN_MINUTES"
 
 status=$(curl --silent --output /dev/null --write-out '%{http_code}' --header "X-Demo-Session: $TOKEN" \

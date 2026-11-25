@@ -90,7 +90,8 @@ class ErrorContractOpenApiConfiguration {
 
     /** Apertura y cierre de sesión: no implementan Idempotency-Key, que repetiría la respuesta con el token. */
     static final java.util.Set<String> SESSION_SETUP_PATHS=java.util.Set.of(
-        "/api/v1/dev-auth/login","/api/v1/dev-auth/logout","/api/v1/auth/m1/login","/api/v1/auth/m1/logout");
+        "/api/v1/dev-auth/login","/api/v1/dev-auth/logout","/api/v1/auth/m1/login","/api/v1/auth/m1/logout",
+        "/api/v1/auth/staff/login","/api/v1/auth/staff/logout");
 
     private void documentIfMatch(Operation operation,String ifMatchDescription,String etagDescription){
         Parameter ifMatch=operation.getParameters()==null?null:operation.getParameters().stream()

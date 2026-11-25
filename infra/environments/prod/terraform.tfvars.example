@@ -37,6 +37,7 @@ backend_environment_variables = {
 # El perfil prod rechaza secretos RENTAS_DEMO_*.
 backend_secret_variables = {
   CORE_RABBITMQ_PASSWORD = "arn:aws:secretsmanager:us-east-2:000000000000:secret:modulo-5-rentas-prod-core-rabbitmq-password"
+  STAFF_ACCOUNTS         = "arn:aws:secretsmanager:us-east-2:000000000000:secret:modulo-5-rentas-prod-staff-accounts"
 }
 
 frontend_environment_variables = {
