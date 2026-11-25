@@ -32,11 +32,12 @@ porque un certificado ACM para el ALB necesita un nombre propio. El equipo compr
   | Ambiente | Frontend | API | Origen del ALB |
   |---|---|---|---|
   | TEST | `test.modulo-rentas.com.ar` | dominio de CloudFront | `origin-test.modulo-rentas.com.ar` |
-  | PROD | dominio de Amplify | dominio de CloudFront | `origin-prod.modulo-rentas.com.ar` (PR #173) |
+  | PROD | `modulo-rentas.com.ar` (desde el 25/11) | dominio de CloudFront | `origin-prod.modulo-rentas.com.ar` (PR #173) |
   | DEV | dominio de Amplify | dominio de CloudFront | `origin-dev.modulo-rentas.com.ar` (se crea y se destruye con el ambiente) |
 
-- **CORS.** TEST acepta el dominio de Amplify y `https://test.modulo-rentas.com.ar`
-  (`cors_allowed_origins` en `infra/environments/test`).
+- **CORS.** TEST acepta el dominio de Amplify y `https://test.modulo-rentas.com.ar`; PROD, el
+  dominio de Amplify y `https://modulo-rentas.com.ar` (`cors_allowed_origins` en cada
+  `infra/environments/<ambiente>`). Ninguno de los dos lo fuerza `cd-backend`.
 - **Permisos.**
   - `github-<ambiente>-domain` (TEST y PROD): leer la zona, certificados ACM y asociaciones de
     dominio de Amplify. TEST sólo puede escribir `test.modulo-rentas.com.ar` y sus
