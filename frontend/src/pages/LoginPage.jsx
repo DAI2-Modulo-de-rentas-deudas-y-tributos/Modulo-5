@@ -7,7 +7,7 @@ import Alert from "../components/ui/Alert.jsx";
 import Button from "../components/common/Button.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
 import { homePathForRole } from "../config/workspaces.js";
-import { M1_LOGIN_ENABLED, STAFF_LOGIN_ENABLED } from "../services/apiClient.js";
+import { AUTH_MODE, M1_LOGIN_ENABLED, STAFF_LOGIN_ENABLED } from "../services/apiClient.js";
 import { M1_LOGIN_MAX_ATTEMPTS } from "../services/rentasService.js";
 
 /** Cuentas con las que se puede ingresar: la DEMO de Rentas y la de Ciudadanos (M1). */
@@ -18,7 +18,8 @@ const ACCESS = {
     missing: "Ingresá tu usuario.",
     description: "Usá tus credenciales. Te llevaremos automáticamente al portal o área de trabajo que te corresponde.",
     note: "El acceso se define según tu perfil. Si todavía no tenés usuario, solicitá tu cuenta en la Dirección de Rentas.",
-    source: "demo",
+    // En PROD ("m1") el personal entra con su cuenta propia de Rentas; en DEMO, con la cuenta DEMO.
+    source: AUTH_MODE === "m1" ? "staff" : "demo",
     credentials: (form) => ({ username: form.username, password: form.password }),
   },
   m1: {
@@ -37,7 +38,7 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const [mode, setMode] = useState(M1_LOGIN_ENABLED && !STAFF_LOGIN_ENABLED ? "m1" : "rentas");
+  const [mode, setMode] = useState(AUTH_MODE === "m1" ? "m1" : "rentas");
   const [form, setForm] = useState({ username: "", email: "", password: "" });
   const [verContrasena, setVerContrasena] = useState(false);
   const [errors, setErrors] = useState({});
