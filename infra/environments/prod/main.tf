@@ -81,13 +81,17 @@ module "ecs" {
   task_cpu                  = var.backend_task_cpu
   task_memory               = var.backend_task_memory
   spring_profiles_active    = var.backend_spring_profiles_active
-  environment_variables     = var.backend_environment_variables
-  secret_variables          = var.backend_secret_variables
-  database_address          = module.database.address
-  database_port             = module.database.port
-  database_name             = module.database.database_name
-  database_secret_arn       = module.database.master_secret_arn
-  cors_allowed_origins      = [module.hosting.frontend_url]
+  # Igual que en TEST: confía en X-Forwarded-For sólo desde el ALB y CloudFront, para
+  # reenviarle a M1 la IP real del vecino (ADR 0012) y no la del ALB.
+  environment_variables = merge(var.backend_environment_variables, {
+    RENTAS_SECURITY_TRUSTED_PROXY_CIDRS = join(",", concat(var.public_subnet_cidrs, module.security.cloudfront_origin_cidrs))
+  })
+  secret_variables     = var.backend_secret_variables
+  database_address     = module.database.address
+  database_port        = module.database.port
+  database_name        = module.database.database_name
+  database_secret_arn  = module.database.master_secret_arn
+  cors_allowed_origins = [module.hosting.frontend_url]
 
   depends_on = [module.edge]
 }

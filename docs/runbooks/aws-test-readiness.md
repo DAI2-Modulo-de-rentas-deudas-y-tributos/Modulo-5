@@ -123,9 +123,11 @@ se publica en la rama de deployment manual `test` de Amplify.
    del apagado diario de ECS a las 22:00 de Argentina.
 2. Encender TEST desde `Control AWS TEST runtime` con `START_TEST`. Terraform
    ya configura el cliente real (`infra/environments/test/variables.tf`):
-   AMQPS en 5671 con `module_rentas`, publicación y consumo de `q.rentas`, y la
-   contraseña desde Secrets Manager. TEST y PROD comparten esa cola: mientras
-   TEST consuma, el consumidor de PROD queda apagado.
+   AMQPS en 5671 con `module_rentas` y la contraseña desde Secrets Manager. TEST
+   publica pero no consume: `q.rentas` es de PROD, y con una cola compartida lo
+   que leyera TEST no le llegaría a PROD. Para consumir en TEST hace falta que
+   Core cree una cola propia (por ejemplo `q.rentas.test`) con las mismas
+   suscripciones.
 3. La IP de salida es la Elastic IP del NAT Gateway (ADR 0011): no cambia con
    las promociones ni con el reemplazo de tareas. Se obtiene con
    `terraform output nat_public_ip` en `infra/environments/test`, o con
