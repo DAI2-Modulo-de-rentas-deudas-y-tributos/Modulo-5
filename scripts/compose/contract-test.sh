@@ -23,9 +23,10 @@ TOKEN=$(curl --fail --silent --show-error --header "Content-Type: application/js
 mkdir -p "$REPORT_DIR" && chmod 777 "$REPORT_DIR"
 # dev-auth queda afuera: /logout invalidaría la sesión de la prueba y /login, /bootstrap son del modo DEMO.
 # auth/m1 también: depende del login de M1, que Compose no tiene (responde 503 M1_AUTH_DISABLED).
+# auth/staff también: el fuzzing dispara su límite de intentos (429) y no hay cuentas en Compose.
 docker run --rm --network "${DOCKER_NETWORK:-host}" --volume "$PWD/$REPORT_DIR:/reports" \
   schemathesis/schemathesis:4.33.0 run "$API_URL/v3/api-docs" --url "$API_URL" \
-  --header "X-Demo-Session: $TOKEN" --exclude-path-regex 'dev-auth|auth/m1' \
+  --header "X-Demo-Session: $TOKEN" --exclude-path-regex 'dev-auth|auth/m1|auth/staff' \
   --checks not_a_server_error,response_schema_conformance,status_code_conformance,content_type_conformance \
   --mode all --phases examples,coverage,fuzzing --max-examples 5 --seed 1 --no-color \
   --report junit --report-dir /reports
