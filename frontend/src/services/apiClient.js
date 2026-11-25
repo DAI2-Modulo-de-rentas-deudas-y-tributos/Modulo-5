@@ -17,9 +17,14 @@ function withoutTrailingSlashes(value) {
 const API_BASE_URL = withoutTrailingSlashes((import.meta.env.VITE_API_BASE_URL ?? "").trim());
 
 // DEMO autentica con usuarios y sesiones reales del backend. "mock" es un alias heredado.
+// "m1" (PROD) sólo ofrece el ingreso de vecinos con la cuenta de Ciudadanos (ADR 0012).
 const configuredAuthMode = (import.meta.env.VITE_AUTH_MODE ?? "demo").trim().toLowerCase();
 export const AUTH_MODE = configuredAuthMode === "mock" ? "demo" : configuredAuthMode;
-export const CITIZEN_SESSION = "citizen-cookie-session";
+export const STAFF_LOGIN_ENABLED = AUTH_MODE === "demo";
+export const M1_LOGIN_ENABLED = AUTH_MODE === "demo" || AUTH_MODE === "m1";
+
+/** Origen de la sesión guardada: "m1" viaja como Bearer; cualquier otro valor es DEMO. */
+export const SESSION_SOURCE_KEY = "rentas.authSource";
 
 export class ApiError extends Error {
   constructor(message, status, details, code, traceId) {
@@ -33,38 +38,35 @@ export class ApiError extends Error {
 }
 
 export function authHeaders() {
-  if (AUTH_MODE !== "demo") return {};
   const token = sessionStorage.getItem("rentas.token");
   if (!token) return {};
-  return { "X-Demo-Session": token };
+  if (sessionStorage.getItem(SESSION_SOURCE_KEY) === "m1") return { Authorization: `Bearer ${token}` };
+  return AUTH_MODE === "demo" ? { "X-Demo-Session": token } : {};
+}
+
+function sentSessionToken(headers) {
+  const sent = new Headers(headers);
+  const authorization = sent.get("Authorization") ?? "";
+  return sent.get("X-Demo-Session") ?? (authorization.startsWith("Bearer ") ? authorization.slice(7) : null);
 }
 
 export async function request(path, { method = "GET", body, signal, responseType, headers, requiresAuth = true, includeHeaders = false } = {}) {
   const adapted = adaptApiRequest(path, { method, body, signal });
-  const citizen = AUTH_MODE === "citizen";
-  if (citizen && API_BASE_URL && API_BASE_URL !== window.location.origin) {
-    throw new ApiError("El Portal del Contribuyente requiere una API en el mismo origen.", 503, null, "CITIZEN_ORIGIN_REQUIRED");
-  }
   const requestHeaders = {
     ...(responseType === "blob" ? { Accept: "application/pdf" } : {}),
     ...(adapted.options.body === undefined ? {} : { "Content-Type": "application/json" }),
     ...(requiresAuth ? authHeaders() : {}),
     ...headers,
-    ...(citizen && !["GET", "HEAD", "OPTIONS"].includes(adapted.options.method) ? { "X-Rentas-CSRF": "1" } : {}),
   };
-  const sessionToken = new Headers(requestHeaders).get("X-Demo-Session");
+  const sessionToken = sentSessionToken(requestHeaders);
   const response = await fetch(`${API_BASE_URL}${adapted.path}`, {
     method: adapted.options.method,
     signal: adapted.options.signal,
-    ...(citizen ? { credentials: "same-origin", redirect: "error" } : {}),
     headers: requestHeaders,
     body: adapted.options.body === undefined ? undefined : JSON.stringify(adapted.options.body),
   });
 
   if (response.status === 401 && requiresAuth && sessionToken) notifySessionExpired(sessionToken);
-  if (response.status === 401 && requiresAuth && citizen && !path.startsWith("/api/v1/citizen-auth/")) {
-    notifySessionExpired(CITIZEN_SESSION);
-  }
 
   const contentType = response.headers.get("content-type") ?? "";
   if (response.ok && responseType === "blob") {

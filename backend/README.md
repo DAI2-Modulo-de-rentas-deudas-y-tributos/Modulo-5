@@ -178,7 +178,20 @@ Core/JWT todavía no tiene propiedades ni variables implementadas. Con `BROKER_A
 Con `RENTAS_SECURITY_DEV_MODE=true`, `DevIdentityFilter` resuelve la identidad
 desde `X-Demo-Session` contra `demo_auth_session` (hash SHA-256, TTL y revocación).
 No hay identidad por omisión ni privilegios vía `X-Dev-*`. `AUDITOR` sólo puede leer.
-Sin un proveedor Core/JWT configurado y con dev-mode desactivado el backend queda cerrado.
+Sin un proveedor Core/JWT configurado y con dev-mode desactivado el backend queda cerrado,
+salvo para los vecinos que ingresan con Ciudadanos.
+
+**Ingreso de vecinos con M1 (ADR 0012).** Con `M1_AUTH_ENABLED=true` y `M1_AUTH_BASE_URL`
+(un origen HTTPS sin ruta), `POST /api/v1/auth/m1/login` reenvía el correo y la contraseña (campos `gmail`/`password`) a
+`POST /auth/usuario/login` de M1. Acepta sólo `actorType=CIUDADANO` con un `citizenId` que
+corresponda a una referencia `CITIZEN` activa (`canonical_citizen_id`) y emite una sesión
+opaca propia en `citizen_session`, con rol `TAXPAYER`. El cliente la envía como
+`Authorization: Bearer`; `CitizenSessionFilter` la resuelve en todos los perfiles, incluido
+`prod`. `GET /api/v1/auth/m1/me` devuelve el perfil y `POST /api/v1/auth/m1/logout` revoca la
+sesión. Códigos propios: `M1_CITIZEN_NOT_LINKED`, `M1_TAXPAYER_INACTIVE`,
+`M1_ACTOR_NOT_ALLOWED`, `M1_ACCOUNT_FORBIDDEN`, `M1_RATE_LIMITED`, `M1_UNAVAILABLE` (503),
+`M1_TIMEOUT` (504), `M1_INVALID_RESPONSE`/`M1_UPSTREAM_ERROR` (502) y `M1_AUTH_DISABLED` (503).
+El JWT de M1 se descarta: no hace falta su secreto.
 
 Cada solicitud recibe `X-Correlation-Id`; un valor entrante sólo se conserva si tiene formato seguro. El mismo identificador se usa en errores, logs y auditoría.
 

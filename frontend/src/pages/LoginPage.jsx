@@ -7,19 +7,45 @@ import Alert from "../components/ui/Alert.jsx";
 import Button from "../components/common/Button.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
 import { homePathForRole } from "../config/workspaces.js";
-import { AUTH_MODE } from "../services/apiClient.js";
+import { M1_LOGIN_ENABLED, STAFF_LOGIN_ENABLED } from "../services/apiClient.js";
+import { M1_LOGIN_MAX_ATTEMPTS } from "../services/rentasService.js";
+
+/** Cuentas con las que se puede ingresar: la DEMO de Rentas y la de Ciudadanos (M1). */
+const ACCESS = {
+  rentas: {
+    tab: "Cuenta de Rentas",
+    field: { label: "Usuario", name: "username", type: "text", placeholder: "Ingresá tu nombre de usuario", autoComplete: "username" },
+    missing: "Ingresá tu usuario.",
+    description: "Usá tus credenciales. Te llevaremos automáticamente al portal o área de trabajo que te corresponde.",
+    note: "El acceso se define según tu perfil. Si todavía no tenés usuario, solicitá tu cuenta en la Dirección de Rentas.",
+    source: "demo",
+    credentials: (form) => ({ username: form.username, password: form.password }),
+  },
+  m1: {
+    tab: "Cuenta de Ciudadanos",
+    field: { label: "Correo de Ciudadanos", name: "email", type: "email", placeholder: "nombre@correo.com", autoComplete: "email" },
+    missing: "Ingresá tu correo.",
+    description: "Usá el correo y la contraseña de tu cuenta en el portal Ciudadanos de la Municipalidad.",
+    note: "Si todavía no tenés cuenta, registrate en el portal Ciudadanos de la Municipalidad.",
+    source: "m1",
+    credentials: (form) => ({ email: form.email.trim(), password: form.password }),
+  },
+};
 
 export default function LoginPage() {
-  const citizen = AUTH_MODE === "citizen";
   const { login, isAuthenticated, user, sessionNotice, dismissSessionNotice } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
-  const [form, setForm] = useState({ username: "", password: "" });
+  const [mode, setMode] = useState(M1_LOGIN_ENABLED && !STAFF_LOGIN_ENABLED ? "m1" : "rentas");
+  const [form, setForm] = useState({ username: "", email: "", password: "" });
   const [verContrasena, setVerContrasena] = useState(false);
   const [errors, setErrors] = useState({});
   const [submitError, setSubmitError] = useState(null);
+  const [retryAttempt, setRetryAttempt] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  const access = ACCESS[mode];
+  const identifier = access.field.name;
 
   if (isAuthenticated) {
     return <Navigate to={location.state?.from ?? homePathForRole(user.role)} replace />;
@@ -31,9 +57,15 @@ export default function LoginPage() {
     setErrors((previous) => ({ ...previous, [name]: undefined }));
   };
 
+  const chooseMode = (next) => {
+    setMode(next);
+    setErrors({});
+    setSubmitError(null);
+  };
+
   const validate = () => {
     const found = {};
-    if (!form.username.trim()) found.username = citizen ? "Ingresá tu correo de Ciudadanos." : "Ingresá tu usuario.";
+    if (!form[identifier].trim()) found[identifier] = access.missing;
     if (!form.password) found.password = "Ingresá tu contraseña.";
     setErrors(found);
     return Object.keys(found).length === 0;
@@ -46,11 +78,12 @@ export default function LoginPage() {
 
     setSubmitting(true);
     try {
-      const { profile } = await login(form);
+      const { profile } = await login(access.credentials(form), { source: access.source, onRetry: setRetryAttempt });
       navigate(location.state?.from ?? homePathForRole(profile.role), { replace: true });
     } catch (caught) {
       setSubmitError(caught.message);
     } finally {
+      setRetryAttempt(null);
       setSubmitting(false);
     }
   };
@@ -91,12 +124,27 @@ export default function LoginPage() {
           </header>
           <div className="login-card">
             <div className="login-card-heading">
-              <span>{citizen ? "Portal del Contribuyente" : "Acceso unificado"}</span>
+              <span>Acceso unificado</span>
             </div>
             <h2 id="login-title">Iniciar sesión</h2>
-            <p className="login-card-description">
-              {citizen ? "Ingresá con tu cuenta de Ciudadanos." : "Usá tus credenciales. Te llevaremos automáticamente al portal o área de trabajo que te corresponde."}
-            </p>
+            <p className="login-card-description">{access.description}</p>
+
+            {STAFF_LOGIN_ENABLED && M1_LOGIN_ENABLED && (
+              <fieldset className="login-access-switch">
+                <legend className="sr-only">Cuenta para ingresar</legend>
+                {Object.entries(ACCESS).map(([key, option]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    aria-pressed={mode === key}
+                    onClick={() => chooseMode(key)}
+                    disabled={submitting}
+                  >
+                    {option.tab}
+                  </button>
+                ))}
+              </fieldset>
+            )}
 
             <form id="login-form" onSubmit={onSubmit} noValidate aria-labelledby="login-title" aria-busy={submitting} tabIndex={-1}>
               <div className="login-fields">
@@ -109,17 +157,20 @@ export default function LoginPage() {
                   {submitError && (
                     <Alert variant="error" title="No pudimos validar tus datos">{submitError}</Alert>
                   )}
+                  {retryAttempt !== null && (
+                    <Alert variant="info" title="Ciudadanos se está iniciando">
+                      Reintentamos automáticamente (intento {retryAttempt} de {M1_LOGIN_MAX_ATTEMPTS}).
+                    </Alert>
+                  )}
                 </div>
                 <FormField
-                  label={citizen ? "Correo de Ciudadanos" : "Usuario"}
-                  name="username"
-                  placeholder={citizen ? "Ingresá tu correo" : "Ingresá tu nombre de usuario"}
-                  value={form.username}
+                  key={identifier}
+                  {...access.field}
+                  value={form[identifier]}
                   onChange={onChange}
-                  error={errors.username}
+                  error={errors[identifier]}
                   required
                   disabled={submitting}
-                  autoComplete="username"
                   prefix={<UserRound size={17} className="text-neutral-400" aria-hidden="true" />}
                 />
                 <FormField
@@ -153,9 +204,7 @@ export default function LoginPage() {
                   {!submitting && <ArrowRight size={17} aria-hidden="true" />}
                 </Button>
               </div>
-              <p className="login-account-note">
-                {citizen ? "Tu cuenta debe estar vinculada a un contribuyente de Rentas." : "El acceso se define según tu perfil. Si todavía no tenés usuario, solicitá tu cuenta en la Dirección de Rentas."}
-              </p>
+              <p className="login-account-note">{access.note}</p>
             </form>
           </div>
           <p className="login-access-note">

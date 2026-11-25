@@ -179,8 +179,11 @@ Para desarrollar con recarga en caliente se puede levantar sólo la base
 
 - `VITE_API_BASE_URL`: URL pública del backend; no contiene secretos.
 - `VITE_AUTH_MODE`: `mock` valida usuario/contraseña contra
-  `POST /api/v1/dev-auth/login` (PostgreSQL + BCrypt + sesión opaca); `core` queda
-  reservado para el contrato Core/JWT futuro.
+  `POST /api/v1/dev-auth/login` (PostgreSQL + BCrypt + sesión opaca) y además ofrece el
+  ingreso de vecinos con Ciudadanos; `m1` (PROD) ofrece sólo ese ingreso (ADR 0012);
+  `core` queda reservado para el contrato Core/JWT futuro.
+- `M1_AUTH_ENABLED` / `M1_AUTH_BASE_URL`: habilitan `POST /api/v1/auth/m1/login`, que valida
+  al vecino contra el login de M1 y abre una sesión propia de M5. TEST y PROD los activan.
 - `RENTAS_SECURITY_DEV_MODE`: habilita endpoints y sesiones DEMO sólo para
   integración local. Default `false`; no debe habilitarse en producción.
 - `RENTAS_DEMO_BOOTSTRAP_PASSWORD`: secreto de `POST /api/v1/dev-auth/bootstrap`
@@ -201,8 +204,8 @@ entorno intente habilitarlo y no utiliza sus tablas ni repositorios.
 Los ambientes `dev` y `test` usan el modo demo a propósito mientras Core/JWT siga
 pendiente: es el único borde de identidad disponible para operar y para la
 aceptación automatizada. `prod`, desplegado desde `main`, corre con el perfil `prod`
-y `VITE_AUTH_MODE=core`, así que no admite inicios de sesión hasta integrar
-Core/JWT. El esquema DEMO no puede viajar hasta ahí porque el perfil `prod` excluye
+y `VITE_AUTH_MODE=m1`: sólo admite el ingreso de vecinos con su cuenta de Ciudadanos.
+El personal de Rentas no tiene ingreso hasta integrar Core/JWT o definir cuentas propias. El esquema DEMO no puede viajar hasta ahí porque el perfil `prod` excluye
 sus servicios, repositorios y validación Hibernate,
 la migración `V18` retira las tablas y dos precondiciones de Terraform cortan el plan
 si alguien intenta activar el modo demo o un secreto `RENTAS_DEMO_*` bajo ese perfil.

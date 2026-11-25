@@ -57,7 +57,10 @@ class AuthorizationMatrixTests {
         "POST /api/v1/dev-auth/login", "public",
         "POST /api/v1/dev-auth/bootstrap", "public",
         "POST /api/v1/dev-auth/logout", "authenticated",
-        "GET /api/v1/dev-auth/me", "authenticated"
+        "GET /api/v1/dev-auth/me", "authenticated",
+        "POST /api/v1/auth/m1/login", "public",
+        "POST /api/v1/auth/m1/logout", "authenticated",
+        "GET /api/v1/auth/m1/me", "authenticated"
     );
 
     @Autowired @Qualifier("requestMappingHandlerMapping") RequestMappingHandlerMapping handlerMapping;

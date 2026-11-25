@@ -121,11 +121,11 @@ se publica en la rama de deployment manual `test` de Amplify.
 1. Acordar con Core la ventana, el hostname TLS del broker, el vhost y las
    credenciales de TEST por el canal de secretos. Coordinar las pruebas antes
    del apagado diario de ECS a las 22:00 de Argentina.
-2. Encender TEST desde `Control AWS TEST runtime` con `START_TEST`. Si se
-   necesita habilitar el cliente real en la tarea, usar
-   `CORE_RABBITMQ_PORT=5671`, `SPRING_RABBITMQ_SSL_ENABLED=true` y las
-   referencias a Secrets Manager para usuario y contraseña. Activar publicación
-   o consumo sólo para el ensayo acordado.
+2. Encender TEST desde `Control AWS TEST runtime` con `START_TEST`. Terraform
+   ya configura el cliente real (`infra/environments/test/variables.tf`):
+   AMQPS en 5671 con `module_rentas`, publicación y consumo de `q.rentas`, y la
+   contraseña desde Secrets Manager. TEST y PROD comparten esa cola: mientras
+   TEST consuma, el consumidor de PROD queda apagado.
 3. La IP de salida es la Elastic IP del NAT Gateway (ADR 0011): no cambia con
    las promociones ni con el reemplazo de tareas. Se obtiene con
    `terraform output nat_public_ip` en `infra/environments/test`, o con

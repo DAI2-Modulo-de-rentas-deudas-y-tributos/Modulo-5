@@ -116,6 +116,8 @@ variable "backend_environment_variables" {
     CORE_RABBITMQ_QUEUE            = "q.rentas"
     CORE_RABBITMQ_RETRY_MODE       = "core-managed"
     CORE_RABBITMQ_CONSUMER_ENABLED = "false"
+    M1_AUTH_ENABLED                = "true"
+    M1_AUTH_BASE_URL               = "https://ciudadanos-m1-backend.onrender.com"
     OUTBOX_DELAY_MS                = "5000"
     RENTAS_SECURITY_DEV_MODE       = "false"
   }
@@ -131,7 +133,7 @@ variable "frontend_environment_variables" {
   description = "Variables publicas incorporadas al build del frontend en PROD."
   type        = map(string)
   default = {
-    VITE_AUTH_MODE = "core"
+    VITE_AUTH_MODE = "m1"
     VITE_USE_MOCKS = "false"
   }
 }
