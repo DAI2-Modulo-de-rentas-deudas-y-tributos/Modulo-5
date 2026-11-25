@@ -184,7 +184,9 @@ salvo para los vecinos que ingresan con Ciudadanos.
 **Ingreso de vecinos con M1 (ADR 0012).** Con `M1_AUTH_ENABLED=true` y `M1_AUTH_BASE_URL`
 (un origen HTTPS sin ruta), `POST /api/v1/auth/m1/login` reenvía el correo y la contraseña (campos `gmail`/`password`) a
 `POST /auth/usuario/login` de M1. Acepta sólo `actorType=CIUDADANO` con un `citizenId` que
-corresponda a una referencia `CITIZEN` activa (`canonical_citizen_id`) y emite una sesión
+corresponda a una referencia `CITIZEN` activa (`canonical_citizen_id`); si no existe, la crea en
+ese primer ingreso con el DNI, CUIL y nombre que devolvió M1, salvo que choque con otra
+referencia de ciudadano (DNI, CUIL o ID externo). Después emite una sesión
 opaca propia en `citizen_session`, con rol `TAXPAYER`. El cliente la envía como
 `Authorization: Bearer`; `CitizenSessionFilter` la resuelve en todos los perfiles, incluido
 `prod`. `GET /api/v1/auth/m1/me` devuelve el perfil y `POST /api/v1/auth/m1/logout` revoca la

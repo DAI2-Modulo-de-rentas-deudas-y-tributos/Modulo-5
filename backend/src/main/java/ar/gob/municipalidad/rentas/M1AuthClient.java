@@ -48,8 +48,17 @@ class M1AuthClient {
         this.client=HttpClient.newBuilder().connectTimeout(connectTimeout).followRedirects(HttpClient.Redirect.NEVER).build();
     }
 
-    /** Devuelve el UUID canónico del ciudadano. Los mensajes de M1 nunca llegan al llamador. */
-    UUID login(String email,String password,String clientAddress) {
+    /**
+     * Identidad que devuelve M1. {@code dni}, {@code cuit} y {@code displayName} quedan en null si M1
+     * no los manda con el formato esperado: sin ellos no se puede crear la referencia local.
+     */
+    record M1Citizen(UUID citizenId,String dni,String cuit,String displayName) {
+        boolean registrable(){return dni!=null&&cuit!=null&&displayName!=null;}
+        @Override public String toString(){return "M1Citizen["+citizenId+"]";}
+    }
+
+    /** Devuelve la identidad del ciudadano. Los mensajes de M1 nunca llegan al llamador. */
+    M1Citizen login(String email,String password,String clientAddress) {
         String body=json.createObjectNode().put("gmail",email).put("password",password).toString();
         HttpRequest.Builder request=HttpRequest.newBuilder(loginUri).timeout(readTimeout)
             .header("Content-Type","application/json").header("Accept","application/json")
@@ -67,7 +76,7 @@ class M1AuthClient {
                 if(!BEARER.matcher(response.headers().firstValue("Authorization").orElse("")).matches())throw invalidResponse();
                 byte[] bytes=stream.readNBytes(MAX_RESPONSE_BYTES+1);
                 if(bytes.length==0||bytes.length>MAX_RESPONSE_BYTES)throw invalidResponse();
-                return citizenId(readTree(bytes));
+                return citizen(readTree(bytes));
             }
         } catch(HttpTimeoutException ex) {
             throw new BusinessException("M1_TIMEOUT","Ciudadanos no respondió a tiempo. Reintentá en unos segundos",504);
@@ -84,7 +93,7 @@ class M1AuthClient {
         catch(IOException ex) { throw invalidResponse(); }
     }
 
-    private UUID citizenId(JsonNode root) {
+    private M1Citizen citizen(JsonNode root) {
         if(!root.isObject()||!root.path("auth").isBoolean())throw invalidResponse();
         if(!root.get("auth").asBoolean())throw invalidCredentials();
         if(!"CIUDADANO".equals(text(root,"actorType")))
@@ -94,7 +103,21 @@ class M1AuthClient {
             String value=text(root,alias);
             if(value!=null&&!uuid(value).equals(citizenId))throw invalidResponse();
         }
-        return citizenId;
+        // DNI y CUIL llegan como números: M1 manda dni=0 cuando su documento no es numérico.
+        return new M1Citizen(citizenId,digits(root.get("dni"),"[1-9][0-9]{5,8}"),digits(root.get("cuit"),"[0-9]{11}"),fullName(root));
+    }
+
+    private static String digits(JsonNode value,String pattern) {
+        if(value==null||!(value.isIntegralNumber()||value.isTextual()))return null;
+        String text=value.asText().trim();
+        return text.matches(pattern)?text:null;
+    }
+
+    private static String fullName(JsonNode root) {
+        JsonNode first=root.get("nombre"),last=root.get("apellido");
+        if(first==null||last==null||!first.isTextual()||!last.isTextual()||first.asText().isBlank()||last.asText().isBlank())return null;
+        String name=first.asText().trim()+" "+last.asText().trim();
+        return name.length()<=200?name:null;
     }
 
     private static String text(JsonNode root,String field) {

@@ -34,6 +34,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class M1CitizenAuthFlowTests {
     private static final AtomicReference<UUID> M1_CITIZEN=new AtomicReference<>();
     private static final AtomicReference<Integer> M1_STATUS=new AtomicReference<>(200);
+    /** Campos de perfil que agrega el login de M1 (dni, cuit, nombre, apellido); vacío por defecto. */
+    private static final AtomicReference<String> M1_PROFILE=new AtomicReference<>("");
+    private static final String PROFILE=",\"dni\":31415926,\"cuit\":20314159263,\"nombre\":\"Ana\",\"apellido\":\"Paz\"";
     private static final M1AuthClientTests.StubM1 M1=stub();
 
     @Autowired MockMvc mvc;
@@ -48,7 +51,7 @@ class M1CitizenAuthFlowTests {
 
     @AfterAll static void stopM1() { M1.close(); }
 
-    @BeforeEach void defaults() { M1_STATUS.set(200); M1_CITIZEN.set(UUID.randomUUID()); }
+    @BeforeEach void defaults() { M1_STATUS.set(200); M1_CITIZEN.set(UUID.randomUUID()); M1_PROFILE.set(""); }
 
     @Test void citizenLogsInWithM1AndOperatesOnlyOnOwnTaxpayer() throws Exception {
         TaxpayerReference own=taxpayer(M1_CITIZEN.get(),TaxpayerStatus.ACTIVE);
@@ -69,6 +72,33 @@ class M1CitizenAuthFlowTests {
 
         mvc.perform(post("/api/v1/auth/m1/logout").header("Authorization",bearer)).andExpect(status().isNoContent());
         mvc.perform(get("/api/v1/auth/m1/me").header("Authorization",bearer)).andExpect(status().isUnauthorized());
+    }
+
+    @Test void firstLoginRegistersTheCitizenWithTheDataFromM1() throws Exception {
+        M1_PROFILE.set(PROFILE);
+        long references=taxpayers.count();
+        long id=read(login("ana@example.invalid").andExpect(status().isOk())).path("user").path("taxpayerId").asLong();
+        TaxpayerReference created=taxpayers.findById(id).orElseThrow();
+        assertThat(created.taxpayerType).isEqualTo(TaxpayerType.CITIZEN);
+        assertThat(created.canonicalCitizenId).isEqualTo(M1_CITIZEN.get());
+        assertThat(created.externalId).isEqualTo(M1_CITIZEN.get().toString());
+        assertThat(created.dni).isEqualTo("31415926");
+        assertThat(created.cuit).isEqualTo("20314159263");
+        assertThat(created.displayName).isEqualTo("Ana Paz");
+        assertThat(created.externalStatus).isEqualTo(TaxpayerStatus.ACTIVE);
+        assertThat(audit.findAll()).anyMatch(e->"TAXPAYER_REGISTERED_FROM_M1_LOGIN".equals(e.action)&&M1_CITIZEN.get().toString().equals(e.userId));
+        login("ana@example.invalid").andExpect(status().isOk()).andExpect(jsonPath("$.user.taxpayerId").value(id));
+        assertThat(taxpayers.count()).isEqualTo(references+1);
+    }
+
+    @Test void firstLoginDoesNotTakeOverAnotherReference() throws Exception {
+        TaxpayerReference legacy=taxpayer(null,TaxpayerStatus.ACTIVE);
+        legacy.dni="31415926";taxpayers.saveAndFlush(legacy);
+        M1_PROFILE.set(PROFILE);
+        long references=taxpayers.count();
+        login("ana@example.invalid").andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("M1_CITIZEN_NOT_LINKED"));
+        assertThat(taxpayers.count()).isEqualTo(references);
+        assertThat(taxpayers.findById(legacy.id).orElseThrow().canonicalCitizenId).isNull();
     }
 
     @Test void citizenWithoutLocalReferenceIsRejectedAndAudited() throws Exception {
@@ -151,7 +181,7 @@ class M1CitizenAuthFlowTests {
             return new M1AuthClientTests.StubM1(exchange->{
                 String citizen=M1_CITIZEN.get().toString();
                 M1AuthClientTests.respondLogin(exchange,M1_STATUS.get(),
-                    "{\"citizenId\":\""+citizen+"\",\"actorId\":\""+citizen+"\",\"actorType\":\"CIUDADANO\",\"auth\":true}");
+                    "{\"citizenId\":\""+citizen+"\",\"actorId\":\""+citizen+"\",\"actorType\":\"CIUDADANO\",\"auth\":true"+M1_PROFILE.get()+"}");
             });
         } catch(IOException ex) { throw new UncheckedIOException(ex); }
     }

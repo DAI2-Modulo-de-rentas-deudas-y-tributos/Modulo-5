@@ -1,6 +1,6 @@
 # ADR 0012: Ingreso de vecinos con la cuenta de Ciudadanos (M1)
 
-- Estado: aceptado
+- Estado: aceptado (enmendado el 2026-11-25: alta en el primer ingreso)
 - Fecha: 2026-11-23
 
 ## Contexto
@@ -20,8 +20,13 @@ reenviando las credenciales desde su backend y emitiendo una sesión propia.
   llama a M1 y acepta la identidad sólo si `auth=true`, `actorType=CIUDADANO` y `citizenId` es
   un UUID coherente con `actorId`/`uuid`. El JWT de M1 se descarta y nunca se valida su firma.
 - La identidad se resuelve por `canonical_citizen_id` hacia una referencia `CITIZEN` en estado
-  `ACTIVE`/`ACTIVA`. M5 no crea referencias en el login: si el vecino todavía no llegó por los
-  eventos de M1, la respuesta es `403 M1_CITIZEN_NOT_LINKED`.
+  `ACTIVE`/`ACTIVA`. Si no existe, M5 la crea en ese primer ingreso con los datos que devolvió
+  el login de M1: UUID, DNI, CUIL, nombre y apellido, los mismos que guarda al recibir
+  `citizenUpdated/REGISTERED`. El estado es `ACTIVE`, porque M1 sólo autentica a ciudadanos
+  `ACTIVO`. El alta queda auditada como `TAXPAYER_REGISTERED_FROM_M1_LOGIN`. No la crea si M1
+  no manda esos datos con el formato del evento (por ejemplo `dni=0`) ni si ya hay otra
+  referencia de ciudadano con ese DNI, CUIL o ID externo: entonces responde
+  `403 M1_CITIZEN_NOT_LINKED` y esa referencia se vincula a mano con `canonical-citizen-link`.
 - M5 emite una sesión opaca propia (`citizen_session`: hash SHA-256 del token, vencimiento y
   revocación, V36) con rol `TAXPAYER` y el `taxpayerId` local. Viaja como
   `Authorization: Bearer`, vale en todos los perfiles y no forma parte del esquema DEMO.
@@ -46,8 +51,10 @@ reenviando las credenciales desde su backend y emitiendo una sesión propia.
   renovar el token contra M1 cada 15 minutos. Además, los tokens de M1 no se pueden revocar.
   Descartado.
 - Esperar Core/JWT: no hay contrato ni fecha, y PROD sigue sin usuarios. Descartado.
-- Crear la referencia del contribuyente en el primer login: M1 es dueño del dato y la
-  referencia sólo debe nacer de sus eventos. Descartado.
+- Crear la referencia sólo a partir de los eventos de M1: fue la decisión original (M1 es dueño
+  del dato). Se enmendó el 25/11 porque a `q.rentas` no llega ningún `citizenUpdated` de M1 y
+  ningún vecino podía entrar. Los datos siguen viniendo de M1, por su login en lugar de por un
+  evento, y el `REGISTERED` que llegue después actualiza la misma referencia sin duplicarla.
 
 ## Consecuencias
 
@@ -55,7 +62,8 @@ reenviando las credenciales desde su backend y emitiendo una sesión propia.
   `toString` de los DTO la ocultan.
 - El ingreso depende de que M1 responda. Si M1 no está disponible, el ingreso falla con 503 o
   504, y las sesiones ya abiertas siguen funcionando.
-- En PROD el ingreso sólo funciona cuando el vecino ya tiene su referencia vinculada, lo que
-  requiere el consumo AMQP de los eventos de M1, todavía apagado.
+- El ingreso no depende de que lleguen los eventos de M1. Sí se necesitan para que M5 se
+  entere de bloqueos, fallecimientos y cambios de datos: sin ellos, una sesión ya abierta dura
+  hasta su vencimiento (8 h), aunque M1 no deja abrir sesiones nuevas a una cuenta bloqueada.
 - El personal de Rentas sigue sin ingreso en PROD: los roles de Rentas no existen en M1.
   Necesita su propia decisión (por ejemplo, cuentas locales como las de M8).

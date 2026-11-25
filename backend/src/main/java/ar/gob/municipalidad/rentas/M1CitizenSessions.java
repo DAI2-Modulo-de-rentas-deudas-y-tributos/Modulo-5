@@ -11,6 +11,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -94,10 +95,12 @@ class M1CitizenAuthService {
     LoginResponse login(LoginRequest request,String clientAddress) {
         M1AuthClient client=m1.getIfAvailable();
         if(client==null)throw new BusinessException("M1_AUTH_DISABLED","El ingreso con Ciudadanos no está habilitado",503);
-        UUID citizenId;
-        try { citizenId=client.login(request.email().trim(),request.password(),clientAddress); }
+        M1AuthClient.M1Citizen citizen;
+        try { citizen=client.login(request.email().trim(),request.password(),clientAddress); }
         catch(BusinessException ex) { throw rejected(ex,"anonymous"); }
+        UUID citizenId=citizen.citizenId();
         TaxpayerReference taxpayer=taxpayers.findByCanonicalCitizenId(citizenId)
+            .or(()->registerFromLogin(citizen))
             .filter(t->t.taxpayerType==TaxpayerType.CITIZEN)
             .orElseThrow(()->rejected(new BusinessException("M1_CITIZEN_NOT_LINKED",
                 "Tu cuenta de Ciudadanos todavía no está vinculada a Rentas. Consultá en la Dirección de Rentas",403),citizenId.toString()));
@@ -112,6 +115,34 @@ class M1CitizenAuthService {
             audit.recordSecurityEvent("M1_LOGIN_SUCCEEDED",citizenId.toString(),ROLE,Map.of("outcome","SUCCESS"));
         });
         return new LoginResponse(token,user(taxpayer));
+    }
+
+    /**
+     * Primer ingreso: crea la referencia del vecino con los datos que devolvió el login de M1 (ADR 0012).
+     * No la crea si M1 no mandó DNI, CUIL y nombre válidos, ni si ya hay otra referencia de ciudadano
+     * con ese DNI, CUIL o ID externo: esa se vincula a mano con canonical-citizen-link.
+     */
+    private Optional<TaxpayerReference> registerFromLogin(M1AuthClient.M1Citizen citizen) {
+        if(!citizen.registrable())return Optional.empty();
+        String externalId=citizen.citizenId().toString();
+        try {
+            return transaction.execute(status -> {
+                if(taxpayers.findByTaxpayerTypeAndExternalId(TaxpayerType.CITIZEN,externalId).isPresent()
+                        ||taxpayers.findByTaxpayerTypeAndDni(TaxpayerType.CITIZEN,citizen.dni()).isPresent()
+                        ||taxpayers.findByTaxpayerTypeAndCuit(TaxpayerType.CITIZEN,citizen.cuit()).isPresent())
+                    return Optional.<TaxpayerReference>empty();
+                TaxpayerReference taxpayer=new TaxpayerReference();
+                taxpayer.taxpayerType=TaxpayerType.CITIZEN;taxpayer.externalId=externalId;taxpayer.canonicalCitizenId=citizen.citizenId();
+                taxpayer.dni=citizen.dni();taxpayer.cuit=citizen.cuit();taxpayer.displayName=citizen.displayName();
+                taxpayer.externalStatus=TaxpayerStatus.ACTIVE;taxpayer.createdAt=taxpayer.updatedAt=OffsetDateTime.now();
+                taxpayers.saveAndFlush(taxpayer);
+                audit.recordSecurityEvent("TAXPAYER_REGISTERED_FROM_M1_LOGIN",externalId,ROLE,Map.of("taxpayerId",taxpayer.id));
+                return Optional.of(taxpayer);
+            });
+        } catch(DataIntegrityViolationException concurrentFirstLogin) {
+            // Dos primeros ingresos simultáneos: el otro ya la creó.
+            return taxpayers.findByCanonicalCitizenId(citizen.citizenId());
+        }
     }
 
     @Transactional(readOnly=true) public UserResponse me(String authorization) {
