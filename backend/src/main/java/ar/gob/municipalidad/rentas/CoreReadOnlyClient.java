@@ -5,20 +5,28 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
-import java.io.InputStream;
+import java.io.ByteArrayOutputStream;
+import java.nio.ByteBuffer;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.Flow;
 
 @Component
 class CoreReadOnlyClient {
     private static final int MAX_RESPONSE_BYTES=1_048_576;
-    private static final Set<String> DEAD_LETTER_FILTERS=Set.of("status","page");
-    private static final Set<String> DELIVERY_FILTERS=Set.of("eventId","page");
+    private static final Set<String> DEAD_LETTER_FILTERS=Set.of("status","reasonCode","page");
+    private static final Set<String> DELIVERY_FILTERS=Set.of("eventId","targetModule","status","page");
+    private static final Set<String> DEAD_LETTER_REASONS=Set.of(
+        "SCHEMA_VIOLATION","DELIVERY_FAILED","MALFORMED_MESSAGE","SOURCE_UNVERIFIED");
     private final CoreModuleTokenService tokens;
     private final ObjectMapper json;
 
@@ -63,15 +71,17 @@ class CoreReadOnlyClient {
     }
 
     private CoreReadResponse send(URI uri,CoreModuleTokenService.AccessToken token) {
-        HttpRequest request=HttpRequest.newBuilder(uri).timeout(tokens.requestTimeout())
+        java.time.Duration timeout=tokens.requestTimeout();
+        long started=System.nanoTime();
+        HttpRequest request=HttpRequest.newBuilder(uri).timeout(timeout)
             .header("Authorization","Bearer "+token.value()).header("Accept","application/json").GET().build();
         try {
-            HttpResponse<InputStream> response=tokens.httpClient().send(request,HttpResponse.BodyHandlers.ofInputStream());
-            try(InputStream body=response.body()) {
-                byte[] bytes=body.readNBytes(MAX_RESPONSE_BYTES+1);
-                if(bytes.length>MAX_RESPONSE_BYTES)throw permanent("CORE_READ_RESPONSE_TOO_LARGE");
-                return new CoreReadResponse(response.statusCode(),new String(bytes,StandardCharsets.UTF_8));
-            }
+            HttpResponse<byte[]> response=tokens.httpClient().send(request,
+                info->new BoundedBodySubscriber(MAX_RESPONSE_BYTES,
+                    timeout.minusNanos(Math.max(0,System.nanoTime()-started))));
+            byte[] bytes=response.body();
+            if(bytes.length>MAX_RESPONSE_BYTES)throw permanent("CORE_READ_RESPONSE_TOO_LARGE");
+            return new CoreReadResponse(response.statusCode(),new String(bytes,StandardCharsets.UTF_8));
         }
         catch(InterruptedException ex){Thread.currentThread().interrupt();throw retryable("CORE_READ_TRANSPORT_FAILED");}
         catch(CoreHttpPublishException ex){throw ex;}
@@ -91,12 +101,21 @@ class CoreReadOnlyClient {
             if(key==null||!allowedFilters.contains(key)||value==null||value.isBlank())
                 throw permanent("CORE_READ_INVALID_QUERY_PARAMETER");
             if("page".equals(key))boundedInteger(value,0,1_000_000);
-            else if("status".equals(key)&&!value.matches("[A-Z_]{1,32}"))
+            else if("status".equals(key)&&!validStatus(value,allowedFilters))
+                throw permanent("CORE_READ_INVALID_QUERY_PARAMETER");
+            else if("reasonCode".equals(key)&&!DEAD_LETTER_REASONS.contains(value))
+                throw permanent("CORE_READ_INVALID_QUERY_PARAMETER");
+            else if("targetModule".equals(key)&&!"rentas".equals(value))
                 throw permanent("CORE_READ_INVALID_QUERY_PARAMETER");
             else if("eventId".equals(key))try{java.util.UUID.fromString(value);}
             catch(IllegalArgumentException ex){throw permanent("CORE_READ_INVALID_QUERY_PARAMETER");}
             return encode(key)+"="+encode(value);
         }).sorted().collect(java.util.stream.Collectors.joining("&"));
+    }
+
+    private static boolean validStatus(String value,Set<String> filters) {
+        if(filters.contains("reasonCode"))return "OPEN".equals(value);
+        return Set.of("DEAD","DELIVERED").contains(value);
     }
 
     private static void boundedInteger(String value,int minimum,int maximum) {
@@ -105,6 +124,40 @@ class CoreReadOnlyClient {
     }
 
     private record CoreReadResponse(int statusCode,String body) {}
+
+    private static final class BoundedBodySubscriber implements HttpResponse.BodySubscriber<byte[]> {
+        private static final byte[] TOO_LARGE=new byte[MAX_RESPONSE_BYTES+1];
+        private final int maximumBytes;
+        private final ByteArrayOutputStream body=new ByteArrayOutputStream();
+        private final CompletableFuture<byte[]> result=new CompletableFuture<>();
+        private volatile Flow.Subscription subscription;
+
+        private BoundedBodySubscriber(int maximumBytes,java.time.Duration timeout){
+            this.maximumBytes=maximumBytes;
+            long timeoutMillis=Math.max(1,timeout.toMillis());
+            CompletableFuture.delayedExecutor(timeoutMillis,java.util.concurrent.TimeUnit.MILLISECONDS).execute(()->{
+                if(result.completeExceptionally(new HttpTimeoutException("Core response body timed out"))
+                    &&subscription!=null)subscription.cancel();
+            });
+        }
+        @Override public CompletionStage<byte[]> getBody(){return result;}
+        @Override public void onSubscribe(Flow.Subscription subscription){
+            this.subscription=subscription;subscription.request(1);
+        }
+        @Override public void onNext(List<ByteBuffer> buffers){
+            if(result.isDone())return;
+            long incoming=buffers.stream().mapToLong(ByteBuffer::remaining).sum();
+            if(incoming>maximumBytes-body.size()){
+                subscription.cancel();result.complete(TOO_LARGE);return;
+            }
+            for(ByteBuffer buffer:buffers){
+                byte[] chunk=new byte[buffer.remaining()];buffer.get(chunk);body.writeBytes(chunk);
+            }
+            subscription.request(1);
+        }
+        @Override public void onError(Throwable error){result.completeExceptionally(error);}
+        @Override public void onComplete(){result.complete(body.toByteArray());}
+    }
 
     private static String encode(String value) {
         return URLEncoder.encode(value,StandardCharsets.UTF_8).replace("+","%20");

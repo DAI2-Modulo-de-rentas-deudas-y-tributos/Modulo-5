@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -64,14 +65,17 @@ class CoreHttpEventPublisherTests {
             CoreModuleTokenService moduleTokens=new CoreModuleTokenService(json,server.uri(),SECRET,
                 Duration.ofSeconds(1),Duration.ofSeconds(2),Duration.ofSeconds(1),Clock.systemUTC());
             CoreReadOnlyClient client=new CoreReadOnlyClient(moduleTokens,json);
-            assertThat(client.listDeadLetters(Map.of("status","DELIVERED","page","2")).path("items")).isEmpty();
+            assertThat(client.listDeadLetters(Map.of("status","OPEN","reasonCode","DELIVERY_FAILED","page","2"))
+                .path("items")).isEmpty();
             assertThat(client.getDeadLetter("dl-17").path("items")).isEmpty();
             assertThat(client.getDeadLetterAudit("dl-17").path("items")).isEmpty();
-            assertThat(client.listDeliveries(Map.of("eventId",EVENT_ID)).path("items")).isEmpty();
+            assertThat(client.listDeliveries(Map.of("eventId",EVENT_ID,"targetModule","rentas","status","DELIVERED"))
+                .path("items")).isEmpty();
             assertThat(paths).hasSize(4);
-            assertThat(paths.get(0)).startsWith("/api/v1/dlq?").contains("status=DELIVERED","page=2");
+            assertThat(paths.get(0)).startsWith("/api/v1/dlq?")
+                .contains("status=OPEN","reasonCode=DELIVERY_FAILED","page=2");
             assertThat(paths).contains("/api/v1/dlq/dl-17","/api/v1/dlq/dl-17/audit",
-                "/api/v1/deliveries?eventId="+EVENT_ID);
+                "/api/v1/deliveries?eventId="+EVENT_ID+"&status=DELIVERED&targetModule=rentas");
             assertThat(tokens.get()).isEqualTo(1);
         }
     }
@@ -124,16 +128,22 @@ class CoreHttpEventPublisherTests {
         })){
             var client=new CoreReadOnlyClient(new CoreModuleTokenService(json,server.uri(),SECRET,Duration.ofSeconds(1),
                 Duration.ofSeconds(2),Duration.ofSeconds(1),Clock.systemUTC()),json);
-            client.listDeadLetters(Map.of("status","DELIVERED","page","0"));
-            client.listDeliveries(Map.of("eventId",EVENT_ID,"page","1"));
+            client.listDeadLetters(Map.of("status","OPEN","reasonCode","DELIVERY_FAILED","page","0"));
+            client.listDeliveries(Map.of("eventId",EVENT_ID,"targetModule","rentas","status","DEAD","page","1"));
             assertThat(paths).hasSize(2);
-            assertThat(paths.get(0)).contains("page=0","status=DELIVERED");
-            assertThat(paths.get(1)).contains("eventId="+EVENT_ID,"page=1");
+            assertThat(paths.get(0)).contains("page=0","status=OPEN","reasonCode=DELIVERY_FAILED");
+            assertThat(paths.get(1)).contains("eventId="+EVENT_ID,"targetModule=rentas","status=DEAD","page=1");
         }
         var client=new CoreReadOnlyClient(new CoreModuleTokenService(json,"","",Duration.ofSeconds(1),Duration.ofSeconds(2),Duration.ofSeconds(1),Clock.systemUTC()),json);
-        for(Map<String,String> invalid:List.of(Map.of("payload","private"),Map.of("page","-1"),Map.of("page","1000001"),Map.of("status","private status"),Map.of("eventId","not-a-uuid")))
+        for(Map<String,String> invalid:List.of(Map.of("payload","private"),Map.of("page","-1"),Map.of("page","1000001"),
+            Map.of("status","private status"),Map.of("status","OPEN"),Map.of("eventId","not-a-uuid")))
             assertThatThrownBy(()->client.listDeliveries(invalid)).isInstanceOf(CoreHttpPublishException.class)
                 .hasMessage("CORE_READ_INVALID_QUERY_PARAMETER");
+        for(Map<String,String> invalid:List.of(Map.of("status","DEAD"),Map.of("reasonCode","UNKNOWN")))
+            assertThatThrownBy(()->client.listDeadLetters(invalid)).isInstanceOf(CoreHttpPublishException.class)
+                .hasMessage("CORE_READ_INVALID_QUERY_PARAMETER");
+        assertThatThrownBy(()->client.listDeliveries(Map.of("targetModule","otro-modulo")))
+            .isInstanceOf(CoreHttpPublishException.class).hasMessage("CORE_READ_INVALID_QUERY_PARAMETER");
     }
 
     @Test void readOnlyClientRejectsOversizedResponsesWithoutParsingTheBody() throws Exception {
@@ -145,6 +155,31 @@ class CoreHttpEventPublisherTests {
                 Duration.ofSeconds(2),Duration.ofSeconds(1),Clock.systemUTC()),json);
             assertThatThrownBy(()->client.listDeliveries(Map.of())).isInstanceOf(CoreHttpPublishException.class)
                 .hasMessage("CORE_READ_RESPONSE_TOO_LARGE");
+        }
+    }
+
+    @Test void readOnlyClientTimesOutWhileReadingBodyAfterHeadersArrive() throws Exception {
+        AtomicReference<Boolean> bodyStarted=new AtomicReference<>(false);
+        try(TestServer server=server(exchange->{
+            if(exchange.getRequestURI().getPath().endsWith("module-token")){
+                respond(exchange,200,token("read",3600));return;
+            }
+            exchange.sendResponseHeaders(200,0);
+            try(var body=exchange.getResponseBody()){
+                body.write("{".getBytes(StandardCharsets.UTF_8));body.flush();bodyStarted.set(true);
+                try{Thread.sleep(700);}catch(InterruptedException ex){Thread.currentThread().interrupt();}
+                body.write("\"items\":[]}".getBytes(StandardCharsets.UTF_8));
+            }catch(IOException expectedAfterClientTimeout){/* client closes the body at its deadline */}
+        })){
+            var tokens=new CoreModuleTokenService(json,server.uri(),SECRET,Duration.ofSeconds(1),
+                Duration.ofMillis(150),Duration.ofSeconds(1),Clock.systemUTC());
+            long started=System.nanoTime();
+            assertThatThrownBy(()->new CoreReadOnlyClient(tokens,json).listDeliveries(Map.of()))
+                .isInstanceOf(CoreHttpPublishException.class)
+                .hasMessage("CORE_READ_TRANSPORT_FAILED");
+            long elapsedMillis=java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started);
+            assertThat(bodyStarted.get()).isTrue();
+            assertThat(elapsedMillis).isLessThan(600);
         }
     }
 
