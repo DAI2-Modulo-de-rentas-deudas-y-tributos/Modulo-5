@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rabbitmq.client.AMQP;
 import com.rabbitmq.client.Channel;
 import com.rabbitmq.client.GetResponse;
+import com.rabbitmq.client.LongString;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -384,7 +385,7 @@ class RabbitMqEventPublisherTests {
     private Message asSpringMessage(GetResponse delivery){
         var properties=new org.springframework.amqp.core.MessageProperties();
         Map<String,Object> headers=delivery.getProps().getHeaders();
-        if(headers!=null)properties.setHeaders(new HashMap<>(headers));
+        if(headers!=null)headers.forEach((key,value)->properties.setHeader(key,value instanceof LongString text?text.toString():value));
         properties.setMessageId(delivery.getProps().getMessageId());
         properties.setDeliveryTag(delivery.getEnvelope().getDeliveryTag());
         properties.setRedelivered(delivery.getEnvelope().isRedeliver());
