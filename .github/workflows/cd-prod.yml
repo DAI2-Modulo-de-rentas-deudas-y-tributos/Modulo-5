@@ -134,8 +134,8 @@ jobs:
     needs: infra
     uses: ./.github/workflows/cd-backend.yml
     with:
+      # Sin amplify_branch: el CORS (Amplify + dominio propio) lo define Terraform, como en TEST.
       environment: prod
-      amplify_branch: main
 
   frontend:
     name: frontend

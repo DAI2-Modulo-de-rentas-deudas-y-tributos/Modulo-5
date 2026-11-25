@@ -8,6 +8,7 @@ locals {
   name_prefix        = "${local.project_name}-${local.environment}"
   availability_zones = slice(data.aws_availability_zones.available.names, 0, 2)
   domain_zone        = "modulo-rentas.com.ar"
+  frontend_domain    = local.domain_zone
 }
 
 module "network" {
@@ -91,7 +92,7 @@ module "ecs" {
   database_port        = module.database.port
   database_name        = module.database.database_name
   database_secret_arn  = module.database.master_secret_arn
-  cors_allowed_origins = [module.hosting.frontend_url]
+  cors_allowed_origins = [module.hosting.frontend_url, "https://${local.frontend_domain}"]
 
   depends_on = [module.edge]
 }
@@ -103,4 +104,5 @@ module "hosting" {
   branch_name           = "main"
   api_base_url          = module.edge.api_base_url
   environment_variables = var.frontend_environment_variables
+  custom_domains        = { (local.frontend_domain) = local.domain_zone }
 }
