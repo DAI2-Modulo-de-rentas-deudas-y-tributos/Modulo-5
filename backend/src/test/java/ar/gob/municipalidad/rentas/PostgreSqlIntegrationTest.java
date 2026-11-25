@@ -657,14 +657,14 @@ class PostgreSqlIntegrationTest {
                     hasKey=true;
                 }
             }
-            boolean excludedFromIdempotency=excluded.contains(path)||java.util.Set.of("/api/v1/dev-auth/login","/api/v1/dev-auth/logout").contains(path);
+            boolean excludedFromIdempotency=excluded.contains(path)||ErrorContractOpenApiConfiguration.SESSION_SETUP_PATHS.contains(path);
             assertThat(hasKey).as("Idempotency-Key en POST %s",path).isEqualTo(!excludedFromIdempotency);
             if(hasKey) covered++;
         }
         assertThat(paths.path("/api/v1/tickets/{id}/return").path("post").isMissingNode()).isFalse();
         assertThat(paths.path("/api/v1/taxpayers/{id}/canonical-citizen-link").path("post").isMissingNode()).isFalse();
         assertThat(paths.path("/api/v1/integrations/outbox/{id}/retry").path("post").isMissingNode()).isFalse();
-        assertThat(postCount).isEqualTo(78);
+        assertThat(postCount).isEqualTo(80);
         assertThat(covered).isEqualTo(71);
     }
 
