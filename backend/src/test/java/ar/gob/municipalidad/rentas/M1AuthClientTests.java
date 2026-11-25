@@ -32,16 +32,36 @@ class M1AuthClientTests {
             forwarded.set(exchange.getRequestHeaders().getFirst("X-Forwarded-For"));
             respondLogin(exchange,200,OK_BODY);
         })) {
-            assertThat(client(m1.url()).login("ana@example.invalid","clave-fixture","203.0.113.7")).isEqualTo(UUID.fromString(CITIZEN));
+            assertThat(client(m1.url()).login("ana@example.invalid","clave-fixture","203.0.113.7").citizenId()).isEqualTo(UUID.fromString(CITIZEN));
             assertThat(new ObjectMapper().readTree(body.get()).path("gmail").asText()).isEqualTo("ana@example.invalid");
             assertThat(forwarded.get()).isEqualTo("203.0.113.7");
+        }
+    }
+
+    @Test void returnsTheProfileOnlyWhenM1SendsCompleteData() throws Exception {
+        String complete=OK_BODY.replace("\"auth\":true","\"auth\":true,\"dni\":31415926,\"cuit\":20314159263");
+        try(StubM1 m1=new StubM1(exchange->respondLogin(exchange,200,complete))) {
+            M1AuthClient.M1Citizen citizen=client(m1.url()).login("ana@example.invalid","clave-fixture",null);
+            assertThat(citizen.registrable()).isTrue();
+            assertThat(citizen.dni()).isEqualTo("31415926");
+            assertThat(citizen.cuit()).isEqualTo("20314159263");
+            assertThat(citizen.displayName()).isEqualTo("Ana Paz");
+            assertThat(citizen.toString()).doesNotContain("31415926","Ana");
+        }
+        // M1 manda dni=0 si el documento no es numérico; un CUIL con guiones tampoco es el formato del evento.
+        String incomplete=OK_BODY.replace("\"auth\":true","\"auth\":true,\"dni\":0,\"cuit\":\"20-31415926-3\"");
+        try(StubM1 m1=new StubM1(exchange->respondLogin(exchange,200,incomplete))) {
+            M1AuthClient.M1Citizen citizen=client(m1.url()).login("ana@example.invalid","clave-fixture",null);
+            assertThat(citizen.dni()).isNull();
+            assertThat(citizen.cuit()).isNull();
+            assertThat(citizen.registrable()).isFalse();
         }
     }
 
     @Test void omitsForwardedHeaderWithoutClientAddress() throws Exception {
         AtomicReference<String> forwarded=new AtomicReference<>("unset");
         try(StubM1 m1=new StubM1(exchange->{forwarded.set(exchange.getRequestHeaders().getFirst("X-Forwarded-For"));respondLogin(exchange,200,OK_BODY);})) {
-            assertThat(client(m1.url()).login("ana@example.invalid","clave-fixture"," ")).isEqualTo(UUID.fromString(CITIZEN));
+            assertThat(client(m1.url()).login("ana@example.invalid","clave-fixture"," ").citizenId()).isEqualTo(UUID.fromString(CITIZEN));
             assertThat(forwarded.get()).isNull();
         }
     }
