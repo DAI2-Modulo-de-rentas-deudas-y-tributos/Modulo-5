@@ -62,3 +62,9 @@ rentas:
   security.demo-session-ttl: ${RENTAS_DEMO_SESSION_TTL:PT8H}
   security.demo-login-origin-max-failures: ${RENTAS_SECURITY_DEMO_LOGIN_ORIGIN_MAX_FAILURES:20}
   security.trusted-proxy-cidrs: ${RENTAS_SECURITY_TRUSTED_PROXY_CIDRS:}
+  # Ingreso de ciudadanos mediante el login de M1 (ADR 0012). La URL llega siempre por entorno.
+  m1.auth.enabled: ${M1_AUTH_ENABLED:false}
+  m1.auth.base-url: ${M1_AUTH_BASE_URL:}
+  m1.auth.connect-timeout: ${M1_AUTH_CONNECT_TIMEOUT:5s}
+  m1.auth.read-timeout: ${M1_AUTH_READ_TIMEOUT:25s}
+  m1.auth.session-ttl: ${M1_AUTH_SESSION_TTL:PT8H}

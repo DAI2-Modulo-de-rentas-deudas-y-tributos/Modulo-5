@@ -17,3 +17,4 @@ Cada ADR debe indicar contexto, decisión, alternativas y consecuencias.
 - [ADR-0009: Ambiente de producción desde `main`](0009-ambiente-produccion.md)
 - [ADR-0010: Dominio propio `modulo-rentas.com.ar`](0010-dominio-propio.md)
 - [ADR-0011: IP de salida fija del backend con NAT Gateway](0011-ip-salida-fija-nat.md)
+- [ADR-0012: Ingreso de vecinos con la cuenta de Ciudadanos (M1)](0012-login-ciudadano-m1.md)

@@ -87,6 +87,9 @@
 }
 .login-submit:hover { box-shadow: 0 12px 28px #0f2c592b; }
 .login-submit svg { margin-left: 5px; }
+.login-access-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; min-width: 0; margin: 24px 0 0; padding: 4px; border: 1px solid #cdd5df; border-radius: 10px; background: #f8fafc; }
+.login-access-switch button { min-height: 38px; border-radius: 7px; font-size: 13px; font-weight: 600; color: #52627a; }
+.login-access-switch button[aria-pressed="true"] { background: white; color: var(--color-navy); box-shadow: 0 1px 3px #0f2c591f; }
 .login-account-note { max-width: 390px; margin-top: 17px; font-size: 11px; line-height: 1.75; color: #606d7e; }
 .login-access-note { display: flex; justify-content: center; align-items: center; gap: 7px; font-size: 11px; color: #606d7e; text-align: center; }
 .login-page a, .login-page button { transition: color 180ms, background-color 180ms, border-color 180ms; }

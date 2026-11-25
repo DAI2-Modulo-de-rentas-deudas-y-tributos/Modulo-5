@@ -8,7 +8,8 @@ Monorepo del **Módulo 5 - Rentas** (tributos, deudas, planes de pago) de un sis
 multi-módulo. El sistema está implementado y en etapa de entrega: `frontend/` es React + Vite
 (portal "Ciudad UADE") y `backend/` es Spring Boot 3.5 con Java 17, PostgreSQL 17 y Flyway; ambos
 consumen datos reales (no hay capa de mocks). La identidad usa el modo DEMO (`X-Demo-Session`)
-mientras Core/JWT siga pendiente. Al crear código nuevo hay que respetar el modelo de despliegue
+mientras Core/JWT siga pendiente; los vecinos ingresan además con su cuenta de Ciudadanos (M1),
+con una sesión propia de M5 en `Authorization: Bearer` que también funciona en PROD (ADR 0012). Al crear código nuevo hay que respetar el modelo de despliegue
 ya decidido en los ADR, no inventar uno distinto.
 
 El repositorio y su documentación están **en español**; mantener ese idioma en docs, ADR,

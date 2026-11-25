@@ -37,9 +37,10 @@ Los roles indicados son las autoridades requeridas por las anotaciones de los en
 
 ## Controles transversales
 
-- Los endpoints de negocio requieren sesión autenticada y sus anotaciones de rol se evalúan antes de enlazar el cuerpo HTTP. Las únicas rutas de API sin `@PreAuthorize` son las rutas explícitas de salud y autenticación DEMO (`health`, `login`, `bootstrap`, `logout`, `me`); login/bootstrap son públicas y logout/me requieren autenticación.
+- Los endpoints de negocio requieren sesión autenticada y sus anotaciones de rol se evalúan antes de enlazar el cuerpo HTTP. Las únicas rutas de API sin `@PreAuthorize` son las rutas explícitas de salud, autenticación DEMO (`health`, `login`, `bootstrap`, `logout`, `me`) y autenticación de Ciudadanos (`auth/m1/login`, `auth/m1/logout`, `auth/m1/me`); los login y bootstrap son públicos y logout/me requieren autenticación.
 - La autorización por rol no sustituye autorización por recurso. `CurrentIdentity.requireOwnership` y las comprobaciones equivalentes del servicio impiden al contribuyente consultar o modificar recursos ajenos. También se validan ownership de pagos, boletas, deuda, planes, beneficios y solicitudes.
 - Las operaciones de aprobación usan roles separados de las operaciones de preparación donde el flujo lo exige. `AuditService` aplica controles de actor distinto; esas reglas de negocio no se reemplazan con `@PreAuthorize`.
+- `TAXPAYER` también se obtiene con el ingreso de Ciudadanos (`/api/v1/auth/m1/*`, ADR 0012): la sesión ciudadana `Authorization: Bearer` lleva el `taxpayerId` de la referencia vinculada por `canonical_citizen_id` y aplica la misma titularidad. Es la única autenticación disponible en `prod`.
 - La sesión DEMO está condicionada al modo dev y no constituye autenticación productiva. La autoridad `TECHNICAL` aparece en endpoints de integración y no debe asignarse a usuarios de negocio.
 - `SecurityConfig` aplica 401 a solicitudes no autenticadas y 403 a solicitudes autenticadas sin autoridad. La protección de rutas y ownership se verifica por separado.
 

@@ -80,6 +80,18 @@ class ProductionSchemaIsolationTest {
     }
 
     @Test
+    void productionKeepsCitizenM1LoginOutsideTheDemoSchema() throws Exception {
+        assertThat(jdbc.queryForObject(
+            "select count(*) from information_schema.tables where lower(table_name)='citizen_session'", Integer.class)).isOne();
+        // Sin M1_AUTH_ENABLED la ruta existe pero no autentica a nadie.
+        mvc.perform(post("/api/v1/auth/m1/login").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"vecino@example.invalid\",\"password\":\"x\"}"))
+            .andExpect(status().isServiceUnavailable());
+        mvc.perform(get("/api/v1/auth/m1/me").header("Authorization", "Bearer desconocido"))
+            .andExpect(status().isUnauthorized());
+    }
+
+    @Test
     void productionUpgradeFromV17PreservesHistoryAndRemovesExistingDemoData() {
         String url = "jdbc:h2:mem:production-upgrade;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE";
         Flyway common = Flyway.configure().dataSource(url, "sa", "")

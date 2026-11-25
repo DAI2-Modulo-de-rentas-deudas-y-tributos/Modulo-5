@@ -70,6 +70,9 @@ services:
       RENTAS_DEMO_BOOTSTRAP_PASSWORD: ${RENTAS_DEMO_BOOTSTRAP_PASSWORD:?Falta RENTAS_DEMO_BOOTSTRAP_PASSWORD en .env (copiar .env.example a .env y completarlo)}
       RENTAS_DEMO_SESSION_TTL: ${RENTAS_DEMO_SESSION_TTL:-PT8H}
       RENTAS_SECURITY_TRUSTED_PROXY_CIDRS: ${RENTAS_SECURITY_TRUSTED_PROXY_CIDRS:-}
+      # Ingreso de vecinos con la cuenta de Ciudadanos (M1). Apagado salvo que .env lo active.
+      M1_AUTH_ENABLED: ${M1_AUTH_ENABLED:-false}
+      M1_AUTH_BASE_URL: ${M1_AUTH_BASE_URL:-}
     ports:
       - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
     healthcheck:

@@ -42,7 +42,11 @@ Copiar `.env.example` a `.env`:
 - `VITE_AUTH_MODE=demo` — el login siempre va a `POST /api/v1/dev-auth/login`.
   Las cuentas y las sesiones viven en PostgreSQL (`demo_user`, `demo_auth_session`).
   El frontend envía `X-Demo-Session`; no elige roles en cabeceras. Core/JWT sigue
-  pendiente.
+  pendiente. La pantalla también ofrece "Cuenta de Ciudadanos".
+- `VITE_AUTH_MODE=m1` (PROD) — sólo el ingreso de vecinos con su cuenta de Ciudadanos:
+  `POST /api/v1/auth/m1/login` con correo y contraseña de M1 (ADR 0012). La sesión se
+  guarda con `rentas.authSource=m1` y viaja como `Authorization: Bearer`. Si Ciudadanos
+  está arrancando, el login reintenta hasta tres veces.
 
 El valor anterior `mock` se acepta como alias de `demo` para mantener la
 compatibilidad de despliegues existentes. Ambos autentican contra el backend real.

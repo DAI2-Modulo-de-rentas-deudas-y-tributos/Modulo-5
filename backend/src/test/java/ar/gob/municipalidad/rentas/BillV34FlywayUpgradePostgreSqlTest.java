@@ -44,7 +44,7 @@ class BillV34FlywayUpgradePostgreSqlTest {
         Flyway latest = flyway().load();
         latest.migrate();
         latest.validate();
-        assertThat(latest.info().current().getVersion().getVersion()).isEqualTo("34");
+        assertThat(latest.info().current().getVersion().getVersion()).isEqualTo("36");
 
         assertThat(jdbc.queryForObject("select status from bill where id=?", String.class, oldBill)).isEqualTo("ISSUED");
         assertThat(jdbc.queryForObject("select total_amount from bill where id=?", BigDecimal.class, oldBill)).isEqualByComparingTo("200.00");

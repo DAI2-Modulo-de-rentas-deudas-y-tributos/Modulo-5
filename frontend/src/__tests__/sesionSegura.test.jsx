@@ -58,7 +58,7 @@ describe("ciclo de sesión verificado por backend", () => {
         code: "INVALID_CREDENTIALS",
       });
     });
-    expect(logout).toHaveBeenCalledWith("token-rechazado");
+    expect(logout).toHaveBeenCalledWith("token-rechazado", "demo");
     expect(sessionStorage.getItem("rentas.token")).toBeNull();
     await waitFor(() => expect(auth.isAuthenticated).toBe(false));
   });
