@@ -17,13 +17,15 @@ function withoutTrailingSlashes(value) {
 const API_BASE_URL = withoutTrailingSlashes((import.meta.env.VITE_API_BASE_URL ?? "").trim());
 
 // DEMO autentica con usuarios y sesiones reales del backend. "mock" es un alias heredado.
-// "m1" (PROD) sólo ofrece el ingreso de vecinos con la cuenta de Ciudadanos (ADR 0012).
+// "m1" (PROD) ofrece el ingreso de vecinos con Ciudadanos (ADR 0012) y el del personal con su
+// cuenta propia de Rentas (ADR 0013); "demo" usa la cuenta DEMO para el personal.
 const configuredAuthMode = (import.meta.env.VITE_AUTH_MODE ?? "demo").trim().toLowerCase();
 export const AUTH_MODE = configuredAuthMode === "mock" ? "demo" : configuredAuthMode;
-export const STAFF_LOGIN_ENABLED = AUTH_MODE === "demo";
+export const STAFF_LOGIN_ENABLED = AUTH_MODE === "demo" || AUTH_MODE === "m1";
 export const M1_LOGIN_ENABLED = AUTH_MODE === "demo" || AUTH_MODE === "m1";
 
-/** Origen de la sesión guardada: "m1" viaja como Bearer; cualquier otro valor es DEMO. */
+/** Origen de la sesión guardada: "m1" (vecino) y "staff" (personal) viajan como Bearer; cualquier otro valor es DEMO. */
+const BEARER_SOURCES = new Set(["m1", "staff"]);
 export const SESSION_SOURCE_KEY = "rentas.authSource";
 
 export class ApiError extends Error {
@@ -40,7 +42,7 @@ export class ApiError extends Error {
 export function authHeaders() {
   const token = sessionStorage.getItem("rentas.token");
   if (!token) return {};
-  if (sessionStorage.getItem(SESSION_SOURCE_KEY) === "m1") return { Authorization: `Bearer ${token}` };
+  if (BEARER_SOURCES.has(sessionStorage.getItem(SESSION_SOURCE_KEY))) return { Authorization: `Bearer ${token}` };
   return AUTH_MODE === "demo" ? { "X-Demo-Session": token } : {};
 }
 

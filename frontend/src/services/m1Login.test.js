@@ -58,7 +58,8 @@ describe("sesión ciudadana con M1", () => {
     const { authHeaders, M1_LOGIN_ENABLED, STAFF_LOGIN_ENABLED } = await import("./apiClient.js");
     expect(authHeaders()).toEqual({ Authorization: "Bearer t-m1" });
     expect(M1_LOGIN_ENABLED).toBe(true);
-    expect(STAFF_LOGIN_ENABLED).toBe(false);
+    // ADR 0013: en PROD el personal también entra, con su cuenta propia de Rentas.
+    expect(STAFF_LOGIN_ENABLED).toBe(true);
   });
 
   it("me y logout usan las rutas M1 y un 401 Bearer vence la sesión", async () => {

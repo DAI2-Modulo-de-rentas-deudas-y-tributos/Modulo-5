@@ -91,6 +91,10 @@ export const authService = {
     if (AUTH_MODE === "core") {
       throw new ApiError("La autenticación Core/JWT todavía no tiene un contrato integrado.", 503, null, "CORE_AUTH_PENDING");
     }
+    if (AUTH_MODE === "m1") {
+      const result = await request("/api/v1/auth/staff/login", { method: "POST", body: { username, password }, requiresAuth: false });
+      return mapDemoAuthSession(result);
+    }
     if (AUTH_MODE !== "demo") {
       throw new ApiError("El modo de autenticación configurado no está habilitado.", 503, null, "AUTH_MODE_UNSUPPORTED");
     }
@@ -99,7 +103,9 @@ export const authService = {
   },
 
   async me() {
-    if (sessionStorage.getItem(SESSION_SOURCE_KEY) === "m1") return mapM1User(await request("/api/v1/auth/m1/me"));
+    const source = sessionStorage.getItem(SESSION_SOURCE_KEY);
+    if (source === "m1") return mapM1User(await request("/api/v1/auth/m1/me"));
+    if (source === "staff") return mapDemoAuthSession({ token: sessionStorage.getItem("rentas.token"), user: await request("/api/v1/auth/staff/me") }).user;
     if (AUTH_MODE === "core") {
       throw new ApiError("La autenticación Core/JWT todavía no tiene un contrato integrado.", 503, null, "CORE_AUTH_PENDING");
     }
@@ -111,8 +117,8 @@ export const authService = {
   },
 
   async logout(token, source) {
-    if (source === "m1") {
-      await request("/api/v1/auth/m1/logout", { method: "POST", requiresAuth: false, headers: { Authorization: `Bearer ${token}` } });
+    if (source === "m1" || source === "staff") {
+      await request(`/api/v1/auth/${source}/logout`, { method: "POST", requiresAuth: false, headers: { Authorization: `Bearer ${token}` } });
       return;
     }
     if (AUTH_MODE !== "demo") return;

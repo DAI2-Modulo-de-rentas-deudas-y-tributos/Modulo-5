@@ -117,7 +117,7 @@ class SecurityConfig {
                     .requestMatchers("/actuator/health", "/api/v1/health").permitAll();
                 if (publicDocs) auth.requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll();
                 auth
-                .requestMatchers(HttpMethod.POST, "/api/v1/dev-auth/login", "/api/v1/dev-auth/bootstrap", M1CitizenAuthController.LOGIN_PATH).permitAll()
+                .requestMatchers(HttpMethod.POST, "/api/v1/dev-auth/login", "/api/v1/dev-auth/bootstrap", M1CitizenAuthController.LOGIN_PATH, StaffAuthController.LOGIN_PATH).permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/v1/**").authenticated()
                 .anyRequest().authenticated();
             })

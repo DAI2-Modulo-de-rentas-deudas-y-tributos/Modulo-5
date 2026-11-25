@@ -11,7 +11,7 @@ const PAYMENT_INTENT_KEY = "rentas.electronicPaymentIntent";
 
 function hasStoredToken() {
   if (!sessionStorage.getItem(TOKEN_KEY)) return false;
-  return AUTH_MODE === "demo" || sessionStorage.getItem(SESSION_SOURCE_KEY) === "m1";
+  return AUTH_MODE === "demo" || ["m1", "staff"].includes(sessionStorage.getItem(SESSION_SOURCE_KEY));
 }
 
 /** Quita la sesión guardada. El intento de pago electrónico se conserva sólo al vencer la sesión. */

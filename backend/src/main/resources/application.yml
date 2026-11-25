@@ -68,3 +68,6 @@ rentas:
   m1.auth.connect-timeout: ${M1_AUTH_CONNECT_TIMEOUT:5s}
   m1.auth.read-timeout: ${M1_AUTH_READ_TIMEOUT:25s}
   m1.auth.session-ttl: ${M1_AUTH_SESSION_TTL:PT8H}
+  # Cuentas del personal de Rentas (ADR 0013): JSON con hashes BCrypt, desde Secrets Manager.
+  staff.accounts: ${STAFF_ACCOUNTS:}
+  staff.session-ttl: ${STAFF_SESSION_TTL:PT8H}

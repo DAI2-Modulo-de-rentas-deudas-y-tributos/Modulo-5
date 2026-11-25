@@ -236,12 +236,13 @@ class M1CitizenAuthController {
     }
 }
 
-/** Resuelve {@code Authorization: Bearer} contra las sesiones ciudadanas. Vale en todos los perfiles. */
+/** Resuelve {@code Authorization: Bearer} contra las sesiones del personal y las ciudadanas. Vale en todos los perfiles. */
 @Component
 class CitizenSessionFilter extends OncePerRequestFilter {
     private final M1CitizenAuthService sessions;
+    private final StaffAuthService staff;
     private final SecurityErrorResponseWriter errors;
-    CitizenSessionFilter(M1CitizenAuthService sessions,SecurityErrorResponseWriter errors){this.sessions=sessions;this.errors=errors;}
+    CitizenSessionFilter(M1CitizenAuthService sessions,StaffAuthService staff,SecurityErrorResponseWriter errors){this.sessions=sessions;this.staff=staff;this.errors=errors;}
 
     @Override protected void doFilterInternal(HttpServletRequest request,HttpServletResponse response,FilterChain chain)
             throws ServletException,IOException {
@@ -249,7 +250,7 @@ class CitizenSessionFilter extends OncePerRequestFilter {
         if(M1CitizenAuthService.bearerToken(authorization)!=null&&applies(request)
                 &&SecurityContextHolder.getContext().getAuthentication()==null) {
             try {
-                M1CitizenAuthService.ResolvedSession session=sessions.resolve(authorization);
+                M1CitizenAuthService.ResolvedSession session=staff.resolve(authorization).orElseGet(()->sessions.resolve(authorization));
                 SecurityContextHolder.getContext().setAuthentication(
                     new UsernamePasswordAuthenticationToken(session.identity(),null,session.authorities()));
             } catch(BusinessException ex) {
@@ -263,6 +264,7 @@ class CitizenSessionFilter extends OncePerRequestFilter {
     private static boolean applies(HttpServletRequest request) {
         String path=request.getRequestURI();
         return path.startsWith("/api/v1/")&&!path.equals("/api/v1/health")
-            &&!("POST".equalsIgnoreCase(request.getMethod())&&path.equals(M1CitizenAuthController.LOGIN_PATH));
+            &&!("POST".equalsIgnoreCase(request.getMethod())
+                &&(path.equals(M1CitizenAuthController.LOGIN_PATH)||path.equals(StaffAuthController.LOGIN_PATH)));
     }
 }

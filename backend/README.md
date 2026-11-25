@@ -181,6 +181,25 @@ No hay identidad por omisión ni privilegios vía `X-Dev-*`. `AUDITOR` sólo pue
 Sin un proveedor Core/JWT configurado y con dev-mode desactivado el backend queda cerrado,
 salvo para los vecinos que ingresan con Ciudadanos.
 
+**Cuentas del personal de Rentas (ADR 0013).** `STAFF_ACCOUNTS` es una lista JSON; en PROD
+llega desde Secrets Manager (`modulo-5-rentas-prod-staff-accounts`). Cada cuenta lleva
+`username` (minúsculas, `[a-z0-9._-]`, 3 a 60), `displayName`, `role` (`RENTAS`, `SUPERVISOR`,
+`CASHIER` o `AUDITOR`) y `passwordHash`: un hash BCrypt de costo 10 a 14, nunca la contraseña.
+Al arrancar, el backend crea o actualiza esas cuentas y desactiva las que ya no figuran. El hash
+se genera en la computadora de quien administra:
+
+```sh
+py -m pip install bcrypt
+py -c "import bcrypt,getpass; print(bcrypt.hashpw(getpass.getpass().encode(), bcrypt.gensalt(12)).decode())"
+```
+
+```json
+[{"username":"ana.rentas","displayName":"Ana Pérez","role":"SUPERVISOR","passwordHash":"$2b$12$..."}]
+```
+
+El personal ingresa con `POST /api/v1/auth/staff/login` y la sesión viaja como
+`Authorization: Bearer` (8 h). Cinco fallos por usuario bloquean el ingreso 15 minutos.
+
 **Ingreso de vecinos con M1 (ADR 0012).** Con `M1_AUTH_ENABLED=true` y `M1_AUTH_BASE_URL`
 (un origen HTTPS sin ruta), `POST /api/v1/auth/m1/login` reenvía el correo y la contraseña (campos `gmail`/`password`) a
 `POST /auth/usuario/login` de M1. Acepta sólo `actorType=CIUDADANO` con un `citizenId` que
