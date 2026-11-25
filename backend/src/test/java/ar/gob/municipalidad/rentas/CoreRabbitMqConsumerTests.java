@@ -320,11 +320,21 @@ class CoreRabbitMqConsumerTests {
         RabbitTemplate rabbit=confirmedPublisher();Channel channel=mock(Channel.class);
         Message original=new Message(payload.getBytes(StandardCharsets.UTF_8),new MessageProperties());
         original.getMessageProperties().setMessageId(eventId.toString());
+        original.getMessageProperties().setUserId("foreign-publisher");
+        original.getMessageProperties().setHeader("x-core-event-id",eventId.toString());
+        original.getMessageProperties().setHeader("x-core-target-module","rentas");
+        original.getMessageProperties().setHeader("x-core-attempt",2);
+        original.getMessageProperties().setHeader("x-core-trace-id","trace-foreign");
 
         listener(dispatcher,rabbit).receive(original,channel,54);
 
         verify(rabbit).send(eq("rentas.retry"),eq("q.rentas.retry.1"),argThat(retry->
             eventId.toString().equals(retry.getMessageProperties().getMessageId())
+                &&"m5-test".equals(retry.getMessageProperties().getUserId())
+                &&eventId.toString().equals(retry.getMessageProperties().getHeaders().get("x-core-event-id"))
+                &&"rentas".equals(retry.getMessageProperties().getHeaders().get("x-core-target-module"))
+                &&Integer.valueOf(2).equals(retry.getMessageProperties().getHeaders().get("x-core-attempt"))
+                &&"trace-foreign".equals(retry.getMessageProperties().getHeaders().get("x-core-trace-id"))
                 &&payload.equals(new String(retry.getBody(),StandardCharsets.UTF_8))),any(CorrelationData.class));
         verify(channel).basicAck(54,false);verify(channel,never()).basicNack(eq(54),anyBoolean(),anyBoolean());
     }
@@ -353,10 +363,10 @@ class CoreRabbitMqConsumerTests {
         }
     }
 
-    private CoreRabbitMqConsumer listener(CoreInboundEventDispatcher dispatcher){return listener(dispatcher,mock(RabbitTemplate.class),"local");}
+    private CoreRabbitMqConsumer listener(CoreInboundEventDispatcher dispatcher){return listener(dispatcher,confirmedPublisher(),"local");}
     private CoreRabbitMqConsumer listener(CoreInboundEventDispatcher dispatcher,RabbitTemplate rabbit){return listener(dispatcher,rabbit,"local");}
     private CoreRabbitMqConsumer listener(CoreInboundEventDispatcher dispatcher,RabbitTemplate rabbit,String retryMode){return new CoreRabbitMqConsumer(dispatcher,rabbit,retryMode,"rentas.retry","q.rentas.retry.1","q.rentas.retry.2","q.rentas.retry.3",1000);}
-    private RabbitTemplate confirmedPublisher(){RabbitTemplate rabbit=mock(RabbitTemplate.class);doAnswer(invocation->{CorrelationData correlation=invocation.getArgument(3);correlation.getFuture().complete(new CorrelationData.Confirm(true,null));return null;}).when(rabbit).send(any(String.class),any(String.class),any(Message.class),any(CorrelationData.class));return rabbit;}
+    private RabbitTemplate confirmedPublisher(){RabbitTemplate rabbit=mock(RabbitTemplate.class);var factory=mock(org.springframework.amqp.rabbit.connection.ConnectionFactory.class);when(factory.getUsername()).thenReturn("m5-test");when(rabbit.getConnectionFactory()).thenReturn(factory);doAnswer(invocation->{CorrelationData correlation=invocation.getArgument(3);correlation.getFuture().complete(new CorrelationData.Confirm(true,null));return null;}).when(rabbit).send(any(String.class),any(String.class),any(Message.class),any(CorrelationData.class));return rabbit;}
     private Message message(long tag){MessageProperties properties=new MessageProperties();properties.setDeliveryTag(tag);return new Message(ticketUpdated().getBytes(StandardCharsets.UTF_8),properties);}
     private String envelope(String type,String source,String data){return """
         {"eventId":"%s","eventType":"%s","eventVersion":"1.0","occurredAt":"2026-10-30T10:00:00-03:00","sourceModule":"%s","correlationId":"%s","causationId":null,"data":%s}

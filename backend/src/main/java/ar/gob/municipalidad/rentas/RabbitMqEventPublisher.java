@@ -19,6 +19,7 @@ class RabbitMqEventPublisher implements EventPublisher {
     private final ObjectMapper json;
     private final String exchange;
     private final Duration confirmTimeout;
+    private final String username;
 
     RabbitMqEventPublisher(RabbitTemplate rabbit,ObjectMapper json,
         @org.springframework.beans.factory.annotation.Value("${rentas.core.amqp.exchange:muni.inbox}") String exchange,
@@ -27,8 +28,11 @@ class RabbitMqEventPublisher implements EventPublisher {
         @org.springframework.beans.factory.annotation.Value("${spring.rabbitmq.password:}") String password) {
         if(username==null||username.isBlank()||password==null||password.isBlank()||"CHANGE_ME".equals(password))
             throw new IllegalStateException("CORE_RABBITMQ_CREDENTIALS_REQUIRED");
+        var connectionFactory=rabbit.getConnectionFactory();
+        String connectionUsername=connectionFactory==null?null:connectionFactory.getUsername();
+        if(!username.equals(connectionUsername))throw new IllegalStateException("CORE_RABBITMQ_CREDENTIALS_MISMATCH");
         rabbit.setReturnsCallback(returned -> {});
-        this.rabbit=rabbit;this.json=json;this.exchange=exchange;this.confirmTimeout=confirmTimeout;
+        this.rabbit=rabbit;this.json=json;this.exchange=exchange;this.confirmTimeout=confirmTimeout;this.username=connectionUsername;
     }
 
     @Override public OutboxStatus publish(String eventType,String targetModule,String payload) {
@@ -38,6 +42,7 @@ class RabbitMqEventPublisher implements EventPublisher {
             message.getMessageProperties().setMessageId(eventId);
             message.getMessageProperties().setContentType("application/json");
             message.getMessageProperties().setDeliveryMode(MessageDeliveryMode.PERSISTENT);
+            message.getMessageProperties().setUserId(username);
             return message;
         },correlation);
         CorrelationData.Confirm confirm;
